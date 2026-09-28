@@ -83,6 +83,12 @@ async def test_provider_field_purpose_names_the_new_chat_scope(request) -> None:
         "Sets the provider new chats start with; open chats nobody has used "
         "yet follow it."
     )
+    # Final review (Task 3 rider): the Model row kept "when Console has no
+    # narrower override" framing; it names the same scope now.
+    screen._active_settings_field_id = "settings-model-value"
+    assert dict(screen._provider_field_guidance_rows_base())["Purpose"] == (
+        "Sets the model new chats start with; open chats nobody has used yet follow it."
+    )
 
 
 @pytest.mark.asyncio

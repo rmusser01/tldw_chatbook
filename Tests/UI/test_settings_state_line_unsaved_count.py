@@ -24,6 +24,7 @@ from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
 from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
+    SettingsValidationResult,
 )
 from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
@@ -153,6 +154,31 @@ async def test_other_staging_lines_keep_their_own_badge(request) -> None:
         "State: Validate, then Save · 1 unsaved | Draft kept when you leave; "
         "use raw editor controls."
     )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_invalid_draft_keeps_badge_and_count(request) -> None:
+    """Final review (Task 4 ruling): "State: Needs correction | ..." dropped
+    both the badge and the count on Appearance, Library & RAG and Storage."""
+    screen = SettingsScreen(_build_test_app())
+    problem = "Media database path must not be blank."
+    invalid = SettingsValidationResult(False, problem)
+    screen._appearance_validation_result = lambda: invalid
+    screen._library_rag_validation_result = lambda: invalid
+    screen._storage_validation_result = lambda: invalid
+    for category in (
+        SettingsCategoryId.APPEARANCE,
+        SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.STORAGE,
+    ):
+        screen._category_has_unsaved_changes = lambda c, category=category: (
+            c is category
+        )
+        screen._category_unsaved_count = lambda c: 2
+        assert screen._category_state_banner_text(category) == (
+            f"State: Draft — save with s · 2 unsaved | Needs correction: {problem}"
+        ), category
 
 
 @pytest.mark.asyncio

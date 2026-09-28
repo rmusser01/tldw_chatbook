@@ -423,6 +423,8 @@ button, the Model section's **Configure** button in the left rail, or the
   endpoint serves, and the **Endpoint** field for local/self-hosted servers.
 - **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
   related knobs), then **Provider-specific**, **Context**, and **Identity**.
+  Each field has the same label as in Settings — for example **Thinking
+  budget**, and **Budget strategy** and **When limit nears** under Context.
   The modal still shows every sampling field, but a field the selected
   provider's request does not carry is dropped: for Anthropic, Min P, Seed,
   Presence penalty and Frequency penalty are accepted without error, never sent, and not
@@ -884,27 +886,3 @@ catalog unavailable…" with "Showing 20 of N matching models". Pinned by a
 widget test with 25 models for each warning
 (`Tests/Widgets/test_model_search_picker.py`), not driven live. The rest of
 this page's content unchanged from the prior stamp.)*
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.1 —
-2026-09-27: Conversation settings takes its field labels from the same table
-as Settings. Driven live at 211x44 on a scratch llama.cpp profile: the Model
-view reads **Endpoint** (was Base URL), **Max tokens** (was Response max
-tokens), **Presence penalty**, **Frequency penalty**, **Reasoning effort** and
-**Thinking budget** (was Budget); the Context view reads **Budget strategy**
-(was Budget mode), **When limit nears** (was Behavior) and "Max tokens 4,096
-tokens" under Model capacity. The Alt+M popover's Temperature and Streaming
-labels come from the same table (pinned by a mounted test, not driven live).
-The rest of this page's content unchanged from the prior stamp.*
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.5 —
-2026-09-27: the status row's **Provider** chip names the provider as the
-pickers do. Driven live at 211x44 on a scratch profile: a saved
-`provider = "Llama_cpp"` read "Provider: Llama_cpp" before and
-"Provider: llama.cpp" after; OpenAI read "Provider: OpenAI"; a custom endpoint
-named "GPU Box" read "Provider: GPU Box" (was "Provider: custom-ep:gpu-box";
-also at 235x52); Oobabooga read "Provider: Text Generation Web…", cut by the
-chip's existing width cap. When an unused chat follows new saved defaults to
-another provider, the warning names both by display name ("Console provider
-changed OpenAI -> llama.cpp: …"); that notice is pinned by a Console test,
-not driven live. The rest of this page's content unchanged from the prior
-stamp.*

@@ -486,9 +486,3 @@ next step, and the partial-failure toast reports counts and points at Logs (F3)
 instead of embedding the last raw error string. Pinned by
 `Tests/UI/test_settings_rag_profile_region.py`'s backfill toast tests; no other
 behavior of this pane changed.)*
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.4 —
-2026-09-27: the State banner copy above (badge kept, unsaved count added) is
-pinned by `Tests/UI/test_settings_state_line_unsaved_count.py`, and the dirty
-line renders in one row at 211x44 for Library & RAG; RAG itself was not driven
-live.*

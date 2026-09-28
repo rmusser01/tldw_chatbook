@@ -3915,7 +3915,8 @@ class ConsoleSessionController:
                 # TASK-33002.5: the notice names both providers as the chip
                 # does; the log keeps the keys.
                 provider_display_name(settings.provider, app_config),
-                provider_display_name(fresh_defaults.provider, app_config),
+                provider_display_name(fresh_defaults.provider, app_config)
+                or "not selected",
             )
         return fresh_defaults
 

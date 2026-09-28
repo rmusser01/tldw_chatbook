@@ -637,10 +637,3 @@ landing in the Library editor with the captured note's Info showing its
 `console` / `conversation:<id>` / `message:<id>` keywords; **Save as…** ▸
 Note still titles after the conversation; Alt+C and Alt+I open the rails at
 235x52.)*
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.6 —
-2026-09-27: the per-model reasoning control in **Settings > Console Behavior**
-is now titled **Reasoning replay override** (it was "Override current Console
-model"); its target line, **Use default** list and **Native tool support**
-checkbox are unchanged. Driven live at 211x44 and 235x52 on a scratch
-llama.cpp profile.*

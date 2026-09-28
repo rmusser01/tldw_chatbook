@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_model_popover_geometry import (
@@ -24,6 +24,9 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
     _wait_for_selector,
+)
+from Tests.UI.test_settings_configuration_hub import (
+    _capture_provider_settings_mutations,
 )
 from tldw_chatbook.Chat.console_provider_support import (
     GENERATION_FIELD_REQUEST_KEYS,
@@ -134,11 +137,24 @@ def test_console_validation_names_fields_by_their_table_labels():
             model="model-a",
             max_tokens=0,
             base_url="not a url",
+            thinking_effort="turbo",
+            thinking_budget_tokens=10,
         ),
-        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+        app_config={
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}
+        },
     )
     assert f"{MODEL_FIELD_LABELS['max_tokens']} must be 1 or greater." in errors
     assert f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL." in errors
+    # Final review (Task 1 minor): the two thinking errors named the fields
+    # "Thinking effort" and "Thinking budget tokens".
+    assert (
+        f"{MODEL_FIELD_LABELS['thinking_effort']} must be one of off, low, "
+        "medium, high, xhigh, or max."
+    ) in errors
+    assert (
+        f"{MODEL_FIELD_LABELS['thinking_budget_tokens']} must be at least 1024."
+    ) in errors
 
 
 @pytest.mark.parametrize(
@@ -192,11 +208,14 @@ async def test_popover_labels_come_from_the_field_table():
         await app.push_screen(build_geometry_popover())
         await pilot.pause()
         screen = app.screen
-        assert _label_drift(
-            screen,
-            {"console-popover-temperature": "temperature"},
-            "console-popover-field-label",
-        ) == []
+        assert (
+            _label_drift(
+                screen,
+                {"console-popover-temperature": "temperature"},
+                "console-popover-field-label",
+            )
+            == []
+        )
         streaming = screen.query_one("#console-popover-streaming", Button)
         assert str(streaming.label).startswith(f"{MODEL_FIELD_LABELS['streaming']}: ")
 
@@ -291,3 +310,101 @@ async def test_settings_console_behavior_fallback_labels_come_from_the_table(
         await _wait_for_selector(screen, pilot, "#settings-console-default-temperature")
         await pilot.pause()
         assert _label_drift(screen, controls, "settings-input-label") == []
+
+        # Final review I2: focusing a fallback shows the table's help and
+        # range, as the Providers & Models inspector does.
+        screen.query_one("#settings-console-default-temperature").focus()
+        await pilot.pause()
+        field = MODEL_CONFIG_FIELDS["temperature"]
+        guide = [
+            str(screen.query_one(f"#settings-console-behavior-field-guide-{i}").content)
+            for i in range(4)
+        ]
+        assert guide == [
+            f"Focused setting: {field.label}",
+            f"Purpose: {field.help}",
+            "Saved as: chat_defaults.temperature",
+            f"Validation: {field.valid_range}",
+        ]
+        for name in GENERATION_FIELD_REQUEST_KEYS:
+            screen._active_settings_field_id = (
+                f"settings-console-default-{name.replace('_', '-')}"
+            )
+            rows = dict(screen._console_behavior_field_guidance_rows())
+            assert rows["Purpose"] == MODEL_CONFIG_FIELDS[name].help, name
+        # The Control guide rows read the same help lines.
+        guide_text = " ".join(str(static.content) for static in screen.query(Static))
+        for name in ("streaming", "temperature", "top_p", "max_tokens"):
+            assert MODEL_CONFIG_FIELDS[name].help in guide_text, name
+
+
+def _llamacpp_app_with_saved_minimal():
+    """A llama.cpp profile saved with "minimal" before the list was narrowed."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099/v1/chat/completions",
+            "model_defaults": {
+                "qwen": {"reasoning_effort": "minimal", "temperature": 0.5}
+            },
+        }
+    }
+    return app
+
+
+async def _open_llamacpp_model_defaults(host, pilot):
+    screen = _active_destination_screen(host)
+    screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+    await _wait_for_selector(screen, pilot, "#settings-model-profile-temperature")
+    await pilot.pause()
+    return screen
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_saved_minimal_on_llamacpp_survives_revert(request):
+    """Final review C1: Revert assigned "minimal" to a Select that no longer
+    offered it, and Textual's InvalidSelectValueError took the app down. The
+    saved value stays as a labelled option in all three Select writers."""
+    host = DestinationHarness(_llamacpp_app_with_saved_minimal(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_llamacpp_model_defaults(host, pilot)
+        select = screen.query_one("#settings-model-profile-reasoning-effort", Select)
+        # Another model's profile rebuilds the options without "minimal".
+        screen.query_one("#settings-model-value", Input).value = "other-model"
+        await pilot.pause()
+        await pilot.pause()
+        assert "minimal" not in [value for _label, value in select._options]
+        screen.action_settings_revert_category()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        await pilot.pause()
+        assert select.value == "minimal"
+        assert ("minimal (not supported here)", "minimal") in select._options
+        assert screen.query_one("#settings-model-value", Input).value == "qwen"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_saved_minimal_on_llamacpp_survives_an_unrelated_save(
+    request, monkeypatch
+):
+    """Final review C1: a Save that touched only Temperature rebuilt the
+    profile from a Select showing "Inherit default" and deleted "minimal"."""
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = DestinationHarness(_llamacpp_app_with_saved_minimal(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_llamacpp_model_defaults(host, pilot)
+        screen.query_one("#settings-model-profile-temperature", Input).value = "0.9"
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        await pilot.pause()
+    writes = [
+        values["api_settings.llama_cpp"]["model_defaults"]["qwen"]
+        for values, _deletes in mutations
+        if "api_settings.llama_cpp" in values
+    ]
+    assert writes == [{"reasoning_effort": "minimal", "temperature": 0.9}]

@@ -116,6 +116,7 @@ from ...Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
 )
 from ...Chat.console_provider_support import (
+    GENERATION_FIELD_REQUEST_KEYS,
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
     ConsoleProviderCatalogEntry,
@@ -1066,7 +1067,8 @@ STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
 INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
 #: TASK-33002.3: what a Providers & Models save reaches (ADR-095 D1). Shared
-#: by the save result and its toast; the State line says it in one row.
+#: by the save result and its toast; the State line says it in one row. The
+#: short form lives in `_category_state_scope_text`: change both together.
 PROVIDER_SAVE_SCOPE_COPY = (
     "new chats and open chats nobody has used yet take them; chats with work "
     "keep their own settings (change them in Console with Alt+M)."
@@ -1130,6 +1132,12 @@ PERMISSION_SUMMARY_FIELD_IDS = frozenset(
         "settings-permission-summary-retry",
     }
 )
+# Console Behavior's generation fallbacks by widget id; their focused guide
+# reads the one field table (TASK-33002 final review I2).
+CONSOLE_DEFAULT_FIELD_NAMES = {
+    f"settings-console-default-{name.replace('_', '-')}": name
+    for name in GENERATION_FIELD_REQUEST_KEYS
+}
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
 # rather than five copies of the per-setting boilerplate every other
 # numeric Console field uses. Five near-identical settings is where that
@@ -6963,19 +6971,15 @@ class SettingsScreen(BaseAppScreen):
         supported = self._model_profile_field_supported(
             provider, draft_key, values.get("model")
         )
-        allowed = (
-            self._model_profile_reasoning_effort_options(
-                provider, values.get("model"), self._app_config_mapping()
-            )
-            if draft_key == "model_profile_reasoning_effort"
-            else CLOSED_ENUM_SELECT_OPTIONS[
-                PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-            ]
+        options = self._model_profile_enum_options(
+            provider, values.get("model"), draft_key, values[draft_key]
         )
         return Select(
-            [(value, value) for value in allowed],
+            options,
             value=(
-                self._select_option_value(values[draft_key], allowed)
+                self._select_option_value(
+                    values[draft_key], tuple(value for _label, value in options)
+                )
                 if supported
                 else Select.NULL
             ),
@@ -9557,27 +9561,6 @@ class SettingsScreen(BaseAppScreen):
             _focus_now()
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
-        if (
-            category is SettingsCategoryId.APPEARANCE
-            and self._category_has_unsaved_changes(category)
-        ):
-            validation = self._appearance_validation_result()
-            if not validation.valid:
-                return f"State: Needs correction | {validation.message}"
-        if (
-            category is SettingsCategoryId.LIBRARY_RAG
-            and self._category_has_unsaved_changes(category)
-        ):
-            validation = self._library_rag_validation_result()
-            if not validation.valid:
-                return f"State: Needs correction | {validation.message}"
-        if (
-            category is SettingsCategoryId.STORAGE
-            and self._category_has_unsaved_changes(category)
-        ):
-            validation = self._storage_validation_result()
-            if not validation.valid:
-                return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
             # TASK-33002.4: the badge stays (ADR-033) and the line counts the
             # unsaved fields. "revert with r" rides along where r is the
@@ -9589,6 +9572,15 @@ class SettingsScreen(BaseAppScreen):
                 f"{self._persistence_badge(category)} · "
                 f"{self._category_unsaved_count(category)} unsaved"
             )
+            # Final review (Task 4): an invalid draft keeps its badge and count.
+            validate = {
+                SettingsCategoryId.APPEARANCE: self._appearance_validation_result,
+                SettingsCategoryId.LIBRARY_RAG: self._library_rag_validation_result,
+                SettingsCategoryId.STORAGE: self._storage_validation_result,
+            }.get(category)
+            validation = validate() if validate is not None else None
+            if validation is not None and not validation.valid:
+                return f"State: {unsaved} | Needs correction: {validation.message}"
             if category is SettingsCategoryId.ADVANCED_CONFIG:
                 return f"State: {unsaved} | Draft kept when you leave; use raw editor controls."
             if category is SettingsCategoryId.SPEECH_TTS:
@@ -9659,6 +9651,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Save blocked until the text validates; backup before overwrite."
         if category is SettingsCategoryId.PROVIDERS_MODELS:
+            # One-row form of PROVIDER_SAVE_SCOPE_COPY: change both together.
             return (
                 "Applies to new and unused open chats · used chats keep theirs "
                 "(Console: Alt+M)"
@@ -10284,6 +10277,15 @@ class SettingsScreen(BaseAppScreen):
                     "Applies",
                     "Approval rounds rendered after the change; no Save step.",
                 ),
+            )
+        name = CONSOLE_DEFAULT_FIELD_NAMES.get(self._active_settings_field_id or "")
+        if name is not None:
+            spec = MODEL_CONFIG_FIELDS[name]
+            return (
+                ("Focused setting", spec.label),
+                ("Purpose", spec.help),
+                ("Saved as", f"chat_defaults.{name}"),
+                ("Validation", spec.valid_range),
             )
         return (
             (
@@ -12757,6 +12759,32 @@ class SettingsScreen(BaseAppScreen):
             str(provider or ""), REASONING_EFFORT_SELECT_OPTIONS, app_config
         )
 
+    def _model_profile_enum_options(
+        self, provider: object, model: object, draft_key: str, saved: object
+    ) -> list[tuple[str, str]]:
+        """Return the (label, value) options of a model-default enum Select.
+
+        The one list for compose, sync and Revert. A saved reasoning level
+        that the provider's narrowed list no longer offers stays as a
+        labelled option: without it Revert raised InvalidSelectValueError
+        and an unrelated Save deleted the value (TASK-33002 final review C1).
+        """
+        if draft_key != "model_profile_reasoning_effort":
+            return [
+                (value, value)
+                for value in CLOSED_ENUM_SELECT_OPTIONS[
+                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+                ]
+            ]
+        offered = self._model_profile_reasoning_effort_options(
+            provider, model, self._app_config_mapping()
+        )
+        options = [(value, value) for value in offered]
+        saved_text = str(saved or "").strip().lower()
+        if saved_text in REASONING_EFFORT_OPTIONS - {""} - set(offered):
+            options.append((f"{saved_text} (not supported here)", saved_text))
+        return options
+
     def _model_profile_field_supported(
         self, provider: object, draft_key: str, model: object
     ) -> bool:
@@ -14377,23 +14405,15 @@ class SettingsScreen(BaseAppScreen):
                                 else Select.NULL
                             )
                         else:
-                            allowed = (
-                                self._model_profile_reasoning_effort_options(
-                                    provider, model, self._app_config_mapping()
-                                )
-                                if draft_key == "model_profile_reasoning_effort"
-                                else CLOSED_ENUM_SELECT_OPTIONS[
-                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-                                ]
+                            options = self._model_profile_enum_options(
+                                provider, model, draft_key, value
                             )
                             if draft_key == "model_profile_reasoning_effort":
-                                select.set_options(
-                                    [(option, option) for option in allowed]
-                                )
+                                select.set_options(options)
                             select.value = (
                                 self._select_option_value(
                                     value,
-                                    allowed,
+                                    tuple(option for _label, option in options),
                                 )
                                 if supported
                                 else Select.NULL
@@ -15967,7 +15987,10 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "Model"),
                 (
                     "Purpose",
-                    "Selects the model used when Console has no narrower override.",
+                    (
+                        "Sets the model new chats start with; open chats nobody "
+                        "has used yet follow it."
+                    ),
                 ),
                 ("Saved as", "chat_defaults.model"),
                 (
@@ -18259,7 +18282,8 @@ class SettingsScreen(BaseAppScreen):
             target = self._reasoning_override_target
             with Collapsible(title="Reasoning replay override", collapsed=True):
                 yield Static(
-                    f"{target[0]} / {target[2]} — {safe_endpoint_display(target[1])}"
+                    f"{provider_display_name(target[0], self._app_config_mapping())}"
+                    f" / {target[2]} — {safe_endpoint_display(target[1])}"
                     if target
                     else "Select a local model in Console to set a remembered override.",
                     markup=False,
@@ -22583,23 +22607,9 @@ class SettingsScreen(BaseAppScreen):
                 "Default chat display name",
                 "Speaker label and trusted character-template human name",
             )
-            yield self._detail_row(
-                MODEL_FIELD_LABELS["streaming"],
-                "Global fallback for streaming responses when no Console session "
-                "or provider+model profile overrides it",
-            )
-            yield self._detail_row(
-                MODEL_FIELD_LABELS["temperature"],
-                "Creativity fallback, 0.0 is focused and 2.0 is exploratory",
-            )
-            yield self._detail_row(
-                MODEL_FIELD_LABELS["top_p"],
-                "Probability cutoff fallback; lower values narrow token choices",
-            )
-            yield self._detail_row(
-                MODEL_FIELD_LABELS["max_tokens"],
-                "Optional response cap for new/default Console sends",
-            )
+            for name in ("streaming", "temperature", "top_p", "max_tokens"):
+                spec = MODEL_CONFIG_FIELDS[name]
+                yield self._detail_row(spec.label, spec.help)
             yield self._detail_row(
                 "Paste collapse",
                 "Only pasted chunks over the threshold become compact placeholders; "
@@ -24792,6 +24802,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-console-sidechat-prompt-template",
                 "settings-console-default-user-display-name",
                 *PERMISSION_SUMMARY_FIELD_IDS,
+                *CONSOLE_DEFAULT_FIELD_NAMES,
             }
             self._active_settings_field_id = (
                 widget_id if widget_id in console_behavior_field_ids else None
@@ -31732,11 +31743,14 @@ class SettingsScreen(BaseAppScreen):
                         if draft_key == "model_profile_streaming":
                             select.value = self._streaming_select_value(profile_value)
                         else:
+                            options = self._model_profile_enum_options(
+                                provider, values["model"], draft_key, profile_value
+                            )
+                            if draft_key == "model_profile_reasoning_effort":
+                                select.set_options(options)
                             select.value = self._select_option_value(
                                 profile_value,
-                                CLOSED_ENUM_SELECT_OPTIONS[
-                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-                                ],
+                                tuple(option for _label, option in options),
                             )
                     else:
                         self.query_one(

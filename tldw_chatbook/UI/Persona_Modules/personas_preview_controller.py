@@ -23,7 +23,7 @@ from ...Chat.console_chat_models import (
 )
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
-from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
+from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
@@ -270,12 +270,7 @@ class PersonasPreviewController:
     @staticmethod
     def _provider_label(provider_key: str) -> str:
         """Human-readable display name for a provider config key."""
-        key = str(provider_key or "").strip()
-        if not key:
-            return ""
-        return PROVIDER_DISPLAY_NAMES.get(
-            key.lower(), key.replace("_", " ").replace("-", " ").title()
-        )
+        return provider_display_name(str(provider_key or ""))
 
     def provider_readout(self) -> tuple[str, str]:
         """Compute the pre-send provider readout from current config.

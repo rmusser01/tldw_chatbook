@@ -1489,12 +1489,15 @@ def _console_session_settings_structural_errors(
         and settings.thinking_effort not in _THINKING_EFFORT_VALUES
     ):
         errors.append(
-            "Thinking effort must be one of off, low, medium, high, xhigh, or max."
+            f"{MODEL_FIELD_LABELS['thinking_effort']} must be one of off, low, "
+            "medium, high, xhigh, or max."
         )
     if not _is_blank_value(
         settings.thinking_budget_tokens
     ) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
-        errors.append("Thinking budget tokens must be at least 1024.")
+        errors.append(
+            f"{MODEL_FIELD_LABELS['thinking_budget_tokens']} must be at least 1024."
+        )
 
     return errors
 

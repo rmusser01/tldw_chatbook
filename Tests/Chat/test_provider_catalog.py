@@ -81,3 +81,15 @@ def test_console_catalog_labels_come_from_the_shared_catalog() -> None:
     for entry in catalog:
         assert entry.readiness_key in PROVIDER_DISPLAY_NAMES, entry.readiness_key
         assert entry.display_name == PROVIDER_DISPLAY_NAMES[entry.readiness_key]
+
+
+@pytest.mark.parametrize("key", ["local-llm", "Llama_cpp", "Google", "openai"])
+def test_personas_preview_names_providers_from_the_shared_catalog(key: str) -> None:
+    # Final review I3: the Personas preview kept a private lookup with a
+    # title-case fallback, so a saved local-llm read "Local Llm" there and
+    # "Local LLM (legacy generic)" on the Console chip.
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    assert PersonasPreviewController._provider_label(key) == provider_display_name(key)

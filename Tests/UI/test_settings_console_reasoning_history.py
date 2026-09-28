@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Checkbox, Collapsible, Select
+from textual.widgets import Checkbox, Collapsible, Select, Static
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from Tests.private_profile import private_profile_test
@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.local_reasoning import (
     ReasoningReplayPolicy,
     reasoning_override_key,
 )
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML, validate_config_keys
 
 
@@ -150,6 +151,12 @@ async def test_reasoning_history_remembers_normalized_target_and_clears_override
         collapsible = override.query_ancestor(Collapsible)
         assert collapsible.title == "Reasoning replay override"
         assert native.query_ancestor(Collapsible) is collapsible
+        # Final review (Task 6 minor): the target line names the provider by
+        # its display name, never the raw "local_vllm" key.
+        target_line = str(
+            collapsible.query(".settings-detail-row").first(Static).content
+        )
+        assert target_line.startswith(f"{provider_display_name('local_vllm')} / alias")
 
         assert override.value == "inherit"
         assert next((str(label), value) for label, value in override._options) == (
@@ -181,7 +188,8 @@ async def test_reasoning_history_remembers_normalized_target_and_clears_override
         target_copy = next(
             str(widget.renderable)
             for widget in screen.query(".settings-detail-row")
-            if "local_vllm / alias" in str(getattr(widget, "renderable", ""))
+            if f"{provider_display_name('local_vllm')} / alias"
+            in str(getattr(widget, "renderable", ""))
         )
         assert "secret" not in target_copy and "private" not in target_copy
 

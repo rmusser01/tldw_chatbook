@@ -51,6 +51,7 @@ import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_provider_support import MODEL_CONFIG_FIELDS
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
 from tldw_chatbook.Constants import TAB_CHAT
@@ -5214,22 +5215,11 @@ async def test_settings_console_behavior_inspector_explains_visible_controls(req
         text = _visible_text(screen)
 
         assert "Control guide" in text
-        assert (
-            "Streaming: Global fallback for streaming responses when no Console session "
-            "or provider+model profile overrides it"
-        ) in text
-        assert (
-            "Temperature: Creativity fallback, 0.0 is focused and 2.0 is exploratory"
-            in text
-        )
-        assert (
-            "Top P: Probability cutoff fallback; lower values narrow token choices"
-            in text
-        )
-        assert (
-            "Max tokens: Optional response cap for new/default Console sends"
-            in text
-        )
+        # TASK-33002 final review I2: the Control guide's model-field rows
+        # read the one field table's help instead of private copy.
+        for name in ("streaming", "temperature", "top_p", "max_tokens"):
+            field = MODEL_CONFIG_FIELDS[name]
+            assert f"{field.label}: {field.help}" in text
         assert (
             "Paste collapse: Only pasted chunks over the threshold become compact placeholders; "
             "typed text stays literal"

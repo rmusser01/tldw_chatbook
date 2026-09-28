@@ -104,27 +104,12 @@ the rail is how you find it again. (Two exceptions: switching the
 active RAG profile prompts — see [RAG defaults](settings/rag.md) — and leaving
 Speech & TTS with edits raises its own save/discard dialog instead of keeping
 the draft; see that section and Quirks.) A draft that fails
-validation shows "State: Needs correction | \<the problem\>" and Save stays
+validation keeps its badge and count and names the problem — "State: Draft —
+save with s · 1 unsaved | Needs correction: \<the problem\>" — and Save stays
 blocked; with nothing pending, the buttons read **Save (s) — no changes** and
 **Revert (r) — no changes**. Saving is always local: nothing leaves your machine
 unless you explicitly run a network action, such as Manual sync from Overview
 or **Test saved settings** in Web Search.
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.4 —
-2026-09-27: driven live at 211x44 (and once at 235x52) on a scratch llama.cpp
-profile. On Console Behavior, editing Threshold (chars) read "State: Draft —
-save with s · 1 unsaved · revert with r | Changes affect global Console
-fallbacks after save."; editing Max parallel agent runs as well made it "2
-unsaved"; setting each field back by hand took it to "1 unsaved" and then to
-the clean line. Providers & Models read "State: Draft — save with s · 2
-unsaved | Applies to new and unused open chats · used chats keep theirs
-(Console: Alt+M)" in one row after editing Model and Env var; Speech & TTS
-read "State: Draft — save with s · 2 unsaved | Leaving Speech & TTS resolves
-this draft: save or discard first." and dropped to 1 when Organization ID was
-cleared; Advanced Config read "State: Validate, then Save · 1 unsaved | Draft
-kept when you leave; use raw editor controls.". The capture above was
-re-taken the same day. A draft that fails validation still shows "State:
-Needs correction | …"; covered by tests, not driven live.*
 
 ### Web Search: first setup and additional backends
 
@@ -217,11 +202,11 @@ The biggest page, and where to start.
 
 | Group | What's in it |
 |---|---|
-| **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider"), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
+| **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider", under the same display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and old names still work as typed provider IDs), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
 | **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
-| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text, and focusing one shows its plain-language help and range in the inspector. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity."). Global fallbacks live under Console Behavior. |
+| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text, and focusing one shows its plain-language help and range in the inspector. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity."). For llama.cpp and other strict local templates the **Reasoning effort** list leaves out levels the request would drop, such as "minimal"; a value saved before stays selected as "minimal (not supported here)" until you change it. Global fallbacks live under Console Behavior. |
 
 Use **Tab** to reach the discovered-model list, arrow keys to move, and
 **Space** to check a model. Checked rows survive leaving this category and
@@ -287,7 +272,7 @@ them in Console with Alt+M)". The State line says the same in one row:
 "Applies to new and unused open chats · used chats keep theirs (Console:
 Alt+M)". Focusing the **Provider** search or list shows its Purpose in the
 inspector: "Sets the provider new chats start with; open chats nobody has used
-yet follow it."
+yet follow it."; **Model** reads the same way for the model.
 
 A clean form follows changes to the saved default provider, model and endpoint
 when you return. An unsaved edit stays attached to the provider and model you
@@ -298,75 +283,6 @@ so does an open chat you have not touched yet: no messages and no edited
 settings. It follows the next time Console shows it, even when its provider
 already reads Ready, and Console tells you if its provider changed. A chat that
 holds any work keeps its own settings.
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.1 —
-2026-09-27: every model-configuration field now has one label from one field
-table, the same in Generation defaults, Console Behavior's global fallbacks
-and the Console's Conversation settings: **Max tokens**, **Presence
-penalty**, **Frequency penalty**, **Reasoning effort**, **Reasoning
-summary**, **Thinking**, **Thinking budget**, **Endpoint**, **Budget
-strategy** and **When limit nears**. Driven live at 211x44 (and once at
-235x52) on a scratch llama.cpp profile: the Generation defaults read "Hidden
-for llama.cpp: Reasoning summary, Verbosity, Thinking."; focusing Thinking
-budget showed "Purpose: Tokens reserved for thinking when Thinking is on." and
-"Validation: whole number, 1,024 or more; blank inherits the default" in the
-inspector; the Reasoning effort list for llama.cpp offered none, low, medium,
-high and xhigh (no "minimal", which llama.cpp's request drops); **/**
-"Thinking budget" reported 2 matches, "Providers & Models › Thinking budget"
-and "Next: Console Behavior › Thinking budget", and Enter landed on the
-Providers & Models field (Enter opens only the first match). The old names
-(Think budget, Response max tokens) stay in the search index as aliases; not
-driven live.*
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.2 —
-2026-09-27: the Test Provider result reads as the Config, Key, Endpoint, Model
-and Generation rows described above, with no " | " line and no `model=` or
-`api_key_source=` spellings. Driven live at 211x44 on a scratch llama.cpp
-profile: with nothing listening on the saved endpoint the result led with
-"Endpoint    http://127.0.0.1:9199 · model listing failed (connection
-refused) — start the server or check the URL" and the toast said the same;
-after pointing the Endpoint at a server that lists models, the rows read
-"Config llama.cpp is configured", "Endpoint … (draft) · model listing
-reached", "Model qwen · listed by the server" and "Generation not tested".
-An endpoint typed with `?mycred=SEKRET` showed only
-`http://127.0.0.1:9198/v1 (draft)` in the rows, and the toast did not show
-it either. Overview's "Last connection test" shows the leading row only.
-Review fix round 1, same day, on scratch profiles: OpenAI with no key led with
-"Key missing — enter one in the API key field or set OPENAI_API_KEY" above
-"Config OpenAI is not ready" (211x44 and 235x52); OpenAI with the key in the
-environment read "Config OpenAI is configured" and "Key from env var
-OPENAI_API_KEY · present, not verified"; Databricks with DATABRICKS_TOKEN set
-and no workspace URL led with "Endpoint not set — enter the workspace URL in
-the Endpoint field" and "Key not checked until the provider is ready", and
-typing the workspace host into Endpoint turned it configured; llama.cpp with
-nothing listening, launched at 235x52, kept every row on one line. The
-Claude-subscription rows are covered by tests; not driven live.*
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.3 —
-2026-09-27: driven live at 211x44 (and once at 235x52) on a scratch OpenAI
-profile. The clean State line read "State: Draft — save with s | Applies to
-new and unused open chats · used chats keep theirs (Console: Alt+M)" in one
-row (the banner is 120 cells wide at 211x44, so the line still fits once it
-gains an unsaved count). Editing the model and pressing **Esc**, **s** showed
-"Provider settings saved: new chats and open chats nobody has used yet take
-them; chats with work keep their own settings (change them in Console with
-Alt+M)." under Test Provider, and the toast opened with "Provider and model
-settings saved:" followed by the same words. Tabbing onto the Provider search
-box showed "Focused setting: Provider" and the new Purpose in the inspector.
-The partial-failure copy (file written but not reloaded, or not written) is
-unchanged; covered by tests, not driven live.*
-
-*Verified against feat/model-config-p2-field-table + TASK-33002.5 —
-2026-09-27: the Provider list takes its names from the one provider catalog
-Console uses, so some rows are relabelled: **Google Gemini** (was Google),
-**Moonshot AI** (was Moonshot), **Mistral AI** (was MistralAI), **Custom
-OpenAI-compatible** and **Custom OpenAI-compatible #2** (were Custom OpenAI
-and Custom OpenAI 2), **Aphrodite Engine**, **KoboldCpp**, and the legacy
-aliases now say so: **llama.cpp (legacy alias)**, **Ollama (legacy alias)**,
-**vLLM (legacy alias)**, **Mistral AI (legacy alias)** and **Local LLM (legacy
-generic)**. Old names still work as typed provider IDs. Driven live at 211x44
-on a scratch llama.cpp profile by filtering the list with `g`, `mo`, `custom`
-and `legacy`.*
 
 #### QwenCloud
 
@@ -1041,7 +957,8 @@ Most controls are drafted. Groups marked **applies immediately** save as you edi
 | **Parallel agent runs** | **Max parallel agent runs**, read live, so it applies to the running app once saved. |
 | **Agent tool-result display cap** | **Display cap (chars)** (20–2000): how much of a tool result Console shows *you*, which is not what the model saw. Open a run's "View full log" to read past it. |
 | **Permission summaries** | **Off** by default. **Fallback (no rationale)** or **Every approval** sends a bounded excerpt of user/assistant conversation text to your designated provider/model for an advisory summary. Mode, provider and model save immediately; summaries do not decide approvals. |
-| **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, with the same labels, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
+| **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, with the same labels, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. Focusing one shows the same help and range in the **Focused field guide** as the Providers & Models inspector, and the setting it is saved as (`chat_defaults.<field>`). |
+| **Local reasoning history** | How much earlier reasoning a local model gets back: **Automatic (recommended)**, **Current exchange**, **All available** or **Off**. **Reasoning replay override** (collapsed) remembers a different choice, and **Native tool support**, for the local model Console is using now; its first line names that provider, model and endpoint, and **Use default** clears the override. |
 | **Conversation context & memory** | Automatic/custom context budget; Ask/Automatic/Off compaction; summary representation; **Compact at (%)** and **Reduce context to (%)**; summary token limit; failure behavior and carry-forward mode. **Edit summary prompt** opens the matching Internal Prompts entry. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
 

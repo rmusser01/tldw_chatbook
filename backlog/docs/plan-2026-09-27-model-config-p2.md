@@ -265,7 +265,7 @@ Tests pin the old strings at Tests/UI/test_settings_configuration_hub.py:3630 an
 
 - [ ] #1 Every 'Console Defaults' string in Settings reads 'Console Behavior', matching the rail label, and the tests at Tests/UI/test_settings_configuration_hub.py:3630 and :8691 are updated on purpose
 - [ ] #2 The collapsible formerly titled 'Override current Console model' is titled 'Reasoning replay override' and keeps its contents and widget ids
-- [ ] #3 A rendered capture at 211x44 of Console Behavior shows both changes
+- [ ] #3 Rendered captures at 211x44 show both changes: Console Behavior for the retitled collapsible, and Providers & Models for the renamed 'Console Behavior' copy, which renders only there (synced with the subtask after the final review; the renamed strings render only in Providers & Models)
 
 ### References
 
