@@ -2087,6 +2087,29 @@ class LLMManagementWindow(Container):
                 provider,
             )
 
+    _llamacpp_snapshots_enabled_cache: tuple[float, bool] | None = None
+
+    def _llamacpp_snapshots_enabled(self) -> bool:
+        """Snapshot ownership flag, memoized off the hot Preview path.
+
+        Qodo round: ``load_snapshot_preferences`` reads the config file, and
+        the Preview button hits this callback per interaction; the TTL keeps
+        the UI cheap while bounding preference-edit staleness.
+        """
+        import time
+
+        from tldw_chatbook.LLM_Management.snapshot_settings import (
+            load_snapshot_preferences,
+        )
+
+        now = time.monotonic()
+        cached = self._llamacpp_snapshots_enabled_cache
+        if cached is not None and now - cached[0] < 5.0:
+            return cached[1]
+        enabled = load_snapshot_preferences().enabled
+        self._llamacpp_snapshots_enabled_cache = (now, enabled)
+        return enabled
+
     def llamacpp_launch_options(self) -> "LlamaCppLaunchOptions":
         """Prepare the same launch settings as Start without probing any resources."""
         import os
@@ -2094,23 +2117,24 @@ class LLMManagementWindow(Container):
         from tldw_chatbook.LLM_Management.llamacpp_launch_preview import (
             prepare_launch_options,
         )
-        from tldw_chatbook.LLM_Management.snapshot_settings import (
-            load_snapshot_preferences,
-        )
 
         return prepare_launch_options(
             self.query_one("#llamacpp-host", Input).value,
             self.query_one("#llamacpp-port", Input).value,
             self.query_one("#llamacpp-additional-args", Input).value,
             self.llamacpp_tuning(),
-            snapshots_enabled=load_snapshot_preferences().enabled,
+            snapshots_enabled=self._llamacpp_snapshots_enabled(),
             environment=os.environ,
         )
 
-    def llamacpp_tuning(self):
+    def llamacpp_tuning(self) -> "LlamaCppTuning":
+        from ..LLM_Management.llamacpp_profiles import LlamaCppTuning
+
         return self.query_one("#llamacpp-setup-view").tuning()
 
-    def llamacpp_launch_started(self, host, port, claim) -> None:
+    def llamacpp_launch_started(
+        self, host: str, port: str, claim: "ServerLaunchClaim"
+    ) -> None:
         self.query_one("#llamacpp-setup-view").launch_started(host, port, claim)
 
     def _invalidate_llamacpp_connection(self) -> None:

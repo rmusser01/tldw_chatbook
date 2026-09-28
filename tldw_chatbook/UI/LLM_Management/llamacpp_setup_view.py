@@ -619,8 +619,14 @@ class LlamaCppSetupView(Vertical):
         )
         self.query_one("#llamacpp-existing-url", Input).disabled = active
         model = self.query_one("#llamacpp-connection-model", Select)
-        if snapshot.model_ids and snapshot.model_ids != self._last_models:
-            self._last_models = snapshot.model_ids
+        if snapshot.model_ids:
+            if snapshot.model_ids != self._last_models:
+                self._last_models = snapshot.model_ids
+        elif self._last_models:
+            # A later verification with no models must not keep the previous
+            # verification's list selectable (Qodo round: reused URLs could
+            # otherwise present stale models as if still verified).
+            self._last_models = ()
             with model.prevent(Select.Changed):
                 model.set_options([(value, value) for value in snapshot.model_ids])
                 model.value = (

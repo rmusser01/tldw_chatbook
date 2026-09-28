@@ -436,6 +436,10 @@ from ..Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from ...Constants import TAB_CHAT
+from ..Navigation.llamacpp_handoff import (
+    LlamaCppDefaultIntent,
+    owner_has_current_intent as llama_owner_has_current_intent,
+)
 from ..Navigation.vllm_handoff import (
     VllmDefaultIntent,
     owner_has_current_intent,
@@ -3110,7 +3114,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
-        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent] | None = None
+        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None = None
         self._vllm_default_before_presentation: (
             _VllmDefaultPresentationSnapshot | None
         ) = None
@@ -13073,7 +13077,10 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return None
-        return store.release_recovery(HandoffChannel.VLLM_DEFAULT)
+        return (
+            store.release_recovery(HandoffChannel.VLLM_DEFAULT)
+            or store.release_recovery(HandoffChannel.LLAMACPP_DEFAULT)
+        )
 
     def _sync_vllm_default_recovery_widgets(self) -> None:
         """Expose surviving cleanup authority without leaking the handoff value."""
@@ -13190,14 +13197,30 @@ class SettingsScreen(BaseAppScreen):
         if self._vllm_default_claim is None and self._vllm_default_recovery() is None:
             return False
         self.app.notify(
-            "Finishing verified vLLM handoff. Settings actions are temporarily "
+            "Finishing verified provider handoff. Settings actions are temporarily "
             "unavailable.",
             severity="warning",
         )
         return True
 
     def _consume_pending_vllm_default_intent(self) -> bool:
-        """Stage one current verified target in Providers without saving it."""
+        """Stage one current verified vLLM target without saving it."""
+        return self._consume_verified_default_intent(
+            HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent, "vllm",
+            "_vllm_connection_owner", owner_has_current_intent,
+        )
+
+    def _consume_pending_llamacpp_default_intent(self) -> bool:
+        """Stage one current verified llama.cpp target without saving it."""
+        return self._consume_verified_default_intent(
+            HandoffChannel.LLAMACPP_DEFAULT, LlamaCppDefaultIntent, "llama_cpp",
+            "_llamacpp_connection_owner", llama_owner_has_current_intent,
+        )
+
+    def _consume_verified_default_intent(
+        self, channel, intent_type, provider, owner_attribute, current_intent
+    ) -> bool:
+        """Reuse the staged draft and exact-claim compensation transaction."""
 
         if self._vllm_default_claim is not None:
             return False
@@ -13235,14 +13258,14 @@ class SettingsScreen(BaseAppScreen):
                 self._snapshot_vllm_default_presentation()
             )
             self._vllm_default_claim = cast(
-                HandoffClaim[VllmDefaultIntent], claim
+                HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent], claim
             )
             self._vllm_default_release_retry_scheduled = False
             self._set_vllm_default_compensation_fence(True)
-            self._stage_provider_value("provider", "vllm")
+            self._stage_provider_value("provider", provider)
             self._stage_provider_value("model", intent.model_id)
             self._stage_provider_value("endpoint", intent.api_url)
-            self._sync_provider_manual_widget("vllm")
+            self._sync_provider_manual_widget(provider)
             model_input = self.query_one("#settings-model-value", Input)
             endpoint_input = self.query_one(
                 "#settings-provider-endpoint-value", Input
@@ -13296,31 +13319,40 @@ class SettingsScreen(BaseAppScreen):
 
     def _acknowledge_vllm_default_intent(
         self,
-        claim: HandoffClaim[VllmDefaultIntent],
-        intent: VllmDefaultIntent,
+        claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent],
+        intent: VllmDefaultIntent | LlamaCppDefaultIntent,
     ) -> None:
         """Acknowledge only after the staged draft and widgets reached a paint."""
 
         store = getattr(self.app_instance, "pending_handoffs", None)
-        draft = self._provider_draft()
         try:
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            llama = type(intent) is LlamaCppDefaultIntent
+            provider = "llama_cpp" if llama else "vllm"
+            owner = getattr(
+                self.app_instance,
+                "_llamacpp_connection_owner" if llama else "_vllm_connection_owner",
+                None,
+            )
+            current_intent = (
+                llama_owner_has_current_intent if llama else owner_has_current_intent
+            )
+            values = self._provider_setting_values_mapping()
             if (
                 type(store) is not PendingHandoffStore
                 or self._vllm_default_claim is not claim
                 or not self.is_mounted
-                or not owner_has_current_intent(owner, intent)
-                or draft is None
-                or draft.values.get("provider") != "vllm"
-                or draft.values.get("model") != intent.model_id
-                or draft.values.get("endpoint") != intent.api_url
+                or not current_intent(owner, intent)
+                or values.get("provider") != provider
+                or values.get("model") != intent.model_id
+                or values.get("endpoint") != intent.api_url
+                or self._provider_widget_value() != provider
                 or self.query_one("#settings-model-value", Input).value
                 != intent.model_id
                 or self.query_one("#settings-provider-endpoint-value", Input).value
                 != intent.api_url
                 or not store.acknowledge_current(claim)
             ):
-                raise RuntimeError("vLLM Settings handoff changed before render")
+                raise RuntimeError("verified provider Settings handoff changed before render")
         except BaseException:
             self._rollback_vllm_default_intent(claim=claim)
             return
@@ -13341,7 +13373,7 @@ class SettingsScreen(BaseAppScreen):
     def _rollback_vllm_default_intent(
         self,
         *,
-        claim: HandoffClaim[VllmDefaultIntent] | None = None,
+        claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None = None,
     ) -> None:
         """Restore the prefill draft and release only this exact claim."""
 

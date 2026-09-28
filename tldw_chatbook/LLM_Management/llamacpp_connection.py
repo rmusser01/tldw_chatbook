@@ -41,7 +41,19 @@ def admissible_model_id(value: object) -> bool:
 
 
 def canonical_base_url(value: str) -> str:
-    """Normalize an explicit credential-free endpoint without adding defaults."""
+    """Normalize an explicit credential-free endpoint without adding defaults.
+
+    Args:
+        value: User-entered llama.cpp endpoint; may be blank or malformed.
+
+    Returns:
+        The persisted canonical base URL (scheme + host + port, no
+        credentials, query, or fragment).
+
+    Raises:
+        ValueError: If ``value`` is not a non-blank string or does not
+            resolve to a credential-free llama.cpp endpoint.
+    """
     if type(value) is not str or not value.strip():
         raise ValueError("Enter a llama.cpp endpoint.")
     resolution = resolve_provider_endpoint("llama_cpp", value)

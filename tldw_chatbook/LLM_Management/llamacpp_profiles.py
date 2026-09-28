@@ -436,6 +436,19 @@ class LlamaCppProfileRepository:
         uid = _effective_uid()
         _reject_symlink(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Qodo round: a caller-supplied path could point through a symlinked
+        # parent; the leaf-only check above would not notice. On POSIX, a
+        # resolved parent that differs from its lexical spelling names a
+        # symlinked ancestor -- refuse rather than follow it. (Windows skips
+        # this check: resolve() there also normalizes spelling, and the
+        # shared private-path primitives already report Windows ACLs as
+        # unverified rather than fail.)
+        if os.name == "posix" and (
+            self.path.parent.resolve() != self.path.parent
+        ):
+            raise LlamaCppProfileCorrupt(
+                "llama.cpp profile storage is unavailable"
+            )
         lock_path = self.path.with_name(f"{self.path.name}.lock")
         try:
             try:
