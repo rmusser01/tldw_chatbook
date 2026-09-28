@@ -1165,7 +1165,7 @@ class ChatbookImporter:
 
         for conv_id in conversation_ids:
             status.record_processed(ContentType.CONVERSATION)
-            logger.info(
+            logger.debug(
                 f"ChatbookImporter._import_conversations: Processing conversation {conv_id} ({status.processed_items}/{len(conversation_ids)})"
             )
 
@@ -1235,7 +1235,7 @@ class ChatbookImporter:
                 existing_conversations = db.get_conversation_by_name(
                     conv_name, archive_scope="all"
                 )
-                logger.info(
+                logger.debug(
                     f"ChatbookImporter._import_conversations: Found {len(existing_conversations) if existing_conversations else 0} existing conversations with name '{conv_name}'"
                 )
 
@@ -1247,7 +1247,7 @@ class ChatbookImporter:
                     )
 
                     if resolution == ConflictResolution.SKIP:
-                        logger.info(
+                        logger.debug(
                             "ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution"
                         )
                         status.record_skipped(ContentType.CONVERSATION)
@@ -1255,7 +1255,7 @@ class ChatbookImporter:
                     elif resolution == ConflictResolution.RENAME:
                         old_name = conv_name
                         conv_name = self._generate_unique_name(conv_name, db)
-                        logger.info(
+                        logger.debug(
                             f"ChatbookImporter._import_conversations: Renamed conversation from '{old_name}' to '{conv_name}'"
                         )
 
@@ -1328,12 +1328,12 @@ class ChatbookImporter:
                 )
                 with db.transaction(immediate=True) as connection:
                     new_conv_id = db.add_conversation(conv_dict)
-                    logger.info(
+                    logger.debug(
                         f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}"
                     )
 
                     if new_conv_id:
-                        logger.info(
+                        logger.debug(
                             f"ChatbookImporter._import_conversations: Importing {len(staged_messages)} messages"
                         )
                         for ordinal, (
@@ -1472,7 +1472,7 @@ class ChatbookImporter:
                             msg,
                         )
                     status.record_success(ContentType.CONVERSATION)
-                    logger.info(
+                    logger.debug(
                         f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}"
                     )
                 else:
@@ -2331,7 +2331,7 @@ class ChatbookImporter:
 
         for note_id in note_ids:
             status.record_processed(ContentType.NOTE)
-            logger.info(
+            logger.debug(
                 f"ChatbookImporter._import_notes: Processing note {note_id} ({status.processed_items}/{len(note_ids)})"
             )
 
@@ -2353,7 +2353,7 @@ class ChatbookImporter:
 
                 # Load note file
                 note_file = extract_dir / note_item.file_path
-                logger.info(
+                logger.debug(
                     f"ChatbookImporter._import_notes: Loading note file from {note_file}"
                 )
                 if not note_file.exists():
@@ -2408,7 +2408,7 @@ class ChatbookImporter:
 
                 if new_note_id:
                     status.record_success(ContentType.NOTE)
-                    logger.info(f"Imported note: {note_title}")
+                    logger.debug(f"Imported note: {note_title}")
                 else:
                     status.record_failure(ContentType.NOTE)
                     status.add_error(f"Failed to create note: {note_title}")
@@ -2455,7 +2455,7 @@ class ChatbookImporter:
 
         for char_id in character_ids:
             status.record_processed(ContentType.CHARACTER)
-            logger.info(
+            logger.debug(
                 f"ChatbookImporter._import_characters: Processing character {char_id} ({status.processed_items}/{len(character_ids)})"
             )
 
@@ -2478,7 +2478,7 @@ class ChatbookImporter:
                 parsed_card, format_name = detect_and_parse_character_card(
                     raw_char_data
                 )
-                logger.info(
+                logger.debug(
                     f"ChatbookImporter._import_characters: Detected format '{format_name}' for character {char_id}"
                 )
                 if not parsed_card:
@@ -2492,7 +2492,7 @@ class ChatbookImporter:
                     continue
 
                 # Log the detected format
-                logger.info(
+                logger.debug(
                     f"ChatbookImporter._import_characters: Successfully parsed character {char_id} from {format_name} format"
                 )
 
@@ -2506,7 +2506,7 @@ class ChatbookImporter:
 
                 # Check for existing character
                 existing = db.get_character_card_by_name(char_name)
-                logger.info(
+                logger.debug(
                     f"ChatbookImporter._import_characters: Found existing character: {True if existing else False}"
                 )
 
@@ -2517,7 +2517,7 @@ class ChatbookImporter:
                     )
 
                     if resolution == ConflictResolution.SKIP:
-                        logger.info(
+                        logger.debug(
                             "ChatbookImporter._import_characters: Skipping character due to conflict resolution"
                         )
                         status.record_skipped(ContentType.CHARACTER)
@@ -2525,7 +2525,7 @@ class ChatbookImporter:
                     elif resolution == ConflictResolution.RENAME:
                         old_name = char_name
                         char_name = self._generate_unique_character_name(char_name, db)
-                        logger.info(
+                        logger.debug(
                             f"ChatbookImporter._import_characters: Renamed character from '{old_name}' to '{char_name}'"
                         )
 
@@ -2561,13 +2561,13 @@ class ChatbookImporter:
                             card_data[key] = value
 
                 new_char_id = db.add_character_card(card_data)
-                logger.info(
+                logger.debug(
                     f"ChatbookImporter._import_characters: Created character with ID {new_char_id}"
                 )
 
                 if new_char_id:
                     status.record_success(ContentType.CHARACTER)
-                    logger.info(
+                    logger.debug(
                         f"ChatbookImporter._import_characters: Successfully imported character: {char_name}"
                     )
                 else:
@@ -2675,7 +2675,7 @@ class ChatbookImporter:
 
                 if new_prompt_id:
                     status.record_success(ContentType.PROMPT)
-                    logger.info(
+                    logger.debug(
                         "ChatbookImporter._import_prompts: Prompt imported "
                         "item={} category=success",
                         prompt_id,
@@ -2756,7 +2756,7 @@ class ChatbookImporter:
                     # Handle conflict
                     if conflict_resolution == ConflictResolution.SKIP:
                         status.record_skipped(ContentType.MEDIA)
-                        logger.info(f"Skipped existing media: {title}")
+                        logger.debug(f"Skipped existing media: {title}")
                         continue
                     elif conflict_resolution == ConflictResolution.RENAME:
                         title = self._generate_unique_media_title(title, db)
@@ -2820,7 +2820,7 @@ class ChatbookImporter:
 
                     if new_media_id:
                         status.record_success(ContentType.MEDIA)
-                        logger.info(f"Imported media: {title}")
+                        logger.debug(f"Imported media: {title}")
                     else:
                         status.record_failure(ContentType.MEDIA)
                         status.add_error(f"Failed to create media: {title}")
@@ -3066,7 +3066,7 @@ class ChatbookImporter:
                     # byte-identical (non-conflict) branch above is
                     # unaffected -- scripts still import additively there,
                     # which is the ordinary re-keep/idempotent-import path.
-                    logger.info(
+                    logger.debug(
                         "ChatbookImporter._import_kept_briefings: kept briefing "
                         f"source_briefing_id={source_briefing_id} conflicts with "
                         "an existing local row; its kept scripts were not imported."
@@ -3102,7 +3102,7 @@ class ChatbookImporter:
                         f"{scripts_conflicted} kept script(s) already present "
                         "locally with different content and were not modified."
                     )
-                logger.info(
+                logger.debug(
                     "ChatbookImporter._import_kept_briefings: kept briefing "
                     f"source_briefing_id={source_briefing_id} "
                     f"({'inserted' if newly_inserted else 'already present'}); "

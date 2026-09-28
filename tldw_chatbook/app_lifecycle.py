@@ -1434,10 +1434,12 @@ class LifecycleMixin:
         worker_name = event.worker.name
         worker_group = event.worker.group
 
-        # Log the state change
+        # Log the state change (formatted only when DEBUG is on: PERF-03)
         self.loguru_logger.debug(
-            f"on_worker_state_changed: Worker '{worker_name}' "
-            f"(Group: {worker_group}, State: {event.state})"
+            "on_worker_state_changed: Worker '{}' (Group: {}, State: {})",
+            worker_name,
+            worker_group,
+            event.state,
         )
 
         # TASK-22215. The same "one hook sees every transition" property the
@@ -1494,14 +1496,9 @@ class LifecycleMixin:
                 # transition in the app passes through.
                 pass
 
-        # Delegate to the handler registry
-        handled = await self.worker_handler_registry.handle_event(event)
-
-        if not handled:
-            # Log unhandled workers for debugging
-            self.loguru_logger.warning(
-                f"No handler found for worker '{worker_name}' (Group: {worker_group})"
-            )
+        # Delegate to the handler registry; it reports unhandled workers, at
+        # WARNING only when one failed (PERF-03).
+        await self.worker_handler_registry.handle_event(event)
 
     def chat_wrapper(self, strip_thinking_tags: bool = True, **kwargs: Any) -> Any:
         """Delegate a retained non-streaming media call.

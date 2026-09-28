@@ -17155,3 +17155,18 @@ indistinguishable from "still frozen".
 known bug (the tests now use `FreezeObserved(Exception)`), mark with
 `raises=FreezeObserved`, and keep preconditions as plain asserts, so they FAIL.
 Prove it once with a deliberately broken precondition: it must go red, not xfail.
+
+## 2026-09-28 — A pytest runner fed from a file list silently ran the whole suite (TASK-33262)
+
+A scratch runner read test paths with `mapfile -t files < list` and called
+`pytest "${files[@]}"`. On macOS, `/usr/bin/env bash` is bash 3.2, which has no
+`mapfile`: the command failed, the array stayed empty, and pytest -- given no
+paths -- fell back to `testpaths = ["Tests"]` and started the full ~4,000-file
+suite. It showed up only as a ten-minute run printing `[ 0%]`, and stopping it
+with `pkill -f "<pytest flags>"` could just as well have killed another
+session's pytest that used the same flags.
+
+**What to do.** In any runner that builds a pytest argument list, read it with a
+`while IFS= read -r` loop and refuse an empty list (`[ ${#files[@]} -gt 0 ] ||
+exit 2`) before calling pytest. Stop your own background runs by task id or
+PID, never by a command-line pattern: several sessions share this machine.

@@ -3,11 +3,15 @@
 #
 # Imports
 import asyncio
+import atexit
+import copy
 import faulthandler
 import logging
 import os
+import queue
 import signal
 import sys
+import threading
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -193,7 +197,161 @@ class RichLogHandler(logging.Handler):
             traceback.print_exc(file=sys.stderr)
 
 
-class PrivateRotatingFileHandler(RotatingFileHandler):
+class _LogWriter:
+    """One daemon thread that runs deferred sink work in emission order.
+
+    PERF-03 (TASK-33262). The private file and the Logs buffer used to format,
+    redact, write and flush on whichever thread logged -- the event loop
+    included, at ~340 us per INFO record. Routed handlers now hand the record
+    here instead; see ``_WriterDeferredHandler``.
+    """
+
+    def __init__(self) -> None:
+        self._jobs: queue.SimpleQueue = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._stopping = False
+        self.thread = threading.Thread(
+            target=self._run, name="tldw-log-writer", daemon=True
+        )
+        self.thread.start()
+
+    def submit(self, handler, record) -> bool:
+        """Queue one job; False once stopping, so the caller writes directly."""
+        with self._lock:
+            # The lock orders every accepted job before stop()'s sentinel, so
+            # nothing is queued behind it and silently dropped.
+            if self._stopping or not self.thread.is_alive():
+                return False
+            self._jobs.put((handler, record))
+        return True
+
+    def _run(self) -> None:
+        while (job := self._jobs.get()) is not None:
+            handler, record = job
+            if handler is None:
+                record.set()  # a drain() marker: everything before it is done
+                continue
+            try:
+                handler._handle_now(record)
+            except Exception:
+                handler.handleError(record)
+
+    def drain(self, timeout: float = 5.0) -> bool:
+        """Wait until every job submitted so far has been handled."""
+        if threading.current_thread() is self.thread:
+            return True
+        done = threading.Event()
+        if not self.submit(None, done):
+            if self.thread.is_alive():
+                self.thread.join(timeout)
+            return not self.thread.is_alive()
+        return done.wait(timeout)
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Handle everything already queued, then end the thread."""
+        with self._lock:
+            if self._stopping:
+                return
+            self._stopping = True
+            self._jobs.put(None)
+        if threading.current_thread() is not self.thread:
+            self.thread.join(timeout)
+
+
+#: The running writer, or None. Handlers read it per record, so stopping it
+#: turns every routed handler back into a direct one.
+_log_writer: _LogWriter | None = None
+_log_writer_atexit_registered = False
+
+
+def start_background_logging() -> None:
+    """Start the shared log writer if it is not already running."""
+    global _log_writer, _log_writer_atexit_registered
+    if _log_writer is not None and _log_writer.thread.is_alive():
+        return
+    _log_writer = _LogWriter()
+    if not _log_writer_atexit_registered:
+        # Registered after `logging` registered its own shutdown, so it runs
+        # first (LIFO): queued records reach disk before handlers are closed.
+        atexit.register(stop_background_logging)
+        _log_writer_atexit_registered = True
+
+
+def flush_background_logging(timeout: float = 5.0) -> bool:
+    """Wait until every record logged so far has been handled."""
+    writer = _log_writer
+    return True if writer is None else writer.drain(timeout)
+
+
+def stop_background_logging(timeout: float = 5.0) -> None:
+    """Drain and stop the shared log writer; routed handlers write directly after."""
+    global _log_writer
+    writer, _log_writer = _log_writer, None
+    if writer is not None:
+        writer.stop(timeout)
+
+
+def route_through_log_writer(handler: "_WriterDeferredHandler") -> None:
+    """Have ``handler`` emit on the shared log writer thread from now on."""
+    start_background_logging()
+    handler.defer_to_writer = True
+
+
+_SNAPSHOT_ATTR = "_tldw_writer_snapshot"
+
+
+def _writer_snapshot(record: logging.LogRecord) -> logging.LogRecord:
+    """Freeze ``record`` for the writer thread, once per record.
+
+    Every routed sink the record reaches gets this same copy, so they share its
+    one redaction. The message is rendered now because the caller may mutate
+    its arguments as soon as the log call returns.
+    """
+    snapshot = record.__dict__.get(_SNAPSHOT_ATTR)
+    if snapshot is None:
+        snapshot = copy.copy(record)
+        snapshot.msg = record.getMessage()
+        snapshot.args = None
+        setattr(record, _SNAPSHOT_ATTR, snapshot)
+    return snapshot
+
+
+class _WriterDeferredHandler(logging.Handler):
+    """A handler whose ``emit`` runs on the shared log writer once routed."""
+
+    #: Set by whoever owns the handler's lifecycle (``route_through_log_writer``).
+    defer_to_writer = False
+
+    def handle(self, record: logging.LogRecord):
+        writer = _log_writer if self.defer_to_writer else None
+        if writer is None:
+            return super().handle(record)
+        rv = self.filter(record)
+        if isinstance(rv, logging.LogRecord):
+            record = rv
+        if rv:
+            try:
+                snapshot = _writer_snapshot(record)
+            except Exception:
+                self.handleError(record)
+                return rv
+            if not writer.submit(self, snapshot):
+                self._handle_now(snapshot)
+        return rv
+
+    def _handle_now(self, record: logging.LogRecord) -> None:
+        self.acquire()
+        try:
+            self.emit(record)
+        finally:
+            self.release()
+
+    def drain_pending(self, timeout: float = 5.0) -> bool:
+        """Wait for this handler's queued records (all queued records, in fact)."""
+        return flush_background_logging(timeout) if self.defer_to_writer else True
+
+
+class PrivateRotatingFileHandler(_WriterDeferredHandler, RotatingFileHandler):
     """A rotating handler whose files stay inside the private-path boundary."""
 
     def __init__(
@@ -261,6 +419,9 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
 
     def _maintenance_close_admission(self) -> None:
         """Flush and retire this file sink while other logger handlers stay live."""
+        # Records queued before the pause belong in the file. Drained before
+        # taking the lock: the writer needs it to emit them.
+        self.drain_pending()
         self.acquire()
         try:
             self._maintenance_closed = True
@@ -298,6 +459,12 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
         super().doRollover()
         self._harden_existing_generations()
 
+    def close(self) -> None:
+        """Write the records still queued for this file, then close it."""
+        self.drain_pending()
+        self.defer_to_writer = False
+        super().close()
+
 
 class RedactingFileFormatter(logging.Formatter):
     """Formatter that masks recognized credentials and PII in every record.
@@ -321,12 +488,22 @@ class RedactingFileFormatter(logging.Formatter):
       embedded in ``str(exc)`` -- the exact shape TASK-23108 was filed about --
       untouched in the ``exc_info`` block appended after it.
 
-    ``redact_log_line`` is reused verbatim -- the same function the in-app Logs
-    buffer applies -- so file and clipboard diagnostics share the same policy.
-    Its ``MAX_REDACTED_LINE_CHARS`` cap is kept rather than disabled: the cap
-    cuts on a token boundary before redaction, preserving credential detection
-    while bounding sanitizer work. A record longer than 2,000 characters is
-    truncated on disk as well as in the Logs screen.
+    ``redact_log_line`` is reused verbatim, and this formatter is also the
+    in-app Logs buffer's (``LogsBufferHandler``), so file and clipboard
+    diagnostics share the same policy. Its ``MAX_REDACTED_LINE_CHARS`` cap is
+    kept rather than disabled: the cap cuts on a token boundary before
+    redaction, preserving credential detection while bounding sanitizer work.
+    A record body longer than 2,000 characters is truncated on disk as well as
+    in the Logs screen.
+
+    PERF-03 (TASK-33262): what is redacted is the record's *body* -- message,
+    exception text and stack, everything a caller controls -- and it is
+    redacted once per record (``_redacted_body``). Each sink then lays its own
+    prefix of code-side metadata (timestamp, level, logger name, line number)
+    around that one result. Redacting each sink's whole line instead cost three
+    sanitizer passes per INFO record: ``RotatingFileHandler.shouldRollover``
+    formats the record before ``emit`` formats it again, and the Logs buffer
+    uses a different layout.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -347,7 +524,26 @@ class RedactingFileFormatter(logging.Formatter):
                 field is absent from the record.
         """
 
-        return redact_log_line(super().format(record))
+        # `message` is the last field of both sink layouts, so the body -- with
+        # its traceback -- lands exactly where Formatter.format would put it.
+        record.message = _redacted_body(record)
+        if self.usesTime():
+            record.asctime = self.formatTime(record, self.datefmt)
+        return self.formatMessage(record)
+
+
+#: Renders a record's caller-controlled text: message, then exception and stack.
+_BODY_FORMATTER = logging.Formatter()
+_REDACTED_BODY_ATTR = "_tldw_redacted_body"
+
+
+def _redacted_body(record: logging.LogRecord) -> str:
+    """Return the record's redacted body, running the sanitizer at most once."""
+    body = record.__dict__.get(_REDACTED_BODY_ATTR)
+    if body is None:
+        body = redact_log_line(_BODY_FORMATTER.format(record))
+        setattr(record, _REDACTED_BODY_ATTR, body)
+    return body
 
 
 def _private_file_formatter() -> logging.Formatter:
@@ -357,6 +553,71 @@ def _private_file_formatter() -> logging.Formatter:
         "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+class LogsBufferHandler(_WriterDeferredHandler):
+    """Feed the in-app Logs screen and its bounded "Copy all" buffer.
+
+    Both the live view and Copy all get the same credential/PII-redacted line
+    as the private file, from the same single redaction pass. Built inside the
+    app's running loop while the log writer runs, it formats on the writer and
+    hands only the finished line back to the loop, which alone touches the
+    stores and the widgets. Built with no running loop (tests, early setup) it
+    stays synchronous, exactly as before.
+    """
+
+    def __init__(self, app) -> None:
+        super().__init__()
+        self.app = app
+        self.setFormatter(
+            RedactingFileFormatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+        )
+        self._loop = _running_loop()
+        self.defer_to_writer = self._loop is not None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            entry = (record.levelname, record.name, self.format(record))
+            loop = self._loop
+            if loop is None or _running_loop() is loop:
+                self._store(entry)
+            elif not loop.is_closed():  # else nothing is left to display it
+                loop.call_soon_threadsafe(self._store, entry)
+        except Exception:
+            self.handleError(record)
+
+    def _store(self, entry: tuple[str, str, str]) -> None:
+        level, name, message = entry
+        app = self.app
+        app._log_buffer.append(message)
+        app._log_records.append(entry)
+
+        # Preferred live path: the Logs screen's LogsWindow applies the user's
+        # active filters as records arrive.
+        logs_window = getattr(app, "_current_logs_window", None)
+        if logs_window is not None:
+            try:
+                logs_window.append_record(level, name, message)
+                return
+            except Exception:
+                pass  # Widget might not be mounted
+
+        # Legacy fallback: write straight to the RichLog widget.
+        widget = getattr(app, "_current_log_widget", None)
+        if widget:
+            try:
+                widget.write(message)
+            except Exception:
+                pass  # Widget might not be mounted
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
@@ -496,6 +757,62 @@ def _forward_loguru_to_standard(message) -> None:
         std_logger.log(std_level, record["message"], extra=extra)
 
 
+#: (loguru sink id, level) of the forwarder ``configure_application_logging``
+#: installed, so ``sync_loguru_forward_level`` re-levels exactly that sink.
+_loguru_forward_sink: tuple[int, int] | None = None
+_LOGURU_FORWARD_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
+)
+
+
+def _loguru_forward_level() -> int:
+    """Return the lowest loguru level a forwarded record could still pass at.
+
+    PERF-03 (TASK-33262). The forwarder used to sit at TRACE, so loguru's
+    early level check never fired: every dropped ``logger.debug`` still built
+    a record (~7-8 us instead of ~0.15 us), every ``opt(lazy=True)`` argument
+    was evaluated, and a dropped ``opt(exception=True).debug`` formatted a
+    traceback. Forwarded records land on ``logging.getLogger(<module>)``, so
+    what decides is the effective level of the root and ``tldw_chatbook``
+    loggers. TRACE is forwarded as DEBUG, so a DEBUG threshold keeps TRACE.
+    """
+    threshold = min(
+        logging.getLogger().getEffectiveLevel(),
+        logging.getLogger("tldw_chatbook").getEffectiveLevel(),
+    )
+    return 0 if threshold <= logging.DEBUG else threshold
+
+
+def sync_loguru_forward_level() -> None:
+    """Re-level the loguru->stdlib forwarder after a stdlib level change.
+
+    loguru cannot change a sink's level in place, so the forwarder is replaced:
+    the new sink is added before the old one goes, so no record falls between
+    them. A forwarder that someone else removed stays removed.
+    """
+    global _loguru_forward_sink
+    if _loguru_forward_sink is None:
+        return
+    old_id, old_level = _loguru_forward_sink
+    level = _loguru_forward_level()
+    if level == old_level:
+        return
+    new_id = loguru_logger.add(
+        _forward_loguru_to_standard,
+        format=_LOGURU_FORWARD_FORMAT,
+        level=level,
+        diagnose=False,  # task-2119: see configure_application_logging.
+        backtrace=True,
+    )
+    try:
+        loguru_logger.remove(old_id)
+    except ValueError:
+        loguru_logger.remove(new_id)
+        _loguru_forward_sink = None
+        return
+    _loguru_forward_sink = (new_id, level)
+
+
 #: Where faulthandler writes. Sits beside the private application log, and is
 #: treated with the same care: a dump contains live stack frames.
 CRASH_DUMP_FILENAME = "faulthandler.log"
@@ -588,6 +905,7 @@ def enable_crash_forensics():
 
 def configure_application_logging(app_instance):
     """Sets up all logging handlers, including Loguru integration."""
+    global _loguru_forward_sink
     # FIXME - LOGGING MAY BRING BACK BLINKING
     temp_handler = logging.StreamHandler(sys.stdout)
     temp_handler.setLevel(logging.DEBUG)
@@ -604,12 +922,16 @@ def configure_application_logging(app_instance):
     # --- BEGIN LOGURU MANAGEMENT (Your existing code is mostly fine here) ---
     try:
         loguru_logger.remove()  # Good: removes Loguru's default stderr sink
+        _loguru_forward_sink = None
         logging.info("Loguru: All pre-existing sinks removed.")
 
-        loguru_logger.add(
+        # PERF-03: at the stdlib threshold, not TRACE (see
+        # `_loguru_forward_level`); re-levelled by `sync_loguru_forward_level`.
+        forward_level = _loguru_forward_level()
+        forward_sink_id = loguru_logger.add(
             _forward_loguru_to_standard,
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
-            level="TRACE",
+            format=_LOGURU_FORWARD_FORMAT,
+            level=forward_level,
             # task-2119 (security): diagnose=False is load-bearing, not
             # cosmetic. With it left at loguru's default (True), any
             # exception logged via `logger.opt(exception=True)` -- e.g. the
@@ -628,6 +950,7 @@ def configure_application_logging(app_instance):
             diagnose=False,
             backtrace=True,
         )
+        _loguru_forward_sink = (forward_sink_id, forward_level)
         # This log message will also currently go to the initial basicConfig stderr handler
         logging.info(
             "Loguru: Configured to forward its messages to standard Python logging system."
@@ -677,6 +1000,7 @@ def configure_application_logging(app_instance):
     )
     initial_log_level = getattr(logging, initial_log_level_str, logging.INFO)
     root_logger.setLevel(initial_log_level)
+    sync_loguru_forward_level()
     # (A temporary print to confirm, as logging to root_logger now might go to "last resort" until a handler is added)
     if not quiet_startup:
         print(
@@ -764,7 +1088,13 @@ def configure_application_logging(app_instance):
         app_instance._rich_log_handler = None
 
     # File logging is isolated so an unsafe target cannot remove terminal/UI sinks.
-    _configure_private_file_logging(root_logger)
+    if _configure_private_file_logging(root_logger):
+        # PERF-03: disk writes leave the emitting thread (the event loop
+        # included). The handler stays on root, where maintenance and shutdown
+        # find it; its close() writes whatever is still queued.
+        for handler in root_logger.handlers:
+            if isinstance(handler, PrivateRotatingFileHandler):
+                route_through_log_writer(handler)
 
     # Re-evaluate lowest level for standard logging root logger
     # (Your existing logic for this is fine)
@@ -789,6 +1119,7 @@ def configure_application_logging(app_instance):
             "Standard Logging: No handlers found on root logger after setup!"
         )
 
+    sync_loguru_forward_level()
     logging.info("Logging setup complete.")
     logging.info("--- _setup_logging END ---")
 
