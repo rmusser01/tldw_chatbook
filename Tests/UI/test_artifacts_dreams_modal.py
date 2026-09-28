@@ -1346,3 +1346,70 @@ async def test_tracked_story_detail_renders_tracked_badge(tmp_path):
 
         assert tracked_story["tracked"] is True
         assert "· tracked" in _visible_text(modal)
+
+
+# --- Qodo #8 (PR #2890): service-side URL validation notice -------------------
+
+
+@pytest.mark.asyncio
+async def test_track_on_credential_url_is_a_notice_and_writes_nothing(
+        tmp_path, monkeypatch
+):
+    """A URL the modal's ``_ingestable`` gate accepts (http(s) + host) but
+    the shared ``validate_url`` rejects (embedded credentials) is refused
+    by the service before any write: a notice, no tracked row, no
+    subscription."""
+    db = _seed_db(tmp_path)
+    collection = db.create_collection("2026-09-24", "scheduled", "digest2")
+    db.insert_story(
+        collection,
+        title="Credential-carried deal",
+        url="https://user:secret@example.com/deal",
+        snippet="hidden",
+        body="body",
+        status="complete",
+        source="web",
+        kind="deal",
+        event_date=None,
+        location="Seattle",
+        matched_topics=["deals"],
+        query="deal watch",
+    )
+    story = next(
+        row for row in list_recent_dreams(db, limit=10)
+        if "example.com/deal" in str(row.get("url"))
+    )
+    subs_db, service = _subs_stack(tmp_path)
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == [], (
+            "a refused track records no tracked feedback"
+        )
+        assert db.list_tracked_items() == []
+        assert _sub_count(subs_db) == 0
+        assert changed == []
+        assert any("not a valid http(s) URL" in n.message
+                   for n in app._notifications)
+        assert app.screen is modal, "the refusal must not dismiss or crash"

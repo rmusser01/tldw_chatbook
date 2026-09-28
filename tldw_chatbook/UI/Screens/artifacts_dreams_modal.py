@@ -132,6 +132,9 @@ _TRACK_SOURCE_DISABLED_NOTICE = (
     "This page's source already exists but is disabled; enable it in "
     "Watchlists first, then track again."
 )
+_TRACK_INVALID_URL_NOTICE = (
+    "This page's address is not a valid http(s) URL; nothing was tracked."
+)
 
 
 def _ingestable(story: Mapping[str, Any]) -> bool:
@@ -694,6 +697,7 @@ class DreamsStoryModal(ModalScreen[None]):
         # Lazy Dreams import (same pattern as ``action_ingest``).
         from ...Dreams.track_service import (
             TrackCapReached,
+            TrackInvalidURL,
             TrackSourceDisabled,
             track_page,
         )
@@ -722,6 +726,13 @@ class DreamsStoryModal(ModalScreen[None]):
             )
         except TrackCapReached:
             self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except TrackInvalidURL:
+            # Qodo #8 (PR #2890): the service refused the URL before any
+            # write; ``_ingestable`` should have caught it first, so this
+            # is a belt-and-braces notice for a direct press race.
+            self.notify(_TRACK_INVALID_URL_NOTICE, severity="warning",
+                        markup=False)
             return
         except TrackSourceDisabled:
             # P7 (fix round 1): the URL's source exists but is disabled and
@@ -787,7 +798,13 @@ class DreamsStoryModal(ModalScreen[None]):
                 self.notify(_NOT_TRACKED_NOTICE, severity="information",
                             markup=False)
                 return
-            await untrack(subs_service, db, int(tracked["id"]))
+            await untrack(
+                subs_service, db, int(tracked["id"]),
+                # Qodo #13 (PR #2890): retiring the wrapper also disables
+                # the one-time reminder linked to it (the same getter the
+                # track action promotes through; None degrades silently).
+                scheduling_db_getter=self._scheduling_db_getter,
+            )
         except Exception as exc:  # noqa: BLE001 - a failed untrack is a notice
             logger.warning(f"Dreams untrack failed: {type(exc).__name__}")
             self.notify(
