@@ -5,6 +5,17 @@ owns its DB handle via the ``dreams_db_getter`` seam, so no destination
 shell (and no ``bootstrap_profile``) is needed. Goal text is user-typed, so
 every rendered row is a literal ``rich.text.Text`` -- the assertions read
 ``.plain`` via the same ``_renderable_text`` helpers.
+
+Import-order admission binding (75ecfdbca9 family): ``Tests/UI/conftest``'s
+autouse ``_disable_model_catalog_refresh`` first-imports
+``tldw_chatbook.app`` whose module body runs ``load_settings()``; under the
+per-test config sandbox that admission fails closed
+(``RecoveryRequired("raw_source_selection_changed")``) unless the app was
+already imported at COLLECTION time, when the profile is consistent. The
+story-modal file gets that binding via its ``app_factory`` import; this
+file mounts only a bare App, so it imports the factory purely for the
+binding (hence noqa) -- without it the file is order-dependent and errors
+standalone.
 """
 
 from __future__ import annotations
@@ -14,6 +25,7 @@ from rich.text import Text
 from textual.app import App
 from textual.widgets import Input, ListView, Static
 
+import Tests.UI.app_factory  # noqa: F401 - config-participant admission binding (see module docstring)
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.UI.Screens.artifacts_dreams_goals_modal import DreamsGoalsModal
 
