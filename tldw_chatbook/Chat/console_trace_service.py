@@ -6362,13 +6362,16 @@ def _response_projection_profile(resolution: object | None) -> dict[str, object]
         return None
     from tldw_chatbook.Chat.console_provider_gateway import (
         _DISPLAYABLE_THINKING_EXECUTION_KEYS,
-        _HOSTED_THINKING_FINISH_POLICIES,
         _thinking_protocol,
+        resolve_finish_policy,
     )
 
     execution_key = getattr(resolution, "execution_key", "")
     disposition = getattr(resolution, "thinking_stream_disposition", None)
-    hosted_policy = _HOSTED_THINKING_FINISH_POLICIES.get(execution_key)
+    # Qodo round: resolve through the ADR-179 generic entry so engine-driven
+    # hosted presets (Fireworks, Together, Cerebras...) resolve their
+    # proprietary policies instead of missing the static hand-written map.
+    hosted_policy = resolve_finish_policy(execution_key)
     if (
         execution_key not in _DISPLAYABLE_THINKING_EXECUTION_KEYS
         if disposition == "displayable"

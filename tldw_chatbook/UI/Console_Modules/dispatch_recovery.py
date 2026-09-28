@@ -102,7 +102,8 @@ class ConsoleDispatchRecoveryRegion(Widget):
         recovery: ConsoleDispatchRecoveryState | None = None,
         *,
         session_id: str = "",
-        on_action: Callable[[str, str, str], None] | None = None,
+        on_action: Callable[[str, str, str, Callable[[], None]], None]
+        | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -193,11 +194,19 @@ class ConsoleDispatchRecoveryRegion(Widget):
             return
         event.stop()
         self._intent_in_flight = True
+
+        def _release_intent() -> None:
+            # Qodo round: the latch must clear on completion, not only when a
+            # DIFFERENT store snapshot arrives -- an early return or an
+            # unclaimed refusal leaves the same snapshot object forever.
+            self._intent_in_flight = False
+
         if self._on_action is not None:
             self._on_action(
                 self._session_id,
                 self._assistant_message_id,
                 action_id,
+                _release_intent,
             )
 
 

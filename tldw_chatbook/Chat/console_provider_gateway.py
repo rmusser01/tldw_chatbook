@@ -39,12 +39,6 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
-from tldw_chatbook.Chat.console_context_window import (
-    ContextWindowCache,
-    ContextWindowResolution,
-    ContextWindowTarget,
-    resolve_context_window,
-)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
@@ -191,6 +185,12 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_context_window import (
+        ContextWindowCache,
+        ContextWindowResolution,
+        ContextWindowTarget,
+        resolve_context_window,
+    )
     # Imported lazily in resolve_finish_policy: keeping the engine off the
     # module scope keeps it out of the UI-ready census (ADR-097 ratchet).
     from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
