@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import replace
 from types import SimpleNamespace
 
+from Tests.app_module_patches import patch_app_global, set_app_global
 from Tests.private_profile import private_profile_test
 
 import pytest
@@ -1468,7 +1469,7 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
             return splash_defaults.get(key, default)
         return default
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=force_splash_config):
+    with patch_app_global("get_cli_setting", side_effect=force_splash_config):
         async with app.run_test(size=(120, 35)) as pilot:
             await pilot.pause(0.3)
             assert app.splash_screen_active, "splash must still be active at press time"
@@ -4247,8 +4248,6 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
         WorkspaceDataSource,
     )
 
-    import tldw_chatbook.app as app_module
-
     class _AvailableServerWorkspaceService:
         async def list_workspaces(self):
             return [
@@ -4271,7 +4270,7 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
             "revision": "round-trip-context-1",
         },
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     app = _build_test_app()
     app.server_notes_workspace_service = _AvailableServerWorkspaceService()
     app.server_context_provider = SimpleNamespace(

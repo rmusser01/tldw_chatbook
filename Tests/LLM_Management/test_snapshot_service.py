@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
 )
@@ -939,7 +940,7 @@ async def test_app_shutdown_settles_lazy_snapshot_initialization(tmp_path, monke
         assert release.wait(5)
         return tmp_path
 
-    monkeypatch.setattr(app_module, "get_user_data_dir", root)
+    set_app_global(monkeypatch, "get_user_data_dir", root)
     app = SimpleNamespace(is_running=True)
     app_module.TldwCli._wire_llamacpp_snapshot_service(app)
     owner = app_module.TldwCli.llamacpp_snapshot_service.fget(app)

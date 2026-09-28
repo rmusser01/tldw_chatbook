@@ -2,6 +2,7 @@
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
 from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
@@ -163,7 +164,7 @@ def test_app_readiness_installs_after_recovery_and_before_return(
     import tldw_chatbook.app as app_module
 
     db, service, coordinator, root = components
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: root)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: root)
     app = SimpleNamespace(
         chachanotes_db=db,
         persona_actor_pack_coordinator=coordinator,
@@ -207,7 +208,7 @@ def test_app_readiness_preserves_retired_legacy_builtin(
         repository.archive_binding(
             persona_id=PIXEL_MIGU_PERSONA_ID, expected_identity=graph.identity
         )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: root)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: root)
     app = SimpleNamespace(
         chachanotes_db=db,
         persona_actor_pack_coordinator=coordinator,

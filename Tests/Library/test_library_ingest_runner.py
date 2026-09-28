@@ -43,6 +43,7 @@ from textual.app import App
 
 import tldw_chatbook.app as _app_module
 import tldw_chatbook.app_ingest_queue as _ingest_queue_module
+import tldw_chatbook.app_service_wiring as _service_wiring_module
 import tldw_chatbook.STT.parakeet_dispatch as _parakeet_dispatch_module
 import tldw_chatbook.STT.parakeet_external as _parakeet_external_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
@@ -866,7 +867,7 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    workspace_db = _app_module.WorkspaceDB(
+    workspace_db = _service_wiring_module.WorkspaceDB(
         tmp_path / "app-workspaces.sqlite",
         client_id="app-wiring-test",
     )
@@ -877,7 +878,7 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     )
     app = _app_module.TldwCli.__new__(_app_module.TldwCli)
     app.local_workspace_db = workspace_db
-    app.workspace_registry_service = _app_module.LocalWorkspaceRegistryService(
+    app.workspace_registry_service = _service_wiring_module.LocalWorkspaceRegistryService(
         workspace_db
     )
     app.workspace_registry_service.create_workspace(

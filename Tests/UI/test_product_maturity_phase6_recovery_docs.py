@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Checkbox, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
@@ -152,7 +153,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
     app._initial_tab_value = "home"
 
     with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
+        patch_app_global("get_cli_setting", side_effect=_test_cli_setting),
         patch("tldw_chatbook.config.get_cli_setting", side_effect=_test_cli_setting),
     ):
         async with app.run_test(size=(180, 50)) as pilot:

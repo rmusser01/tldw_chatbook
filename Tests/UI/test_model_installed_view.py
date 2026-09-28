@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.app_module_patches import set_app_global
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.css.query import NoMatches
 from textual.screen import Screen
@@ -506,7 +507,7 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", no_splash)
+    set_app_global(monkeypatch, "get_cli_setting", no_splash)
     monkeypatch.setattr(
         LLMManagementWindow,
         "_ollama_api_available",

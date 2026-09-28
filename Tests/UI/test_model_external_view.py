@@ -9,6 +9,7 @@ from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.app_module_patches import set_app_global
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
@@ -186,12 +187,9 @@ async def test_external_view_keeps_actions_and_status_reachable_at_80_columns(
     app = _build_test_app()
     assert app.CSS_PATH == TldwCli.CSS_PATH
     app._parakeet_source_service = service
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False if (section, key) == ("splash_screen", "enabled") else default
-        ),
-    )
+        ))
     monkeypatch.setattr(
         LLMManagementWindow,
         "_ollama_api_available",

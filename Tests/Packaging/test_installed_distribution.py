@@ -749,6 +749,7 @@ def add_root_owner_class(class_node, tree=app_tree, classes=local_classes):
 
 add_root_owner_class(app_class)
 assert "LibraryIngestQueueMixin" in seen_root_classes
+assert "ServiceWiringMixin" in seen_root_classes
 assert (
     frozenset().union(
         *(class_body_reactives(node) for node in root_owner_classes)
@@ -820,7 +821,8 @@ for method_name in wiring_methods:
     setattr(TldwCli, method_name, counted)
 
 sync_consumer_classes = (
-    sys.modules[TldwCli.__module__].ChatConversationScopeService,
+    # TASK-33011: the chat conversation wiring moved into ServiceWiringMixin.
+    sys.modules["tldw_chatbook.app_service_wiring"].ChatConversationScopeService,
     sys.modules[TldwCli.__module__].MediaReadingScopeService,
 )
 initial_sync_arguments = {

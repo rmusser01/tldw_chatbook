@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from textual.widgets import Input
 
+from Tests.app_module_patches import set_app_global
 import tldw_chatbook.app as app_module
 from Tests.reactive_ownership_contract import RETIRED_TLDW_REACTIVES
 from tldw_chatbook.app import TldwCli
@@ -99,7 +100,7 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True

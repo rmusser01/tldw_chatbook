@@ -5,11 +5,12 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from textual.widgets import Button
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TabNavigationProvider, TldwCli
 from tldw_chatbook.UI.Navigation.shell_destinations import (
@@ -102,7 +103,7 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
 ) -> None:
     app = _build_clean_keyboard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

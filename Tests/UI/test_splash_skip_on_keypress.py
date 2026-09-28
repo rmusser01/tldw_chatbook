@@ -21,6 +21,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 
+from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 pytestmark = pytest.mark.asyncio
@@ -173,7 +174,6 @@ async def test_a_keypress_skips_the_startup_splash_in_the_full_app() -> None:
     60s so the auto-close timer cannot account for the close: only the
     keypress can.
     """
-    from unittest.mock import patch
 
     from tldw_chatbook import app as app_mod
 
@@ -186,7 +186,7 @@ async def test_a_keypress_skips_the_startup_splash_in_the_full_app() -> None:
             return 60.0
         return real_get(section, key, default)
 
-    with patch.object(app_mod, "get_cli_setting", side_effect=pinned_duration):
+    with patch_app_global("get_cli_setting", side_effect=pinned_duration):
         app = _build_test_app()
         async with app.run_test() as pilot:
             deadline = time.perf_counter() + 3.0

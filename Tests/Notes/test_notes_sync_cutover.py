@@ -20,6 +20,12 @@ _LEGACY_MODULES = (
     _PRODUCTION / "Library" / "library_notes_sync_state.py",
 )
 _LEGACY_WRITER_NAMES = {"NotesSyncEngine", "NotesSyncService"}
+# TASK-33011: TldwCli's service composition lives in a mixin module that
+# app.py imports at module scope, so the app-level guards read both files.
+_APP_COMPOSITION_FILES = (
+    _PRODUCTION / "app.py",
+    _PRODUCTION / "app_service_wiring.py",
+)
 _LEGACY_CONFIG_KEYS = {
     "auto_sync_enabled",
     "sync_conflict_resolution",
@@ -140,7 +146,9 @@ def test_note_library_exposes_no_callable_legacy_sync_metadata_writer() -> None:
 def test_production_routes_share_the_canonical_local_note_authority() -> None:
     from tldw_chatbook.Library.library_notes_lasting_sync_state import LastingSyncSetup
 
-    app_source = Path("tldw_chatbook/app.py").read_text(encoding="utf-8")
+    app_source = "".join(
+        path.read_text(encoding="utf-8") for path in _APP_COMPOSITION_FILES
+    )
 
     assert LastingSyncSetup().note_scope_id == "local_note"
     assert "note_scope_id=ScopeType.LOCAL_NOTE.value" in app_source
@@ -913,11 +921,12 @@ async def test_rechecking_and_abandoning_setup_does_not_leak_a_root_lease(
 
 
 def test_production_app_opens_both_restart_cutover_fences() -> None:
-    path = _PRODUCTION / "app.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     builds = [
         node
-        for node in ast.walk(tree)
+        for path in _APP_COMPOSITION_FILES
+        for node in ast.walk(
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        )
         if isinstance(node, ast.Call)
         and _dotted_name(node.func).endswith("build_notes_sync_runtime_owner")
     ]
@@ -942,20 +951,25 @@ def test_production_app_builds_the_lasting_runtime_off_the_import_path() -> None
     ``Tests/Packaging/test_app_import_diet_closure.py``; this half pins the
     structure that produces it.
     """
-    path = _PRODUCTION / "app.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    # Scoped to TldwCli's OWN method bodies: app.py defines 13 `__init__`
-    # methods across its command providers, helper apps and classes nested
-    # inside TldwCli methods, so neither a module-wide lookup nor an
-    # `ast.walk` of the class picks the right one (both land on a nested
-    # class's `__init__` and assert nothing).
-    app_class = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ClassDef) and node.name == "TldwCli"
-    )
+    trees = [
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for path in _APP_COMPOSITION_FILES
+    ]
+    # Scoped to TldwCli's OWN method bodies (and its ServiceWiringMixin's,
+    # TASK-33011): app.py defines 13 `__init__` methods across its command
+    # providers, helper apps and classes nested inside TldwCli methods, so
+    # neither a module-wide lookup nor an `ast.walk` of the class picks the
+    # right one (both land on a nested class's `__init__` and assert nothing).
     functions = {
         node.name: node
+        for tree, class_name in zip(trees, ("TldwCli", "ServiceWiringMixin"))
+        for app_class in [
+            next(
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ClassDef) and node.name == class_name
+            )
+        ]
         for node in app_class.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
@@ -983,6 +997,7 @@ def test_production_app_builds_the_lasting_runtime_off_the_import_path() -> None
     # Neither module may be imported at app module scope any more.
     module_scope_imports = {
         node.module
+        for tree in trees
         for node in tree.body
         if isinstance(node, ast.ImportFrom) and node.module
     }

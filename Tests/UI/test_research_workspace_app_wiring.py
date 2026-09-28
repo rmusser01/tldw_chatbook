@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Research_Workspace import (
     QualifiedWorkspaceRef,
@@ -114,8 +115,6 @@ def _rendered_text(widget: Static) -> str:
 def test_research_screen_dependencies_are_fresh_and_late_bound(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     first_local = _LocalWorkspaceService("local-first")
     first_server = _ServerWorkspaceService()
     first_provider = _ServerContextProvider()
@@ -126,7 +125,7 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
     )
     first_notes = object()
     app.notes_scope_service = first_notes
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
 
     first = app._create_navigation_screen("research_workspace", ResearchWorkspaceScreen)
 
@@ -182,8 +181,6 @@ def test_research_screen_dependencies_are_fresh_and_late_bound(
 async def test_research_local_note_mutation_uses_canonical_app_notes_user(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     class Notes:
         def __init__(self) -> None:
             self.calls = []
@@ -228,7 +225,7 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
     )
     app.notes_user_id = "notes-owner-from-users-name"
     app.notes_scope_service = notes
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app._create_navigation_screen("research_workspace", ResearchWorkspaceScreen)
     port = screen.controller.port_for_data_source(WorkspaceDataSource.LOCAL)
 
@@ -298,14 +295,12 @@ async def test_app_startup_reconciliation_clears_absent_owner_only_after_grace(
 async def test_missing_foundation_services_return_typed_recovery_without_crashing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     app = _unmounted_app(
         local_service=None,
         server_service=None,
         server_context_provider=None,
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
 
     screen = app._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
@@ -341,8 +336,6 @@ class _ProductionResearchHarness(_ResearchHarness):
 async def test_mounted_selector_switches_controller_and_qualified_catalog(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     local = _LocalWorkspaceService()
     server = _ServerWorkspaceService()
     provider = _ServerContextProvider()
@@ -351,7 +344,7 @@ async def test_mounted_selector_switches_controller_and_qualified_catalog(
         server_service=server,
         server_context_provider=provider,
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -397,8 +390,6 @@ async def test_mounted_selector_switches_controller_and_qualified_catalog(
 async def test_unavailable_server_stays_selected_with_recovery_and_no_local_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     local = _LocalWorkspaceService()
     server = _ServerWorkspaceService()
     provider = _ServerContextProvider(unavailable=True)
@@ -407,7 +398,7 @@ async def test_unavailable_server_stays_selected_with_recovery_and_no_local_fall
         server_service=server,
         server_context_provider=provider,
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -444,14 +435,12 @@ async def test_unavailable_server_stays_selected_with_recovery_and_no_local_fall
 async def test_selected_workspace_loads_and_saves_device_only_pane_preferences(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     app_owner = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -486,14 +475,12 @@ async def test_selected_workspace_loads_and_saves_device_only_pane_preferences(
 def test_foundation_screen_does_not_construct_future_phase_coordinators(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     app = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -551,14 +538,12 @@ async def test_catalog_aba_does_not_repaint_newer_local_selection() -> None:
 async def test_local_overlay_preferences_do_not_carry_to_server_without_overlay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     app_owner = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -589,14 +574,12 @@ async def test_local_overlay_preferences_do_not_carry_to_server_without_overlay(
 async def test_server_overlay_preferences_do_not_carry_back_to_local_without_overlay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     app_owner = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -628,14 +611,12 @@ async def test_server_overlay_preferences_do_not_carry_back_to_local_without_ove
 async def test_medium_companion_change_persists_qualified_overlay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     app_owner = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -760,14 +741,13 @@ async def test_rapid_medium_companion_saves_follow_committed_revision_order(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A committed thread write must finish before the final choice is saved."""
-    import tldw_chatbook.app as app_module
 
     app_owner = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -823,14 +803,13 @@ async def test_queued_overlay_save_recaptures_owner_after_authority_switch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Queued work saves the current qualified owner, never the prior ref."""
-    import tldw_chatbook.app as app_module
 
     app_owner = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -885,7 +864,6 @@ async def test_local_aba_reconciles_own_precommit_save_before_final_choice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A stale owner commit remains trustworthy revision evidence for its ref."""
-    import tldw_chatbook.app as app_module
 
     local_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "local-research")
     app_owner = _unmounted_app(
@@ -893,7 +871,7 @@ async def test_local_aba_reconciles_own_precommit_save_before_final_choice(
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )
@@ -1057,14 +1035,12 @@ async def test_mismatched_overlay_ref_cannot_repaint_selected_workspace() -> Non
 async def test_inactive_authority_focus_does_not_impersonate_active_selection(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     app_owner = _unmounted_app(
         local_service=_LocalWorkspaceService(),
         server_service=_ServerWorkspaceService(),
         server_context_provider=_ServerContextProvider(),
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     screen = app_owner._create_navigation_screen(
         "research_workspace", ResearchWorkspaceScreen
     )

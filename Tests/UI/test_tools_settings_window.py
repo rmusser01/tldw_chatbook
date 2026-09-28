@@ -12,6 +12,7 @@ import toml
 
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, Switch, TextArea
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 import tldw_chatbook.app as app_module
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -126,7 +127,7 @@ def mock_config_path(monkeypatch, temp_config_path: Path):
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 @pytest.fixture

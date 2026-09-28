@@ -8,6 +8,7 @@ from textual.css.query import QueryError
 from textual.widget import Widget
 from textual.widgets import Static
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import (
     LAB_RAIL_INSPECTOR,
@@ -50,7 +51,7 @@ def _disable_splash_race(monkeypatch) -> None:
             return False
         return _real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
 
 
 class _ProbeBody(Static):

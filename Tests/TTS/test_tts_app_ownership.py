@@ -17,6 +17,7 @@ import pytest
 
 import tldw_chatbook.app as app_module
 import tldw_chatbook.TTS as tts_package
+from Tests.app_module_patches import set_app_global
 from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli
@@ -124,7 +125,7 @@ def _isolate_constructor_paths(
         raising=False,
     )
     monkeypatch.setattr(
-        "tldw_chatbook.app.get_library_collections_db_path",
+        "tldw_chatbook.app_service_wiring.get_library_collections_db_path",
         lambda: tmp_path / "library_collections.sqlite",
     )
     monkeypatch.setattr(
@@ -132,7 +133,7 @@ def _isolate_constructor_paths(
         lambda: tmp_path / "library_ingest_jobs.sqlite",
     )
     monkeypatch.setattr(
-        "tldw_chatbook.app.get_scheduled_tasks_db_path",
+        "tldw_chatbook.app_service_wiring.get_scheduled_tasks_db_path",
         lambda: tmp_path / "scheduled_tasks.sqlite",
     )
 
@@ -1466,7 +1467,7 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
     monkeypatch.setattr(
         voice_bundle_module, "TTSVoiceBundlePortabilityService", build
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     owner = SimpleNamespace(
         _tts_voice_bundle_service=None,
         _tts_voice_bundle_service_close_task=None,
@@ -1540,6 +1541,8 @@ async def test_composite_shutdown_joins_each_owner_in_authority_order() -> None:
 def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:
     paths = (
         REPO_ROOT / "tldw_chatbook/app.py",
+        # TASK-33011: TldwCli's service composition moved here from app.py.
+        REPO_ROOT / "tldw_chatbook/app_service_wiring.py",
         REPO_ROOT / "tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py",
     )
     for path in paths:

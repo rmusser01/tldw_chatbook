@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from textual.widgets import Button
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_unified_shell_phase6_first_time_replay import (
     _screen_text,
@@ -50,7 +50,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
         has_library_content=True,
     )
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,

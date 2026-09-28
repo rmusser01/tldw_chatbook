@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -91,8 +92,8 @@ class DestinationHarness:
 
     @asynccontextmanager
     async def run_test(self, **kwargs):
-        with patch(
-            "tldw_chatbook.app.get_cli_setting",
+        with patch_app_global(
+            "get_cli_setting",
             side_effect=_settings_without_splash,
         ):
             async with self.app.run_test(**kwargs) as pilot:
@@ -110,8 +111,8 @@ class WatchlistsContextHarness:
 
     @asynccontextmanager
     async def run_test(self, **kwargs):
-        with patch(
-            "tldw_chatbook.app.get_cli_setting",
+        with patch_app_global(
+            "get_cli_setting",
             side_effect=_settings_without_splash,
         ):
             async with self.app.run_test(**kwargs) as pilot:
@@ -162,8 +163,8 @@ async def test_console_briefing_inspect_navigates_shell_to_exact_loaded_row():
         watchlist["id"],
         created_at="2026-08-27T11:00:00+00:00",
     )
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=_settings_without_splash,
     ):
         async with app.run_test(size=(180, 50)) as pilot:
@@ -231,8 +232,8 @@ async def test_briefing_deep_link_rejects_malformed_or_wrong_backend_id(context)
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
 
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=_settings_without_splash,
     ):
         async with app.run_test():
@@ -2877,8 +2878,8 @@ async def test_seeded_tree_expansion_takes_effect_on_the_first_render():
         id="wl-tree",
     )
 
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=_settings_without_splash,
     ):
         async with app.run_test(size=(60, 30)) as pilot:
