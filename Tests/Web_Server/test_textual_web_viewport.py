@@ -99,7 +99,7 @@ def test_textual_serve_resize_patch_forces_full_terminal_repaint():
 
 
 def test_textual_serve_resize_patch_keeps_upstream_gpu_renderers():
-    """task-32905: nulling the addons forced xterm's DOM renderer, which
+    """task-33130: nulling the addons forced xterm's DOM renderer, which
     turned every forced repaint into a full-screen DOM rebuild (~44k added
     nodes measured for one click). Upstream's WebGL/Canvas renderers stay."""
     upstream = (
@@ -120,7 +120,7 @@ def test_textual_serve_resize_patch_keeps_upstream_gpu_renderers():
 
 
 def test_textual_serve_resize_patch_gates_send_size_on_grid_changes():
-    """task-32905: an unconditional sendSize() inside every repaint fed a
+    """task-33130: an unconditional sendSize() inside every repaint fed a
     self-sustaining loop -- every app output frame triggered a repaint,
     every repaint sent a resize, and the app answered every resize with
     fresh output (~54 resizes/second at idle, both processes pegged). The
@@ -191,7 +191,7 @@ def test_textual_serve_resize_patch_repaints_after_terminal_writes():
         "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length,"
         "this._chatbookViewportAfterWrite&&this._chatbookViewportAfterWrite()}))"
     ) in patched
-    # task-32905: the after-write repaint is a trailing debounce -- a
+    # task-33130: the after-write repaint is a trailing debounce -- a
     # per-write requestAnimationFrame full refresh rebuilt every row once
     # per output frame during streams.
     assert (
@@ -307,7 +307,7 @@ def _served_shell_html() -> str:
 
 
 def test_served_shell_derives_same_origin_terminal_websocket_url():
-    """task-32905: the server-substituted absolute websocket URL (from
+    """task-33130: the server-substituted absolute websocket URL (from
     public_url, default localhost) crossed the session-cookie boundary
     whenever the page was opened via 127.0.0.1, a LAN IP, or another name,
     and the terminal died at the handshake. The shell now derives the URL
@@ -323,7 +323,7 @@ def test_served_shell_derives_same_origin_terminal_websocket_url():
 
 
 def test_served_shell_stops_canvas_session_poll_after_disable():
-    """task-32905: a 404 from /canvas/api/session is a server-side kill
+    """task-33130: a 404 from /canvas/api/session is a server-side kill
     switch that cannot recover without a restart, so the 1 Hz poll must
     stop instead of firing forever."""
     shell = _served_shell_js()

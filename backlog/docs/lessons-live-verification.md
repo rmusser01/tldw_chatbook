@@ -3385,7 +3385,7 @@ makes. The app log orders these writes for you: grep `tldw_cli_app.log` for
 servers the flow probes can be a stdlib `ThreadingHTTPServer` answering
 `/v1/models`; the wizard only offers "Start chatting" after a probe succeeds.
 
-## Measure both ends of the served websocket before trusting a "laggy UI" report (TASK-32905, 2026-09-23)
+## Measure both ends of the served websocket before trusting a "laggy UI" report (TASK-33130, 2026-09-23)
 
 **Incident.** The textual-serve webui was reported "super laggy and
 unresponsive". Static reading found suspects (patched browser JS, disabled GPU
