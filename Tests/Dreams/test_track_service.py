@@ -27,7 +27,12 @@ from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
     WatchlistBundleService,
 )
 
-from tldw_chatbook.Dreams.track_service import TrackCapReached, track_page, untrack
+from tldw_chatbook.Dreams.track_service import (
+    TrackCapReached,
+    TrackSourceDisabled,
+    track_page,
+    untrack,
+)
 
 _URL = "https://example.com/flights"
 _MIN_INTERVAL_SECONDS = 12 * 3600
@@ -342,3 +347,93 @@ async def test_untrack_attached_leaves_subscription_active(
     assert int(subscription["is_active"]) == 1, (
         "an attached (not dream-created) subscription is NEVER touched"
     )
+
+
+# --- re-track after untrack (fix round 1, ruling P7) ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_retrack_after_untrack_reenables_dream_disabled_source(
+    tmp_path, dreams_db, settings, subs_stack
+):
+    """untrack disables the dream-created source; re-tracking must re-enable.
+
+    ``find_source_id_by_url`` matches on URL alone (no is_active filter), so
+    without the P7 re-enable the re-track would attach to a still-disabled
+    subscription: a dead watch wearing an active tracked item and an
+    untruthful "attached" notice.
+    """
+    subs_db, service = subs_stack
+    first = await track_page(
+        service, dreams_db, url=_URL, title="Cheap flights", intent="deal"
+    )
+    assert first["outcome"] == "created"
+    await untrack(service, dreams_db, first["tracked_item_id"])
+    assert int(
+        subs_db.get_subscription(first["subscription_id"])["is_active"]
+    ) == 0, "fixture: the prior untrack disabled the dream-created source"
+
+    second = await track_page(
+        service, dreams_db, url=_URL, title="Cheap flights", intent="deal"
+    )
+
+    assert second["outcome"] == "re-enabled"
+    assert second["subscription_id"] == first["subscription_id"], (
+        "re-track adopts the same subscription, never a duplicate"
+    )
+    assert second["watchlist_id"] == first["watchlist_id"]
+    subscription = subs_db.get_subscription(second["subscription_id"])
+    assert int(subscription["is_active"]) == 1, (
+        "the source we disabled on untrack is active again"
+    )
+    active = dreams_db.list_tracked_items()
+    assert len(active) == 1, "exactly one active tracked item after re-track"
+    assert active[0]["id"] == second["tracked_item_id"]
+    assert active[0]["created_by_dreams"] == 1, (
+        "a re-enabled dream source stays dream-owned (untrack disables again)"
+    )
+    assert _count_rows(subs_db, "subscriptions") == 1
+    member_ids = [
+        row["id"]
+        for row in WatchlistBundleService(subs_db).list_source_rows(
+            second["watchlist_id"]
+        )
+    ]
+    assert second["subscription_id"] in member_ids, "membership present"
+    rules = await service.list_alert_rules(job_id=second["subscription_id"])
+    assert rules, "alert rule present"
+
+
+@pytest.mark.asyncio
+async def test_retrack_refuses_foreign_disabled_source(
+    tmp_path, dreams_db, settings, subs_stack
+):
+    """A disabled source with NO dream provenance is refused, not adopted.
+
+    The user disabled this source themselves; re-track must neither re-enable
+    it behind their back nor record an active tracked item against a dead
+    watch.
+    """
+    subs_db, service = subs_stack
+    existing = await service.create_source(
+        {"name": "User's own feed", "url": _URL, "source_type": "url",
+         "active": False}
+    )
+    assert int(
+        subs_db.get_subscription(existing["source_id"])["is_active"]
+    ) == 0, "fixture: the foreign source starts disabled"
+
+    with pytest.raises(TrackSourceDisabled) as excinfo:
+        await track_page(
+            service, dreams_db, url=_URL, title="Cheap flights", intent="topic"
+        )
+
+    assert excinfo.value.reason_code == "track_source_disabled"
+    # Refused BEFORE any write: no tracked row, no watchlist, no alert rule,
+    # and the foreign source stays exactly as disabled as the user left it.
+    assert dreams_db.list_tracked_items() == []
+    assert int(
+        subs_db.get_subscription(existing["source_id"])["is_active"]
+    ) == 0
+    assert _count_rows(subs_db, "watchlists") == 0
+    assert _count_rows(subs_db, "local_watchlist_alert_rules") == 0

@@ -556,6 +556,72 @@ async def test_track_without_subs_service_degrades_to_notice(tmp_path):
         assert app.screen is modal, "a refused action must not dismiss or crash"
 
 
+@pytest.mark.asyncio
+async def test_track_on_disabled_foreign_source_is_a_notice_and_writes_nothing(
+    tmp_path, monkeypatch
+):
+    """Fix round 1 (P7): a URL whose source exists but is disabled is refused.
+
+    The notice must say the source exists but is disabled; no tracked row, no
+    feedback, no refresh -- and the disabled source is left untouched.
+    """
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    subs_db, service = _subs_stack(tmp_path)
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+
+    async def _seed_disabled_source() -> None:
+        await service.create_source(
+            {
+                "name": "User's own feed",
+                "url": "https://example.com/flights",
+                "source_type": "url",
+                "active": False,
+            }
+        )
+
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _seed_disabled_source()
+        changed: list[int] = []
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == []
+        assert db.list_tracked_items() == []
+        assert changed == []
+        with subs_db.connection() as conn:
+            stored = conn.execute(
+                "SELECT is_active FROM subscriptions WHERE source = ?",
+                ("https://example.com/flights",),
+            ).fetchone()
+        assert stored is not None and int(stored[0]) == 0, (
+            "the foreign source stays exactly as disabled as the user left it"
+        )
+        assert any(
+            "exists" in n.message and "disabled" in n.message
+            for n in app._notifications
+        ), "the notice must explain the source exists but is disabled"
+        assert app.screen is modal, "a refused track must not dismiss or crash"
+
+
 def _seed_llm_story_db(tmp_path) -> DreamsDB:
     """One llm-source story: its URL is the synthetic dreams:// scheme."""
     db = DreamsDB(tmp_path / "dreams-llm.sqlite", "dreams-modal")
