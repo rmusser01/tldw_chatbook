@@ -115,6 +115,15 @@
 #settings-workbench.settings-workbench-compact #settings-theme-list {
     max-height: $ds-size-9;
 }
+/* TASK-33122: a narrow row drops "launch"/"overrides …" to stay on one
+   line, and at 80x24 the card is scrolled off under the list, so this line
+   spells out what the highlighted row dropped. One reserved row (blank when
+   nothing was dropped) keeps the list from jumping as the highlight moves. */
+#settings-theme-row-status {
+    height: $ds-size-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 /* TASK-33064: the card's chips come in three groups (switching, creation,
    your theme), one horizontal row each, the groups a blank row apart. Each
    chip takes an equal share of its row (`1fr`, no 16-cell Button minimum):

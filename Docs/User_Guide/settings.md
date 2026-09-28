@@ -615,7 +615,11 @@ on one line: when the list is too narrow (e.g. at 80x24), the row keeps at
 least ten cells of the name and gives up the rest in this order — "overrides
 built-in" shortens to "overrides", then that marker goes, then the strip drops
 to three colours, then **launch** goes; **active** always stays. Only then is
-the name cut short with "…". Moving the
+the name cut short with "…". Whatever the highlighted row had to shorten or
+drop is spelled out on the line under the list — e.g. "launch default ·
+overrides built-in" — so it stays visible even when the preview card is
+scrolled out of view; the line is blank when the row already shows it all.
+Moving the
 highlight (mouse, **↑**/**↓** or **j**/**k**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
 dark/light · yours/shipped/built-in", the origin named once even for a
