@@ -144,7 +144,7 @@ def _heavy_task(self):
 page's content where behaviour changed. Record what was verified -- and against which
 branch and date -- in the task's Implementation Notes, not in the User Guide page. Do
 not add "Verified against" paragraphs to User Guide pages: parallel PRs appending them
-at the same spot caused 121 sync-merge conflicts in one week (2026-09-27 CI spec).
+at the same spot caused most User Guide sync conflicts in the 2026-09-27 CI spec's replay of real sync merges.
 
 **Merging into `dev`** (protection as of 2026-09-27): GitHub refuses a merge unless all of these hold:
 

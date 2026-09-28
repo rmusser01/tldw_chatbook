@@ -1,0 +1,121 @@
+..........................F.................                             [100%]
+=================================== FAILURES ===================================
+________________________ test_dimension_literal_ratchet ________________________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2905/test_dimension_literal_ratchet0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ________________________ test_dimension_literal_ratchet ________________________
+E
+E   request = <FixtureRequest for <Coroutine test_dimension_literal_ratchet>>
+E
+E       @private_profile_test
+E       def test_dimension_literal_ratchet(request) -> None:
+E           """The dimension floor is a HARD ZERO (ADR-161 task 11 close-out).
+E
+E           Every baseline entry reached zero during the task-11 migration, so the
+E           baseline-pinned allowance ratchet was replaced by a flat ban: no
+E           hand-written sheet outside the tokens file may carry a raw numeric
+E           padding/margin/width/height declaration. ``core/_variables.tcss`` alone
+E           is exempt -- mirroring the hex ratchet's tokens-file exemption in
+E           ``test_design_token_governance.py``.
+E           """
+E           offenders: list[str] = []
+E           for sheet, css in _sheet_sources().items():
+E               if sheet == TOKENS_SHEET:
+E                   continue
+E               count = len(_DIM.findall(css))
+E               if count:
+E                   offenders.append(f"{sheet}: {count}")
+E   >       assert not offenders, (
+E               "Raw numeric dimension literals remain (ADR-161 spec 3.10: the "
+E               "floor is hard zero; raw values are legal only in token "
+E               "definitions, which live in core/_variables.tcss):\n  " + "\n  ".join(offenders)
+E           )
+E   E       AssertionError: Raw numeric dimension literals remain (ADR-161 spec 3.10: the floor is hard zero; raw values are legal only in token definitions, which live in core/_variables.tcss):
+E   E           components/_agentic_terminal.tcss: 1
+E   E           features/_workflows.tcss: 11
+E   E       assert not ['components/_agentic_terminal.tcss: 1', 'features/_workflows.tcss: 11']
+E
+E   Tests/UI/test_component_pattern_governance.py:283: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:59:04.660 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E   2026-09-22 09:59:04.699 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6143 - Attempting to load CLI config from: <tmp>/pytest-of-user/pytest-2905/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml
+E   2026-09-22 09:59:04.700 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - CLI Config file not found at <tmp>/pytest-of-user/pytest-2905/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+E   2026-09-22 09:59:04.701 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6181 - Created default CLI config file at <tmp>/pytest-of-user/pytest-2905/test_dimension_literal_ratchet0/private-profile-process/profile/config/config.toml
+E   2026-09-22 09:59:04.701 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6248 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+E   2026-09-22 09:59:04.702 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6252 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E   2026-09-22 09:59:04.709 | INFO     | tldw_chatbook.config:_load_settings_uncached:1864 - Determined ACTUAL_PROJECT_ROOT for general paths: <repo>/tldw_chatbook
+E   2026-09-22 09:59:04.709 | INFO     | tldw_chatbook.config:_load_settings_uncached:1867 - Determined APP_COMPONENT_ROOT for config files: <repo>/tldw_chatbook
+E   2026-09-22 09:59:04.710 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1890 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-22 09:59:04.710 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2211 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-22 09:59:04.741 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3433 - Ensured chat dictionaries folder exists: <tmp>/pytest-of-user/pytest-2905/test_dimension_literal_ratchet0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-22 09:59:04.741 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3445 - load_settings: Configuration cached for future use
+E   2026-09-22 09:59:04.741 | INFO     | tldw_chatbook.config:<module>:9857 - Default API Endpoint (from config.py global scope): openai
+E   2026-09-22 09:59:04.742 | DEBUG    | tldw_chatbook.config:<module>:9880 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E   2026-09-22 09:59:04.830 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:59:04.901 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:59:04.972 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:59:04.979 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:59:04.981 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:59:05.102 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:59:05.360 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2905/test_dimension_literal_ratchet0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
+E   1 failed in 1.14s
+============================= slowest 25 durations =============================
+20.61s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+19.41s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+17.28s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-fetch]
+17.09s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-light-fetch]
+15.96s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-dark-search]
+15.57s call     Tests/UI/test_mcp_inspector_compact_access.py::test_test_form_controls_remain_reachable_through_resize[textual-light-search]
+9.95s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size1-textual-light]
+9.45s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size0-textual-light]
+9.12s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size1-textual-dark]
+8.93s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size0-textual-dark]
+4.71s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.19s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[finding]
+3.12s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[tool]
+3.11s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+3.06s call     Tests/UI/test_mcp_inspector_guidance.py::test_guidance_returns_only_after_last_detail_clears
+2.92s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[audit]
+2.89s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[permission]
+2.30s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.02s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.91s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.86s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+1.84s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.82s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.81s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+1.79s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+=========================== short test summary info ============================
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
+1 failed, 43 passed in 218.39s (0:03:38)
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-18bfeaf8-b723-494e-9cd4-a60ccfbce12b/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-18bfeaf8-b723-494e-9cd4-a60ccfbce12b/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-18bfeaf8-b723-494e-9cd4-a60ccfbce12b
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-18bfeaf8-b723-494e-9cd4-a60ccfbce12b'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-99ea3d23-7dc4-4846-8928-2312a046407a/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-99ea3d23-7dc4-4846-8928-2312a046407a/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-99ea3d23-7dc4-4846-8928-2312a046407a
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-99ea3d23-7dc4-4846-8928-2312a046407a'
+  warnings.warn(

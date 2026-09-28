@@ -150,16 +150,20 @@ class SharingScopeService:
             return self._with_record_id(mode, "sharing_token", item, "id")
         if item.get("resource_type") and "id" in item:
             return self._with_record_id(mode, "sharing_token", item, "id")
-        if "share_id" in item:
+        if item.get("operation_id"):
+            return self._with_record_id(
+                mode, "sharing_clone_operation", item, "operation_id"
+            )
+        if item.get("job_id"):
+            return self._with_record_id(mode, "sharing_clone_job", item, "job_id")
+        if item.get("share_id") is not None:
             return self._with_record_id(mode, "shared_workspace", item, "share_id")
         if "workspace_id" in item and "owner_user_id" in item and "id" in item:
             return self._with_record_id(mode, "workspace_share", item, "id")
-        if "workspace_id" in item and "source_type" in item:
+        if "source_id" in item or ("workspace_id" in item and "source_type" in item):
             return self._with_record_id(mode, "shared_workspace_source", item, "id")
         if "media_type" in item and "id" in item:
             return self._with_record_id(mode, "shared_media", item, "id")
-        if "job_id" in item:
-            return self._with_record_id(mode, "sharing_clone_job", item, "job_id")
         if "event_type" in item and "id" in item:
             return self._with_record_id(mode, "sharing_event", item, "id")
         if "id" in item:
@@ -370,16 +374,112 @@ class SharingScopeService:
         *,
         mode: SharingBackend | str | None = None,
         new_name: str | None = None,
+        name: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        """Admit or replay a logical clone using its caller-retained key.
+
+        Args:
+            share_id: Recipient share identifier.
+            mode: Sharing backend; these operations require server mode.
+            new_name: Legacy Python alias for the optional new workspace name.
+            name: Canonical optional new workspace name.
+            idempotency_key: Caller-retained key reused for retries of the same logical
+                operation.
+
+        Returns:
+            The durable operation receipt or a compatible legacy job response.
+
+        Raises:
+            ValueError: The clone request or returned receipt fails validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
+        kwargs: dict[str, Any] = {"new_name": new_name}
+        if name is not None:
+            kwargs["name"] = name
+        if idempotency_key is not None:
+            kwargs["idempotency_key"] = idempotency_key
         return await self._call(
             mode=mode,
             resource="links",
             action="launch",
             method_name="clone_shared_workspace",
-            normalize_kind="sharing_clone_job",
-            id_key="job_id",
             args=(share_id,),
-            kwargs={"new_name": new_name},
+            kwargs=kwargs,
+        )
+
+    async def get_shared_workspace_clone_operation(
+        self,
+        share_id: int,
+        operation_id: str,
+        *,
+        mode: SharingBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Read a recipient-owned clone receipt, including after share revocation.
+
+        Args:
+            share_id: Recipient share identifier.
+            operation_id: UUID of the recipient-owned durable clone receipt.
+            mode: Sharing backend; these operations require server mode.
+
+        Returns:
+            The receipt with operation identity, progress, result, and error details.
+
+        Raises:
+            ValueError: The operation UUID or returned receipt is invalid.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
+        return await self._call(
+            mode=mode,
+            resource="links",
+            action="inspect",
+            method_name="get_shared_workspace_clone_operation",
+            args=(share_id, operation_id),
+        )
+
+    async def list_shared_workspace_source_page(
+        self,
+        share_id: int,
+        *,
+        mode: SharingBackend | str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Read one validated source page with completeness metadata.
+
+        Args:
+            share_id: Recipient share identifier.
+            mode: Sharing backend; these operations require server mode.
+            offset: Nonnegative source offset, defaulting to zero.
+            limit: Page size from 1 through 200, defaulting to 50.
+            q: Optional search text, 1 through 512 characters; sent unchanged.
+            state: Optional free-text status filter, 1 through 64 characters.
+
+        Returns:
+            Source items, pagination, summary, and partial errors without truncation.
+
+        Raises:
+            ValueError: Page filters or the returned page fail validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
+        return await self._call(
+            mode=mode,
+            resource="links",
+            action="inspect",
+            method_name="list_shared_workspace_source_page",
+            args=(share_id,),
+            kwargs={"offset": offset, "limit": limit, "q": q, "state": state},
         )
 
     async def list_shared_workspace_sources(
@@ -388,6 +488,22 @@ class SharingScopeService:
         *,
         mode: SharingBackend | str | None = None,
     ) -> list[dict[str, Any]]:
+        """Collect sources across advancing pages, including empty pages.
+
+        Args:
+            share_id: Recipient share identifier.
+            mode: Sharing backend; these operations require server mode.
+
+        Returns:
+            All source rows in server page order.
+
+        Raises:
+            ValueError: A returned page is invalid or its cursor does not advance.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         return await self._call(
             mode=mode,
             resource="links",

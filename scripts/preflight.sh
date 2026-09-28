@@ -112,6 +112,8 @@ run_check "production diagnostic inventory" \
   "$PYTHON" scripts/check_persistent_diagnostic_inventory.py
 run_check "backlog task ids" \
   "$PYTHON" scripts/check_backlog_task_ids.py
+run_check "readable backlog task files" \
+  "$PYTHON" scripts/check_backlog_task_files.py
 run_check "chachanotes table allowlist" \
   "$PYTHON" scripts/check_schema_table_allowlist.py
 run_check "index plan pins" \

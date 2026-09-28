@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## A queue that never drains may be another repo's CI
+
+**TASK-33160, 2026-09-27.** From 2026-09-23, this repo's required check waited 172-745 min
+(median) for runners, with long stretches of 0 jobs running. The cause was the sibling repo
+`tldw_server`. Its `LICENSE_FIRST_CI_ENABLED` variable enabled a duplicate `workflow_run` CI
+lane: about 750-job runs, 352 of them macOS, posting to `main` where nothing read them. That
+lane filled the account-wide cap of 40 concurrent jobs (5 macOS), which both repos share.
+Deleting the variable and cancelling the queued duplicate runs cut this repo from 0 running /
+24 queued to 7 running / 3 queued within minutes. When runs sit queued, check the account's
+other repos (`gh run list --repo <sibling> --status queued`) before calling it GitHub-side
+starvation.
+
 ## A config section code reads from `app_config` must be copied in `load_settings()`
 
 **TASK-32954, 2026-09-25.** The built-in skills' off switch reads
@@ -304,6 +316,14 @@ governance negative cases also needed to call the original assertion via
 `.__wrapped__`, because invoking the newly async wrapper without awaiting it
 otherwise made their expected failures disappear. Preserve the production guard,
 prove the baseline, and exercise negative controls after harness changes.
+
+**TASK-32913, 2026-09-22.** Selecting inspector result cases independently
+exposed 148 setup failures with the same source-change refusal. A mixed guidance
+run had imported the app during collection and masked the missing enrollment.
+The inspector harness now uses the existing module `bootstrap_profile` marker,
+matching the Workbench's collection-time source lifetime. Verify the first case
+alone as well as the related selection; do not use unrelated collection imports
+to make a recovery-admission failure disappear.
 
 **TASK-32777, 2026-09-18.** Five App startup hygiene cases hit the same
 collection-to-fixture profile change while checking cold provisioning. Four
@@ -16744,6 +16764,22 @@ so test both. Drive the explicit case through the Hub's own write path
 own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
 built-ins and inherited defaults, not an explicit override.
 
+### A module attribute patch can silently replace a process-wide clock (TASK-19642.4)
+
+**What happened.** The TASK-602 smoke node passed alone but errored during an
+interrupted broad run whose traceback was not retained. The test patched
+`smoke.time.monotonic` with a three-value iterator and a `5.0` fallback;
+`smoke.time` was the shared standard-library `time` module. A focused extra
+global clock read shifted the smoke's observations and failed its exact result
+assertion. The original broad-run exception remains unknown. The repair
+rebound only the loaded smoke module's `time` name to a private clock and
+asserted the process-wide function identity had not changed. The exact node
+then passed in eight Ubuntu/macOS lanes across Python 3.11-3.14, and
+TASK-602's five native evidence lanes passed on the reviewed executable commit.
+
+**What to do.** When faking time for a module, replace that module's binding
+with a private clock object. Assert that the shared `time.monotonic` identity
+survives the test, then rerun the exact node in the affected platform matrix.
 ### Count transcript work separately from coalesced draft repaints (PR #2196 / TASK-24300)
 
 **What happened.** The mounted empty-versus-400-message census counted zero transcript snapshots and zero history/context/spend row traversals in both arms after settled projection caching. It still failed exact equality because the total one-row draft estimate count was 19 versus 17: Textual coalesced a different number of repaint calls. That was not a transcript-size term. Recording the largest message input to any estimate kept the exact comparison deterministic and failed on a full-history estimate while admitting the one-row live draft. A separate one-app 400-message census pinned all full-history traversal totals to zero.
@@ -16795,3 +16831,23 @@ at production cost before you rank anything else.
 (`TieAwareStylesheet`, last 4 themes), so a *revisited* theme reparses in
 ~1 ms in production too; a first visit still pays ~400 ms. The probe advice
 stands: without `TLDW_TEST_CSS_CACHE=0` the test cache hides first-visit cost.
+
+## 2026-09-20 — Admission retries need the caller's real lifecycle (TASK-32881)
+
+The connected clone HTTP test reused one request object and proved a stable
+Idempotency-Key, while the actual Sharing panel recreated a request on every
+click. Review caught that a lost accepted response followed by a user retry could
+still create a second workspace. A mounted panel → real scope/service → httpx
+transport regression exposed the gap and now covers timeout, remount, and explicit
+new-copy intent. The retained identity also needs stable server/account scope,
+server-normalized inputs, and quota behavior that never evicts uncertain requests.
+Exercise the UI or workflow that owns the logical request, not just a transport
+helper whose test already assumes the required ownership.
+
+The PR-2763 follow-up found that the mounted Sharing test still supplied a
+`server_sharing_scope_service` attribute that the production application never
+sets. Its correct transport assertions therefore missed disabled production
+controls. The fixture now uses the actual `sharing_scope_service` attribute and
+Sharing_Interop wrapper constructed by TldwCli; it failed before fixing the panel
+lookup. A mounted workflow test must also match the application's wiring names
+and service family, not only the underlying HTTP contract (TASK-32881).

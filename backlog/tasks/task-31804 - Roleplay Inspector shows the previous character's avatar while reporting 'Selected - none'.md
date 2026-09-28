@@ -1,6 +1,6 @@
 ---
 id: TASK-31804
-title: Roleplay Inspector shows the previous character's avatar while reporting 'Selected: none'
+title: "Roleplay Inspector shows the previous character's avatar while reporting 'Selected: none'"
 status: Done
 assignee:
   - '@claude'

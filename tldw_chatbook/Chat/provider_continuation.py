@@ -39,6 +39,13 @@ ContinuationProvider = Literal[
     "together",
     "fireworks",
     "cerebras",
+    # TASK-33201 doc-derived presets.
+    "sambanova",
+    "nvidia",
+    "deepinfra",
+    "nebius",
+    "novita",
+    "minimax",
 ]
 ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
@@ -94,6 +101,12 @@ _PAIRINGS = frozenset(
         ("together", "chat_completions"),
         ("fireworks", "chat_completions"),
         ("cerebras", "chat_completions"),
+        ("sambanova", "chat_completions"),
+        ("nvidia", "chat_completions"),
+        ("deepinfra", "chat_completions"),
+        ("nebius", "chat_completions"),
+        ("novita", "chat_completions"),
+        ("minimax", "chat_completions"),
     }
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})

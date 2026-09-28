@@ -447,10 +447,14 @@ async def test_refresh_swallows_and_logs_errors(monkeypatch):
         logger.remove(sink_id)
     text = "".join(logged)
     # Context: the provider list keys being refreshed + the exception type name.
+    # The key list itself is pinned by test_auto_refresh_cloud_provider_list_is_pinned.
+    from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+        AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    )
+
     assert (
         "Model catalog auto-refresh failed "
-        "(OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, QwenCloud, ZAI, "
-        "Databricks, Together, Fireworks, Cerebras): RuntimeError"
+        f"({', '.join(AUTO_REFRESH_PROVIDER_LIST_KEYS)}): RuntimeError"
     ) in text
     # No traceback (diagnose=True would dump frame locals) and no exception
     # message, which may carry endpoint URLs or credentials.

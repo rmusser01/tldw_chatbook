@@ -3,7 +3,7 @@ id: TASK-24620
 title: Console voice chip starves the composer draft at narrow widths
 status: Done
 assignee:
-  - @zcode
+  - '@zcode'
 created_date: '2026-08-30'
 updated_date: '2026-08-30'
 labels:

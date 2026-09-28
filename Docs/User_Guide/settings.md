@@ -393,9 +393,11 @@ workspace URL without credentials in the URL, then correct
 timeout/retry/streaming types under **Advanced Config**. Test the draft again
 before saving.
 
-#### Inference clouds (Together, Fireworks, Cerebras)
+#### Inference clouds
 
-**Together**, **Fireworks**, and **Cerebras** are engine presets: each one is
+**Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** are
+engine presets: each one is
 a provider registry record served through the shared strict hosted-provider
 engine (the same path Databricks uses), not a per-provider adapter. There is
 no API mode selector for any of them.
@@ -405,13 +407,28 @@ no API mode selector for any of them.
 | **Together** | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
 | **Fireworks** | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
 | **Cerebras** | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+| **SambaNova** | `https://api.sambanova.ai/v1` | `SAMBANOVA_API_KEY` |
+| **NVIDIA NIM** | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` |
+| **DeepInfra** | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_API_KEY` |
+| **Nebius Token Factory** | `https://api.tokenfactory.nebius.com/v1` | `NEBIUS_API_KEY` |
+| **Novita AI** | `https://api.novita.ai/openai/v1` | `NOVITA_API_KEY` |
+| **MiniMax** | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` |
 
-All three are **discovery-first**: no models ship in the config because each
-account serves a different catalog. The provider model list starts empty —
-fill it with **Discover models** (an authenticated `GET {base}/models` that
-reuses the chat credential) or by seeding `[providers].Together` /
-`[providers].Fireworks` / `[providers].Cerebras` manually. Until a model is
-set, readiness blocks sends with the model named as the missing piece.
+All except MiniMax are **discovery-first**: no models ship in the config
+because each account serves a different catalog. The provider model list
+starts empty — fill it with **Discover models** (an authenticated
+`GET {base}/models` that reuses the chat credential) or by seeding the
+provider's `[providers]` entry (for example `[providers].Together`) manually.
+Until a model is set, readiness blocks sends with the model named as the
+missing piece. **MiniMax** documents no models route, so its list ships
+seeded with the models its API reference names (`MiniMax-M3`,
+`MiniMax-M2.7`, …) and is not refreshed automatically.
+
+SambaNova, NVIDIA NIM, DeepInfra, Nebius, Novita, and MiniMax were set up
+from each provider's public API documentation rather than from a recorded
+response, so an unexpected field in
+a real reply fails with a protocol error instead of being passed through.
+If that happens, please report the provider and the error.
 
 Function tools are exposed for the models that support them. Reasoning
 differs by provider: Together and Cerebras have no reasoning-effort control,
@@ -419,11 +436,23 @@ while **Fireworks keeps R1-family model reasoning private** — the server
 reasons behind its own API surface and does not stream it with the reply, so
 reasoning does not appear in transcripts (any `reasoning_content` the server
 does return gets Z.ai's private treatment: kept off the live stream). That is
-provider behavior, not the app dropping output.
+provider behavior, not the app dropping output. **NVIDIA NIM**, **Nebius**,
+**Novita**, and **MiniMax** reasoning models get the same private treatment;
+Novita and MiniMax are asked to return reasoning separately so it never
+leaks into the reply text as `<think>` tags. **SambaNova** documents reasoning
+inline as `<think>` text on non-streaming replies (streamed replies send it in
+a separate field, which is dropped); this preset does not split the inline
+form out of the reply text.
+
+**NVIDIA NIM** streams do not report token usage, so streamed NVIDIA replies
+show no token counts. Nebius and MiniMax treat a `content_filter` finish as
+a provider error rather than a partial reply.
+
+GitHub Models and Hyperbolic are not offered: both services retired their
+hosted inference APIs in 2026.
 
 If Test Provider reports invalid settings, keep exactly one canonical
-`[api_settings.together]` / `[api_settings.fireworks]` /
-`[api_settings.cerebras]` table, set the API key (or its env var), and leave
+`[api_settings.<provider>]` table (for example `[api_settings.together]`), set the API key (or its env var), and leave
 the shipped `api_base_url` unless your account documents a different one.
 Test the draft again before saving.
 

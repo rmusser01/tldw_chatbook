@@ -128,8 +128,12 @@ class ServerSharingScopeService:
 
     def _normalize_clone(self, payload: Any) -> dict[str, Any]:
         normalized = self._normalize_simple(payload, entity_kind="share_clone_job")
+        operation_id = normalized.get("operation_id")
         job_id = normalized.get("job_id")
-        if job_id is not None:
+        if operation_id is not None:
+            normalized["entity_kind"] = "share_clone_operation"
+            normalized["id"] = self._server_id("share_clone_operation", operation_id)
+        elif job_id is not None:
             normalized["id"] = self._server_id("share_clone_job", job_id)
         return normalized
 
@@ -223,6 +227,24 @@ class ServerSharingScopeService:
         share_id: int,
         **payload: Any,
     ) -> dict[str, Any]:
+        """Admit or replay a logical clone using its caller-retained key.
+
+        Args:
+            mode: Sharing backend; these operations require server mode.
+            share_id: Recipient share identifier.
+            payload: Clone request fields, including name/new_name and a retained
+                idempotency_key.
+
+        Returns:
+            The durable operation receipt or a compatible legacy job response.
+
+        Raises:
+            ValueError: The clone request or returned receipt fails validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         self._require_server_mode(mode)
         self._enforce_policy("sharing.links.launch.server")
         result = await self._maybe_await(
@@ -232,12 +254,108 @@ class ServerSharingScopeService:
         normalized["share_id"] = share_id
         return normalized
 
+    async def get_shared_workspace_clone_operation(
+        self,
+        *,
+        mode: SharingBackend | str | None = None,
+        share_id: int,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Read a recipient-owned clone receipt, including after share revocation.
+
+        Args:
+            mode: Sharing backend; these operations require server mode.
+            share_id: Recipient share identifier.
+            operation_id: UUID of the recipient-owned durable clone receipt.
+
+        Returns:
+            The receipt with operation identity, progress, result, and error details.
+
+        Raises:
+            ValueError: The operation UUID or returned receipt is invalid.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
+        self._require_server_mode(mode)
+        self._enforce_policy("sharing.links.inspect.server")
+        result = await self._maybe_await(
+            self._require_service().get_shared_workspace_clone_operation(
+                share_id, operation_id
+            )
+        )
+        return self._normalize_clone(result)
+
+    async def list_shared_workspace_source_page(
+        self,
+        *,
+        mode: SharingBackend | str | None = None,
+        share_id: int,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Read one validated source page with completeness metadata.
+
+        Args:
+            mode: Sharing backend; these operations require server mode.
+            share_id: Recipient share identifier.
+            offset: Nonnegative source offset, defaulting to zero.
+            limit: Page size from 1 through 200, defaulting to 50.
+            q: Optional search text, 1 through 512 characters; sent unchanged.
+            state: Optional free-text status filter, 1 through 64 characters.
+
+        Returns:
+            Source items, pagination, summary, and partial errors without truncation.
+
+        Raises:
+            ValueError: Page filters or the returned page fail validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
+        self._require_server_mode(mode)
+        self._enforce_policy("sharing.links.list.server")
+        result = self._as_dict(
+            await self._maybe_await(
+                self._require_service().list_shared_workspace_source_page(
+                    share_id, offset=offset, limit=limit, q=q, state=state
+                )
+            )
+        )
+        result["items"] = [
+            self._normalize_simple(item, entity_kind="shared_workspace_source")
+            for item in result.get("items", [])
+        ]
+        result["backend"] = "server"
+        result["entity_kind"] = "shared_workspace_source_page"
+        return result
+
     async def list_shared_workspace_sources(
         self,
         *,
         mode: SharingBackend | str | None = None,
         share_id: int,
     ) -> dict[str, Any]:
+        """Collect sources across advancing pages, including empty pages.
+
+        Args:
+            mode: Sharing backend; these operations require server mode.
+            share_id: Recipient share identifier.
+
+        Returns:
+            All source rows in server page order.
+
+        Raises:
+            ValueError: A returned page is invalid or its cursor does not advance.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         self._require_server_mode(mode)
         self._enforce_policy("sharing.links.list.server")
         result = await self._maybe_await(

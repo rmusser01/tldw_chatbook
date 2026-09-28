@@ -15,6 +15,7 @@ async def open_recovery(
     screen: Any, *, session_id: str | None = None, after_run_id: str | None = None
 ) -> None:
     """List owning-session records; a row action enters the retained confirm flow."""
+    from tldw_chatbook.Chat.console_worktree_recovery import RECOVERY_FAILED_MESSAGE
     from tldw_chatbook.Widgets.Chat_Widgets.worktree_recovery_dialog import (
         WorktreeRecoveryDialog,
     )
@@ -49,7 +50,12 @@ async def open_recovery(
             conversation_id = page.conversation_id
 
             async def recover():
-                result = await helper.start(session_id, run_id, action)
+                try:
+                    result = await helper.start(session_id, run_id, action)
+                except Exception:  # noqa: BLE001 - the retained helper owns failure cleanup
+                    message = RECOVERY_FAILED_MESSAGE
+                else:
+                    message = result.message
                 if (
                     runtime.view is screen
                     and controller.store.active_session_id == session_id
@@ -61,7 +67,7 @@ async def open_recovery(
                     is not None
                     and current.persisted_conversation_id == conversation_id
                 ):
-                    screen.notify(result.message)
+                    screen.notify(message)
 
             screen.run_worker(recover())
 

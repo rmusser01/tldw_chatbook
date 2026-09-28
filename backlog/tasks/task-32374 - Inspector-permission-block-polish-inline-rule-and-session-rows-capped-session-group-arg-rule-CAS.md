@@ -1,6 +1,6 @@
 ---
 id: TASK-32374
-title: Inspector permission block polish: inline rule and session rows, capped session group, arg-rule CAS
+title: "Inspector permission block polish: inline rule and session rows, capped session group, arg-rule CAS"
 status: To Do
 assignee: []
 created_date: '2026-09-11 01:55'

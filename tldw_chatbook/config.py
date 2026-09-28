@@ -4271,6 +4271,15 @@ Databricks = [] # Empty: model availability is workspace-dependent; fills via di
 Together = [] # Inference cloud: fills via /v1/models discovery or manual seeding
 Fireworks = [] # Inference cloud: fills via /inference/v1/models discovery or manual seeding
 Cerebras = [] # Inference cloud: fills via /v1/models discovery or manual seeding
+# Doc-derived inference clouds (TASK-33201); empty lists fill via discovery.
+SambaNova = [] # fills via /v1/models discovery or manual seeding
+NVIDIA = [] # fills via /v1/models discovery or manual seeding
+DeepInfra = [] # fills via /v1/openai/models discovery or manual seeding
+Nebius = [] # fills via /v1/models discovery or manual seeding
+Novita = [] # fills via /openai/v1/models discovery or manual seeding
+# MiniMax documents no /models route: seeded from the `model` enum at
+# platform.minimax.io/docs/api-reference/text-chat-openai (2026-09-27).
+MiniMax = ["MiniMax-M3", "MiniMax-M3.1-Flash-Preview", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"]
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4515,6 +4524,61 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     api_key_env_var = "CEREBRAS_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
     api_base_url = "https://api.cerebras.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # Doc-derived inference clouds (TASK-33201): same shape as above.
+    [api_settings.sambanova] # Matches key in [providers]
+    api_key_env_var = "SAMBANOVA_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.sambanova.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.nvidia] # Matches key in [providers]
+    api_key_env_var = "NVIDIA_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://integrate.api.nvidia.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.deepinfra] # Matches key in [providers]
+    api_key_env_var = "DEEPINFRA_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.deepinfra.com/v1/openai"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.nebius] # Matches key in [providers]
+    api_key_env_var = "NEBIUS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.tokenfactory.nebius.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.novita] # Matches key in [providers]
+    api_key_env_var = "NOVITA_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.novita.ai/openai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.minimax] # Matches key in [providers]
+    api_key_env_var = "MINIMAX_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.minimax.io/v1"
     timeout = 90
     retries = 3
     retry_delay = 5.0
@@ -9699,6 +9763,14 @@ def get_library_collections_db_path() -> Path:
     return (
         _get_custom_database_path("library_collections_db_path")
         or get_user_data_dir() / profile_paths.database_leaf("library_collections_db_path")
+    )
+
+
+def get_dreams_db_path() -> Path:
+    """Return the canonical path for the Dreams database (dreams phase 1)."""
+    return (
+        _get_custom_database_path("dreams_db_path")
+        or get_user_data_dir() / "dreams.sqlite"
     )
 
 
