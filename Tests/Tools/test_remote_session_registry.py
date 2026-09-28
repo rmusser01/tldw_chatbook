@@ -265,3 +265,23 @@ def test_waiter_on_the_key_lock_goes_one_shot_after_close_all():
     assert results == {"first": None, "second": None}
     assert made[0].closed, "a start finishing after close_all must be closed, not kept"
     assert reg._sessions == {}
+
+
+# A pair: part 1 shuts the singleton down like an app test's on_unmount; part 2
+# (next in file order) must still get a working one via the conftest reset. Split
+# across xdist workers, part 2 still passes (it can never be made flaky by it).
+def test_shutdown_singleton_part_1_app_exit():
+    from tldw_chatbook.Tools import remote_session_registry as module
+
+    module.close_all_remote_sessions()
+    assert module.get_session_registry()._shutdown
+
+
+def test_shutdown_singleton_part_2_next_test_gets_a_working_registry():
+    """The conftest autouse reset drops the shut-down singleton between tests."""
+    from tldw_chatbook.Tools import remote_session_registry as module
+
+    reg = module.get_session_registry()
+    assert not reg._shutdown
+    assert reg.acquire(("run-x", "b1"), FakeWorker) is not None
+    reg.close_key("run-x")
