@@ -35,6 +35,7 @@ APP_PATH = PRODUCTION_ROOT / "app.py"
 #: TASK-33011: TldwCli's destination launchers, handoffs and Personal Context
 #: launchers live here as functions of ``app``; ``TldwCli`` keeps stubs.
 APP_DESTINATIONS_PATH = PRODUCTION_ROOT / "app_destinations.py"
+APP_SPEECH_PATH = PRODUCTION_ROOT / "app_speech.py"
 BOOTSTRAP_PATH = PRODUCTION_ROOT / "runtime_policy" / "bootstrap.py"
 SOURCE_STATE_PATH = PRODUCTION_ROOT / "runtime_policy" / "source_state.py"
 SCHEDULES_WORKBENCH_PATH = (
@@ -1106,14 +1107,20 @@ class QueueMixin(RootStateMixin):
     ]
 
 
-def test_app_destinations_functions_take_the_root_app_as_app() -> None:
+@pytest.mark.parametrize(
+    "module_path", [APP_DESTINATIONS_PATH, APP_SPEECH_PATH], ids=lambda p: p.stem
+)
+def test_app_destinations_functions_take_the_root_app_as_app(
+    module_path: Path,
+) -> None:
     """Keep the moved TldwCli bodies inside the root-app sweeps (TASK-33011).
 
     ``_local_tldw_root_classes`` follows only classes, so it cannot see
-    ``app_destinations``. Its bodies stay guarded because they reach the app
-    through a parameter named ``app``, which ``_is_root_app_expression`` and
-    the production-wide ``_root_app_*`` sweeps recognize; a rename to
-    ``self`` or ``host`` would silently drop them out of every sweep.
+    ``app_destinations`` or ``app_speech``. Their bodies stay guarded because
+    they reach the app through a parameter named ``app``, which
+    ``_is_root_app_expression`` and the production-wide ``_root_app_*``
+    sweeps recognize; a rename to ``self`` or ``host`` would silently drop
+    them out of every sweep.
     """
     former_staticmethods = {
         "_watchlists_run_navigation_context",
@@ -1121,7 +1128,7 @@ def test_app_destinations_functions_take_the_root_app_as_app() -> None:
     }
     functions = [
         node
-        for node in _parse(APP_DESTINATIONS_PATH).body
+        for node in _parse(module_path).body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
     assert functions

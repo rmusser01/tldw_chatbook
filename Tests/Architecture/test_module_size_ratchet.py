@@ -66,8 +66,9 @@ _BUDGETS: dict[str, int] = {
     # +24 -> 19,682; dev growth (theme tail, Dreams wiring) +191 -> 19,873;
     # Library ingest queue -> app_ingest_queue.py: 19,873 -> 14,930; dev
     # growth (theme final wave, SSH sessions) +42 -> 14,972; service
-    # composition C/E/O -> app_service_wiring.py: 14,972 -> 11,506).
-    "tldw_chatbook/app.py": 11506,
+    # composition C/E/O -> app_service_wiring.py: 14,972 -> 11,506; speech
+    # N/U/U2 -> app_speech.py: 11,506 -> 10,601).
+    "tldw_chatbook/app.py": 10601,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     "tldw_chatbook/app_ingest_queue.py": 4999,

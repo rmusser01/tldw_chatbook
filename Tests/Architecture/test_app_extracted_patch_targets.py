@@ -59,6 +59,7 @@ EXTRACTED_MODULES = (
     "app_destinations",
     "app_ingest_queue",
     "app_service_wiring",
+    "app_speech",
 )
 
 #: Rule 2 exemptions: (test file, name) -> why a bare app-module patch is right.

@@ -6,7 +6,10 @@ moved body looks names up in its NEW module's globals, so a patch on
 ``app_service_wiring.py`` both read a name (``get_cli_setting``,
 ``get_user_data_dir``, ``get_subscriptions_db_path`` and so on), a test that
 means "every read the app makes" must patch both modules, with ONE object so
-call assertions still see every call. These two helpers do that.
+call assertions still see every call. These two helpers do that. An extracted
+module that does not bind the name (``app_speech`` has no
+``get_user_data_dir``) cannot read it as a global, so it is skipped; the app
+module itself is always patched, so a misspelt name still raises.
 
 ``Tests/Architecture/test_app_extracted_patch_targets.py`` fails on a bare
 app-module patch of such a name, and points here.
@@ -14,6 +17,7 @@ app-module patch of such a name, and points here.
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 from unittest.mock import DEFAULT, patch
 
@@ -23,7 +27,17 @@ import pytest
 APP_GLOBAL_MODULES: tuple[str, ...] = (
     "tldw_chatbook.app",
     "tldw_chatbook.app_service_wiring",
+    "tldw_chatbook.app_speech",
 )
+
+
+def _binding_extracted_modules(name: str) -> list[str]:
+    """The ``APP_GLOBAL_MODULES[1:]`` entries that bind ``name`` at module scope."""
+    return [
+        module
+        for module in APP_GLOBAL_MODULES[1:]
+        if name in vars(importlib.import_module(module))
+    ]
 
 
 class _AppGlobalPatcher:
@@ -41,7 +55,7 @@ class _AppGlobalPatcher:
     def start(self) -> Any:
         value = self._primary.start()
         try:
-            for module in APP_GLOBAL_MODULES[1:]:
+            for module in _binding_extracted_modules(self._name):
                 other = patch(f"{module}.{self._name}", value)
                 other.start()
                 self._others.append(other)
@@ -79,12 +93,13 @@ def patch_app_global(name: str, new: Any = DEFAULT, **kwargs: Any) -> _AppGlobal
 
 
 def set_app_global(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
-    """``monkeypatch.setattr`` one name on every ``APP_GLOBAL_MODULES`` entry.
+    """``monkeypatch.setattr`` one name on every app module that binds it.
 
     Args:
         monkeypatch: The test's ``MonkeyPatch``.
         name: The module-level name to replace.
         value: The replacement, shared by every module.
     """
-    for module in APP_GLOBAL_MODULES:
+    monkeypatch.setattr(f"{APP_GLOBAL_MODULES[0]}.{name}", value)
+    for module in _binding_extracted_modules(name):
         monkeypatch.setattr(f"{module}.{name}", value)
