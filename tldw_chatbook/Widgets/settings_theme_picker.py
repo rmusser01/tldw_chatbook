@@ -940,7 +940,12 @@ class ThemePane(ContentSwitcher):
         super().watch_current(old, new)
         # TASK-33064: the picker fills the detail pane (CSS `-picker`); the
         # taller editor keeps the auto height so the pane body scrolls it.
-        self.set_class(new == "settings-theme-picker", "-picker")
+        # TASK-33241: restyle the pane alone -- a plain set_class restyles
+        # its whole subtree (~180 nodes with the editor: ~165 ms per switch
+        # at 211x44), and `-picker` only styles the pane's own compound
+        # (the CSS rule, pinned by test_picker_class_styles_only_the_pane).
+        self.set_class(new == "settings-theme-picker", "-picker", update=False)
+        self.app.stylesheet.update_nodes([self])
 
     def compose(self) -> ComposeResult:
         # The editor is composed first so the picker's first refresh_catalog
@@ -964,12 +969,12 @@ class ThemePane(ContentSwitcher):
         files, unreadable = self._editor().user_theme_listing()
         return set(files), unreadable
 
-    def show_picker(self) -> None:
+    def show_picker(self, highlight: str | None = None) -> None:
         # Review I-1: every Back undoes an unsaved Try and ends the session.
         self._editor().end_session()
         self.current = "settings-theme-picker"
         picker = self.query_one(ThemePicker)
-        picker.refresh_catalog()
+        picker.refresh_catalog(highlight=highlight)
         picker.focus_list()
 
     def open_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> Worker[Any] | None:
@@ -1051,8 +1056,8 @@ class ThemePane(ContentSwitcher):
         if not self.is_attached:
             return
         try:
-            self.show_picker()
-            self.query_one(ThemePicker).refresh_catalog(highlight=event.theme_name)
+            # TASK-33241: one rescan, not show_picker's plus a second one.
+            self.show_picker(highlight=event.theme_name)
         except QueryError:
             return
 
