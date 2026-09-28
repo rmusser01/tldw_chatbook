@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:30'
-updated_date: '2026-09-28 03:24'
+updated_date: '2026-09-28 03:28'
 labels:
   - performance
   - console
@@ -139,4 +139,8 @@ Four regressions failed before the source fixes: warm ordinary ToolBatchReady an
 Fresh focused verification: 46 tests passed in 21.65 s across the store count, default-settings memo, context parity, display history, config-path memo, lazy tokenizer, selected deferred persistence, continuation ownership/durability and dispatch failure/settlement cases. Full checks passed for the two edited regression files; source undefined-name checks, edited source/handoff format ranges and git diff --check passed. Reports: D:/Codex-UAT/pr2196-review-fixes/{red,green,focused}.xml. No full suite or long mounted cohort was repeated. The recorded mounted exact-census/cost results remain evidence on 6c98a43a8a329ce0b14bfee7ecc3fd8a7abb3f10, distinct from these fresh review-fix runs.
 
 ADR required: no new ADR. Existing ADR-190 governs continuation display invalidation; the tokenizer change restores the existing optional-import fallback without a new runtime boundary. Added the materialized-baseline lesson in backlog/docs/lessons-testing-evidence.md. Task remains In Progress pending final integration review, push and protected CI.
+
+Final local rebase (2026-09-27): inspected live dev 97b16d4fb684f2c1fc5b92d8906e12a1cdba2e4e before replay. Its bounded delta adds external MCP character reads and extracts application destination/handoff helpers; the only shared source path is config.py's unrelated expose_character_tools flag, away from the path-resolution memo. ADR-190 remains unallocated in dev. All five existing PR commits replayed cleanly, and range-diff reported identical patches; the review fix became 7b041d35164f398a126369c1e07e2b0118aa72f6.
+
+Fresh post-rebase evidence: the same 46 focused cases passed in 21.73 s (D:/Codex-UAT/pr2196-review-fixes/focused-rebased.xml). Source undefined-name checks, full lint/format checks for the two regression files, edited continuation/tokenizer/handoff format ranges and base-to-head diff --check passed. These are fresh results on the latest dev integration; the long mounted O(1)/cost evidence remains explicitly tied to the earlier 6c98a43a8a head and was not repeated. Only this evidence note follows the tested source commit. The checkout is kept local for final integration review; no push or merge was performed, and protected CI for this new head is pending.
 <!-- SECTION:NOTES:END -->
