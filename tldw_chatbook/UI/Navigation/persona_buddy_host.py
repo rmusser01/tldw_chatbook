@@ -165,6 +165,10 @@ class PersonaBuddyHost:
         if selected:
             self._epoch += 1
             self.request_refresh()
+        elif previous is not None:
+            # Qodo round: a rejected selection must not leave the previous
+            # valid view hidden -- restore it until an unrelated refresh.
+            previous.display = True
         return selected
 
     async def update_preferences(self, **changes: Any) -> None:

@@ -222,9 +222,13 @@ class PersonaBuddyView(Vertical):
         if (
             snapshot.generation == self._snapshot.generation
             and snapshot.resolution.cache_identity
-            != self._snapshot.resolution.cache_identity
+            == self._snapshot.resolution.cache_identity
             and not availability_transition
         ):
+            # Qodo round: only an UNCHANGED identity is skippable. A changed
+            # identity at the same generation (e.g. appearance.reduce_motion)
+            # must re-render -- the previous code inverted this and dropped
+            # reduced-motion snapshots on the floor.
             return
         prepared = snapshot.prepared
         if (

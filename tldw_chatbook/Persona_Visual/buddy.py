@@ -97,7 +97,16 @@ class BuddyController:
     ) -> None:
         self._service = local_service
         self._repository = repository
-        self._profile_root = Path(profile_root).absolute()
+        root = Path(profile_root)
+        # Qodo round: a symlinked/aliased profile spelling is rejected through
+        # the controller's soft-failure contract (reason=..., selections and
+        # preference writes refuse) rather than the per-component walker.
+        self._root_canonical = (
+            root.resolve() == root
+            if (os.name == "posix" and root.is_dir())
+            else True
+        )
+        self._profile_root = root.absolute()
         self._clock = clock
         self._preferences = BuddyPreferences()
         self._generation = 0
@@ -175,7 +184,7 @@ class BuddyController:
         explicit: bool = False,
     ) -> None:
         """Acquire or renew a trusted source lease; custom states always expire."""
-        custom = state not in RESERVED_STATES
+        custom = isinstance(state, str) and state not in RESERVED_STATES
         if (
             not isinstance(source, str)
             or not source
@@ -402,6 +411,10 @@ class BuddyController:
             or len(persona_id) > 200
         ):
             self._reason = "persona_buddy_local_required"
+            return False
+        if not getattr(self, "_root_canonical", True):
+            # Qodo round: noncanonical profile root refuses selection softly.
+            self._reason = "persona_buddy_preferences_invalid"
             return False
         self._generation += 1
         async with self._lock:
