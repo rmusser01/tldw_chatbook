@@ -1,0 +1,871 @@
+FFFFFFFF                                                                 [100%]
+=================================== FAILURES ===================================
+____ test_raw_response_keyboard_access_survives_resize[size0-textual-dark] _____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_raw_response_keyboard_access_survives_resize[size0-textual-dark] _____
+E
+E   request = <FixtureRequest for <Coroutine test_raw_response_keyboard_access_survives_resize[size0-textual-dark]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1098ccb60>
+E   theme = 'textual-dark', size = (80, 24)
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E       @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+E       @private_profile_test
+E       async def test_raw_response_keyboard_access_survives_resize(
+E           request, monkeypatch, theme, size
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           app.theme = theme
+E           async with app.run_test(size=size) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool()
+E               await inspector.show_tool(tool)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               raw = json.dumps(
+E                   ["[bold] literal [/] 中文", *[f"row {i}" for i in range(40)], "END"],
+E                   ensure_ascii=False,
+E                   indent=2,
+E               )
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[{"text": "current"}],
+E                   raw=raw,
+E               )
+E               await _settle(pilot)
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               title = disclosure.query_one("CollapsibleTitle")
+E               title.focus()
+E               await _settle(pilot)
+E               assert disclosure.collapsed
+E   >           _assert_visible(app, title)
+E
+E   Tests/UI/test_mcp_inspector_results.py:113:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   app = _ResultApp(title='_ResultApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})
+E   control = CollapsibleTitle()
+E
+E       def _assert_visible(app, control):
+E           visible = app.screen._compositor.visible_widgets
+E           assert control in visible, (control.id, control.region)
+E           region, clip = visible[control]
+E           assert region.width > 0 and region.height > 0
+E   >       assert region.intersection(clip) == region, (control.id, region, clip)
+E   E       AssertionError: (None, Region(x=64, y=7, width=16, height=3), Region(x=64, y=7, width=12, height=3))
+E   E       assert Region(x=64, ...=12, height=3) == Region(x=64, ...=16, height=3)
+E   E
+E   E         Omitting 3 identical items, use -vv to show
+E   E         Differing attributes:
+E   E         ['width']
+E   E
+E   E         Drill down into differing attribute width:
+E   E           width: 12 != 16
+E   E         Use -v to get more diff
+E
+E   Tests/UI/test_mcp_inspector_results.py:43: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:09.690 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:09.763 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:09.844 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:09.853 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:09.854 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:10.018 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:10.374 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-dark]
+E   1 failed in 2.35s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-22 09:53:08.662 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-22 09:53:08.801 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-22 09:53:08.900 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-22 09:53:08.922 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-22 09:53:08.928 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+____ test_raw_response_keyboard_access_survives_resize[size0-textual-light] ____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_raw_response_keyboard_access_survives_resize[size0-textual-light] ____
+E
+E   request = <FixtureRequest for <Coroutine test_raw_response_keyboard_access_survives_resize[size0-textual-light]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109bc4ec0>
+E   theme = 'textual-light', size = (80, 24)
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E       @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+E       @private_profile_test
+E       async def test_raw_response_keyboard_access_survives_resize(
+E           request, monkeypatch, theme, size
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           app.theme = theme
+E           async with app.run_test(size=size) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool()
+E               await inspector.show_tool(tool)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               raw = json.dumps(
+E                   ["[bold] literal [/] 中文", *[f"row {i}" for i in range(40)], "END"],
+E                   ensure_ascii=False,
+E                   indent=2,
+E               )
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[{"text": "current"}],
+E                   raw=raw,
+E               )
+E               await _settle(pilot)
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               title = disclosure.query_one("CollapsibleTitle")
+E               title.focus()
+E               await _settle(pilot)
+E               assert disclosure.collapsed
+E   >           _assert_visible(app, title)
+E
+E   Tests/UI/test_mcp_inspector_results.py:113:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   app = _ResultApp(title='_ResultApp', classes={'-theme-textual-light', '-light-mode'}, pseudo_classes={'focus', 'nocolor', 'light'})
+E   control = CollapsibleTitle()
+E
+E       def _assert_visible(app, control):
+E           visible = app.screen._compositor.visible_widgets
+E           assert control in visible, (control.id, control.region)
+E           region, clip = visible[control]
+E           assert region.width > 0 and region.height > 0
+E   >       assert region.intersection(clip) == region, (control.id, region, clip)
+E   E       AssertionError: (None, Region(x=64, y=7, width=16, height=3), Region(x=64, y=7, width=12, height=3))
+E   E       assert Region(x=64, ...=12, height=3) == Region(x=64, ...=16, height=3)
+E   E
+E   E         Omitting 3 identical items, use -vv to show
+E   E         Differing attributes:
+E   E         ['width']
+E   E
+E   E         Drill down into differing attribute width:
+E   E           width: 12 != 16
+E   E         Use -v to get more diff
+E
+E   Tests/UI/test_mcp_inspector_results.py:43: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:13.360 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:13.440 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:13.523 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:13.531 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:13.532 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:13.663 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:13.936 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-light]
+E   1 failed in 2.34s
+____ test_raw_response_keyboard_access_survives_resize[size1-textual-dark] _____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_raw_response_keyboard_access_survives_resize[size1-textual-dark] _____
+E
+E   request = <FixtureRequest for <Coroutine test_raw_response_keyboard_access_survives_resize[size1-textual-dark]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109d091f0>
+E   theme = 'textual-dark', size = (170, 48)
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E       @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+E       @private_profile_test
+E       async def test_raw_response_keyboard_access_survives_resize(
+E           request, monkeypatch, theme, size
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           app.theme = theme
+E           async with app.run_test(size=size) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool()
+E               await inspector.show_tool(tool)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               raw = json.dumps(
+E                   ["[bold] literal [/] 中文", *[f"row {i}" for i in range(40)], "END"],
+E                   ensure_ascii=False,
+E                   indent=2,
+E               )
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[{"text": "current"}],
+E                   raw=raw,
+E               )
+E               await _settle(pilot)
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               title = disclosure.query_one("CollapsibleTitle")
+E               title.focus()
+E               await _settle(pilot)
+E               assert disclosure.collapsed
+E               _assert_visible(app, title)
+E               assert "Raw response" in " ".join(_painted(app, title).split())
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               assert not disclosure.collapsed
+E               scroll = app.query_one("#mcp-inspector-test-result-raw-scroll", VerticalScroll)
+E               scroll.focus()
+E               await _settle(pilot)
+E               assert scroll.has_focus
+E               _assert_visible(app, scroll)
+E               body = app.query_one("#mcp-inspector-test-result-raw-body", Static)
+E               assert "[bold] literal [/] 中文" in str(body.renderable)
+E               assert not body._render_markup
+E               await pilot.press("end")
+E               await _settle(pilot)
+E               assert scroll.scroll_y == scroll.max_scroll_y > 0
+E               assert "END" in _painted(app, scroll)
+E               for dimensions in ((170, 48), (80, 24), size):
+E                   await pilot.resize_terminal(*dimensions)
+E                   await _settle(pilot)
+E                   assert scroll.has_focus
+E   >               _assert_visible(app, scroll)
+E
+E   Tests/UI/test_mcp_inspector_results.py:134:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   app = _ResultApp(title='_ResultApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})
+E   control = VerticalScroll(id='mcp-inspector-test-result-raw-scroll')
+E
+E       def _assert_visible(app, control):
+E           visible = app.screen._compositor.visible_widgets
+E           assert control in visible, (control.id, control.region)
+E           region, clip = visible[control]
+E           assert region.width > 0 and region.height > 0
+E   >       assert region.intersection(clip) == region, (control.id, region, clip)
+E   E       AssertionError: ('mcp-inspector-test-result-raw-scroll', Region(x=65, y=3, width=10, height=12), Region(x=65, y=3, width=10, height=11))
+E   E       assert Region(x=65, ...10, height=11) == Region(x=65, ...10, height=12)
+E   E
+E   E         Omitting 3 identical items, use -vv to show
+E   E         Differing attributes:
+E   E         ['height']
+E   E
+E   E         Drill down into differing attribute height:
+E   E           height: 11 != 12
+E   E         Use -v to get more diff
+E
+E   Tests/UI/test_mcp_inspector_results.py:43: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:16.677 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:16.749 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:16.823 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:16.831 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:16.832 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:16.957 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:17.206 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc2/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   2.53s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-dark]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-dark]
+E   1 failed in 3.75s
+____ test_raw_response_keyboard_access_survives_resize[size1-textual-light] ____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc3/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_raw_response_keyboard_access_survives_resize[size1-textual-light] ____
+E
+E   request = <FixtureRequest for <Coroutine test_raw_response_keyboard_access_survives_resize[size1-textual-light]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bbb10a0>
+E   theme = 'textual-light', size = (170, 48)
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E       @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+E       @private_profile_test
+E       async def test_raw_response_keyboard_access_survives_resize(
+E           request, monkeypatch, theme, size
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           app.theme = theme
+E           async with app.run_test(size=size) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool()
+E               await inspector.show_tool(tool)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               raw = json.dumps(
+E                   ["[bold] literal [/] 中文", *[f"row {i}" for i in range(40)], "END"],
+E                   ensure_ascii=False,
+E                   indent=2,
+E               )
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[{"text": "current"}],
+E                   raw=raw,
+E               )
+E               await _settle(pilot)
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               title = disclosure.query_one("CollapsibleTitle")
+E               title.focus()
+E               await _settle(pilot)
+E               assert disclosure.collapsed
+E               _assert_visible(app, title)
+E               assert "Raw response" in " ".join(_painted(app, title).split())
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               assert not disclosure.collapsed
+E               scroll = app.query_one("#mcp-inspector-test-result-raw-scroll", VerticalScroll)
+E               scroll.focus()
+E               await _settle(pilot)
+E               assert scroll.has_focus
+E               _assert_visible(app, scroll)
+E               body = app.query_one("#mcp-inspector-test-result-raw-body", Static)
+E               assert "[bold] literal [/] 中文" in str(body.renderable)
+E               assert not body._render_markup
+E               await pilot.press("end")
+E               await _settle(pilot)
+E               assert scroll.scroll_y == scroll.max_scroll_y > 0
+E               assert "END" in _painted(app, scroll)
+E               for dimensions in ((170, 48), (80, 24), size):
+E                   await pilot.resize_terminal(*dimensions)
+E                   await _settle(pilot)
+E                   assert scroll.has_focus
+E   >               _assert_visible(app, scroll)
+E
+E   Tests/UI/test_mcp_inspector_results.py:134:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   app = _ResultApp(title='_ResultApp', classes={'-light-mode', '-theme-textual-light'}, pseudo_classes={'focus', 'nocolor', 'light'})
+E   control = VerticalScroll(id='mcp-inspector-test-result-raw-scroll')
+E
+E       def _assert_visible(app, control):
+E           visible = app.screen._compositor.visible_widgets
+E           assert control in visible, (control.id, control.region)
+E           region, clip = visible[control]
+E           assert region.width > 0 and region.height > 0
+E   >       assert region.intersection(clip) == region, (control.id, region, clip)
+E   E       AssertionError: ('mcp-inspector-test-result-raw-scroll', Region(x=65, y=3, width=10, height=12), Region(x=65, y=3, width=10, height=11))
+E   E       assert Region(x=65, ...10, height=11) == Region(x=65, ...10, height=12)
+E   E
+E   E         Omitting 3 identical items, use -vv to show
+E   E         Differing attributes:
+E   E         ['height']
+E   E
+E   E         Drill down into differing attribute height:
+E   E           height: 11 != 12
+E   E         Use -v to get more diff
+E
+E   Tests/UI/test_mcp_inspector_results.py:43: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:21.494 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:21.566 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:21.642 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:21.650 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:21.651 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:21.780 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:22.033 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_raw_response_keyboard_acc3/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   2.47s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-light]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-light]
+E   1 failed in 3.74s
+_ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False] _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False] _
+E
+E   request = <FixtureRequest for <Coroutine test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a3e5070>
+E   raw_form = False, context = None
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("raw_form", [False, True])
+E       @pytest.mark.parametrize(
+E           "context", [None, PermissionProfileContext("research", 7, "b" * 64, 3)]
+E       )
+E       @private_profile_test
+E       async def test_invalid_attempt_replaces_previous_details_and_can_be_corrected(
+E           request, monkeypatch, raw_form, context
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool(input_schema=None) if raw_form else _tool()
+E               await inspector.show_tool(tool, profile_context=context)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[],
+E                   raw='{"previous":true}',
+E                   decision_note="Earlier approval context",
+E                   profile_context=context,
+E               )
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               disclosure.collapsed = False
+E               field = (
+E                   app.query_one("#mcp-schema-raw", TextArea)
+E                   if raw_form
+E                   else app.query_one("#mcp-schema-field-0", Input)
+E               )
+E               if raw_form:
+E                   field.text = '{"query":'
+E               else:
+E                   field.value = ""
+E               run = app.query_one("#mcp-inspector-test-run", Button)
+E               run.focus()
+E               await _settle(pilot)
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               assert str(
+E                   app.query_one("#mcp-inspector-test-result", Static).renderable
+E               ).startswith("Failed")
+E   >           assert not disclosure.display
+E   E           AssertionError: assert not True
+E   E            +  where True = Collapsible(id='mcp-inspector-test-result-raw').display
+E
+E   Tests/UI/test_mcp_inspector_results.py:195: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:26.355 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:26.426 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:26.500 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:26.508 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:26.509 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:26.636 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:26.915 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False]
+E   1 failed in 2.22s
+_ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True] _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True] _
+E
+E   request = <FixtureRequest for <Coroutine test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e251430>
+E   raw_form = True, context = None
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("raw_form", [False, True])
+E       @pytest.mark.parametrize(
+E           "context", [None, PermissionProfileContext("research", 7, "b" * 64, 3)]
+E       )
+E       @private_profile_test
+E       async def test_invalid_attempt_replaces_previous_details_and_can_be_corrected(
+E           request, monkeypatch, raw_form, context
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool(input_schema=None) if raw_form else _tool()
+E               await inspector.show_tool(tool, profile_context=context)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[],
+E                   raw='{"previous":true}',
+E                   decision_note="Earlier approval context",
+E                   profile_context=context,
+E               )
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               disclosure.collapsed = False
+E               field = (
+E                   app.query_one("#mcp-schema-raw", TextArea)
+E                   if raw_form
+E                   else app.query_one("#mcp-schema-field-0", Input)
+E               )
+E               if raw_form:
+E                   field.text = '{"query":'
+E               else:
+E                   field.value = ""
+E               run = app.query_one("#mcp-inspector-test-run", Button)
+E               run.focus()
+E               await _settle(pilot)
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               assert str(
+E                   app.query_one("#mcp-inspector-test-result", Static).renderable
+E               ).startswith("Failed")
+E   >           assert not disclosure.display
+E   E           AssertionError: assert not True
+E   E            +  where True = Collapsible(id='mcp-inspector-test-result-raw').display
+E
+E   Tests/UI/test_mcp_inspector_results.py:195: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:29.726 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:29.809 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:29.893 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:29.902 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:29.904 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:30.041 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:30.319 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True]
+E   1 failed in 2.33s
+_ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False] _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False] _
+E
+E   request = <FixtureRequest for <Coroutine test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c2e1280>
+E   raw_form = False
+E   context = PermissionProfileContext(profile_id='research', selector_generation=7, policy_digest='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', revision=3)
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("raw_form", [False, True])
+E       @pytest.mark.parametrize(
+E           "context", [None, PermissionProfileContext("research", 7, "b" * 64, 3)]
+E       )
+E       @private_profile_test
+E       async def test_invalid_attempt_replaces_previous_details_and_can_be_corrected(
+E           request, monkeypatch, raw_form, context
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool(input_schema=None) if raw_form else _tool()
+E               await inspector.show_tool(tool, profile_context=context)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[],
+E                   raw='{"previous":true}',
+E                   decision_note="Earlier approval context",
+E                   profile_context=context,
+E               )
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               disclosure.collapsed = False
+E               field = (
+E                   app.query_one("#mcp-schema-raw", TextArea)
+E                   if raw_form
+E                   else app.query_one("#mcp-schema-field-0", Input)
+E               )
+E               if raw_form:
+E                   field.text = '{"query":'
+E               else:
+E                   field.value = ""
+E               run = app.query_one("#mcp-inspector-test-run", Button)
+E               run.focus()
+E               await _settle(pilot)
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               assert str(
+E                   app.query_one("#mcp-inspector-test-result", Static).renderable
+E               ).startswith("Failed")
+E   >           assert not disclosure.display
+E   E           AssertionError: assert not True
+E   E            +  where True = Collapsible(id='mcp-inspector-test-result-raw').display
+E
+E   Tests/UI/test_mcp_inspector_results.py:195: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:33.224 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:33.298 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:33.374 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:33.382 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:33.383 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:33.507 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:33.760 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_2/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False]
+E   1 failed in 2.23s
+_ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True] _
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_3/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True] _
+E
+E   request = <FixtureRequest for <Coroutine test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e215010>
+E   raw_form = True
+E   context = PermissionProfileContext(profile_id='research', selector_generation=7, policy_digest='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', revision=3)
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("raw_form", [False, True])
+E       @pytest.mark.parametrize(
+E           "context", [None, PermissionProfileContext("research", 7, "b" * 64, 3)]
+E       )
+E       @private_profile_test
+E       async def test_invalid_attempt_replaces_previous_details_and_can_be_corrected(
+E           request, monkeypatch, raw_form, context
+E       ):
+E           monkeypatch.setattr(
+E               inspector_module,
+E               "get_cli_setting",
+E               lambda section, key=None, default=None: default,
+E           )
+E           app = _ResultApp()
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               inspector = app.query_one(MCPInspector)
+E               tool = _tool(input_schema=None) if raw_form else _tool()
+E               await inspector.show_tool(tool, profile_context=context)
+E               await inspector.open_test_panel()
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               inspector.show_test_preview(_preview(tool))
+E               inspector.show_tool_result(
+E                   server_key=tool.server_key,
+E                   tool_name=tool.name,
+E                   ok=True,
+E                   result=[],
+E                   raw='{"previous":true}',
+E                   decision_note="Earlier approval context",
+E                   profile_context=context,
+E               )
+E               disclosure = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+E               disclosure.collapsed = False
+E               field = (
+E                   app.query_one("#mcp-schema-raw", TextArea)
+E                   if raw_form
+E                   else app.query_one("#mcp-schema-field-0", Input)
+E               )
+E               if raw_form:
+E                   field.text = '{"query":'
+E               else:
+E                   field.value = ""
+E               run = app.query_one("#mcp-inspector-test-run", Button)
+E               run.focus()
+E               await _settle(pilot)
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               assert str(
+E                   app.query_one("#mcp-inspector-test-result", Static).renderable
+E               ).startswith("Failed")
+E   >           assert not disclosure.display
+E   E           AssertionError: assert not True
+E   E            +  where True = Collapsible(id='mcp-inspector-test-result-raw').display
+E
+E   Tests/UI/test_mcp_inspector_results.py:195: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-22 09:53:36.767 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E   2026-09-22 09:53:36.853 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-22 09:53:36.947 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-22 09:53:36.956 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-22 09:53:36.957 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-22 09:53:37.104 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-22 09:53:37.391 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   - generated xml file: <tmp>/pytest-of-user/pytest-2901/test_invalid_attempt_replaces_3/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True]
+E   1 failed in 2.50s
+============================= slowest 25 durations =============================
+4.83s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-dark]
+4.80s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-light]
+3.67s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True]
+3.47s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-dark]
+3.45s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True]
+3.37s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False]
+3.36s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-light]
+3.27s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-dark]
+FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-light]
+FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-dark]
+FAILED Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-light]
+FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False]
+FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True]
+FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False]
+FAILED Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True]
+8 failed in 31.70s
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-ccee66e8-29f9-441f-a0a0-4a3eea6ce1d6/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-ccee66e8-29f9-441f-a0a0-4a3eea6ce1d6/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-ccee66e8-29f9-441f-a0a0-4a3eea6ce1d6
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-ccee66e8-29f9-441f-a0a0-4a3eea6ce1d6'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-f4119307-5d99-4128-96a7-be8da2f57d3d/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-f4119307-5d99-4128-96a7-be8da2f57d3d/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-f4119307-5d99-4128-96a7-be8da2f57d3d
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-f4119307-5d99-4128-96a7-be8da2f57d3d'
+  warnings.warn(

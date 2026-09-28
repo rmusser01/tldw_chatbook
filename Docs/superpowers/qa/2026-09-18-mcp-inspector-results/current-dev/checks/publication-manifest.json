@@ -1,0 +1,72 @@
+[
+  {
+    "source": "<tmp>/32913-results-red.txt",
+    "export": "32913-results-red.txt",
+    "source_sha256": "936d3ce7c162629906a58afbafc1267f3db1c8e25c17d61a46c44fc3c913ada0",
+    "export_sha256": "6b79175ac8f7b06ad64d0e2a325cfec3213f3696d95c83fa6f35d49f43579a83",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-results-green.txt",
+    "export": "32913-results-green.txt",
+    "source_sha256": "05a99f31f30b6dde82fb9e04382e926d770e56fe09ca1d2af0e4e9c837a4ae02",
+    "export_sha256": "83f4e8ebe5ab3fdf29c379e0ac0366924d6879e548b2c84fdf13974dad76569e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-result-integration-fixed.txt",
+    "export": "32913-result-integration-fixed.txt",
+    "source_sha256": "6ef28d3c077a4dc32bb16e5de90966ae1ccacea68e18c94d4fb7d5edce0f9c5b",
+    "export_sha256": "ac1f18b339b4fdd20a21998ce71b8f0a2aec4ab4992ee864d105914ec91f80ae",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-isolated-harness.txt",
+    "export": "32913-isolated-harness.txt",
+    "source_sha256": "b56c1f0555abec527b570b70b02893c222d0ea2d7f117b7281b7783bb07be3f5",
+    "export_sha256": "542d90c519f75258313b1d89a64dadd8c3322528186322bbba2f67c01b9854f0",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-layout-governance.txt",
+    "export": "32913-layout-governance.txt",
+    "source_sha256": "9a4a9f7e423025b0d4f993bc6106b7c3b84034198aa1b001a704e6a31ff31b0e",
+    "export_sha256": "6a2636fa07273f7bc3a4019bd8f4df03176429d9395e25121ced13049ca00b97",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-runner-admission-final.txt",
+    "export": "32913-runner-admission-final.txt",
+    "source_sha256": "9c957161bb490b79715831448b3e3d24612d10a3b623258fa2cf08edaaff7d7f",
+    "export_sha256": "a8398e607d17c16d000ec2e9f8edbed33a6079ac183a2db13e87c1a83599e904",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-preflight.txt",
+    "export": "32913-preflight.txt",
+    "source_sha256": "af68fcaeb0a405e99d9b4995515fbb5c51e28eb73b3537d1a5256fdd80fb4a3e",
+    "export_sha256": "707ffa2ef7d7f8f51071eee67cb7d93fed91050ff34350f6ea3b35f6441047f1",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-static-analysis.json",
+    "export": "32913-static-analysis.json",
+    "source_sha256": "889cf64b3c096bd286faeb52b4134016014879d51da5a8ad70d9a6e956c15e1d",
+    "export_sha256": "889cf64b3c096bd286faeb52b4134016014879d51da5a8ad70d9a6e956c15e1d",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-dimension-baseline.json",
+    "export": "32913-dimension-baseline.json",
+    "source_sha256": "d2d1505f95b526b90fd1030c8753482b8d40e89d0f27a4dd43756a3b36758726",
+    "export_sha256": "d2d1505f95b526b90fd1030c8753482b8d40e89d0f27a4dd43756a3b36758726",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/32913-task-id-resweep.json",
+    "export": "32913-task-id-resweep.json",
+    "source_sha256": "b2f9059ee1b4b9d8cf609e52d1366779da8a3330fb131ca0d71755e319c740d2",
+    "export_sha256": "e838fe020bd4c41d803eae1d356357c3edcddd80c9eec49c9f250d155ce208ff",
+    "normalization": "host paths and trailing whitespace"
+  }
+]
