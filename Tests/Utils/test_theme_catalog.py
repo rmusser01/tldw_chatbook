@@ -110,12 +110,26 @@ def test_every_colour_of_every_entry_is_uppercase_rrggbb():
     assert all(len(e.colours) == len(BASE_KEYS) for e in entries)
 
 
-def test_duplicate_display_names_get_id_suffix():
+def test_duplicate_display_names_are_told_apart_by_origin_word():
+    """TASK-33073: solarized-light (built-in) vs solarized_light (shipped)
+    read "Solarized Light · built-in" / "· shipped", not the slug."""
     twin = Theme(name="solarized_light", primary="#268BD2", dark=False)
     entries = build_catalog(_available(solarized_light=twin), set(), "textual-dark", "x")
     names = [e.display_name for e in entries]
     assert len(names) == len(set(names))
-    assert any(n.endswith("· solarized-light") for n in names)
+    assert "Solarized Light · built-in" in names
+    assert "Solarized Light · shipped" in names
+    assert not any("solarized" in n for n in names)
+
+
+def test_duplicate_display_names_in_one_origin_fall_back_to_id():
+    a = Theme(name="my-theme", primary="#268BD2")
+    b = Theme(name="my_theme", primary="#268BD2")
+    entries = build_catalog(
+        _available(**{"my-theme": a, "my_theme": b}), {"my-theme", "my_theme"}, "textual-dark", "x"
+    )
+    names = {e.display_name for e in entries}
+    assert {"My Theme · my-theme", "My Theme · my_theme"} <= names
 
 
 def test_is_catalog_theme():

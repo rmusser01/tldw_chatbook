@@ -38,6 +38,9 @@ BASE_KEYS = (
     "panel", "foreground", "success", "warning", "error",
 )
 _ORIGIN_ORDER: dict[str, int] = {"yours": 0, "shipped": 1, "textual": 2}
+#: TASK-33073: the user-facing word for each origin ("textual" is the
+#: framework's name, not something a user chose).
+ORIGIN_LABELS: dict[str, str] = {"yours": "yours", "shipped": "shipped", "textual": "built-in"}
 _SHIPPED_NAMES = frozenset(t.name for t in ALL_THEMES if getattr(t, "name", None))
 
 
@@ -165,12 +168,22 @@ def build_catalog(
         origin, overrides = _origin(name, user_names)
         rows.append((name, origin, overrides, theme))
     counts = Counter(display_name(name) for name, *_ in rows)
+    per_origin = Counter((display_name(name), origin) for name, origin, *_ in rows)
+
+    def label(name: str, origin: Origin) -> str:
+        # TASK-33073: a shared name is told apart by its origin word when
+        # that is enough (solarized-dark vs solarized_dark), else its id.
+        shown = display_name(name)
+        if counts[shown] == 1:
+            return shown
+        if per_origin[(shown, origin)] == 1:
+            return f"{shown} · {ORIGIN_LABELS[origin]}"
+        return f"{shown} · {name}"
+
     entries = [
         ThemeEntry(
             id=name,
-            display_name=(
-                f"{display_name(name)} · {name}" if counts[display_name(name)] > 1 else display_name(name)
-            ),
+            display_name=label(name, origin),
             origin=origin,
             dark=bool(getattr(theme, "dark", True)),
             colours=_colours(theme),

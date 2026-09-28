@@ -307,7 +307,8 @@ async def test_import_onto_existing_name_confirms_and_cancel_keeps_file(request,
         assert editor.import_theme(str(source)) is None  # pending confirmation
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
-        assert app.screen.message == "Replace the saved theme 'sunny'?"
+        # TASK-33073: the list's name with its file.
+        assert app.screen.message == "Replace the saved theme 'Sunny' (sunny.toml)?"
         assert app.screen.confirm_label == "Replace"
         await pilot.click("#cancel-button")
         await pilot.pause()
@@ -372,7 +373,8 @@ async def test_import_during_pause_writes_nothing(request, tmp_path, src, monkey
 @pytest.mark.asyncio
 @private_profile_test
 async def test_replace_dialog_and_toast_escape_the_name(request, tmp_path, src, monkeypatch):
-    """R33: the name goes through escape_markup in the dialog and the toast."""
+    """R33: the name goes through escape_markup in the toast; the dialog
+    renders with markup off (ConfirmationDialog), so it shows plain text."""
     from tldw_chatbook.Widgets import settings_theme_editor as module
 
     monkeypatch.setattr(module, "escape_markup", lambda value: f"<{value}>")
@@ -385,7 +387,7 @@ async def test_replace_dialog_and_toast_escape_the_name(request, tmp_path, src, 
         await _mounted(pilot, app, editor, tmp_path)
         editor.import_theme(str(source))
         await pilot.pause()
-        assert app.screen.message == "Replace the saved theme '<sunny>'?"
+        assert app.screen.message == "Replace the saved theme 'Sunny' (sunny.toml)?"
         await pilot.click("#confirm-button")
         await pilot.pause()
         assert app.notify.call_args.args[0] == "Imported '<sunny>'"

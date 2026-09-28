@@ -25,6 +25,7 @@ from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
     CACHE_REFRESH_FAILED,
+    ORIGIN_LABELS,
     ThemeChange,
     ThemeEntry,
     build_catalog,
@@ -46,7 +47,7 @@ from .settings_theme_editor import (
 )
 from .theme_preview import ThemePreview
 
-_GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
+_GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "BUILT-IN"}  # TASK-33073
 THEMES_LOADING_LABEL = "Loading your themes…"
 # TASK-32957: one exclusive group per picker for the off-thread folder scan.
 _SCAN_GROUP = "settings-theme-scan"
@@ -60,7 +61,7 @@ def _row(entry: ThemeEntry) -> Text:
         text.append("▮", Style(color=colour))
     markers = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
     if entry.overrides:
-        markers.append(f"overrides {entry.overrides}")
+        markers.append(f"overrides {ORIGIN_LABELS[entry.overrides]}")
     if markers:
         text.append("  " + " · ".join(markers))
     return text
@@ -478,7 +479,7 @@ class ThemePicker(Vertical):
             title.update(entry.display_name)
         else:
             tone = "dark" if entry.dark else "light"
-            title.update(f"{entry.display_name}  ·  {tone} · {entry.origin}")
+            title.update(f"{entry.display_name}  ·  {tone} · {ORIGIN_LABELS[entry.origin]}")
         self.query_one(ThemePreview).paint(dict(entry.colours))
 
     def _highlighted_entry(self) -> ThemeEntry | None:
