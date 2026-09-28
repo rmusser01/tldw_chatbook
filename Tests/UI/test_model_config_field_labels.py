@@ -47,9 +47,9 @@ from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
+from tldw_chatbook.UI.Screens import settings_search_index
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
-    ADVANCED_CONFIG_GUIDED_PATHS,
     MODEL_PROFILE_INPUT_PLACEHOLDERS,
     SettingsScreen,
 )
@@ -147,12 +147,30 @@ def test_labels_fit_the_existing_label_columns():
 
 def test_modal_settings_paths_name_real_settings_categories():
     """Captures flag 6: the Context view sent users to "F4 Settings > Console
-    behavior", a category the Settings rail spells "Console Behavior"."""
-    categories = {label for _category, label in ADVANCED_CONFIG_GUIDED_PATHS}
+    behavior", a category the Settings rail spells "Console Behavior".
+    Checked against the rail's own titles, in any case (gap review Minor 5)."""
+    screen = SettingsScreen.__new__(SettingsScreen)
+    screen._internal_prompts_customized_count = 0
+    categories = {summary.title for summary in screen._category_summaries()}
     source = Path(console_settings_modal.__file__).read_text(encoding="utf-8")
-    paths = re.findall(r"F4 Settings > ([A-Z][\w &]*[\w])", source)
+    paths = re.findall(r"F4 Settings > (\w[\w &]*\w)", source)
     assert paths
     assert set(paths) <= categories, set(paths) - categories
+
+
+def test_model_list_refresh_search_rows_use_display_names():
+    """Gap review Minor 4: "/" search spelled "MistralAI auto-refresh model
+    list" while the checkbox said "Mistral AI: refresh"."""
+    settings_search_index.build_field_search_index()
+    entries = settings_search_index.FIELD_SEARCH_INDEX[
+        SettingsCategoryId.PROVIDERS_MODELS
+    ]
+
+    assert (
+        "settings-mc-auto-mistralai",
+        "Mistral AI auto-refresh model list",
+    ) in entries
+    assert ("settings-mc-write-zai", "Z.ai save fetched models to config") in entries
 
 
 def test_help_lines_use_plain_words_not_config_keys():

@@ -155,4 +155,27 @@ Phase 2 ships one field table, labelled Test rows, scoped save copy, a State lin
 - Live drive at 211x44 and 235x52 on a scratch profile (HOME, XDG_* and TLDW_CONFIG_PATH under the scratchpad; users_name verify_33002_drift5a1; model-listing stub on 127.0.0.1:9198). 24 captures overwrite or join qa/model-config-33002-captures/: the popover fields, the modal Context view and memory rows, P&M test-after-revert, save-result, save-toast, model-defaults and test-cloud, a new settings-pm-automatic-refresh pair, Overview last-connection-test, and the Console Behavior fallbacks and reasoning-replay-override views. The real config.toml SHA-1 is unchanged (194e7c5b82). No real-profile file is newer than the launch. tmux was killed and only the scratch data dir was deleted.
 - Re-check before commit (2026-09-28): the new tests are RED again with HEAD's four surface files restored (8 named failures; `test_t_hotkey_does_not_run_test_while_input_focused` is the ADR-126 `RecoveryRequired` red at HEAD) and GREEN on the fix (104 passed). A 617-name failure set from a wider covering run was rerun on a HEAD export: every name is red there too except `test_console_settings_modal_provider_round_trip_ignores_none_model_sentinel`, which also fails 2 of 2 alone at HEAD (order-dependent, not this change).
 - `PYTHON=<venv> ./scripts/preflight.sh`: rc=0.
+
+**Gap-review fix round 1 (review of 973197c692: 1 Critical, 2 Important, 2 Minor).**
+- Critical (capture flag 4, a regression from ccf34d7b9f): the Test rows were one padded string, so a wrapped Endpoint value continued at column 0, under the labels ("URL" in the label column of settings-pm-test-failed-211x44). The result widget is now `_ProviderTestResult`, a `Static` whose `render()` paints the rows as a Rich grid: a 12-cell label column and a value column that wraps and folds. `_provider_test_result` stays the plain padded string that `_provider_test_headline`, the snapshot and the tests parse. One constant, `_PROVIDER_TEST_LABEL_CELLS`, is used by both the join and the grid. One-line results (not run, stale, cancelled) still render as plain text. No CSS and no new geometry.
+- Important 2 and 3: `_revert_category` now keeps the discarded draft. It invalidates the evidence store and marks the Test result stale only when the draft changed provider, model, endpoint, api_key or credential_env_var. A Temperature-only draft keeps a fresh, accurate result. A probe still running at Revert can no longer settle onto the saved identity, because its token is cancelled.
+- Minor 4: `test_model_list_refresh_search_rows_use_display_names` pins the Automatic refresh search-index rows ("Mistral AI auto-refresh model list", "Z.ai save fetched models to config").
+- Minor 5: `test_modal_settings_paths_name_real_settings_categories` now reads the rail's own titles (`_category_summaries`), not the `ADVANCED_CONFIG_GUIDED_PATHS` copy, and matches paths in any case.
+- Docs: the settings.md Revert sentence now says which discarded fields mark the Test result stale, that a running check is discarded, and that a Temperature-only draft keeps the result.
+- Tests: `test_wrapped_endpoint_row_stays_in_the_value_column_at_211x44` asserts on the painted frame that every continuation line starts at the value column. `test_revert_of_a_temperature_only_draft_keeps_a_fresh_test_result` and `test_probe_in_flight_at_revert_cannot_settle_onto_the_saved_identity` cover the Revert fixes.
+
+**Verification (fix round 1, 2026-09-28).**
+- RED before each fix. Painted frame with the old `Static`: the URL wrapped to column 0 on the lines after "Endpoint". Revert of a Temperature-only draft replaced the rows with the stale copy. With a held probe, Revert then release produced "Endpoint http://localhost:8080 · model listing failed (connection refused)". Minor tests, with their fixes reverted one at a time: `{'console behavior'}` (a lower-case path the old regex skipped), and the "MistralAI auto-refresh model list" row missing.
+- GREEN: all five new or changed tests pass.
+- Covering set: 19 files that read the Test result or Revert, run under xdist -n 6 on this tree and on a HEAD export that carries the new tests. The normalized failure sets differ only by the three new tests, which are red on HEAD and green here. Every other red is shared: the ADR-126 `RecoveryRequired` environment red, plus 2 speech-panel tests red on both.
+- ruff: per-file counts equal HEAD for settings_screen.py and the two test modules. The new lines are format-clean.
+- Live drive at 211x44 and 235x52 on a scratch profile (HOME, XDG_* and TLDW_CONFIG_PATH under the scratchpad; users_name verify_33002_fr1; model-listing stub on 127.0.0.1:9198). Captures that overwrite or join qa/model-config-33002-captures/:
+  - settings-pm-test-failed: "URL" now sits in the value column.
+  - settings-pm-test-passed.
+  - settings-pm-test-after-revert: byte-identical to the committed capture, because an endpoint draft still marks the result stale.
+  - a new settings-pm-test-after-temperature-revert pair: the rows survive a Temperature-only Revert.
+  - The failed and passed frames show "Provider settings reverted to last loaded values." because the session reverted a stray Model edit first.
+  - The real config.toml SHA-1 is unchanged (194e7c5b82). No real-profile file is newer than the launch. tmux was killed and only the scratch profile was deleted.
+- console_settings_modal.py is untouched (net 0).
+- `PYTHON=<venv> ./scripts/preflight.sh`: rc=0.
 <!-- SECTION:NOTES:END -->

@@ -1893,3 +1893,166 @@ async def test_revert_marks_the_discarded_drafts_test_rows_stale(request):
             _provider_test_result_text(screen)
             == SettingsScreen._PROVIDER_TEST_STALE_COPY
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_wrapped_endpoint_row_stays_in_the_value_column_at_211x44(request):
+    """Gap review Critical 1: the Test rows were one padded string, so a
+    long Endpoint value wrapped back to column 0 under the labels
+    (capture settings-pm-test-failed-211x44 put "URL" in the label column).
+    Asserted on the painted frame: every continuation line is blank across
+    the label column."""
+    from textual.containers import VerticalScroll
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    long_endpoint = "http://127.0.0.1:9/" + "/".join(["segment"] * 20)
+
+    async def refused_probe(_base_url: str, **_kwargs: object):
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            summary="unreachable: connection refused",
+            category="connection_refused",
+        )
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = long_endpoint
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        await pilot.pause()
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            refused_probe,
+        ):
+            screen.action_settings_test_category()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        result = screen.query_one("#settings-provider-test-result", Static)
+        screen.query_one("#settings-detail-pane-body", VerticalScroll).scroll_to_widget(
+            result, animate=False, immediate=True, top=True, force=True
+        )
+        await pilot.pause()
+        region = result.region
+        strips = host.screen._compositor.render_strips()
+        painted = [
+            strips[y].crop(region.x, region.right).text
+            for y in range(region.y, region.bottom)
+        ]
+        labels = ("Endpoint", "Config", "Key", "Model", "Generation")
+        label_cells = len("Generation  ")
+
+        assert painted[0].startswith("Endpoint"), painted
+        continuations = [
+            line for line in painted if line.strip() and not line.startswith(labels)
+        ]
+        assert continuations, f"the Endpoint value never wrapped: {painted}"
+        assert all(
+            len(line) - len(line.lstrip()) == label_cells for line in continuations
+        ), "\n".join(painted)
+        assert _result_rows(_provider_test_result_text(screen))[0][0] == "Endpoint"
+
+
+async def _test_reachable_llama_cpp(screen, pilot) -> str:
+    with patch(
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+        _reachable_endpoint_probe,
+    ):
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _wait_for_settings_text(screen, pilot, "model listing reached")
+    return _provider_test_result_text(screen)
+
+
+async def _confirm_revert(screen, pilot) -> None:
+    screen.action_settings_revert_category()
+    await pilot.pause()
+    await pilot.click("#confirm-button")
+    await pilot.pause()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_of_a_temperature_only_draft_keeps_a_fresh_test_result(request):
+    """Gap review Important 2: Revert marked the Test rows stale even when
+    the discarded draft touched no tested field."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        tested = await _test_reachable_llama_cpp(screen, pilot)
+        assert "http://localhost:8080 · model listing reached" in tested
+
+        temperature = screen.query_one("#settings-model-profile-temperature", Input)
+        temperature.value = "0.3"
+        await pilot.pause()
+        assert _provider_test_result_text(screen) == tested
+        await _confirm_revert(screen, pilot)
+
+        assert _provider_test_result_text(screen) == tested
+        identity = screen._provider_current_draft_identity()
+        evidence = screen._provider_evidence_store().evidence_for(identity)
+        assert evidence is not None and evidence.endpoint == "reachable"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_probe_in_flight_at_revert_cannot_settle_onto_the_saved_identity(
+    request,
+):
+    """Gap review Important 3: Revert left the discarded draft's probe token
+    live, so its late result replaced the stale marker with rows crediting
+    the saved endpoint with the draft's failure."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    release = asyncio.Event()
+
+    async def held_refused_probe(_base_url: str, **_kwargs: object):
+        await release.wait()
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            summary="unreachable: connection refused",
+            category="connection_refused",
+        )
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9"
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        await pilot.pause()
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            held_refused_probe,
+        ):
+            screen.action_settings_test_category()
+            await pilot.pause()
+            assert "checking the model listing" in _provider_test_result_text(screen)
+
+            await _confirm_revert(screen, pilot)
+            assert endpoint.value == "http://localhost:8080"
+            assert (
+                _provider_test_result_text(screen)
+                == SettingsScreen._PROVIDER_TEST_STALE_COPY
+            )
+
+            release.set()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert (
+            _provider_test_result_text(screen)
+            == SettingsScreen._PROVIDER_TEST_STALE_COPY
+        )

@@ -266,9 +266,11 @@ again.
 Model and Endpoint edits stay as a draft when you visit another destination and
 return to Settings. Use **Tab** to move between fields. While typing, press
 **Esc**, then **s** to save or **r** to revert. Revert asks first: **Keep editing**
-retains the draft; **Discard changes** restores the saved values and marks
-the last Test result stale, since it described the discarded draft. Saving writes
-the provider settings locally and clears the unsaved marker; it does not test
+retains the draft; **Discard changes** restores the saved values. When the
+discarded draft changed the provider, model, endpoint, API key or env var, it
+also marks the last Test result stale and discards a check still running; a draft
+that changed only generation defaults such as Temperature keeps the result.
+Saving writes the provider settings locally and clears the unsaved marker; it does not test
 the endpoint. Reopening this page shows the saved model and endpoint. The save
 result and its toast say what the save reaches: "new chats and open chats
 nobody has used yet take them; chats with work keep their own settings (change

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from rich.cells import cell_len
+from rich.table import Table
 from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import on, work
@@ -980,6 +981,37 @@ class _SettingsWorkspaceLifecycleResult(Static):
         screen = self.screen
         if isinstance(screen, SettingsScreen):
             screen._reveal_workspace_lifecycle_result()
+
+
+#: Cells the Test result's label column takes ("Generation" plus a gap).
+_PROVIDER_TEST_LABEL_CELLS = 12
+
+
+class _ProviderTestResult(Static):
+    """Paint the Test rows as label and value columns.
+
+    The content stays the plain padded string that Overview and the
+    snapshot parse; only the paint splits it, so a wrapped value continues
+    under its value instead of under the labels (gap review Critical 1).
+    """
+
+    def render(self):
+        content = self.content
+        lines = content.split("\n") if isinstance(content, str) else []
+        if not lines or not all(
+            line[_PROVIDER_TEST_LABEL_CELLS - 1 : _PROVIDER_TEST_LABEL_CELLS] == " "
+            for line in lines
+        ):
+            return super().render()
+        grid = Table.grid(expand=True)
+        grid.add_column(width=_PROVIDER_TEST_LABEL_CELLS, no_wrap=True)
+        grid.add_column(ratio=1, overflow="fold")
+        for line in lines:
+            grid.add_row(
+                Text(line[:_PROVIDER_TEST_LABEL_CELLS]),
+                Text(line[_PROVIDER_TEST_LABEL_CELLS:]),
+            )
+        return grid
 
 
 class _SettingsWorkspaceAssistantResult(Static):
@@ -15642,7 +15674,9 @@ class SettingsScreen(BaseAppScreen):
                 f"Configuration check complete: {display_name} is configured; "
                 f"model {model}. Live generation has not been tested."
             )
-        detail = "\n".join(f"{label:<12}{text}" for label, text in rows)
+        detail = "\n".join(
+            f"{label:<{_PROVIDER_TEST_LABEL_CELLS}}{text}" for label, text in rows
+        )
         return redact_secret_text(detail), redact_secret_text(summary), passed
 
     def _run_provider_readiness_test(self) -> str:
@@ -17131,7 +17165,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-test-provider-guidance",
                 classes="settings-status-row",
             )
-            yield Static(
+            yield _ProviderTestResult(
                 self._provider_test_result,
                 id="settings-provider-test-result",
                 markup=False,
@@ -31658,7 +31692,7 @@ class SettingsScreen(BaseAppScreen):
                     panel.revert(), group="web-search-revert", exclusive=False
                 )
             return
-        self._settings_drafts.pop(category, None)
+        discarded = self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._console_behavior_result = (
                 "Console behavior settings reverted to last loaded values. "
@@ -31774,8 +31808,12 @@ class SettingsScreen(BaseAppScreen):
             self._set_static_text(
                 "#settings-provider-save-result", self._provider_save_result
             )
-            # The Test rows described the draft Revert just discarded.
-            self._mark_provider_test_result_stale()
+            # Only a discarded tested field voids the Test rows, and its
+            # in-flight probe must not settle onto the saved identity.
+            tested = {"provider", "model", "endpoint", "api_key", "credential_env_var"}
+            if discarded is not None and discarded.dirty_keys & tested:
+                self._provider_evidence_store().invalidate()
+                self._mark_provider_test_result_stale()
             self._update_provider_dynamic_widgets()
             self._update_draft_status_widgets(category)
         else:
