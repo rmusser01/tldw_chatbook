@@ -7503,6 +7503,82 @@ async def test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider_raises", [False, True])
+async def test_run_agent_reply_closes_the_runs_remote_sessions_at_run_end(
+    monkeypatch, provider_raises
+):
+    """The run key's SSH sessions close however the run ends (finally path)."""
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+
+    def run_reply(**kwargs):
+        if provider_raises:
+            raise RuntimeError("provider exploded")
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(run_reply=run_reply),
+    )
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    (
+        resolution,
+        turn_context,
+    ) = await controller._capture_and_resolve_turn_execution_context(
+        session.id,
+        configuration,
+    )
+    assert turn_context is not None
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    trace_request = build_console_request(
+        [{"role": "user", "content": "hello"}],
+        message_provenance=(
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST,
+                policy,
+            ),
+        ),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    closed = []
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.remote_session_registry.close_remote_sessions",
+        closed.append,
+    )
+
+    await controller._run_agent_reply(
+        resolution=resolution,
+        provider_messages=[{"role": "user", "content": "hello"}],
+        assistant_message_id=assistant.id,
+        prepare_retry=False,
+        variant_mode=False,
+        turn_context=turn_context,
+        capture_mode_override=ConsoleTraceCaptureMode.CAPTURE_ON,
+        trace_request=trace_request,
+    )
+
+    assert closed == [assistant.id]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("production_boundary", [False, True])
 async def test_durable_capture_on_composes_exact_trace_request_through_real_agent_path(
     tmp_path,

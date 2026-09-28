@@ -1892,13 +1892,15 @@ def _default_remote_run_executor_factory(
     *,
     status_cache: Any,
     sensitive_exclusions: Any,
+    session_key: str | None = None,
 ) -> Any:
     """Build the dispatch adapter over the real ssh transport executor.
 
     Pure construction — no spawn, no network (the hot-path rule): the
     master manager is the shared lazy singleton, and the first transport
     call happens only when a tool call (or the debounced probe thread)
-    actually executes.
+    actually executes. ``session_key`` (the run key) routes calls through
+    that run's shared SSH session worker; ``None`` keeps per-call spawns.
     """
     from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
     from tldw_chatbook.Tools.remote_workspace_executor import (
@@ -1920,6 +1922,7 @@ def _default_remote_run_executor_factory(
         sensitive_exclusions=sensitive_exclusions,
         expected_fingerprint=expected_fingerprint,
         canonical_host_key=host_key,
+        session_key=session_key,
     )
     return _RemoteExecutorDispatchAdapter(inner, alias=binding_id)
 
@@ -1930,6 +1933,7 @@ def _default_remote_instruction_executor(
     *,
     status_cache: Any,
     sensitive_exclusions: Any,
+    session_key: str | None = None,
 ) -> Any:
     """Build the ssh-transport executor for instruction reads (Task 19).
 
@@ -1959,6 +1963,7 @@ def _default_remote_instruction_executor(
         sensitive_exclusions=sensitive_exclusions,
         expected_fingerprint=expected_fingerprint,
         canonical_host_key=host_key,
+        session_key=session_key,
     )
 
 
@@ -1991,6 +1996,7 @@ def _remote_instruction_io_for_selection(
     registry: Any,
     status_cache: Any,
     executor_factory: Any = None,
+    session_key: str | None = None,
 ) -> Any:
     """Build the executor-backed instruction IO for one remote selection.
 
@@ -2003,7 +2009,11 @@ def _remote_instruction_io_for_selection(
     if not is_remote(getattr(selection, "root", None)):
         return None
     binding_id = str(selection.root.binding_id)
-    factory = executor_factory or _default_remote_instruction_executor
+    # The run key reaches only the DEFAULT factory: injected (test)
+    # factories keep their session-key-free signature.
+    factory = executor_factory or functools.partial(
+        _default_remote_instruction_executor, session_key=session_key
+    )
     try:
         from tldw_chatbook.Workspaces.registry_service import (
             binding_exclusion_entries,
@@ -2067,6 +2077,7 @@ def capture_run_admitted_workspace_roots(
     project_authority_guard: Callable[[], bool] | None = None,
     status_cache: Any = None,
     remote_executor_factory: Callable[..., Any] | None = None,
+    remote_session_key: str | None = None,
 ) -> tuple[Any, ...]:
     """Capture immutable run-root authority for one owning Console run.
 
@@ -2092,6 +2103,9 @@ def capture_run_admitted_workspace_roots(
             ``(binding, binding_id, *, status_cache, sensitive_exclusions)``
             building the remote dispatch executor; ``None`` uses the real
             ssh transport adapter (test seam for stub executors).
+        remote_session_key: Optional run key forwarded to the DEFAULT
+            factory only, so every call of this run shares one SSH session
+            per binding; never passed to an injected factory.
 
     Returns:
         Immutable run-root authorities ordered by stable binding ID, or an
@@ -2112,8 +2126,8 @@ def capture_run_admitted_workspace_roots(
         return ()
     if status_cache is None:
         status_cache = _app_remote_binding_status_cache()
-    remote_factory = (
-        remote_executor_factory or _default_remote_run_executor_factory
+    remote_factory = remote_executor_factory or functools.partial(
+        _default_remote_run_executor_factory, session_key=remote_session_key
     )
 
     def _schedule_recovery_probe(binding: Any, binding_id: str) -> None:
@@ -4413,6 +4427,34 @@ def _retire_generation_before_agent_handoff(method: Callable[..., Any]):
                 )
 
     return wrapped
+
+
+def _close_remote_sessions_at_run_end(method: Callable[..., Any]):
+    """Close the run's SSH session workers however the run ends.
+
+    Wraps the WHOLE run, not just its finalize step: the provider-failure,
+    cancel and pre-dispatch refusal paths all return or raise before
+    ``_finalize_agent_reply``. The close runs off the event loop (a worker
+    close may wait ~2s for the remote parent), and the registry module is
+    imported here so it is never resident at UI-ready.
+    """
+
+    @functools.wraps(method)
+    async def wrapped(self, *args, **kwargs):
+        try:
+            return await method(self, *args, **kwargs)
+        finally:
+            from tldw_chatbook.Tools.remote_session_registry import (
+                close_remote_sessions,
+            )
+
+            await asyncio.to_thread(
+                close_remote_sessions, kwargs["assistant_message_id"]
+            )
+
+    return wrapped
+
+
 _PERSONAL_CONTEXT_SERVICE_UNSET = object()
 
 
@@ -21771,6 +21813,7 @@ class ConsoleChatController:
         registry: Any,
         startup_max_bytes: int,
         reader_for: Callable[..., Any] | None = None,
+        session_key: str | None = None,
     ) -> "StartupInstructionCandidate | None":
         """Resolve remote startup instructions through the executor reader.
 
@@ -21788,6 +21831,8 @@ class ConsoleChatController:
             startup_max_bytes: Coerced startup byte budget.
             reader_for: Injectable reader factory (test seam); the real
                 one builds the ssh-transport executor-backed reader.
+            session_key: The run key (``None`` for previews), so the read
+                shares the run's SSH session.
         """
         resolve_reader = reader_for or _remote_instruction_io_for_selection
         try:
@@ -21795,6 +21840,7 @@ class ConsoleChatController:
                 project_selection,
                 registry=registry,
                 status_cache=_app_remote_binding_status_cache(),
+                session_key=session_key,
             )
             if remote_io is None:
                 logger.warning(
@@ -27670,6 +27716,7 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
+    @_close_remote_sessions_at_run_end
     @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
         self,
@@ -27901,6 +27948,7 @@ class ConsoleChatController:
                         await self._resolve_remote_project_instruction_startup(
                             project_selection,
                             registry=registry,
+                            session_key=assistant_message_id,
                             startup_max_bytes=coerce_int_setting(
                                 turn_context.tool_configuration.get(
                                     "project_instructions_startup_max_bytes",
@@ -28092,6 +28140,7 @@ class ConsoleChatController:
                 registry=getattr(self.app, "workspace_registry_service", None),
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
+                remote_session_key=assistant_message_id,
             )
             worktree_repo_authority = None
             if (
