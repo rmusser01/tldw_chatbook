@@ -661,8 +661,13 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                     counting_chat, snapshot=snap, count=query_count,
                     exploration_slots=int(dreams_setting("exploration_slots")))
             else:
-                queries = query_synthesis.preview_queries(
-                    [str(t["text"]) for t in snap["topics"]], query_count)
+                # preview_queries now returns labeled rows (Phase 2 Task 1);
+                # the cycle still wants plain query strings. Its internal
+                # filter already dropped unsearchable goals.
+                queries = [row["query"] for row in
+                           query_synthesis.preview_queries(
+                               [str(t["text"]) for t in snap["topics"]],
+                               snap.get("goals", []), count=query_count)]
                 notes.append("llm budget exhausted: fallback queries, no "
                              "synthesis call")
         except Exception as exc:  # noqa: BLE001 - provider unavailable, degrade
