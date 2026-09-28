@@ -17,6 +17,7 @@ import asyncio
 import inspect
 import json
 from collections.abc import Callable
+from itertools import zip_longest
 from typing import Any
 
 from loguru import logger
@@ -170,6 +171,14 @@ def _fallback_queries(
 ) -> list[dict]:
     """Deterministic degraded-cycle queries from the top topics and goals.
 
+    Qodo #14 (PR #2890): topic and goal lines INTERLEAVE (topic, goal,
+    topic, goal, ...) instead of topics filling every slot first. With the
+    default three-query budget and two or more topics, the old
+    topics-first order starved goals out of the fallback entirely -- an
+    LLM failure then produced no goal-derived search or preview at all
+    despite searchable goals being present. Round-robin puts the first
+    searchable goal in slot 2 whenever one exists, at every count.
+
     Args:
         topics: Snapshot topic texts, heaviest first.
         goals: SEARCHABLE goal texts only (callers filter; this helper is
@@ -177,16 +186,25 @@ def _fallback_queries(
         count: Number of queries to return.
 
     Returns:
-        ``{"query": str, "goal_derived": bool}`` rows — one
-        ``"<topic> recent developments"`` per top topic, at most one
-        ``"<goal> events and tickets"`` per goal, plus one
-        ``"surprising adjacent to <top topic>"`` line, capped at ``count``
-        with one slot always reserved for the exploration line.
+        ``{"query": str, "goal_derived": bool}`` rows -- alternating
+        ``"<topic> recent developments"`` / ``"<goal> events and
+        tickets"`` lines (whichever pool runs out first drains the other
+        into the remaining slots), plus one ``"surprising adjacent to
+        <top topic>"`` line, capped at ``count`` with one slot always
+        reserved for the exploration line.
     """
-    out = [{"query": f"{t} recent developments", "goal_derived": False}
-           for t in topics[: max(count - 1, 1)]]
-    for goal in goals[: max(count - len(out) - 1, 0)]:
-        out.append({"query": f"{goal} events and tickets", "goal_derived": True})
+    interleaved: list[dict] = []
+    for topic, goal in zip_longest(
+        ({"query": f"{t} recent developments", "goal_derived": False}
+         for t in topics),
+        ({"query": f"{g} events and tickets", "goal_derived": True}
+         for g in goals),
+    ):
+        if topic is not None:
+            interleaved.append(topic)
+        if goal is not None:
+            interleaved.append(goal)
+    out = interleaved[: max(count - 1, 1)]
     out.append({"query": f"surprising adjacent to {topics[0]}" if topics
                 else "curious new things this week",
                 "goal_derived": False})
