@@ -1626,4 +1626,40 @@ git commit -m "feat: one SSH session per binding per run; close at run end and a
 
 ## Spike results
 
-(Filled in by Task 1.)
+Measured 2026-09-27, laptop <-> `ml-user@192.168.5.84` (Debian 13, python3
+3.13.5) over LAN Wi-Fi, one ControlMaster-backed ssh channel per run, 60 reps
+per metric (first 10 discarded as warm-up), 50 ICMP pings (`-i 0.2`) run
+immediately after in the same script invocation. Script:
+`scratch/echo_spike.py` (throwaway, not committed) — the brief's sample with
+two corrections: `shlex.quote(SERVER)` instead of `repr(SERVER)` (ssh rejoins
+argv into one string that the remote login shell re-parses, so the server
+source must be shell-quoted), and a `struct`-driven frame-accumulating read
+loop instead of a fixed byte count. Ping was also run without `-q` and its
+per-packet `time=` values parsed, since `-q` only gives min/avg/max/stddev
+and not the median/p90 this spike needs.
+
+| Run | echo median / p90 (ms) | fork-probe median / p90 (ms) | ping median / p90 (ms) | echo ≤ ping median + 15ms? |
+|---|---|---|---|---|
+| 1 (20:02 PDT) | 7.51 / 124.52 | 7.65 / 128.10 | 37.43 / 255.35 | yes (7.51 ≤ 52.43) |
+| 2 (20:04 PDT) | 6.50 / 15.35 | 6.09 / 10.02 | 13.44 / 107.67 | yes (6.50 ≤ 28.44) |
+| 3 (20:06 PDT) | 8.14 / 35.64 | 8.31 / 93.64 | 28.77 / 113.28 | yes (8.14 ≤ 43.77) |
+
+**Decision: GO.** Echo median beat the `ping median + 15ms` bar in all three
+runs at different moments — in fact the framed-echo round trip over the
+persistent ControlMaster channel was consistently *at or below* raw ICMP
+ping's median (this LAN/Wi-Fi link has a heavy-tailed ping distribution:
+p90 up to 9x the median in two of three runs, while the SSH-channel echo's
+tail stayed much tighter except in run 1). Echo was never ≥40ms above ping,
+so the delayed-ACK stall condition never triggered and `-o IPQoS=lowdelay`
+was not tested — no master option to carry into Task 6 beyond what's already
+planned there.
+
+**Fork+waitpid overhead** (fork-probe median minus echo median, same run):
+run 1 +0.14ms, run 2 -0.41ms (noise), run 3 +0.17ms. A fork+waitpid per
+request adds no measurable latency beyond the round trip itself (well under
+1ms, within measurement noise) — `fork_pin_op_ms` for Task 9's success check
+should be treated as ~0ms extra over the echo floor.
+
+No stray remote processes or leftover control sockets after any run
+(verified via `ps -eo pid,args | grep '[p]ython3 -I -c'` and `ls /tmp/tes-*`
+after each trial).
