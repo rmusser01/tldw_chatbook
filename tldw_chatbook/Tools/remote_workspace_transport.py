@@ -295,6 +295,10 @@ class SshMasterManager:
         #: no masters and no ControlPath options for this manager's
         #: lifetime (set once, inside the registry lock).
         self._mux_unusable = False
+        #: Set by close_all (app exit): no new masters or health checks
+        #: afterwards, so a straggler call connects directly instead of
+        #: leaving a detached master behind (TASK-33406).
+        self._closed = False
 
     @property
     def ssh_bin(self) -> str:
@@ -455,12 +459,12 @@ class SshMasterManager:
         logged, not raised — the transport surfaces them as typed call
         errors and the next ``ensure_master`` retries.
 
-        No-op when multiplexing is disabled.
+        No-op when multiplexing is disabled. After :meth:`close_all` this is a no-op.
 
         Args:
             loc: A validated locator.
         """
-        if not self._enabled:
+        if not self._enabled or self._closed:
             return
         key = _host_key(loc)
         with self._lock_for(key):
@@ -490,6 +494,10 @@ class SshMasterManager:
                 # A master from outside this process still owns the socket;
                 # starting ours would race for the same %C path.
                 return
+            if self._closed:
+                # ponytail: a start that passed the entry check just before
+                # close_all can still spawn here; ControlPersist bounds it.
+                return
             self._spawn_master(loc, key, control_dir)
 
     def restart_if_dead(self, loc: RemoteLocator) -> bool:
@@ -498,7 +506,7 @@ class SshMasterManager:
         Runs ``ssh -O check`` (bounded); if the master is gone, removes the
         stale socket file (so the fresh master cannot collide with it) and
         calls :meth:`ensure_master`. Called ONLY after a mux failure —
-        never proactively per batch.
+        never proactively per batch. After :meth:`close_all` this is a no-op.
 
         Args:
             loc: A validated locator.
@@ -506,7 +514,7 @@ class SshMasterManager:
         Returns:
             True iff a restart was attempted (the check said dead).
         """
-        if not self._enabled:
+        if not self._enabled or self._closed:
             return False
         if self.control_path_for(loc) is None:
             return False  # sun_path-degraded: no mux to restart
@@ -533,6 +541,7 @@ class SshMasterManager:
         here, and ControlPersist bounds any master this fails to reach.
         """
         with self._registry_lock:
+            self._closed = True
             keys = list(self._registrations)
             self._registrations.clear()
             sockets = {key: self._sockets.pop(key) for key in keys if key in self._sockets}

@@ -642,6 +642,60 @@ def test_close_all_tolerates_exit_failures(
     manager.close_all()  # must not raise
 
 
+def test_no_master_is_spawned_after_close_all(fake_ssh: FakeSsh) -> None:
+    """TASK-33406: a straggler call after app exit starts no detached master."""
+    manager = _manager(fake_ssh)
+    manager.close_all()
+    manager.ensure_master(_LOC)
+    assert fake_ssh.count("-MNf") == 0
+    assert manager.restart_if_dead(_LOC) is False
+    assert not any("check" in argv for argv in fake_ssh.invocations())
+
+
+def test_closed_singleton_part_1_app_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Tools import remote_workspace_transport as transport
+
+    # Stub the config accessor to avoid full config load; the singleton
+    # shutdown behavior under test is independent of config details.
+    monkeypatch.setattr(
+        config_module,
+        "get_console_ssh_settings",
+        lambda: config_module.ConsoleSshSettings(
+            control_persist="10m",
+            enable_multiplexing=True,
+            connect_timeout_s=3,
+        ),
+    )
+    monkeypatch.setattr(transport, "_MASTER_MANAGER", None)
+
+    transport.get_master_manager().close_all()
+    assert transport.get_master_manager()._closed
+
+
+def test_closed_singleton_part_2_next_test_gets_a_working_manager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Tools import remote_workspace_transport as transport
+
+    # Stub the config accessor so part 2 can construct a fresh manager.
+    monkeypatch.setattr(
+        config_module,
+        "get_console_ssh_settings",
+        lambda: config_module.ConsoleSshSettings(
+            control_persist="10m",
+            enable_multiplexing=True,
+            connect_timeout_s=3,
+        ),
+    )
+
+    mgr = transport.get_master_manager()
+    assert not mgr._closed
+
+
 # ---------------------------------------------------------------------------
 # module singleton
 # ---------------------------------------------------------------------------
