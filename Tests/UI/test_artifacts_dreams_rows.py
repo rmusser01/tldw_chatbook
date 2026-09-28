@@ -6,6 +6,8 @@ runs and ``app.dreams_db`` stays whatever the test assigns) wrapped in
 ``DestinationHarness``, with a real ``DreamsDB`` on ``tmp_path`` for seeding.
 """
 
+import time
+
 import pytest
 from textual.widgets import Static
 
@@ -57,18 +59,59 @@ def _seed_failed_cycle_db(tmp_path) -> DreamsDB:
     return db
 
 
+async def _settle_artifacts_refreshes(screen, pilot, *, timeout: float = 10.0) -> None:
+    """Wait out the Artifacts screen's mount/resume refresh workers.
+
+    ``on_mount`` starts the chatbook, daily-reports and dreams thread
+    workers, and the push that mounted the screen also fires
+    ``on_screen_resume`` (artifacts_screen.py), which starts the reports
+    and dreams refreshes a second time. Every apply recomposes the shared
+    list pane, remounting each row and empty-state Static. A query or
+    click made between one of those recomposes and the next layout pass
+    reads a *detached* widget (``region`` collapses to 0x0) or raises
+    ``NoMatches`` — which is what made these tests rotate red in batch
+    runs while passing solo: the surviving window depends purely on
+    thread timing. Waiting for the workers to finish, then draining the
+    still-queued ``call_from_thread`` applies, closes the window.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        workers = (
+            getattr(screen, "_dreams_worker", None),
+            getattr(screen, "_daily_reports_worker", None),
+            getattr(screen, "_chatbook_refresh_worker", None),
+        )
+        if all(worker is None or worker.is_finished for worker in workers):
+            break
+        if time.monotonic() > deadline:
+            raise AssertionError("Artifacts refresh workers never finished")
+        await pilot.pause(0.02)
+    # ``worker.is_finished`` turns True before its ``call_from_thread``
+    # apply has run; an idle pause drains that pending apply (and the
+    # layout pass it schedules) before the caller queries or clicks.
+    await pilot.pause()
+    await pilot.pause()
+
+
 async def _wait_for_dreams(screen, pilot, selector: str, *, attempts: int = 50):
     """Wait until the worker has landed rows AND composed them.
 
     Waiting on the widget (not just ``screen._dreams``) is deliberate:
     ``_apply_dreams`` sets state, then recomposes asynchronously, so a
     query made the moment the state flips can race the repaint.
+
+    The settle afterwards is as load-bearing as the wait: the dreams
+    apply is only the FIRST of the mount/resume recompose waves (see
+    ``_settle_artifacts_refreshes``), and a row reference taken now is
+    detached (region 0x0, click-miss) the moment a later wave lands.
     """
     for _ in range(attempts):
         await pilot.pause(0.05)
         if screen._dreams and screen.query(selector):
-            return
-    raise AssertionError(f"dreams refresh never landed {selector!r}")
+            break
+    else:
+        raise AssertionError(f"dreams refresh never landed {selector!r}")
+    await _settle_artifacts_refreshes(screen, pilot)
 
 
 def _dream_row_widgets(screen):
@@ -138,6 +181,10 @@ async def test_disabled_dreams_renders_disabled_even_with_rows(tmp_path):
     async with host.run_test(size=(160, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
+        # Dreams is disabled, so there is no row to wait for -- but the
+        # reports/chatbook refresh waves still remount this Static, and a
+        # query taken mid-recompose raises NoMatches.
+        await _settle_artifacts_refreshes(screen, pilot)
 
         empty = screen.query_one("#artifacts-list-dreams", Static)
         assert str(empty.renderable) == "> Dreams: disabled"
@@ -156,6 +203,7 @@ async def test_enabled_dreams_with_no_rows_renders_none_yet(tmp_path, monkeypatc
     async with host.run_test(size=(160, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
+        await _settle_artifacts_refreshes(screen, pilot)
 
         empty = screen.query_one("#artifacts-list-dreams", Static)
         assert str(empty.renderable) == "> Dreams: none yet"
@@ -172,6 +220,7 @@ async def test_missing_dreams_db_degrades_to_none_yet_without_crashing(monkeypat
     async with host.run_test(size=(160, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
+        await _settle_artifacts_refreshes(screen, pilot)
         assert isinstance(screen, ArtifactsScreen)
 
         empty = screen.query_one("#artifacts-list-dreams", Static)

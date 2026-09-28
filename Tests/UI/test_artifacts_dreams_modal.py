@@ -21,6 +21,7 @@ from textual.widgets import Button, Static
 import tldw_chatbook.UI.Screens.artifacts_dreams_modal as dsm_module
 from Tests.Dreams.test_ingest_action import FakeCaptureBackend
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_artifacts_dreams_rows import _settle_artifacts_refreshes
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.Dreams.dreams_view import list_recent_dreams
@@ -644,8 +645,14 @@ async def _wait_for_dreams(screen, pilot, selector: str, *, attempts: int = 50):
     for _ in range(attempts):
         await pilot.pause(0.05)
         if screen._dreams and screen.query(selector):
-            return
-    raise AssertionError(f"dreams refresh never landed {selector!r}")
+            break
+    else:
+        raise AssertionError(f"dreams refresh never landed {selector!r}")
+    # Same settle as the rows file: the dreams apply is only the first of
+    # the mount/resume recompose waves; without draining the reports and
+    # chatbook applies, a click resolved now races their remount and lands
+    # on whatever the recompose leaves at the row's coordinates.
+    await _settle_artifacts_refreshes(screen, pilot)
 
 
 # The four wiring tests below build a real app via ``_build_test_app``,
@@ -685,14 +692,16 @@ async def test_dream_row_click_opens_modal_and_actions_refresh_rows(
         assert host.screen_stack[-1] is screen, "close returns to the Artifacts screen"
 
         # on_changed refreshed the screen's rows: the kept badge is painted.
+        # The refresh's recompose remounts the row mid-loop, so re-query by
+        # selector (never hold the old object) and tolerate the teardown
+        # window where no row is mounted for a beat.
         for _ in range(50):
             await pilot.pause(0.05)
-            row = screen.query_one("#artifacts-dream-row-1", Static)
-            if "kept" in _renderable_text(row.renderable):
+            rows = screen.query("#artifacts-dream-row-1")
+            if rows and "kept" in _renderable_text(rows.first().renderable):
                 break
-        assert "kept" in _renderable_text(
-            screen.query_one("#artifacts-dream-row-1", Static).renderable
-        )
+        rows = screen.query("#artifacts-dream-row-1")
+        assert rows and "kept" in _renderable_text(rows.first().renderable)
 
 
 @pytest.mark.bootstrap_profile
