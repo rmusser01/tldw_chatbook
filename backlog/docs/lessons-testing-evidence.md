@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## A queue that never drains may be another repo's CI
+
+**TASK-33160, 2026-09-27.** From 2026-09-23, this repo's required check waited 172-745 min
+(median) for runners, with long stretches of 0 jobs running. The cause was the sibling repo
+`tldw_server`. Its `LICENSE_FIRST_CI_ENABLED` variable enabled a duplicate `workflow_run` CI
+lane: about 750-job runs, 352 of them macOS, posting to `main` where nothing read them. That
+lane filled the account-wide cap of 40 concurrent jobs (5 macOS), which both repos share.
+Deleting the variable and cancelling the queued duplicate runs cut this repo from 0 running /
+24 queued to 7 running / 3 queued within minutes. When runs sit queued, check the account's
+other repos (`gh run list --repo <sibling> --status queued`) before calling it GitHub-side
+starvation.
+
 ## A config section code reads from `app_config` must be copied in `load_settings()`
 
 **TASK-32954, 2026-09-25.** The built-in skills' off switch reads

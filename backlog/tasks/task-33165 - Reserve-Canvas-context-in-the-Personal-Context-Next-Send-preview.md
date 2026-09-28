@@ -9,8 +9,7 @@ labels:
   - memory
   - canvas
   - context-budget
-dependencies:
-  - TASK-25907.23
+dependencies: []
 references:
   - tldw_chatbook/Chat/console_chat_controller.py
   - tldw_chatbook/Chat/console_agent_bridge.py
@@ -38,6 +37,8 @@ When Canvas tools are enabled and the model input budget is tight, the Personal 
 ## Review Evidence
 
 TASK-25907.23 current-dev refresh review traced the production controller preview into `ConsoleAgentBridge.build_personal_context_preview_snapshot`: that path omits Canvas provider/authority inputs, while dispatch supplies both. The shared first-request planner includes Canvas schemas and runtime guidance only when that provider is registered. This source mismatch exists in both dev `89dd84943abe8feacc5320d27a5c076641b83893` and original PR head `c945cf0278f5793417b7c9fd43201ed797a921fa`; it is not introduced by their merge. A native production-seam reproduction is still required by AC #1; the existing direct-planner Canvas test does not cover that seam.
+
+This task can proceed independently of the integration task's repository size/style qualification debt because the affected preview and dispatch owners already exist on dev.
 
 The current Canvas owner requires `register_run` before its tools advertise. Registration creates run/staging ownership, so reusing it during disposable inspection is not an acceptable budget workaround. Read ADR-121 and ADR-186 before selecting the preview contract; record the ADR decision in the implementation plan before coding.
 
