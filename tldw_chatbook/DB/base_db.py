@@ -337,6 +337,53 @@ class _QuiescentSQLiteConnection(sqlite3.Connection):
         self._quiescence_registry: SQLiteConnectionQuiescenceRegistry | None = None
         self._quiescence_tokens: set[object] = set()
         self._quiescence_tokens_lock = threading.RLock()
+        # PERF-04 (TASK-33263): transaction-boundary observation for the
+        # semantic mutation guard, replacing a trace callback whose expanded
+        # SQL rendered every bound BLOB as hex on each statement.
+        self._transaction_boundary_listener: Callable[[], None] | None = None
+        self._observed_in_transaction = False
+
+    def set_transaction_boundary_listener(self, listener: Callable[[], None]) -> None:
+        """Call ``listener`` whenever this connection's transaction may have changed.
+
+        Every statement runs through a quiescent cursor, which compares
+        ``in_transaction`` before and after it. The comparison before a
+        statement also catches a transaction ended outside Python (C-level
+        ``commit()`` from ``with connection:``). ``executescript`` always
+        reports a boundary, since one script can COMMIT and BEGIN again
+        without changing ``in_transaction``.
+
+        Args:
+            listener: Zero-argument callback; must not execute SQL.
+        """
+
+        self._transaction_boundary_listener = listener
+        self._observed_in_transaction = self.in_transaction
+
+    def _observe_transaction_state(self, *, boundary: bool = False) -> None:
+        listener = self._transaction_boundary_listener
+        in_transaction = self.in_transaction
+        if listener is not None and (
+            boundary or in_transaction != self._observed_in_transaction
+        ):
+            listener()
+        self._observed_in_transaction = in_transaction
+
+    def commit(self) -> None:
+        """Commit, then report the transaction boundary to the listener."""
+
+        try:
+            super().commit()
+        finally:
+            self._observe_transaction_state()
+
+    def rollback(self) -> None:
+        """Roll back, then report the transaction boundary to the listener."""
+
+        try:
+            super().rollback()
+        finally:
+            self._observe_transaction_state()
 
     def attach_quiescence_registry(
         self, registry: SQLiteConnectionQuiescenceRegistry
@@ -464,11 +511,15 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         """Hold one use reservation through result consumption."""
 
         self._begin_use()
+        connection = self._quiescent_connection
+        connection._observe_transaction_state()
         try:
             result = super().execute(sql, parameters)
         except BaseException:
             self._release_use()
             raise
+        finally:
+            connection._observe_transaction_state()
         self._release_if_no_results()
         return result
 
@@ -476,11 +527,15 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         """Hold one use reservation through repeated execution."""
 
         self._begin_use()
+        connection = self._quiescent_connection
+        connection._observe_transaction_state()
         try:
             result = super().executemany(sql, seq_of_parameters)
         except BaseException:
             self._release_use()
             raise
+        finally:
+            connection._observe_transaction_state()
         self._release_if_no_results()
         return result
 
@@ -488,11 +543,15 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         """Hold one use reservation through script execution."""
 
         self._begin_use()
+        connection = self._quiescent_connection
+        connection._observe_transaction_state()
         try:
             result = super().executescript(sql_script)
         except BaseException:
             self._release_use()
             raise
+        finally:
+            connection._observe_transaction_state(boundary=True)
         self._release_if_no_results()
         return result
 
@@ -573,11 +632,20 @@ class _SemanticMutationAuthorization:
         self._trace_gc_generation: int | None = None
 
     def trace_transaction(self, statement: str) -> None:
-        """Advance connection-local identity at transaction boundaries."""
+        """Advance connection-local identity at transaction boundaries.
+
+        Fallback for connections that cannot report boundaries themselves;
+        managed connections use :meth:`observe_transaction_boundary`.
+        """
 
         operation = statement.lstrip().split(None, 1)[0].upper()
         if operation in {"BEGIN", "COMMIT", "ROLLBACK"}:
             self._transaction_generation += 1
+
+    def observe_transaction_boundary(self) -> None:
+        """Advance connection-local identity: the transaction may have changed."""
+
+        self._transaction_generation += 1
 
     def sqlite_authorizer(
         self,
@@ -735,7 +803,15 @@ def register_semantic_mutation_guard(
         1,
         authorization._sqlite_trace_gc_delete_authorized,
     )
-    connection.set_trace_callback(authorization.trace_transaction)
+    if isinstance(connection, _QuiescentSQLiteConnection):
+        # PERF-04 (TASK-33263): no trace callback. On Python 3.12 it receives
+        # the expanded SQL, so SQLite hex-rendered every bound BLOB per
+        # statement and trigger step (a 3 MiB image insert took ~1.2 s).
+        connection.set_transaction_boundary_listener(
+            authorization.observe_transaction_boundary
+        )
+    else:
+        connection.set_trace_callback(authorization.trace_transaction)
     connection.set_authorizer(authorization.sqlite_authorizer)
     return authorization
 
