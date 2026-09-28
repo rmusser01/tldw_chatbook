@@ -128,7 +128,7 @@ def _isolate_constructor_paths(
         lambda: tmp_path / "library_collections.sqlite",
     )
     monkeypatch.setattr(
-        "tldw_chatbook.app.get_library_ingest_jobs_db_path",
+        "tldw_chatbook.app_ingest_queue.get_library_ingest_jobs_db_path",
         lambda: tmp_path / "library_ingest_jobs.sqlite",
     )
     monkeypatch.setattr(

@@ -62,8 +62,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUDGETS: dict[str, int] = {
     # TASK-33011 decomposition: lowered as each extraction PR lands
     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
-    # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658).
-    "tldw_chatbook/app.py": 19658,
+    # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658; Library ingest queue
+    # -> app_ingest_queue.py: 19,658 -> 14,715).
+    "tldw_chatbook/app.py": 14715,
+    # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
+    # 4,999 lines it is larger than two rows below, so it is born governed.
+    "tldw_chatbook/app_ingest_queue.py": 4999,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
