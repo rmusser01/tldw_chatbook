@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python ≥3.12 (stdlib + existing deps only — no new third-party packages), SQLite via `BaseDB`, Textual 8.x, pytest.
 
-**Spec:** `Docs/superpowers/specs/2026-09-22-dreams-daily-discovery-design.md` (+ `backlog/decisions/178-dreams-daily-discovery-and-tracking.md`). The plan argues from the spec; read both. Phase 2 (Track) is **out of scope** for this plan.
+**Spec:** `Docs/superpowers/specs/2026-09-22-dreams-daily-discovery-design.md` (+ `backlog/decisions/196-dreams-daily-discovery-and-tracking.md`). The plan argues from the spec; read both. Phase 2 (Track) is **out of scope** for this plan.
 
 ## Global Constraints
 

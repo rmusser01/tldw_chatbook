@@ -1,4 +1,4 @@
-# ADR-178: Dreams daily discovery and tracking
+# ADR-196: Dreams daily discovery and tracking
 
 Status: Proposed (2026-09-22) — design spec reviewed twice against code;
 implementation pending.

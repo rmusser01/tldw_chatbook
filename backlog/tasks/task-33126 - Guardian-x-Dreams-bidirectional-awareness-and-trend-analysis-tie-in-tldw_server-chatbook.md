@@ -1,5 +1,5 @@
 ---
-id: TASK-32917
+id: TASK-33126
 title: >-
   Guardian x Dreams - bidirectional awareness and trend-analysis tie-in
   (tldw_server <-> chatbook)
@@ -18,7 +18,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Dreams (chatbook, ADR-178) and Guardian (tldw_server self-monitoring) are two sides of the same coin: Dreams informs the user of new things; Guardian makes the user aware of their own patterns. Tie them together bidirectionally - port Dreams functionality to tldw_server for connected clients and port Guardian self-monitoring to chatbook for local use - and extend Guardian's reactive per-message pattern rules with trend/topic identification over the user's actions, content, and chats. Configured 'topics of consideration' (doomscrolling/doom loops, fixation on a specific thing, self-harm ideation awareness) surface as humane reminders offering an opportunity to course-correct. User-enabled only; must be explicitly configured; disabled by default. Framing: supportive awareness tooling, not a clinical service (match Guardian's existing disclaimer).
+Dreams (chatbook, ADR-196) and Guardian (tldw_server self-monitoring) are two sides of the same coin: Dreams informs the user of new things; Guardian makes the user aware of their own patterns. Tie them together bidirectionally - port Dreams functionality to tldw_server for connected clients and port Guardian self-monitoring to chatbook for local use - and extend Guardian's reactive per-message pattern rules with trend/topic identification over the user's actions, content, and chats. Configured 'topics of consideration' (doomscrolling/doom loops, fixation on a specific thing, self-harm ideation awareness) surface as humane reminders offering an opportunity to course-correct. User-enabled only; must be explicitly configured; disabled by default. Framing: supportive awareness tooling, not a clinical service (match Guardian's existing disclaimer).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -34,5 +34,5 @@ Dreams (chatbook, ADR-178) and Guardian (tldw_server self-monitoring) are two si
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Grounding: Guardian design doc lives in tldw_server at Docs/Design/Guardian_Self_Monitoring.md (SelfMonitoringService: pattern rules with except_patterns, notification_frequency dedup, display modes incl post_session_summary and silent_log, session + rolling-window escalation, bypass_protection incl partner_approval, crisis resources built in). Guardian today is reactive per-message checking; the trend/analysis layer is new capability on both sides. Dreams side: Docs/superpowers/specs/2026-09-22-dreams-daily-discovery-design.md + backlog/decisions/178-dreams-daily-discovery-and-tracking.md (interest profile + feedback loop are the natural signal seams; conversations-as-signal was deliberately deferred from Dreams v1 and would be revisited here under Guardian's stricter opt-in).
+Grounding: Guardian design doc lives in tldw_server at Docs/Design/Guardian_Self_Monitoring.md (SelfMonitoringService: pattern rules with except_patterns, notification_frequency dedup, display modes incl post_session_summary and silent_log, session + rolling-window escalation, bypass_protection incl partner_approval, crisis resources built in). Guardian today is reactive per-message checking; the trend/analysis layer is new capability on both sides. Dreams side: Docs/superpowers/specs/2026-09-22-dreams-daily-discovery-design.md + backlog/decisions/196-dreams-daily-discovery-and-tracking.md (interest profile + feedback loop are the natural signal seams; conversations-as-signal was deliberately deferred from Dreams v1 and would be revisited here under Guardian's stricter opt-in).
 <!-- SECTION:NOTES:END -->

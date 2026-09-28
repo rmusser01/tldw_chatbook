@@ -2,7 +2,7 @@
 
 - **Status:** Proposed — awaiting owner review
 - **Date:** 2026-09-22
-- **Decision:** [ADR-178](../../../backlog/decisions/178-dreams-daily-discovery-and-tracking.md)
+- **Decision:** [ADR-196](../../../backlog/decisions/196-dreams-daily-discovery-and-tracking.md)
 - **Classification:** Architectural
 - **Approved product decisions:** Dreams discovers **new** content and events
   (it never resurfaces what the user already has — the library is the signal,
@@ -407,7 +407,7 @@ Enforcement surfaces:
   LLM-knowledge mode (marked degraded) for privacy-paranoid configurations.
 
 This extends, and must be recorded alongside, [ADR-029]'s local-private-data
-boundary; ADR-178 carries the boundary statement.
+boundary; ADR-196 carries the boundary statement.
 
 ### Configuration (`[dreams]` in config.toml)
 
@@ -461,7 +461,7 @@ the modal and list surfaces.
 
 ## Governance
 
-- **ADR:** [ADR-178](../../../backlog/decisions/178-dreams-daily-discovery-and-tracking.md)
+- **ADR:** [ADR-196](../../../backlog/decisions/196-dreams-daily-discovery-and-tracking.md)
   — required (new storage schema; local-private-data boundary extension; new
   provider-facing generation path; tracking contracts). Number 178 chosen
   after verifying 173–177 are all spoken for on other branches — this repo's
@@ -500,7 +500,7 @@ lands — keeps each plan reviewable).
 ## Follow-ups (out of scope, filed as future tasks)
 
 - **Guardian × Dreams wellbeing tie-in**
-  ([TASK-32917](../../../backlog/tasks/task-32917%20-%20Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md)):
+  ([TASK-33126](../../../backlog/tasks/task-33126%20-%20Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md)):
   bidirectional port with tldw_server's Guardian self-monitoring —
   trend/topic/fixation analysis over configured "topics of consideration"
   surfacing humane course-correct notices; Dreams' interest profile and
