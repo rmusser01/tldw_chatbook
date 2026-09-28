@@ -23,7 +23,7 @@ import pytest
 from tldw_chatbook.Tools import remote_session_worker as worker_module
 from tldw_chatbook.Tools.build_remote_worker_bundle import expected_bundle_stamp, loader_payload
 from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
-from tldw_chatbook.Tools.remote_session_frames import HEADER, HELLO
+from tldw_chatbook.Tools.remote_session_frames import CANCEL, HEADER, HELLO, encode_frame
 from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
 from tldw_chatbook.Tools.remote_workspace_executor import (
     _bundle_payload,
@@ -392,6 +392,34 @@ def test_lock_wait_timeout_fails_only_that_call(worker_factory, workspace):
         first = upload.result(30)
     assert first.failure is None and first.admitted
     assert json.loads(first.response)["outcome"] == "success"
+    assert worker.call(read_request(workspace, "a.txt"), budget=10).failure is None
+
+
+def test_lock_won_at_the_deadline_still_gets_a_write_window(worker_factory, workspace):
+    """Deterministic pin: a writer holding the lock with its deadline already
+    past must still write (not raise _WriteStalled with zero bytes sent)."""
+    worker, _ = worker_factory()
+    worker.start()
+    worker._write(encode_frame(CANCEL, 999_999, b""), time.monotonic() - 1)  # unknown id: a no-op
+    assert worker.alive
+    assert worker.call(read_request(workspace, "a.txt"), budget=10).failure is None
+
+
+def test_upload_finishing_inside_b_budget_keeps_session(worker_factory, workspace):
+    """A's slow upload drains shortly before B's deadline: B wins the lock late."""
+    worker, spawns = worker_factory()
+    worker.start()
+    os.kill(spawns[0].pid, signal.SIGSTOP)
+    with ThreadPoolExecutor(2) as pool:
+        upload = pool.submit(worker.call, _dry_run_write_request(workspace, 1 << 20), budget=15)
+        time.sleep(0.3)
+        late = pool.submit(worker.call, read_request(workspace, "a.txt"), budget=1.5)
+        time.sleep(2.3)  # B's deadline is ~2.5 s after it was sent
+        os.kill(spawns[0].pid, signal.SIGCONT)
+        b_result, a_result = late.result(20), upload.result(30)
+    assert b_result.failure is None or b_result.failure.kind is TransportFailureKind.OP_TIMEOUT
+    assert worker.alive
+    assert a_result.failure is None and json.loads(a_result.response)["outcome"] == "success"
     assert worker.call(read_request(workspace, "a.txt"), budget=10).failure is None
 
 

@@ -308,7 +308,10 @@ class RemoteSessionWorker:
         assert proc is not None
         killed = proc.poll() is None
         self._kill()
-        exit_code = proc.wait()
+        try:
+            exit_code = proc.wait(timeout=self._transport.grace_seconds)
+        except subprocess.TimeoutExpired:
+            exit_code = -signal.SIGKILL  # unreapable for now; give up quietly
         if self._stderr_thread is not None:
             self._stderr_thread.join(_CLOSE_WAIT_S)
         failure = self._transport.classify_exchange_failure(
@@ -330,12 +333,18 @@ class RemoteSessionWorker:
     def _write(self, data: bytes, deadline: float) -> None:
         """Write ``data`` whole under the write lock, by ``deadline``.
 
+        Once the lock is held, the holder always gets at least ``grace`` to
+        write: a caller that wins the lock at its deadline (typically right
+        after another caller's upload filled the pipe) must not mistake a
+        briefly full pipe for a stuck host.
+
         Raises:
             _NotSent: The lock stayed busy (another caller's slow upload)
                 until the deadline: nothing written, the stream is intact.
-            _WriteStalled: Holding the lock, the pipe stopped draining
-                before the frame was out: the host is not reading (and a
-                partial frame corrupts the stream), so the session must die.
+            _WriteStalled: Holding the lock, the pipe stopped draining for
+                the whole write window before the frame was out: the host is
+                not reading (and a partial frame corrupts the stream), so
+                the session must die.
             OSError: The pipe broke (the process is gone).
         """
         fd = self._proc.stdin.fileno()  # type: ignore[union-attr]
@@ -343,10 +352,11 @@ class RemoteSessionWorker:
             raise _NotSent()
         try:
             view = memoryview(data)
+            write_deadline = max(deadline, time.monotonic() + self._transport.grace_seconds)
             while view:
-                if not _wait_fd(fd, selectors.EVENT_WRITE, deadline - time.monotonic()):
+                if not _wait_fd(fd, selectors.EVENT_WRITE, write_deadline - time.monotonic()):
                     # Holding the lock, the pipe took nothing (or stopped
-                    # mid-frame) for the whole deadline: the host is not
+                    # mid-frame) for a full write window: the host is not
                     # reading, so this is a stuck parent either way.
                     raise _WriteStalled()
                 try:
