@@ -1481,3 +1481,30 @@ def test_row_tail_gives_way_before_the_name(width):
     assert fitted.cell_len <= width, fitted.plain
     assert fitted.plain.startswith("Textual D"), fitted.plain
     assert "active" in fitted.plain
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_dropped_status_names_only_what_the_row_lost(request):
+    """TASK-33122: the line under the list spells out launch/overrides when
+    the fitted row dropped either, and stays blank otherwise."""
+    from tldw_chatbook.Widgets.settings_theme_picker import _dropped_status, _row
+
+    def entry(**flags):
+        return tc.ThemeEntry(
+            id="textual-dark",
+            display_name="Textual Dark",
+            origin="yours",
+            dark=True,
+            colours=tuple((key, "#112233") for key in tc.STRIP_KEYS),
+            **flags,
+        )
+
+    both = entry(is_active=True, is_launch_default=True, overrides="textual")
+    assert _dropped_status(both, None) == ""
+    assert _dropped_status(both, 200) == ""
+    for width in (40, 32, 26):  # "overrides built-in" shortened, dropped, then "launch" too
+        assert _dropped_status(both, width) == "launch default · overrides built-in", width
+    assert "launch" not in _row(both, 26).plain
+    assert _dropped_status(entry(is_active=True, is_launch_default=False), 26) == ""
+    assert _dropped_status(entry(is_active=False, is_launch_default=True), 200) == ""

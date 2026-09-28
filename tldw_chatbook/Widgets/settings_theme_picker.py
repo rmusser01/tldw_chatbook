@@ -106,6 +106,23 @@ def _row(entry: ThemeEntry, width: int | None = None) -> Text:
     return name + tail
 
 
+def _dropped_status(entry: ThemeEntry, width: int | None) -> str:
+    """Spell out the launch/overrides markers the row dropped at ``width`` (TASK-33122).
+
+    Returns:
+        e.g. "launch default · overrides built-in" when the fitted row lost
+        any of them ("active" always stays), else "". Fixed vocabulary only.
+    """
+    launch = ["launch"] if entry.is_launch_default else []
+    overrides = [f"overrides {ORIGIN_LABELS[entry.overrides]}"] if entry.overrides else []
+    if not (launch or overrides) or width is None:
+        return ""
+    full = " · ".join((["active"] if entry.is_active else []) + launch + overrides)
+    if _row(entry, width).plain.endswith(full):
+        return ""
+    return " · ".join((["launch default"] if launch else []) + overrides)
+
+
 class ThemeFilterInput(Input):
     BINDINGS: ClassVar[list[Binding]] = [Binding("down", "to_list", "List", show=False)]
 
@@ -326,6 +343,8 @@ class ThemePicker(Vertical):
                     "", id="settings-theme-launch-missing", classes="settings-help-copy", markup=False
                 )
                 yield ThemeOptionList(id="settings-theme-list")
+                # TASK-33122: one reserved line, so the list never jumps.
+                yield Static("", id="settings-theme-row-status", classes="settings-help-copy", markup=False)
                 yield Static("", id="settings-theme-empty", classes="settings-help-copy", markup=False)
                 # Spec §9: a no-match filter offers a way back.
                 with Horizontal(id="settings-theme-clear-filter-row", classes="settings-action-row"):
@@ -521,6 +540,16 @@ class ThemePicker(Vertical):
             entry = by_id.get(lst.get_option_at_index(index).id)
             if entry is not None:
                 lst.replace_option_prompt_at_index(index, _row(entry, width))
+        self._sync_dropped_status()
+
+    def _sync_dropped_status(self) -> None:
+        """TASK-33122: what the highlighted row dropped goes on the line under
+        the list -- at 80x24 the card is scrolled off below it. (Not the
+        list's border subtitle: the focus outline paints over it.)"""
+        lst = self.query_one("#settings-theme-list", ThemeOptionList)
+        entry = self._highlighted_entry()
+        text = _dropped_status(entry, lst.row_width()) if entry is not None else ""
+        self.query_one("#settings-theme-row-status", Static).update(text)
 
     def _show(self, theme_id: str | None) -> None:
         self.highlighted_id = theme_id
@@ -532,6 +561,7 @@ class ThemePicker(Vertical):
         self.query_one("#settings-theme-export-result").display = False
         self.query_one("#settings-theme-copy-path", Button).display = False
         entry = self._highlighted_entry()
+        self._sync_dropped_status()
         error = entry.error if entry is not None else None
         # Tooltips parse markup; the error quotes untrusted file content.
         unreadable_tip = f"This theme file can't be read: {escape_markup(error)}" if error else None
