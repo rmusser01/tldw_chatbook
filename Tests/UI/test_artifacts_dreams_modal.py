@@ -558,8 +558,8 @@ async def test_track_without_subs_service_degrades_to_notice(tmp_path):
 
 @pytest.mark.asyncio
 async def test_track_on_disabled_foreign_source_is_a_notice_and_writes_nothing(
-    tmp_path, monkeypatch
-):
+        tmp_path, monkeypatch
+    ):
     """Fix round 1 (P7): a URL whose source exists but is disabled is refused.
 
     The notice must say the source exists but is disabled; no tracked row, no
@@ -622,6 +622,138 @@ async def test_track_on_disabled_foreign_source_is_a_notice_and_writes_nothing(
         assert app.screen is modal, "a refused track must not dismiss or crash"
 
 
+# --- Untrack (Phase 2 Task 6) --------------------------------------------------
+
+
+def _track_settings_defaults(monkeypatch) -> None:
+    """Deterministic config seams for the track/untrack chain."""
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+
+
+@pytest.mark.asyncio
+async def test_untrack_on_tracked_story_retires_and_disables_subscription(
+        tmp_path, monkeypatch
+):
+    """``u`` retires the story's tracked wrapper and disables the dream
+    subscription (Task 3's fixture, driven through the modal's ``t`` first).
+
+    Untrack records NO feedback (it is not a positive signal) but does fire
+    ``on_changed`` and clears the tracked badge without closing the modal.
+    """
+    _track_settings_defaults(monkeypatch)
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    subs_db, service = _subs_stack(tmp_path)
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")  # the Task 3 fixture: track this story first
+        await pilot.pause()
+        (tracked,) = db.list_tracked_items()
+        assert tracked["status"] == "active"
+        assert int(
+            subs_db.get_subscription(tracked["subscription_id"])["is_active"]
+        ) == 1, "fixture: tracking left the dream source active"
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        item = db.get_tracked_item(tracked["id"])
+        assert item["status"] == "retired"
+        assert item["retired_reason"] == "manual"
+        assert db.list_tracked_items() == [], "no active tracked item remains"
+        assert int(
+            subs_db.get_subscription(tracked["subscription_id"])["is_active"]
+        ) == 0, "the dream-created subscription is disabled, not deleted"
+        assert _feedback_kinds(db, story["id"]) == ["tracked"], (
+            "untrack records no feedback of its own"
+        )
+        assert len(changed) == 2, "on_changed fires once per mutating action"
+        assert any("topped" in n.message or "ntrack" in n.message
+                   for n in app._notifications)
+        assert app.screen is modal, "untrack keeps the modal open"
+        assert "· tracked" not in _visible_text(modal), (
+            "the badge clears without reopening the modal"
+        )
+
+
+@pytest.mark.asyncio
+async def test_untrack_on_untracked_story_is_notice_only(tmp_path, monkeypatch):
+    """``u`` with no tracked wrapper: a gentle notice, no write, no refresh."""
+    _track_settings_defaults(monkeypatch)
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    _unused_subs_db, service = _subs_stack(tmp_path)
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        hints = _renderable_text(modal.query_one("#dsm-hints", Static).renderable)
+        assert "t Track this" in hints and "u Untrack" in hints, (
+            "the footer advertises t and u together"
+        )
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        assert db.list_tracked_items() == []
+        assert _feedback_kinds(db, story["id"]) == []
+        assert changed == [], "nothing changed, so no refresh"
+        assert any("not" in n.message and "track" in n.message
+                   for n in app._notifications), (
+            "the notice must gently say the story is not tracked"
+        )
+        assert app.screen is modal, "a no-op untrack must not dismiss or crash"
+
+
+@pytest.mark.asyncio
+async def test_untrack_without_subs_service_degrades_to_notice(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        assert db.list_tracked_items() == []
+        assert app.screen is modal, "a refused untrack must not dismiss"
+
+
 def _seed_llm_story_db(tmp_path) -> DreamsDB:
     """One llm-source story: its URL is the synthetic dreams:// scheme."""
     db = DreamsDB(tmp_path / "dreams-llm.sqlite", "dreams-modal")
@@ -666,6 +798,7 @@ async def test_llm_story_does_not_offer_ingest_anywhere(tmp_path):
         labels = _button_labels(modal)
         assert "Ingest" not in labels, "dreams:// rows must not offer Ingest"
         assert "Track this" not in labels, "dreams:// rows have no URL to watch"
+        assert "Untrack" not in labels, "dreams:// rows cannot be tracked"
         for word in ("Keep", "Dive deeper", "Export", "More like this",
                      "Less like this", "Close"):
             assert word in labels, f"http-only gate must not hide {word!r}"
@@ -673,10 +806,12 @@ async def test_llm_story_does_not_offer_ingest_anywhere(tmp_path):
             modal.query_one("#dsm-hints", Static).renderable)
         assert "Ingest" not in hints, "hints must not advertise a gated action"
         assert "Track this" not in hints, "hints must not advertise a gated action"
+        assert "Untrack" not in hints, "hints must not advertise a gated action"
 
         # The keyboard binding is guarded too: pressing i or t writes nothing.
         await pilot.press("i")
         await pilot.press("t")
+        await pilot.press("u")
         await pilot.pause()
         assert backend.requests == []
         assert _feedback_kinds(db, story["id"]) == []
@@ -712,7 +847,7 @@ async def test_http_story_still_offers_ingest(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_advertise_exactly_the_nine_actions(tmp_path):
+async def test_footer_hints_advertise_exactly_the_ten_actions(tmp_path):
     db = _seed_db(tmp_path)
     story = _story_row(db)
     app = App()
@@ -733,6 +868,7 @@ async def test_footer_hints_advertise_exactly_the_nine_actions(tmp_path):
             "Export",
             "Ingest",
             "Track this",
+            "Untrack",
             "More like this",
             "Less like this",
             "Goals & privacy",
@@ -840,6 +976,7 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
             "Export",
             "Ingest",
             "Track this",
+            "Untrack",
             "More like this",
             "Less like this",
         ):
@@ -852,6 +989,7 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
             "Export",
             "Ingest",
             "Track this",
+            "Untrack",
             "More like this",
             "Less like this",
         ):
@@ -860,6 +998,7 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
         await pilot.press("k")  # inert on a synthetic row
         await pilot.press("i")  # ingest is equally inert
         await pilot.press("t")  # and track too
+        await pilot.press("u")  # and untrack too
         await pilot.pause()
         with db.connection() as conn:
             feedback_rows = conn.execute("SELECT COUNT(*) FROM dream_feedback").fetchone()

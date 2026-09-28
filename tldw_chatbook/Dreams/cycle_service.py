@@ -45,6 +45,7 @@ from tldw_chatbook.Dreams import (
     profile_sources,
     query_synthesis,
     story_service,
+    track_service,
 )
 from tldw_chatbook.Dreams.discovery import Candidate
 from tldw_chatbook.Dreams.settings import dreams_setting
@@ -592,11 +593,21 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         seen_cutoff = to_utc_iso(now - timedelta(
             days=int(dreams_setting("seen_item_ttl_days"))))
         await asyncio.to_thread(dreams_db.prune_seen, seen_cutoff)
+        # Track lifecycle sweep (Phase 2 Task 6, stage 0 with the other
+        # maintenance passes): retire event-passed and quiet watches, pause
+        # repeatedly failing ones. Degrade-never-abort -- a sweep exception
+        # is a note on the collection, not a dead cycle -- and the sweep's
+        # own notes ride the same degradation channel.
+        stage_notes: list[str] = []
+        try:
+            stage_notes += await track_service.sweep_track_lifecycle(
+                dreams_db, now=now)
+        except Exception as exc:  # noqa: BLE001 - the sweep degrades, never aborts
+            stage_notes.append(f"track sweep failed: {exc}")
         # Profile stages (rulings R18/R19) run BEFORE the snapshot so it
         # reflects refreshed signals and the feedback offsets; both degrade
         # with notes and never abort the cycle. Their notes are carried into
         # the collection row once it exists.
-        stage_notes: list[str] = []
         stage_notes += await _refresh_profile_signals(deps, now)
         feedback_net, feedback_notes = await _apply_feedback(deps, now)
         stage_notes += feedback_notes

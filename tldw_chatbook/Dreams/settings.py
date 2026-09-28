@@ -21,6 +21,11 @@ DREAMS_DEFAULTS: dict[str, Any] = {
     "seen_item_ttl_days": 90,
     "max_searches_per_day": 30,
     "max_llm_calls_per_day": 60,
+    # --- Track loop caps/floors (Phase 2 Task 6); the single source the
+    # track service reads -- its pre-Task-6 fallback literals are gone.
+    "tracked_item_cap": 20,
+    "track_min_check_interval_hours": 12,
+    "track_quiet_retire_count": 14,
 }
 
 

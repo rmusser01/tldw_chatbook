@@ -31,6 +31,7 @@ from tldw_chatbook.Dreams.track_service import (
     promote_to_reminder,
     rebaseline_track,
     run_track_check,
+    sweep_track_lifecycle,
     track_page,
     track_question,
     untrack,
@@ -1135,3 +1136,169 @@ async def test_track_reminder_failure_never_fails_tracking(
         "a reminder failure must leave the tracking result unchanged"
     )
     assert dreams_db.get_tracked_item(result["tracked_item_id"]) is not None
+
+
+# --- lifecycle sweep (Phase 2 Task 6) -------------------------------------------
+#
+# ``sweep_track_lifecycle`` walks every ACTIVE tracked item and applies the
+# three retirement/pause rules: an event whose day-after has fully passed
+# retires (``event_passed``), ``track_quiet_retire_count`` consecutive
+# ``unchanged`` runs retire (``quiet``), and 3 consecutive ``error`` runs
+# pause (``failures``). ``NOW`` (2026-09-22 08:00 UTC) is the sweep clock.
+
+
+def _seed_runs(db, item_id: int, statuses: list[str]) -> None:
+    for status in statuses:
+        db.insert_track_run(
+            item_id, status=status,
+            digest_hash=None if status in ("error", "skipped", "withheld")
+            else "d" + status,
+            verdict_note="", notified=0)
+
+
+@pytest.mark.asyncio
+async def test_sweep_retires_item_whose_event_passed(dreams_db, settings):
+    item_id = dreams_db.create_tracked_item(
+        mechanism="question", intent="event", event_date="2026-09-20",
+        cadence_seconds=3600)
+
+    notes = await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    item = dreams_db.get_tracked_item(item_id)
+    assert item["status"] == "retired"
+    assert item["retired_reason"] == "event_passed"
+    assert any("event passed" in note for note in notes), (
+        "the sweep returns degradation notes naming what it retired"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sweep_spares_item_on_the_day_after_its_event(dreams_db, settings):
+    """Event 2026-09-21 + 1 day == 2026-09-22 (``NOW``): not strictly past.
+
+    The +1d grace keeps the watch alive through the day after the event;
+    only once that day has fully passed does the sweep retire.
+    """
+    item_id = dreams_db.create_tracked_item(
+        mechanism="question", intent="event", event_date="2026-09-21",
+        cadence_seconds=3600)
+
+    notes = await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    assert dreams_db.get_tracked_item(item_id)["status"] == "active"
+    assert notes == []
+
+
+@pytest.mark.asyncio
+async def test_sweep_quiet_retires_after_fourteen_consecutive_unchanged(
+        dreams_db, settings):
+    quiet = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    _seed_runs(dreams_db, quiet, ["baseline"] + ["unchanged"] * 14)
+    one_short = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    _seed_runs(dreams_db, one_short, ["baseline"] + ["unchanged"] * 13)
+
+    notes = await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    assert dreams_db.get_tracked_item(quiet)["status"] == "retired"
+    assert dreams_db.get_tracked_item(quiet)["retired_reason"] == "quiet"
+    assert dreams_db.get_tracked_item(one_short)["status"] == "active"
+    assert any("quiet" in note for note in notes)
+
+
+@pytest.mark.asyncio
+async def test_sweep_broken_unchanged_streak_is_not_quiet(dreams_db, settings):
+    """13 unchanged, one ``changed``, then more unchanged: streak reset.
+
+    The judge said the watch changed recently -- retiring it as quiet would
+    kill a live watch, so only the CONSECUTIVE trailing run counts.
+    """
+    item_id = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    _seed_runs(dreams_db, item_id,
+               ["baseline"] + ["unchanged"] * 13 + ["changed"]
+               + ["unchanged"] * 5)
+
+    await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    assert dreams_db.get_tracked_item(item_id)["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_sweep_quiet_count_resolves_through_settings(
+        dreams_db, settings):
+    """Single-source: the threshold is the [dreams] key, not a literal."""
+    settings["track_quiet_retire_count"] = 2
+    item_id = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    _seed_runs(dreams_db, item_id, ["baseline", "unchanged", "unchanged"])
+
+    await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    assert dreams_db.get_tracked_item(item_id)["retired_reason"] == "quiet"
+
+
+@pytest.mark.asyncio
+async def test_sweep_pauses_after_three_consecutive_errors(dreams_db, settings):
+    failing = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    _seed_runs(dreams_db, failing, ["baseline", "error", "error", "error"])
+    two = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    _seed_runs(dreams_db, two, ["baseline", "error", "error"])
+
+    notes = await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    paused = dreams_db.get_tracked_item(failing)
+    assert paused["status"] == "paused", "3 consecutive errors auto-pause"
+    assert paused["retired_reason"] is None, "a pause is not a retirement"
+    assert dreams_db.get_tracked_item(two)["status"] == "active"
+    assert any("failures" in note for note in notes)
+
+
+@pytest.mark.asyncio
+async def test_sweep_leaves_mixed_healthy_items_untouched(dreams_db, settings):
+    fresh = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    baselined = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    _seed_runs(dreams_db, baselined, ["baseline", "unchanged"])
+    already_paused = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    dreams_db.set_tracked_status(already_paused, "paused")
+    already_retired = dreams_db.create_tracked_item(
+        mechanism="question", intent="event", event_date="2026-09-20",
+        cadence_seconds=3600)
+    dreams_db.set_tracked_status(already_retired, "retired",
+                                 retired_reason="manual")
+
+    notes = await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    assert dreams_db.get_tracked_item(fresh)["status"] == "active"
+    assert dreams_db.get_tracked_item(baselined)["status"] == "active"
+    assert dreams_db.get_tracked_item(already_paused)["status"] == "paused"
+    retired = dreams_db.get_tracked_item(already_retired)
+    assert retired["status"] == "retired"
+    assert retired["retired_reason"] == "manual", (
+        "the sweep never rewrites an already-retired item's reason"
+    )
+    assert notes == [], "a sweep with nothing to do records no notes"
+
+
+@pytest.mark.asyncio
+async def test_run_track_check_sweeps_before_checking(dreams_db, settings):
+    """The check loop sweeps first: an event-passed item retires, and the
+    dispatched check still completes with its normal disposition."""
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="event",
+        event_date="2026-09-20")
+    deps = _track_deps(dreams_db, perform_search=_FakeSearch(_SET_A))
+
+    result = await run_track_check(deps, item_id)
+
+    assert result["status"] == "baseline", "the check itself still runs"
+    item = dreams_db.get_tracked_item(item_id)
+    assert item["status"] == "retired"
+    assert item["retired_reason"] == "event_passed"

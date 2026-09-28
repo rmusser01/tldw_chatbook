@@ -41,6 +41,13 @@ ahead (``promote_to_reminder``), through the app's ``ScheduledTasksDB``
 ``create_reminder_task`` seam -- degrading silently whenever that DB is
 missing, unwired, or unwritable, because the tracked item already exists
 by then and is the real deliverable.
+
+Phase 2 Task 6 adds the lifecycle sweep (``sweep_track_lifecycle``) and
+makes the caps/floors single-sourced: the cap, the check-interval floor,
+and the quiet-retire count resolve through ``dreams_setting`` against
+``DREAMS_DEFAULTS`` (``tracked_item_cap`` 20,
+``track_min_check_interval_hours`` 12, ``track_quiet_retire_count`` 14)
+with no module-local fallback literals left.
 """
 
 from __future__ import annotations
@@ -58,15 +65,10 @@ from tldw_chatbook.Utils.timestamps import to_utc_iso
 
 from . import discovery
 from .discovery import Candidate
-from .settings import dreams_setting
+from .settings import DREAMS_DEFAULTS, dreams_setting
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .cycle_service import CycleDeps
-
-#: Fallbacks until Task 6 adds the ``[dreams]`` keys; ``dreams_setting``
-#: keeps reading them live so the future keys win without a change here.
-_DEFAULT_TRACKED_ITEM_CAP = 20
-_DEFAULT_MIN_CHECK_INTERVAL_HOURS = 12
 
 #: Every Dreams-tracked page joins this one shared watchlist.
 _TRACK_WATCHLIST_NAME = "Dreams Tracked"
@@ -117,6 +119,17 @@ _BASELINE_SCAN_LIMIT = 200
 #: (Phase 2 Task 5): one nudge with a week of runway, not a day-of alarm.
 _REMINDER_LEAD_DAYS = 7
 
+#: Grace after a tracked ``event_date`` before the sweep retires the watch
+#: (Phase 2 Task 6): the event day itself plus one full day of aftermath
+#: coverage; only once that day has fully passed is the watch dead.
+_EVENT_PASSED_GRACE_DAYS = 1
+
+#: Consecutive ``error`` runs that auto-pause a tracked item (Task 6),
+#: mirroring the subscriptions loop's ``auto_pause_threshold`` default: a
+#: watch that keeps failing its checks stops spending budget until a human
+#: looks at it.
+_FAILURE_PAUSE_THRESHOLD = 3
+
 
 class TrackCapReached(RuntimeError):
     """The active tracked-item budget is exhausted; nothing was created.
@@ -145,22 +158,37 @@ class TrackSourceDisabled(RuntimeError):
 
 
 def _cap() -> int:
-    """The ``tracked_item_cap`` setting, coerced to a usable int."""
+    """The ``tracked_item_cap`` setting, coerced to a usable int.
+
+    Single-source (Task 6): the value -- including the fallback for a
+    missing or garbage config value -- comes from ``DREAMS_DEFAULTS``
+    through :func:`dreams_setting`; no literal lives here.
+    """
     try:
-        return max(0, int(dreams_setting("tracked_item_cap",
-                                         _DEFAULT_TRACKED_ITEM_CAP)))
+        return max(0, int(dreams_setting("tracked_item_cap")))
     except (TypeError, ValueError):
-        return _DEFAULT_TRACKED_ITEM_CAP
+        return int(DREAMS_DEFAULTS["tracked_item_cap"])
 
 
 def _min_interval_seconds() -> int:
     """``track_min_check_interval_hours`` converted to seconds."""
     try:
-        hours = max(0, int(dreams_setting("track_min_check_interval_hours",
-                                          _DEFAULT_MIN_CHECK_INTERVAL_HOURS)))
+        hours = max(0, int(dreams_setting("track_min_check_interval_hours")))
     except (TypeError, ValueError):
-        hours = _DEFAULT_MIN_CHECK_INTERVAL_HOURS
+        hours = int(DREAMS_DEFAULTS["track_min_check_interval_hours"])
     return hours * 3600
+
+
+def _quiet_retire_count() -> int:
+    """The ``track_quiet_retire_count`` setting, coerced to a usable int.
+
+    Floored at 1: a zero would retire every active item on the first sweep,
+    which no configuration can mean.
+    """
+    try:
+        return max(1, int(dreams_setting("track_quiet_retire_count")))
+    except (TypeError, ValueError):
+        return int(DREAMS_DEFAULTS["track_quiet_retire_count"])
 
 
 async def track_page(
@@ -383,6 +411,106 @@ async def untrack(subs_service: Any, dreams_db: Any, tracked_item_id: int) -> di
         "status": "retired",
         "subscription_disabled": subscription_disabled,
     }
+
+
+# --- Lifecycle sweep (Phase 2 Task 6) -------------------------------------------
+
+
+def _sweep_sync(
+    dreams_db: Any, *, now_date: date, quiet_count: int
+) -> list[str]:
+    """The sweep's reads and writes; sync, the caller thread-offloads.
+
+    One ``asyncio.to_thread`` hop for the whole sweep (the controller's
+    stage discipline): every hop can land on a fresh executor thread, and
+    each new thread opens another held SQLite connection, so per-operation
+    hops would churn connections for no concurrency gain -- the rules are
+    strictly sequential.
+    """
+    notes: list[str] = []
+    for item in dreams_db.list_tracked_items("active"):
+        item_id = int(item["id"])
+
+        # Rule 1: the event's day-after has fully passed. An unparsable
+        # event_date leaves the item alone (degrade, never guess).
+        event_date = item.get("event_date")
+        if event_date:
+            try:
+                passed = (
+                    date.fromisoformat(str(event_date))
+                    + timedelta(days=_EVENT_PASSED_GRACE_DAYS)
+                ) < now_date
+            except ValueError:
+                logger.warning(
+                    "Dreams sweep: unparsable event_date {!r}", event_date)
+                passed = False
+            if passed:
+                dreams_db.set_tracked_status(
+                    item_id, "retired", retired_reason="event_passed")
+                notes.append(
+                    f"track sweep: retired item {item_id} (event passed)")
+                continue
+
+        # Rule 2: the quiet streak. consecutive_track_dispositions stops
+        # at the newest differing run, so a recent changed/error verdict
+        # resets the count by construction.
+        unchanged_run = dreams_db.consecutive_track_dispositions(
+            item_id, "unchanged")
+        if unchanged_run >= quiet_count:
+            dreams_db.set_tracked_status(
+                item_id, "retired", retired_reason="quiet")
+            notes.append(
+                f"track sweep: retired item {item_id} "
+                f"(quiet: {unchanged_run} unchanged)")
+            continue
+
+        # Rule 3: repeated failures pause the watch, never retire it.
+        error_run = dreams_db.consecutive_track_dispositions(item_id, "error")
+        if error_run >= _FAILURE_PAUSE_THRESHOLD:
+            dreams_db.set_tracked_status(item_id, "paused")
+            notes.append(
+                f"track sweep: paused item {item_id} "
+                f"(repeated failures: {error_run})")
+    if notes:
+        logger.info("Dreams track sweep: {}", "; ".join(notes))
+    return notes
+
+
+async def sweep_track_lifecycle(dreams_db: Any, *, now: Any) -> list[str]:
+    """Retire or pause active tracked items whose watch has gone dead.
+
+    Three rules, applied to each ACTIVE item (paused and retired items are
+    never revisited, and a retired item's ``retired_reason`` is never
+    rewritten):
+
+    * ``event_date + 1 day`` fully past (judged on the UTC date of
+      ``now``) → ``retired("event_passed")`` -- the grace keeps the watch
+      alive through the day after the event;
+    * ``track_quiet_retire_count`` (default 14) CONSECUTIVE ``unchanged``
+      runs → ``retired("quiet")`` -- a streak broken by any other
+      disposition resets, so a watch the judge recently called ``changed``
+      is never retired;
+    * ``_FAILURE_PAUSE_THRESHOLD`` (3) consecutive ``error`` runs →
+      ``paused`` (mirroring the subscriptions loop's
+      ``auto_pause_threshold``): a repeatedly failing check stops spending
+      budget without erasing the watch.
+
+    One rule fires per item per sweep (first match wins, ``continue``),
+    and every hit appends a human-readable note to the returned list --
+    the callers' degradation-notes channel. The whole sweep runs under a
+    single ``asyncio.to_thread`` hop (see :func:`_sweep_sync`).
+
+    Args:
+        dreams_db: The app's ``DreamsDB`` (schema v2).
+        now: The sweep clock (UTC-aware ``datetime``, ``CycleDeps.now``
+            shaped); event-past judging uses its UTC date.
+
+    Returns:
+        Degradation notes naming every retirement/pause the sweep made.
+    """
+    return await asyncio.to_thread(
+        _sweep_sync, dreams_db,
+        now_date=now.date(), quiet_count=_quiet_retire_count())
 
 
 # --- Event reminders (Phase 2 Task 5) -------------------------------------------
@@ -737,11 +865,11 @@ def _dispatch_changed(
 async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
     """Run one scheduled check of a tracked item; every outcome is a row.
 
-    Pipeline (spec §track loop): load the item (a missing one -- retired
-    between emission and dispatch -- is a clean ``skipped`` with no row),
-    budget-guard BEFORE spending anything, re-run the template as one
-    search, digest the result set, and compare against the most recent
-    anchoring digest:
+    Pipeline (spec §track loop): sweep the lifecycle first (Task 6,
+    below), then load the item (a missing one -- retired between emission
+    and dispatch -- is a clean ``skipped`` with no row), budget-guard
+    BEFORE spending anything, re-run the template as one search, digest
+    the result set, and compare against the most recent anchoring digest:
 
     * no baseline yet → ``baseline`` run, ``notified=0``;
     * identical digest → ``unchanged`` run, no LLM call at all;
@@ -769,6 +897,18 @@ async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
         ``baseline``/``unchanged``/``changed``/``withheld``/``error``/
         ``skipped``.
     """
+    # Lifecycle sweep FIRST (Task 6): the item this task dispatches may
+    # already be past its event or quiet -- and other active items may be
+    # too. Degrade-never-abort: a sweep failure logs and the check itself
+    # proceeds unchanged.
+    try:
+        await sweep_track_lifecycle(deps.dreams_db, now=deps.now())
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the sweep must not kill a check
+        logger.warning("Dreams track sweep before check failed: {}",
+                       type(exc).__name__)
+
     dreams_db = deps.dreams_db
     now = deps.now()
     local_date = _local_date(now)

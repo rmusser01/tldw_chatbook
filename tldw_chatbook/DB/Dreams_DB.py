@@ -178,6 +178,14 @@ class DreamsDB(BaseDB):
         CREATE INDEX IF NOT EXISTS idx_dream_tracked_status
             ON dream_tracked_items(status)
         """,
+        # Task 6 ledger item: Task 5 made per-story reads land
+        # (``find_tracked_by_story`` and the story rows' tracked badge),
+        # so the origin-story lookup gets its pinned index -- additive
+        # DDL, no version bump and no data migration.
+        """
+        CREATE INDEX IF NOT EXISTS idx_dream_tracked_origin_story
+            ON dream_tracked_items(origin_story_id)
+        """,
         """
         CREATE TABLE IF NOT EXISTS dream_track_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

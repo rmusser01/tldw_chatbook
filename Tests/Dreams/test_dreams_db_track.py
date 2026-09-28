@@ -180,6 +180,7 @@ def _rewind_to_v1(db) -> None:
     with db.transaction() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_dream_track_runs_item")
         conn.execute("DROP INDEX IF EXISTS idx_dream_tracked_status")
+        conn.execute("DROP INDEX IF EXISTS idx_dream_tracked_origin_story")
         conn.execute("DROP TABLE IF EXISTS dream_track_runs")
         conn.execute("DROP TABLE IF EXISTS dream_tracked_items")
         # A v1-created file holds exactly one stamp: version 1 (a fresh v2
@@ -219,6 +220,9 @@ def test_v1_file_upgrades_in_place_to_v2(tmp_path):
         assert "dream_track_runs" in tables
         assert "idx_dream_tracked_status" in indexes
         assert "idx_dream_track_runs_item" in indexes
+        # Task 6 ledger item: the per-story reads Task 5 added
+        # (``find_tracked_by_story`` + the badge) get their pinned index.
+        assert "idx_dream_tracked_origin_story" in indexes
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
     # The upgraded file is fully usable: track CRUD works and v1 data survived.
     item_id = reopened.create_tracked_item(
