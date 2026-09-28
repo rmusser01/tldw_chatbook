@@ -1,7 +1,7 @@
 # ADR-197: Console hook configuration review and local consent
 
 Date: 2026-09-27
-Status: Proposed; native layout approved, written spec awaiting review
+Status: Accepted following written-spec review and requested audit (2026-09-27)
 Task: [TASK-33151](../tasks/task-33151%20-%20Design-Console-hook-settings-and-persistent-review.md)
 Spec: [Console hook settings and review](../../Docs/superpowers/specs/2026-09-27-console-hook-settings-and-review-design.md)
 Extends: [ADR-148](148-console-run-hooks.md)
@@ -36,16 +36,27 @@ An editor-only or screen-only gate would leave shared/background execution open.
    versioned fingerprint of event, ordered argv, matcher, and timeout. Add optional
    stable IDs and per-hook enable flags while preserving legacy config parsing.
    IDs and enable switches never confer authority. Legacy identity is definition
-   plus duplicate occurrence, never raw array position.
+   plus duplicate occurrence, never raw array position. Changes to a legacy
+   duplicate group's size invalidate that group's grants rather than guessing
+   which occurrence survived. Guided stable IDs remove this ambiguity.
 4. Store observed metadata and current grants in a small private, atomic local
    JSON file owned by the shared runtime, separate from user TOML and MCP tool
    profiles. Protect its canonical live path with the existing sensitive-path
-   exclusions. Missing/corrupt state or persistence failure cannot permit execution.
-   Settings retains the existing config writer and stale-snapshot checks.
-5. Enforce consent at shared admission and immediately before every hook process
-   launch. Pending guard definitions must not become silent permission bypasses.
-   Revocation fences future launches and queued notifications; already launched
-   processes retain existing timeout/shutdown ownership.
+   exclusions. Missing/corrupt/unsupported state or persistence failure cannot
+   permit hook execution. Settings retains the existing config writer, stale
+   snapshot checks, and truthful post-replacement outcomes. Cross-process decisions
+   re-read state under its lock; stale caches cannot restore revoked grants.
+5. Enforce consent at shared admission and serialize the final definition/consent
+   check with actual process creation against consent changes. Read an authoritative
+   lossless config inventory; neither a stale app dictionary nor a parser's omitted
+   invalid entries establishes clearance. Pending/invalid guards remain restrictive,
+   and consent failure cannot inherit UserPromptSubmit's execution-error fail-open.
+   Revocation/disable seal current-runtime admission before persistence; a write
+   failure cannot reopen that seal or claim durable cross-process success. Pin
+   notification targets at event admission, recheck them at launch, and preserve
+   existing bounded queues. Already launched processes retain timeout/shutdown
+   ownership. Cancelled modal generations cannot resume a Send or overwrite a
+   newer revocation.
 6. Preserve ADR-148's six-event, argv-only, user-scope, deny-only protocol and its
    execution-error semantics. Consent is an earlier admission requirement, not a
    tool permission grant or executable-content signature. Project instructions
@@ -75,8 +86,13 @@ remaining restrictive and observers reporting skipped execution.
 The grant store and config writer have separate atomic commits. Interruption can
 require review again but cannot broaden permission. No database migration or new
 dependency is required. This feature consents to exact command definitions;
-same-path script/environment changes remain outside its detection boundary.
+same-path script/environment changes remain outside its detection boundary. Older
+Chatbook versions and arbitrary same-user processes are outside this runtime's
+enforcement boundary; this store follows the existing local permission-store model.
 
 The linked spec defines modal actions, legacy identity migration, draft custody,
-revocation limits, concurrency, and verification. ADR-148 remains authoritative
+revocation limits, concurrency, and verification. The user reviewed the written spec
+positively on 2026-09-27 and requested an audit before continuing; the resulting
+clarifications preserve the approved layout and feature scope. ADR-148 remains
+authoritative
 for hook execution after consent; its accepted text is not rewritten.

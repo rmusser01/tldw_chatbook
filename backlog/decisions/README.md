@@ -121,7 +121,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
 
 | [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
-| [ADR-197](197-console-hook-configuration-review.md) | Proposed | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
+| [ADR-197](197-console-hook-configuration-review.md) | Accepted | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
 
 ## Historical Decision Material
 
