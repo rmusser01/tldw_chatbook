@@ -200,8 +200,12 @@ class _TiktokenRuntimeArmingLoader:
             raise
         try:
             install_tiktoken_runtime()
-        finally:
-            self._finder.discard()
+        except BaseException:
+            # Importlib removes the incomplete tiktoken module after this
+            # exception. Keep the finder armed so the next import retries.
+            self._finder.restore()
+            raise
+        self._finder.discard()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._loader, name)
