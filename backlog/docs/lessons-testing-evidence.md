@@ -16755,3 +16755,33 @@ so test both. Drive the explicit case through the Hub's own write path
 (`service.set_tool_state(..., tool=row)`), then through the Console provider's
 own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
 built-ins and inherited defaults, not an explicit override.
+
+### Count transcript work separately from coalesced draft repaints (PR #2196 / TASK-24300)
+
+**What happened.** The mounted empty-versus-400-message census counted zero transcript snapshots and zero history/context/spend row traversals in both arms after settled projection caching. It still failed exact equality because the total one-row draft estimate count was 19 versus 17: Textual coalesced a different number of repaint calls. That was not a transcript-size term. Recording the largest message input to any estimate kept the exact comparison deterministic and failed on a full-history estimate while admitting the one-row live draft. A separate one-app 400-message census pinned all full-history traversal totals to zero.
+
+**What to do.** Keep zero-work counters for settled transcript walks and measure the maximum input size for draft-only estimators. Do not interpret a different number of coalesced one-row UI calls as evidence of O(N) transcript work, or weaken the mounted gate by dropping the projection paths from the census.
+
+### A bundled tokenizer probe needs a child without inherited overrides (PR #2196 / TASK-24305)
+
+The post-rebase focused run passed 32 cases and failed the lazy-tokenizer bundled-hook probe: preceding context-parity tests had set `TIKTOKEN_CACHE_DIR`, which the probe child inherited. An explicit cache override correctly makes the runtime skip bundled-cache reader installation. The child failed only with that inherited override; clearing `TIKTOKEN_CACHE_DIR` and `DATA_GYM_CACHE_DIR` inside the bundled-hook probe passed the same combined run (36 cases, including deferred-persistence regressions). Give a bundled-runtime child its intended environment before package import, and keep production override behavior intact.
+
+
+### Materialize streams before probing cached event invalidation (PR #2196 / TASK-24300)
+
+The independent review's first continuation probe built a cache key before the
+snapshot folded buffered text. That fold advanced the speech/display revision,
+so the next lookup rebuilt history even though ToolBatchReady published no
+revision. It appeared fresh at 6 -> 7. Materializing the prefix synchronously
+before warming held the revision at 8 -> 8: cached history still admitted the
+assistant while a fresh projection excluded its active continuation. Separate
+warm ToolBatchReady and FinalContinuation regressions now pin the actual event
+publication; the ordinary and dispatch publication routes advance the revision.
+
+Give a warm-cache invalidation probe a stable, materialized source baseline.
+A read that mutates the fixture's revision can conceal the missing event fence
+that the test is meant to detect.
+
+### PR #2196: Windows checkout must preserve tokenizer table bytes
+
+During the 2026-09-27 final offline verification, `git ls-files --eol` showed LF index blobs but CRLF working files in `assets/tiktoken_cache`; the unchanged manifest rejected GPT-2 vocabulary SHA-256 (`84809de...` instead of `1ce1664...`) and encoding construction failed. Mark the immutable cache inventory `-text`, as with Canvas and built-in skills, instead of changing reviewed hashes or normalizing inside the reader. Restoring exact Git blobs and applying the attribute made all 31 affected cases pass, including an upstream-fetch refusal and all five encoding constructors. Metadata-only dependency probes establish installation; test actual blocked imports through their public fallback, not an eager-import-era availability flag.
