@@ -4243,10 +4243,17 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 355,
-      "diagnostic_digest": "6de0f050f59ff92bebce",
+      "call_count": 350,
+      "diagnostic_digest": "291403852ae64b7513f0",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 5,
+      "diagnostic_digest": "86734a89aa348ff787c7",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_destinations.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
