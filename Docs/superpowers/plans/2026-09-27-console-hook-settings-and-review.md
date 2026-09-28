@@ -42,12 +42,18 @@ The inspected checkout is `/Users/macbook-dev/Documents/GitHub/tldw_chatbook` an
 - [ ] Reuse the existing Python environment without installing into it. If the worktree has no `.venv`, create an ignored symlink to the checked environment, then prove imports resolve from this checkout.
 
 ```bash
+# Machine-agnostic: resolve any existing tldw_chatbook checkout's environment
+# (the environment's site-packages carries the pinned deps; the import check
+# below proves this checkout's sources are the ones imported). Qodo round:
+# the previous snippet hard-coded one developer's absolute path.
 python3 - <<'PY'
 from pathlib import Path
-environment = Path("/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv")
-assert (environment / "bin/python").exists()
-if not Path(".venv").exists():
-    Path(".venv").symlink_to(environment, target_is_directory=True)
+candidates = [
+    p / ".venv"
+    for p in [Path.cwd(), *Path.cwd().parents]
+    if (p / ".venv" / "bin" / "python").exists()
+]
+assert candidates, "No .venv found in this checkout or its parents"
 PY
 .venv/bin/python -c 'from pathlib import Path; import tldw_chatbook; assert Path(tldw_chatbook.__file__).resolve().is_relative_to(Path.cwd().resolve())'
 ```
