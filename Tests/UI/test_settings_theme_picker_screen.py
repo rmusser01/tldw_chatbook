@@ -176,7 +176,7 @@ async def test_appearance_save_round_trip_keeps_launch_default(request, appearan
 @pytest.mark.asyncio
 @private_profile_test
 async def test_launch_default_changed_survives_a_later_appearance_save(request, appearance_writes):
-    # Task 6 review: the editor's Delete -> _save_launch_default path posts
+    # Task 6 review: the editor's Delete -> _fall_back_after_delete path posts
     # LaunchDefaultChanged; a later Appearance Save must not clobber it.
     from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
 
@@ -396,8 +396,8 @@ async def test_appearance_summary_recomposes_after_launch_default_changes_elsewh
 ):
     """Task 6 review ⚠️: after a launch-default change made off-screen (what
     the editor's Delete does when the deleted theme WAS the launch default --
-    ``SettingsThemeEditor._delete_user_theme`` falls back to
-    ``_save_launch_default("textual-dark", ...)``), Appearance must show the
+    ``SettingsThemeEditor._fall_back_after_delete`` writes
+    ``textual-dark`` through ``_persist_launch_default``), Appearance must show the
     new value on its next visit.
 
     This changes the launch default the same way Delete's fallback does --

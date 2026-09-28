@@ -79,6 +79,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Iterable, Mapping
 from textual.widget import Widget
 
@@ -178,7 +179,7 @@ from tldw_chatbook.Constants import (
     get_tab_display_label,
 )
 from tldw_chatbook.css import build_css
-from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.css.Themes.themes import ALL_THEMES, printable
 from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
@@ -1137,15 +1138,50 @@ class ThemeProvider(Provider):
         )
 
     def switch_theme(self, theme_name: str) -> None:
-        """Switch to the specified theme and keep it as the launch default."""
-        from .css.Themes.theme_catalog import use_theme, use_theme_toast
+        """Switch to the specified theme and keep it as the launch default.
+
+        TASK-33243: the switch shows now; the launch-default write (~140 ms)
+        is queued and awaited off the UI thread in ``_persist_switch``,
+        sharing the picker's numbered write queue (``ThemePicker._persist_
+        use``) so ordering with a picker Use/Revert holds and quit waits
+        for it (``wait_for_theme_quit_work``).
+
+        Args:
+            theme_name: The registered theme to show and keep, e.g. ``"nord"``.
+        """
+        from .css.Themes.theme_catalog import queue_launch_default, use_theme
 
         try:
-            change = use_theme(self.app, theme_name, persist=True)
+            change = use_theme(self.app, theme_name, persist=False)
         except Exception as e:  # noqa: BLE001 - palette commands must not raise
             self.app.notify(f"Failed to apply theme: {escape_markup(e)}", severity="error")
             return
-        message, severity = use_theme_toast(theme_name, change)
+        change = replace(change, persisted=True)
+        write = queue_launch_default(theme_name)
+        self.app.run_worker(self._persist_switch(change, write), group="settings-theme-use", exit_on_error=False)
+
+    async def _persist_switch(self, change: "ThemeChange", write: "QueuedLaunchDefault") -> None:
+        """Await the palette's launch-default write, then show the toast.
+
+        Mirrors ``ThemePicker._persist_use``: only the latest queued write
+        (review M-1) reports -- a later picker Use or Revert supersedes it.
+
+        Args:
+            change: The switch, for the toast's "was:" name.
+            write: The queued write of the theme the palette switched to.
+        """
+        from .css.Themes.theme_catalog import settle_launch_default, use_theme_toast
+
+        theme_name = write.name
+        try:
+            persisted, caches_reloaded, latest = await settle_launch_default(self.app, write)
+        except Exception as exc:  # noqa: BLE001 - reported as "not saved" below
+            logger.warning(f"Saving the launch default {printable(theme_name)!r} failed: {type(exc).__name__}")
+            persisted, caches_reloaded, latest = False, False, True
+        if not latest:
+            return
+        outcome = replace(change, persisted=persisted, caches_reloaded=caches_reloaded)
+        message, severity = use_theme_toast(theme_name, outcome)
         self.app.notify(message, severity=severity)
 
 

@@ -20,6 +20,7 @@ from typing import Any, Literal, NamedTuple
 
 from loguru import logger
 from textual.color import Color
+from textual.signal import Signal
 from textual.theme import BUILTIN_THEMES, Theme
 
 from ...Utils.input_validation import escape_markup
@@ -464,6 +465,25 @@ def wait_for_theme_quit_work(app: Any, timeout: float = THEME_QUIT_WAIT_SECONDS)
     wait_for_launch_default_writes(max(0.0, deadline - time.monotonic()))
 
 
+def launch_default_signal(app: Any) -> Signal[str]:
+    """The app's "launch default changed" signal, created on first use.
+
+    Final-wave review I-1: published once the latest queued launch-default
+    write has landed -- after the theme switch's own ``theme_changed_signal``
+    -- so a subscriber reading ``current_launch_default()`` sees the new value.
+
+    Args:
+        app: The running app (the signal's owner).
+
+    Returns:
+        The signal; its data is the new launch default's name.
+    """
+    signal = getattr(app, "_theme_launch_default_signal", None)
+    if signal is None:
+        signal = app._theme_launch_default_signal = Signal(app, "theme_launch_default")
+    return signal
+
+
 def _record_launch_default(app: Any, name: str, result: Any, *, latest: bool = True) -> tuple[bool, bool]:
     file_replaced = bool(getattr(result, "file_replaced", False))
     caches_reloaded = bool(getattr(result, "caches_reloaded", False))
@@ -475,6 +495,10 @@ def _record_launch_default(app: Any, name: str, result: Any, *, latest: bool = T
         general = dict(config.get("general", {}))
         general["default_theme"] = name
         config["general"] = general
+    # Only when someone subscribed (``launch_default_signal``); on the app loop.
+    signal = getattr(app, "_theme_launch_default_signal", None)
+    if signal is not None:
+        signal.publish(name)
     return True, caches_reloaded
 
 
