@@ -25,6 +25,8 @@ class RemoteSessionRegistry:
         self._restarted: set[tuple[str, str]] = set()
         # R12: insertion-ordered tombstones of closed run keys (bounded).
         self._closed_keys: dict[str, None] = {}
+        #: Set once by close_all (app shutdown): every later acquire is one-shot.
+        self._shutdown = False
 
     def acquire(self, key: tuple[str, str], create: Callable[[], RemoteSessionWorker]) -> RemoteSessionWorker | None:
         """Return the live session for ``key``, starting one if needed.
@@ -33,17 +35,23 @@ class RemoteSessionRegistry:
         under a per-key lock: concurrent callers for the same binding wait for
         one start; other bindings and runs are never blocked.
 
+        After :meth:`close_all` it returns ``None`` (one-shot) -- also for a
+        caller that was already waiting on the per-key lock, and a start that
+        completes after it is closed rather than kept.
+
         Raises:
             SessionStartError: transport-class start failure (caller records it).
         """
         with self._lock:
+            if self._shutdown:
+                return None
             key_lock = self._key_locks.setdefault(key, threading.Lock())
         with key_lock:
             with self._lock:
                 # A closed run key is one-shot for good: surviving
                 # sub-agents and Stop stragglers never reopen an unowned
                 # session.
-                if key in self._disabled or key[0] in self._closed_keys:
+                if self._shutdown or key in self._disabled or key[0] in self._closed_keys:
                     return None
                 worker = self._sessions.get(key)
                 if worker is not None and worker.alive:
@@ -80,11 +88,12 @@ class RemoteSessionRegistry:
                 logger.debug(f"ssh session worker start failed (transport): {kind}")
                 raise
             with self._lock:
-                closed_meanwhile = key[0] in self._closed_keys
+                closed_meanwhile = self._shutdown or key[0] in self._closed_keys
                 if not closed_meanwhile:
                     self._sessions[key] = worker
             if closed_meanwhile:
-                # The run ended while this start was in flight: nobody owns it.
+                # The run (or the app) ended while this start was in flight:
+                # nobody owns it.
                 worker.close()
                 return None
             return worker
@@ -104,8 +113,9 @@ class RemoteSessionRegistry:
             worker.close()
 
     def close_all(self) -> None:
-        """Close every session (app shutdown)."""
+        """Close every session (app shutdown); later acquires go one-shot."""
         with self._lock:
+            self._shutdown = True
             workers = list(self._sessions.values()); self._sessions.clear()
             self._disabled.clear(); self._restarted.clear(); self._key_locks.clear()
         for worker in workers:
@@ -145,6 +155,10 @@ def close_remote_sessions(session_key: str) -> None:
 
 
 def close_all_remote_sessions() -> None:
-    """Close every session (app exit); a no-op before any session existed."""
-    if _REGISTRY is not None:
-        _REGISTRY.close_all()
+    """Close every session (app exit) and shut the registry down.
+
+    Always reaches the registry (creating it if needed), as
+    :func:`close_remote_sessions` does, so a straggler call after app exit
+    goes one-shot instead of opening a session.
+    """
+    get_session_registry().close_all()

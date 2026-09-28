@@ -117,8 +117,9 @@ def test_module_helpers_close_the_singleton(monkeypatch):
     from tldw_chatbook.Tools import remote_session_registry as module
 
     monkeypatch.setattr(module, "_REGISTRY", None)
-    module.close_all_remote_sessions()  # no registry yet: no-op
-    assert module._REGISTRY is None
+    module.close_all_remote_sessions()  # no registry yet: still shuts one down
+    assert module.get_session_registry().acquire(("run-1", "b1"), lambda: pytest.fail("opened")) is None
+    monkeypatch.setattr(module, "_REGISTRY", None)
     reg = module.get_session_registry()
     assert module.get_session_registry() is reg
     w = reg.acquire(("run-1", "b1"), FakeWorker)
@@ -229,3 +230,38 @@ def test_app_exit_closes_sessions_before_masters_in_one_best_effort_try():
         handler.type is not None and ast.unparse(handler.type) == "Exception"
         for handler in innermost.handlers
     )
+
+
+def test_close_all_makes_later_acquires_one_shot():
+    reg = RemoteSessionRegistry()
+    reg.close_all()
+    assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("opened after shutdown")) is None
+
+
+def test_waiter_on_the_key_lock_goes_one_shot_after_close_all():
+    reg = RemoteSessionRegistry()
+    in_start, release = threading.Event(), threading.Event()
+    made = []
+
+    def slow_create():
+        def hook():
+            in_start.set()
+            release.wait(5)
+        worker = FakeWorker(start_hook=hook)
+        made.append(worker)
+        return worker
+
+    results = {}
+    first = threading.Thread(target=lambda: results.__setitem__("first", reg.acquire(("run-1", "b1"), slow_create)))
+    first.start()
+    assert in_start.wait(5)
+    # A second caller now blocks on the per-key lock behind the slow start.
+    second = threading.Thread(target=lambda: results.__setitem__("second", reg.acquire(("run-1", "b1"), FakeWorker)))
+    second.start()
+    time.sleep(0.1)
+    reg.close_all()
+    release.set()
+    first.join(5); second.join(5)
+    assert results == {"first": None, "second": None}
+    assert made[0].closed, "a start finishing after close_all must be closed, not kept"
+    assert reg._sessions == {}
