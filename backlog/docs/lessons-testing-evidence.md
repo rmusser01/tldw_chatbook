@@ -16818,3 +16818,22 @@ would have ranked it as noise.
 `TLDW_TEST_CSS_CACHE=0`. The private-profile wrapper passes the variable
 through to its child. Also wrap `Stylesheet.reparse` and check that it runs
 at production cost before you rank anything else.
+## 2026-09-20 — Admission retries need the caller's real lifecycle (TASK-32881)
+
+The connected clone HTTP test reused one request object and proved a stable
+Idempotency-Key, while the actual Sharing panel recreated a request on every
+click. Review caught that a lost accepted response followed by a user retry could
+still create a second workspace. A mounted panel → real scope/service → httpx
+transport regression exposed the gap and now covers timeout, remount, and explicit
+new-copy intent. The retained identity also needs stable server/account scope,
+server-normalized inputs, and quota behavior that never evicts uncertain requests.
+Exercise the UI or workflow that owns the logical request, not just a transport
+helper whose test already assumes the required ownership.
+
+The PR-2763 follow-up found that the mounted Sharing test still supplied a
+`server_sharing_scope_service` attribute that the production application never
+sets. Its correct transport assertions therefore missed disabled production
+controls. The fixture now uses the actual `sharing_scope_service` attribute and
+Sharing_Interop wrapper constructed by TldwCli; it failed before fixing the panel
+lookup. A mounted workflow test must also match the application's wiring names
+and service family, not only the underlying HTTP contract (TASK-32881).
