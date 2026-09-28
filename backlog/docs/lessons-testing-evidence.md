@@ -16743,3 +16743,20 @@ so test both. Drive the explicit case through the Hub's own write path
 (`service.set_tool_state(..., tool=row)`), then through the Console provider's
 own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
 built-ins and inherited defaults, not an explicit override.
+
+### Under pytest, a stylesheet reparse costs ~2 ms; in production it costs ~430 ms (TASK-33075, 2026-09-27)
+
+**What happened.** Profiling a theme switch in a `run_test` harness, the first
+pass showed `Stylesheet.reparse` at ~750 ms per switch, and a second pass over
+the same themes showed ~1.5 ms, with Textual's `parse` never called. The root
+conftest installs `Tests/UI/css_cache.py`, a process-global parse cache keyed
+on the stylesheet's variables. Production has no such cache: Textual's
+`reparse` builds a fresh `Stylesheet` with an empty per-instance cache, so
+every theme switch re-parses the whole ~830 KB bundle. That reparse turned
+out to be the largest single cost of the switch (40-60%). A warm-cache profile
+would have ranked it as noise.
+
+**What to do.** Run any CSS/theme performance probe with
+`TLDW_TEST_CSS_CACHE=0`. The private-profile wrapper passes the variable
+through to its child. Also wrap `Stylesheet.reparse` and check that it runs
+at production cost before you rank anything else.

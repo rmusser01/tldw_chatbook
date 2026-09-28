@@ -96,7 +96,24 @@ def is_catalog_theme(name: str) -> bool:
     return name in _SHIPPED_NAMES or name in BUILTIN_THEMES
 
 
+#: TASK-33075: resolved colours per theme definition. Every theme switch
+#: rebuilds the picker catalog, and generating ~91 colour systems was ~80% of
+#: that rebuild (~40-80 ms a switch). Keyed on ``repr`` (every Theme field,
+#: ~3 us) so a re-registered or edited definition never reads stale colours.
+_COLOURS_CACHE: dict[str, tuple[tuple[str, str], ...]] = {}
+
+
 def _colours(theme: Theme) -> tuple[tuple[str, str], ...]:
+    key = repr(theme)
+    cached = _COLOURS_CACHE.get(key)
+    if cached is None:
+        if len(_COLOURS_CACHE) >= 1024:
+            _COLOURS_CACHE.clear()  # ponytail: crude bound; editor Try variants are the only growth
+        cached = _COLOURS_CACHE[key] = _resolve_colours(theme)
+    return cached
+
+
+def _resolve_colours(theme: Theme) -> tuple[tuple[str, str], ...]:
     # Same resolution as the editor (TASK-31255): explicit colours byte-exact,
     # unset ones from the generated colour system.
     try:

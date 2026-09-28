@@ -348,3 +348,30 @@ def test_saved_theme_colours_are_listed_not_grey():
     colours = dict(tc._colours(theme))
     assert colours["primary"] == "#112233"
     assert colours["background"] == "#0A0A0A"
+
+
+def test_catalog_colours_resolve_once_per_theme(monkeypatch):
+    """TASK-33075: every theme switch rebuilds the picker catalog, and
+    resolving ~91 themes' colour systems each time was ~80% of that rebuild.
+    The resolution is cached per theme definition -- a changed definition
+    under the same name still resolves afresh."""
+    calls = []
+    real = Theme.to_color_system
+
+    def counting(self):
+        calls.append(self.name)
+        return real(self)
+
+    monkeypatch.setattr(Theme, "to_color_system", counting)
+    mine = Theme(name="cache_probe_33075", primary="#112233")
+    available = _available(cache_probe_33075=mine)
+    build_catalog(available, set(), "nord", "nord")
+    calls.clear()
+    build_catalog(available, set(), "gruvbox", "nord")
+    assert calls == []
+
+    changed = Theme(name="cache_probe_33075", primary="#445566")
+    entries = build_catalog(_available(cache_probe_33075=changed), set(), "nord", "nord")
+    assert calls == ["cache_probe_33075"]
+    entry = next(e for e in entries if e.id == "cache_probe_33075")
+    assert dict(entry.colours)["primary"] == "#445566"
