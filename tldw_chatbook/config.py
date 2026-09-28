@@ -20,6 +20,7 @@ import sys
 from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -503,9 +504,28 @@ CLI_APP_CLIENT_ID = installation_client_id()
 DEFAULT_CONFIG_PATH = profile_paths.default_config_path()
 
 
+@lru_cache(maxsize=16)
+def _resolve_effective_config_path(
+    override: str | None,
+    home: str | None,
+    userprofile: str | None,
+    cwd: str | None,
+) -> Path:
+    """Cache lexical selection for one environment and relative-path base."""
+    del home, userprofile, cwd  # Key the environment read by expanduser/abspath.
+    return profile_paths.lexical_path(override or DEFAULT_CONFIG_PATH)
+
+
 def _get_effective_config_path() -> Path:
     """Return the lexical active CLI config path."""
-    return profile_paths.effective_config_path(DEFAULT_CONFIG_PATH)
+    override = os.environ.get("TLDW_CONFIG_PATH")
+    cwd = os.getcwd() if override and not os.path.isabs(override) else None
+    return _resolve_effective_config_path(
+        override,
+        os.environ.get("HOME"),
+        os.environ.get("USERPROFILE"),
+        cwd,
+    )
 
 
 def get_cli_config_path() -> Path:
