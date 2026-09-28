@@ -17,6 +17,14 @@ from .base_db import BaseDB
 #: Upper bound for any list read the UI pages through.
 MAX_LIST_LIMIT = 200
 
+#: Upper bound for a ``list_tracked_items`` status read (Qodo #9, PR #2890).
+#: The active set is already capped by ``tracked_item_cap`` (default 20),
+#: but ``retired`` grows forever -- every quiet sweep and passed event
+#: lands there -- and the page-track provenance scan re-reads all three
+#: statuses, so an unbounded read would grow with the user's history.
+#: 500 retired watches is years of use; callers needing more get paging.
+TRACKED_ITEMS_LIST_LIMIT = 500
+
 
 def clamp_limit(limit: int) -> int:
     """Bound a caller-supplied page size to ``1..MAX_LIST_LIMIT``.
@@ -781,7 +789,15 @@ class DreamsDB(BaseDB):
             return int(cursor.lastrowid)
 
     def get_tracked_item(self, tracked_item_id: int) -> dict | None:
-        """Return one tracked item row by id, or None."""
+        """Return one tracked item row by id, or None.
+
+        Args:
+            tracked_item_id: The ``dream_tracked_items`` row to read.
+
+        Returns:
+            The full row as a dict (all ``dream_tracked_items``
+            columns), or ``None`` when no row carries that id.
+        """
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT * FROM dream_tracked_items WHERE id = ?",
@@ -789,21 +805,29 @@ class DreamsDB(BaseDB):
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def list_tracked_items(self, status: str = "active") -> list[dict]:
-        """Return tracked items in one status, newest first.
+    def list_tracked_items(
+        self, status: str = "active", *, limit: int = TRACKED_ITEMS_LIST_LIMIT
+    ) -> list[dict]:
+        """Return tracked items in one status, newest first, bounded.
 
         Args:
             status: Lifecycle filter (``active``/``paused``/``retired``).
+            limit: Maximum rows returned, bounded to
+                ``1..TRACKED_ITEMS_LIST_LIMIT`` (Qodo #9: retired rows
+                accumulate forever, so the read is capped the same way
+                ``clamp_limit`` caps the run-list reads).
 
         Returns:
-            Matching rows ordered ``created_at DESC`` (``id DESC`` breaks
-            ties so same-millisecond inserts keep newest-first order).
+            Up to ``limit`` matching rows ordered ``created_at DESC``
+            (``id DESC`` breaks ties so same-millisecond inserts keep
+            newest-first order).
         """
+        limit = max(1, min(int(limit), TRACKED_ITEMS_LIST_LIMIT))
         with self.connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM dream_tracked_items WHERE status = ?"
-                " ORDER BY created_at DESC, id DESC",
-                (status,),
+                " ORDER BY created_at DESC, id DESC LIMIT ?",
+                (status, limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -817,6 +841,14 @@ class DreamsDB(BaseDB):
         subscription the sweep deliberately left live. With the filter the
         story rows' active-only tracked badge and the ``u`` action agree
         on what "tracked" means.
+
+        Args:
+            origin_story_id: The dream story whose tracked wrapper to find.
+
+        Returns:
+            The newest active row naming that story as its origin (dict of
+            all columns), or ``None`` when the story has no active
+            wrapper.
         """
         with self.connection() as conn:
             row = conn.execute(
@@ -826,6 +858,38 @@ class DreamsDB(BaseDB):
                 (origin_story_id, "active"),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def set_tracked_plan(
+        self, tracked_item_id: int, *, cadence_seconds: int, event_date: str | None
+    ) -> None:
+        """Rewrite one tracked item's check plan (cadence + event date).
+
+        The re-track reuse path (Qodo #2, PR #2890): when a story already
+        has an ACTIVE same-mechanism wrapper, ``track_page`` /
+        ``track_question`` refresh the caller's cadence and event date on
+        the existing row instead of inserting a second wrapper. Both
+        fields are always written -- the caller passes the full new plan,
+        so clearing an event date (``event_date=None``) works.
+
+        Args:
+            tracked_item_id: The wrapper row whose plan to rewrite.
+            cadence_seconds: New minimum seconds between checks.
+            event_date: New target-event date (ISO), or ``None`` to clear.
+
+        A missing row simply matches zero rows (the caller just read the
+        row, and a concurrent retire is a benign no-op); the UPDATE is
+        additionally pinned to ``status='active'`` so a retire landing
+        between the read and this write wins.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE dream_tracked_items SET"
+                " cadence_seconds = ?, event_date = ?, updated_at = ?"
+                " WHERE id = ? AND status = 'active'",
+                (
+                    cadence_seconds, event_date, _utc_now_iso(), tracked_item_id,
+                ),
+            )
 
     def set_tracked_status(
         self,
@@ -844,6 +908,9 @@ class DreamsDB(BaseDB):
             status: New lifecycle state
                 (``active``/``paused``/``retired``).
             retired_reason: Why the item was retired, when retiring.
+
+        Returns:
+            None; a missing row matches zero rows and is a benign no-op.
 
         Raises:
             sqlite3.IntegrityError: If ``status`` is outside its CHECK
@@ -865,6 +932,9 @@ class DreamsDB(BaseDB):
         Args:
             tracked_item_id: Item that was just checked.
             now_iso: Check-completion timestamp (canonical UTC shape).
+
+        Returns:
+            None; a missing row matches zero rows and is a benign no-op.
         """
         with self.transaction() as conn:
             conn.execute(
@@ -875,7 +945,13 @@ class DreamsDB(BaseDB):
             )
 
     def count_active_tracked(self) -> int:
-        """Return how many tracked items are currently active."""
+        """Return how many tracked items are currently active.
+
+        Returns:
+            The COUNT of ``dream_tracked_items`` rows with
+            ``status='active'`` -- the figure the ``tracked_item_cap``
+            guard compares against.
+        """
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM dream_tracked_items WHERE status = 'active'"

@@ -828,7 +828,8 @@ async def test_run_cycle_sweeps_tracked_lifecycle_and_records_notes(
 
     seen: list[tuple] = []
 
-    async def spy(db, *, now):
+    async def spy(db, *, now, subs_service_getter=None,
+                  scheduling_db_getter=None):
         seen.append((db, now))
         return ["track sweep: retired item 9 (event passed)"]
 
@@ -851,7 +852,8 @@ async def test_run_cycle_sweep_failure_degrades_and_cycle_completes(
     """A sweep exception is a degradation note, never an abort."""
     from tldw_chatbook.Dreams import track_service
 
-    async def boom(db, *, now):
+    async def boom(db, *, now, subs_service_getter=None,
+                   scheduling_db_getter=None):
         raise RuntimeError("sweep exploded")
 
     monkeypatch.setattr(track_service, "sweep_track_lifecycle", boom)

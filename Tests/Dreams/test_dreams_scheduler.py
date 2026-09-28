@@ -62,10 +62,11 @@ def test_parse_dream_track_task_id_roundtrip_and_rejects_foreign_ids():
 
 
 def _tracked_item(db, *, last_checked=None, cadence_seconds=12 * 3600,
-                  status=None, query_template="watch {region}"):
+                  status=None, query_template="watch {region}",
+                  mechanism="question", subscription_id=None):
     item_id = db.create_tracked_item(
-        mechanism="question", intent="topic", cadence_seconds=cadence_seconds,
-        query_template=query_template)
+        mechanism=mechanism, intent="topic", cadence_seconds=cadence_seconds,
+        query_template=query_template, subscription_id=subscription_id)
     if last_checked is not None:
         db.touch_tracked_checked(item_id, last_checked.isoformat())
     if status is not None:
@@ -95,12 +96,85 @@ def test_projection_emits_track_checks_for_active_items_with_clamps(
     assert tasks[f"dream_track:{recent}"].next_run_at == _NOW + \
         timedelta(hours=6)
     # 96h since the last check + 12h cadence = 84h overdue > 48h clamp:
-    # skip the stale pileup, next run one cadence from now.
-    assert tasks[f"dream_track:{overdue}"].next_run_at == _NOW + _CADENCE
+    # skip the missed slots and land on the first cadence multiple of
+    # last_checked inside the 48h window -- Qodo #6: the slot derives
+    # from the ITEM (last_checked + k*cadence), never from projection
+    # time, so queue reloads recompute the same instant. k = ceil((96h -
+    # 48h)/12h) = 4 -> last_checked + 48h == _NOW - 48h: due NOW, once.
+    overdue_at = tasks[f"dream_track:{overdue}"].next_run_at
+    assert overdue_at == _NOW - timedelta(hours=96) + 4 * _CADENCE
+    assert overdue_at <= _NOW, "the overdue catch-up slot is due, not deferred"
     for task in tasks.values():
         if task.id.startswith(f"{DREAMS_TRACK_PREFIX}:"):
             assert task.type == "dream_track_check"
             assert task.title.startswith("Dreams tracked check")
+
+
+def test_projection_overdue_item_is_due_at_every_reload(
+        tmp_path, monkeypatch):
+    """Qodo #6 (PR #2890): the queue reloads (~30 min) and REPLACES its
+    tasks, so the old ``now + cadence`` due time slid forward on every
+    reload -- always one full cadence in the future, never popped, so an
+    overdue item never fired again. The k-slot projection keeps the item
+    DUE at every projection (a due task is popped by the very next tick,
+    long before the next reload can replace it)."""
+    proj, db = _projection(tmp_path, monkeypatch)
+    overdue = _tracked_item(db, last_checked=_NOW - timedelta(hours=96))
+
+    first = {t.id: t for t in proj.tasks(_NOW)}[f"dream_track:{overdue}"]
+    later_now = _NOW + timedelta(minutes=30)
+    second = {
+        t.id: t for t in proj.tasks(later_now)
+    }[f"dream_track:{overdue}"]
+
+    assert first.next_run_at <= _NOW, "due at the first projection"
+    assert second.next_run_at <= later_now, (
+        "still due 30 minutes later -- the reload cannot defer it"
+    )
+    assert second.next_run_at - first.next_run_at <= _CADENCE, (
+        "a reload moves the slot by at most one cadence (quantized), "
+        "never to now + cadence"
+    )
+
+
+def test_projection_overdue_future_slot_is_stable_across_reloads(
+        tmp_path, monkeypatch):
+    """Qodo #6, long-cadence case: when the clamp lands the slot in the
+    FUTURE (cadence > clamp), reloads recompute the exact same instant --
+    the slot derives from ``last_checked`` alone."""
+    proj, db = _projection(tmp_path, monkeypatch)
+    # 130h stale, 72h cadence: k = ceil((130-48)/72) = 2 ->
+    # last_checked + 144h == _NOW + 14h, a future due time.
+    overdue = _tracked_item(db, cadence_seconds=72 * 3600,
+                            last_checked=_NOW - timedelta(hours=130))
+
+    first = {t.id: t for t in proj.tasks(_NOW)}[f"dream_track:{overdue}"]
+    assert first.next_run_at == _NOW + timedelta(hours=14)
+    later_now = _NOW + timedelta(minutes=30)
+    second = {
+        t.id: t for t in proj.tasks(later_now)
+    }[f"dream_track:{overdue}"]
+
+    assert first.next_run_at == second.next_run_at, (
+        "a 30-minute reload must not move a future slot"
+    )
+
+
+def test_projection_emits_no_track_tasks_for_page_items(
+        tmp_path, monkeypatch):
+    """Qodo #7 (PR #2890): page-mechanism items are watched by their
+    subscription's own ``watchlist:<id>`` projection; a Dreams search
+    check on them would burn the shared budget for nothing."""
+    proj, db = _projection(tmp_path, monkeypatch)
+    question = _tracked_item(db)
+    _tracked_item(db, mechanism="page", query_template=None,
+                  subscription_id=42)
+
+    tasks = {task.id: task for task in proj.tasks(_NOW)}
+
+    assert set(tasks) == {"dreams:cycle", f"dream_track:{question}"}, (
+        "page items emit no dream_track task"
+    )
 
 
 def test_projection_no_track_tasks_when_disabled(tmp_path, monkeypatch):
