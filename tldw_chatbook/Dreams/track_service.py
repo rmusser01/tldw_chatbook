@@ -30,10 +30,18 @@ it is (a dream-created tracked row for the subscription pins the
 provenance), the re-track RE-ENABLES it and reports ``"re-enabled"``; a
 disabled source with no dream provenance is refused with
 ``TrackSourceDisabled`` -- never adopted, never re-enabled behind the
-user's back. And because a sweep auto-retire leaves the dream-created
-subscription ACTIVE, provenance carries onto the attached wrapper
-(``created_by_dreams=1``, outcome stays ``"attached"``) so a later untrack
-still disables the subscription -- no orphaned active watch.
+user's back. A sweep auto-retire now also DISABLES the dream-created
+subscription itself (Qodo #1, PR #2890) and the linked event reminder
+(Qodo #13), so nothing Dreams scheduled outlives its wrapper; the
+provenance lookup below still consults every status, because a wrapper
+retired by an OLDER build (or a foreign paused row) must keep pinning
+its subscription the same way.
+
+Re-tracking a story that already has an ACTIVE same-mechanism wrapper
+(Qodo #2, PR #2890) reuses it -- the cadence and event date refresh on
+the existing row, nothing is created, and the outcome is
+``"attached"`` -- so one story can never own two live wrappers around
+the same watch and an untrack can never strand the older one.
 
 Scheduling needs no registration here: ``WatchlistProjection`` fabricates
 ``watchlist:<subscription_id>`` tasks straight from subscription rows, so
@@ -66,6 +74,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from tldw_chatbook.Chat.Chat_Functions import extract_response_content
+from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.timestamps import to_utc_iso
 
 from . import discovery
@@ -135,6 +144,21 @@ _EVENT_PASSED_GRACE_DAYS = 1
 #: looks at it.
 _FAILURE_PAUSE_THRESHOLD = 3
 
+#: How many characters of each result's snippet feed the check digest
+#: (Qodo #3, PR #2890). Whitespace-collapsed and capped: enough of the
+#: snippet to move the digest when a price/date/availability line
+#: changes, without letting engine re-crawls that append trailing prose
+#: flip every check to ``changed``.
+_SNIPPET_DIGEST_CHARS = 200
+
+#: Event-loop-only claim set for in-flight checks (Qodo #16, PR #2890):
+#: item ids with a ``run_track_check`` currently executing. Same shape
+#: and reasoning as ``cycle_service._ACTIVE_CYCLE_DATES`` -- the claim is
+#: checked and added with no await between, so a re-dispatch of the same
+#: still-due item (the scheduler reloads while a slow search or judge
+#: call runs) can never interleave past the guard and double-notify.
+_INFLIGHT_TRACK_CHECKS: set[int] = set()
+
 
 class TrackCapReached(RuntimeError):
     """The active tracked-item budget is exhausted; nothing was created.
@@ -160,6 +184,22 @@ class TrackSourceDisabled(RuntimeError):
     """
 
     reason_code = "track_source_disabled"
+
+
+class TrackInvalidURL(ValueError):
+    """The URL to watch is not a well-formed http(s) address (Qodo #8).
+
+    Raised by :func:`track_page` BEFORE any lookup or write. The story
+    modal's ``_ingestable`` gate already refuses non-http rows, but the
+    service is also reachable from direct callers, and a malformed
+    address (bad scheme, embedded whitespace or credentials) persisted as
+    a subscription would be processed by every later watchlist run.
+
+    Attributes:
+        reason_code: Stable machine identifier (``track_invalid_url``).
+    """
+
+    reason_code = "track_invalid_url"
 
 
 def _cap() -> int:
@@ -216,6 +256,103 @@ def _dream_owned_subscription(dreams_db: Any, subscription_id: int) -> bool:
     return False
 
 
+def _has_dreams_change_rule(rules: list[dict]) -> bool:
+    """Whether an enabled Dreams change rule already covers the page.
+
+    Qodo #15 (PR #2890): ``track_page`` pins one ``items_above 0`` rule
+    named ``"Change: <title>"`` per subscription; the title suffix
+    differs between tracks, so identity is the name PREFIX plus the
+    condition -- exactly the tuple this path itself creates.
+
+    Args:
+        rules: ``LocalWatchlistsService.list_alert_rules`` rows
+            (normalized, ``condition_value`` already coerced).
+
+    Returns:
+        True when any enabled rule on the subscription is a Dreams
+        change rule (``Change: `` name, ``items_above`` threshold 0).
+    """
+    for rule in rules:
+        if not bool(rule.get("enabled", True)):
+            continue
+        if not str(rule.get("name") or "").startswith("Change: "):
+            continue
+        if str(rule.get("condition_type") or "") != "items_above":
+            continue
+        value = rule.get("condition_value") or {}
+        try:
+            threshold = int(value.get("threshold"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if threshold == 0:
+            return True
+    return False
+
+
+async def _refresh_wrapper_plan(
+    dreams_db: Any, wrapper: dict, *, cadence: int, event_date: str | None
+) -> None:
+    """Rewrite an active wrapper's cadence/event date when they moved.
+
+    The reuse branch of Qodo #2 (PR #2890). Only writes when a value
+    actually differs -- re-tracking with identical arguments is a pure
+    no-op read path.
+
+    Args:
+        dreams_db: The app's ``DreamsDB``.
+        wrapper: The active tracked-item row being reused.
+        cadence: The caller's (already clamped) check cadence.
+        event_date: The caller's target-event date, or ``None``.
+    """
+    if (
+        int(wrapper.get("cadence_seconds") or 0) == cadence
+        and wrapper.get("event_date") == (event_date or None)
+    ):
+        return
+    await asyncio.to_thread(
+        dreams_db.set_tracked_plan, int(wrapper["id"]),
+        cadence_seconds=cadence, event_date=event_date,
+    )
+
+
+async def _disable_linked_reminders(
+    scheduling_db_getter: Any, tracked_item_id: int
+) -> None:
+    """Disable the one-time reminder linked to a tracked item; degrade.
+
+    Qodo #13 (PR #2890): ``promote_to_reminder`` links the reminder with
+    ``link_type="dream_tracked_item"``; untrack and sweep-retire stop the
+    watch, and the linked reminder must stop with it. Every failure mode
+    (no getter, raising getter, no scheduling DB, unwritable DB) logs and
+    returns -- retirement itself already happened and must not unwind.
+
+    Args:
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None.
+        tracked_item_id: The retired tracked item whose reminder dies.
+    """
+    scheduling_db = None
+    if scheduling_db_getter is not None:
+        try:
+            scheduling_db = scheduling_db_getter()
+        except Exception as exc:  # noqa: BLE001 - reminder degrades
+            logger.warning(
+                "Dreams reminder getter failed while retiring: {}",
+                type(exc).__name__)
+            return
+    if scheduling_db is None:
+        return
+    try:
+        await asyncio.to_thread(
+            scheduling_db.disable_reminders_by_link,
+            "dream_tracked_item", str(tracked_item_id),
+        )
+    except Exception as exc:  # noqa: BLE001 - reminder degrades
+        logger.warning(
+            "Dreams reminder disable failed for item {}: {}",
+            tracked_item_id, type(exc).__name__)
+
+
 async def track_page(
     subs_service: Any,
     dreams_db: Any,
@@ -257,9 +394,15 @@ async def track_page(
         for the subscription pins it -- active, paused, or retired, e.g.
         one a sweep auto-retired while leaving the subscription live)
         wraps the new item ``created_by_dreams=1``, so a later untrack
-        still disables the subscription.
+        still disables the subscription. When the story already owns an
+        ACTIVE page wrapper (Qodo #2, PR #2890) the existing row is
+        reused (cadence/event date refreshed, nothing created) and
+        reported as ``"attached"``.
 
     Raises:
+        TrackInvalidURL: When ``url`` fails the shared ``validate_url``
+            check (scheme, whitespace, credentials, host shape) --
+            raised BEFORE any lookup or write.
         TrackCapReached: When ``count_active_tracked()`` already meets the
             cap -- raised BEFORE any subscription, watchlist, alert, or
             tracked-item write.
@@ -267,6 +410,45 @@ async def track_page(
             with no dream provenance (the user disabled it themselves) --
             also raised before any write.
     """
+    # URL validation FIRST (Qodo #8, PR #2890): the modal gates http(s),
+    # but a direct caller can pass anything, and a malformed address
+    # persisted as a subscription would ride every later watchlist run.
+    if not validate_url(str(url)):
+        raise TrackInvalidURL(f"refusing to track a non-http(s) URL: {url!r}")
+
+    cadence = max(int(cadence_seconds or 0), _min_interval_seconds())
+
+    # Reuse before anything is written (Qodo #2, PR #2890): a story that
+    # already owns an ACTIVE page wrapper keeps it -- refresh the plan
+    # (cadence, event date) on the existing row instead of stacking a
+    # second wrapper around the same watch, which a later untrack of the
+    # newer row would strand. Reuse consumes nothing, so the cap guard
+    # below is deliberately not consulted (and must not refuse it).
+    if origin_story_id is not None:
+        wrapper = await asyncio.to_thread(
+            dreams_db.find_tracked_by_story, origin_story_id)
+        if wrapper is not None and wrapper.get("mechanism") == \
+                _PAGE_MECHANISM:
+            await _refresh_wrapper_plan(
+                dreams_db, wrapper, cadence=cadence,
+                event_date=event_date)
+            # The shared watchlist necessarily exists (this wrapper's
+            # subscription joined it); resolving is idempotent and keeps
+            # the response contract honest.
+            watchlist, _created = await subs_service.resolve_or_create_watchlist(
+                _TRACK_WATCHLIST_NAME
+            )
+            logger.debug(
+                "Dreams tracked page reused: subscription={} item={}",
+                wrapper.get("subscription_id"), wrapper.get("id"),
+            )
+            return {
+                "tracked_item_id": int(wrapper["id"]),
+                "subscription_id": wrapper.get("subscription_id"),
+                "outcome": "attached",
+                "watchlist_id": int(watchlist["id"]),
+            }
+
     # Cap guard FIRST: the whole point is that a capped runtime creates
     # nothing, so this precedes every write below.
     cap = _cap()
@@ -276,8 +458,6 @@ async def track_page(
             f"track cap reached: {active} active tracked items (cap {cap})"
         )
 
-    cadence = max(int(cadence_seconds or 0), _min_interval_seconds())
-
     # Attach-or-create. An existing subscription for exactly this URL is
     # adopted untouched (never renamed, never re-cadenced, never disabled
     # by a later untrack): the user may already depend on it.
@@ -286,11 +466,13 @@ async def track_page(
         subscription_id = int(existing)
         outcome = "attached"
         # P10 (final review): dream provenance is pinned by ANY tracked row
-        # for this subscription, whatever its status. Without the carry, a
-        # re-track after a sweep auto-retire (which retires the wrapper but
-        # leaves the dream-created subscription ACTIVE) would wrap the
-        # watch as created_by_dreams=0, and a later untrack would then
-        # (correctly) never disable it -- an orphaned active subscription.
+        # for this subscription, whatever its status. A sweep auto-retire
+        # now disables the dream-created subscription too (Qodo #1), but
+        # rows retired by older builds -- and any future writer that
+        # retires a wrapper without touching the subscription -- must
+        # still pin provenance, or a re-track would wrap the watch as
+        # created_by_dreams=0 and a later untrack would (correctly)
+        # never disable it: an orphaned active subscription.
         dream_owned = await asyncio.to_thread(
             _dream_owned_subscription, dreams_db, subscription_id
         )
@@ -349,13 +531,20 @@ async def track_page(
 
     # Any new item emerging from the watched page fires a notification into
     # the shared inbox (the Watchlists Notifications pane displays it).
-    await subs_service.create_alert_rule(
-        name=f"Change: {str(title)[:40]}",
-        condition_type="items_above",
-        condition_value={"threshold": 0},
-        job_id=subscription_id,
-        severity="information",
-    )
+    # Idempotent (Qodo #15, PR #2890): a re-track on a NEW story with the
+    # same URL resolves to the same subscription, and pinning a second
+    # identical rule there would notify twice per qualifying run. An
+    # existing enabled Dreams rule ("Change: " name + items_above 0) is
+    # reused, never duplicated.
+    rules = await subs_service.list_alert_rules(job_id=subscription_id)
+    if not _has_dreams_change_rule(rules):
+        await subs_service.create_alert_rule(
+            name=f"Change: {str(title)[:40]}",
+            condition_type="items_above",
+            condition_value={"threshold": 0},
+            job_id=subscription_id,
+            severity="information",
+        )
 
     tracked_item_id = await asyncio.to_thread(
         dreams_db.create_tracked_item,
@@ -389,7 +578,13 @@ async def track_page(
     }
 
 
-async def untrack(subs_service: Any, dreams_db: Any, tracked_item_id: int) -> dict:
+async def untrack(
+    subs_service: Any,
+    dreams_db: Any,
+    tracked_item_id: int,
+    *,
+    scheduling_db_getter: Any = None,
+) -> dict:
     """Retire one tracked item, disabling a dream-created subscription.
 
     The wrapper always moves to ``retired`` (``retired_reason="manual"``).
@@ -398,12 +593,19 @@ async def untrack(subs_service: Any, dreams_db: Any, tracked_item_id: int) -> di
     ``SubscriptionsDB.update_subscription``'s allowlisted ``is_active``
     field -- never deleted, so its watchlist membership and alert rules
     survive for a user who adopted them. A subscription Dreams merely
-    attached to (``created_by_dreams = 0``) is never touched.
+    attached to (``created_by_dreams = 0``) is never touched. The linked
+    event reminder is disabled too (Qodo #13, PR #2890), so a stopped
+    watch cannot still fire its one-time nudge.
 
     Args:
         subs_service: The app's ``LocalWatchlistsService``.
         dreams_db: The app's ``DreamsDB``.
         tracked_item_id: The ``dream_tracked_items`` row to retire.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None; when present, the reminder
+            linked to this item (``link_type="dream_tracked_item"``) is
+            disabled. Degrades, never raises: retirement already happened
+            by the time this runs.
 
     Returns:
         ``{"tracked_item_id": int, "status": "retired",
@@ -422,6 +624,7 @@ async def untrack(subs_service: Any, dreams_db: Any, tracked_item_id: int) -> di
         "retired",
         retired_reason="manual",
     )
+    await _disable_linked_reminders(scheduling_db_getter, tracked_item_id)
 
     subscription_id = item.get("subscription_id")
     subscription_disabled = False
@@ -448,7 +651,7 @@ async def untrack(subs_service: Any, dreams_db: Any, tracked_item_id: int) -> di
 
 def _sweep_sync(
     dreams_db: Any, *, now_date: date, quiet_count: int
-) -> list[str]:
+) -> tuple[list[str], list[dict]]:
     """The sweep's reads and writes; sync, the caller thread-offloads.
 
     One ``asyncio.to_thread`` hop for the whole sweep (the controller's
@@ -456,8 +659,17 @@ def _sweep_sync(
     each new thread opens another held SQLite connection, so per-operation
     hops would churn connections for no concurrency gain -- the rules are
     strictly sequential.
+
+    Returns:
+        ``(notes, retired)`` -- the human-readable degradation notes, and
+        the full row dicts this pass moved to ``retired`` (NOT the paused
+        ones): the async caller uses ``retired`` to disable each row's
+        dream-created subscription (Qodo #1) and linked reminder
+        (Qodo #13) through the service seams, which cannot run inside
+        this sync hop.
     """
     notes: list[str] = []
+    retired: list[dict] = []
     for item in dreams_db.list_tracked_items("active"):
         item_id = int(item["id"])
 
@@ -477,6 +689,7 @@ def _sweep_sync(
             if passed:
                 dreams_db.set_tracked_status(
                     item_id, "retired", retired_reason="event_passed")
+                retired.append(item)
                 notes.append(
                     f"track sweep: retired item {item_id} (event passed)")
                 continue
@@ -489,6 +702,7 @@ def _sweep_sync(
         if unchanged_run >= quiet_count:
             dreams_db.set_tracked_status(
                 item_id, "retired", retired_reason="quiet")
+            retired.append(item)
             notes.append(
                 f"track sweep: retired item {item_id} "
                 f"(quiet: {unchanged_run} unchanged)")
@@ -503,10 +717,16 @@ def _sweep_sync(
                 f"(repeated failures: {error_run})")
     if notes:
         logger.info("Dreams track sweep: {}", "; ".join(notes))
-    return notes
+    return notes, retired
 
 
-async def sweep_track_lifecycle(dreams_db: Any, *, now: Any) -> list[str]:
+async def sweep_track_lifecycle(
+    dreams_db: Any,
+    *,
+    now: Any,
+    subs_service_getter: Any = None,
+    scheduling_db_getter: Any = None,
+) -> list[str]:
     """Retire or pause active tracked items whose watch has gone dead.
 
     Three rules, applied to each ACTIVE item (paused and retired items are
@@ -530,17 +750,67 @@ async def sweep_track_lifecycle(dreams_db: Any, *, now: Any) -> list[str]:
     the callers' degradation-notes channel. The whole sweep runs under a
     single ``asyncio.to_thread`` hop (see :func:`_sweep_sync`).
 
+    A wrapper the sweep retires also loses the things Dreams scheduled
+    around it (Qodo #1/#13, PR #2890): a dream-created page subscription
+    is DISABLED through the ``update_source({"active": False})`` seam
+    (attached foreign subscriptions are never touched), and the linked
+    one-time event reminder is disabled. Both degrade per item -- a
+    missing service, a raising getter, or a failed write logs and moves
+    on; the retirement itself already stands.
+
     Args:
         dreams_db: The app's ``DreamsDB`` (schema v2).
         now: The sweep clock (UTC-aware ``datetime``, ``CycleDeps.now``
             shaped); event-past judging uses its UTC date.
+        subs_service_getter: Zero-arg callable returning the app's
+            ``LocalWatchlistsService`` or None; None (the default) means
+            retired page items keep their subscription -- the legacy
+            sweep behavior -- never an error.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None; None means linked reminders are
+            left enabled.
 
     Returns:
         Degradation notes naming every retirement/pause the sweep made.
     """
-    return await asyncio.to_thread(
+    notes, retired = await asyncio.to_thread(
         _sweep_sync, dreams_db,
         now_date=now.date(), quiet_count=_quiet_retire_count())
+
+    subs_service = None
+    if subs_service_getter is not None:
+        try:
+            subs_service = subs_service_getter()
+        except Exception as exc:  # noqa: BLE001 - sweep degrades, never raises
+            logger.warning(
+                "Dreams sweep: watchlists service getter failed: {}",
+                type(exc).__name__)
+    for item in retired:
+        # Qodo #13 first: the linked reminder dies for EVERY retired item
+        # (page and question alike -- track_question promotes reminders
+        # too).
+        await _disable_linked_reminders(scheduling_db_getter, int(item["id"]))
+        subscription_id = item.get("subscription_id")
+        # Qodo #1: a dream-created PAGE subscription is disabled so the
+        # independent watchlist projection stops scheduling it; a foreign
+        # attached subscription (created_by_dreams=0) is never ours to
+        # stop, and a question item has no subscription at all.
+        if (
+            subs_service is not None
+            and item.get("mechanism") == _PAGE_MECHANISM
+            and int(item.get("created_by_dreams") or 0) == 1
+            and subscription_id
+        ):
+            try:
+                await subs_service.update_source(
+                    int(subscription_id), {"active": False}
+                )
+            except Exception as exc:  # noqa: BLE001 - retire stands either way
+                logger.warning(
+                    "Dreams sweep: disabling subscription {} failed: {}",
+                    subscription_id, type(exc).__name__,
+                )
+    return notes
 
 
 # --- Event reminders (Phase 2 Task 5) -------------------------------------------
@@ -669,7 +939,10 @@ async def track_question(
             week ahead. Degrades, never raises.
 
     Returns:
-        The new tracked item id.
+        The tracked item id -- a NEW row, or the EXISTING active row when
+        the story already owns a question wrapper for this template
+        (Qodo #2, PR #2890: the plan refreshes on the existing row and
+        nothing is created).
 
     Raises:
         ValueError: If ``query_template`` is empty/blank -- an empty watch
@@ -681,6 +954,27 @@ async def track_question(
     if not template.strip():
         raise ValueError("track_question requires a non-empty query_template")
 
+    cadence = max(int(cadence_seconds or 0), _min_interval_seconds())
+
+    # Reuse before anything is written (Qodo #2, PR #2890), same shape as
+    # ``track_page``'s branch: the story's existing ACTIVE question
+    # wrapper keeps watching; only its cadence/event date refresh.
+    if origin_story_id is not None:
+        wrapper = await asyncio.to_thread(
+            dreams_db.find_tracked_by_story, origin_story_id)
+        if wrapper is not None and wrapper.get("mechanism") == \
+                _QUESTION_MECHANISM:
+            await _refresh_wrapper_plan(
+                dreams_db, wrapper, cadence=cadence,
+                event_date=event_date)
+            # Qodo #11: identifiers and lengths only -- the template is
+            # user text and must not reach the logs.
+            logger.debug(
+                "Dreams tracked question reused: item={} template_len={}",
+                wrapper["id"], len(str(wrapper.get("query_template") or "")),
+            )
+            return int(wrapper["id"])
+
     # Cap guard FIRST, identical discipline to ``track_page``.
     cap = _cap()
     active = await asyncio.to_thread(dreams_db.count_active_tracked)
@@ -689,7 +983,6 @@ async def track_question(
             f"track cap reached: {active} active tracked items (cap {cap})"
         )
 
-    cadence = max(int(cadence_seconds or 0), _min_interval_seconds())
     tracked_item_id = await asyncio.to_thread(
         dreams_db.create_tracked_item,
         origin_story_id=origin_story_id,
@@ -710,8 +1003,11 @@ async def track_question(
         {"id": tracked_item_id, "query_template": template,
          "event_date": event_date},
     )
-    logger.debug("Dreams tracked question: item={} template={}",
-                 tracked_item_id, template[:50])
+    # Qodo #11 (PR #2890): identifiers and lengths only -- the template is
+    # caller-supplied text (it can carry anything the user typed next to
+    # a secret), so it must never be logged, not even a prefix.
+    logger.debug("Dreams tracked question: item={} template_len={}",
+                 tracked_item_id, len(template))
     return tracked_item_id
 
 
@@ -728,10 +1024,31 @@ def _render_query(template: str) -> str:
         return template
 
 
+def _snippet_component(snippet: Any) -> str:
+    """Normalized snippet fragment for the digest (Qodo #3, PR #2890).
+
+    Whitespace-collapsed (``"a  b\\n c"`` → ``"a b c"``) and capped at
+    ``_SNIPPET_DIGEST_CHARS``: re-crawl noise -- trailing prose drift,
+    re-wrapped lines -- must not flip every check to ``changed``, while a
+    price/date/availability change near the top of the snippet must.
+    """
+    return " ".join(str(snippet or "").split())[:_SNIPPET_DIGEST_CHARS]
+
+
 def _results_digest(results: list[Candidate]) -> str:
-    """Content digest of one check's result set (URL identity + titles)."""
+    """Content digest of one check's result set.
+
+    Hashes each result's normalized URL, title, and (normalized,
+    bounded) snippet. The snippet component is what makes
+    price/date/availability changes inside an unchanged URL+title
+    reachable by the judge (Qodo #3, PR #2890) -- without it the digest
+    short-circuit declared such results ``unchanged`` forever.
+    """
     joined = "\n".join(
-        discovery.normalize_url(result.url) + result.title for result in results
+        discovery.normalize_url(result.url)
+        + result.title
+        + _snippet_component(result.snippet)
+        for result in results
     )
     return hashlib.sha256(joined.encode()).hexdigest()
 
@@ -858,12 +1175,24 @@ def _dispatch_changed(
     query_template: str,
     note: str,
     tracked_item_id: int,
-) -> str:
+) -> bool:
     """Dispatch the one ``dreams_track`` notification; degrade, never raise.
 
-    Returns the verdict note, with a degrade marker appended when the
-    notification could not be delivered (no dispatcher wired, getter
-    failure, or dispatch failure) -- the run row is written either way.
+    Qodo #4 (PR #2890): the caller learns whether the alert actually
+    reached a dispatcher, so the run row can record ``notified=0`` and a
+    degrade marker instead of claiming delivery that never happened.
+
+    Args:
+        deps: Injected collaborators (only ``dispatch_getter`` is read).
+        query_template: The watch's template (notification title prefix).
+        note: The judge's verdict note (notification body).
+        tracked_item_id: Item the notification is about.
+
+    Returns:
+        True when a dispatcher resolved and ``dispatch`` returned
+        without raising; False for every degraded outcome (no getter, a
+        raising getter, no dispatcher wired, or a dispatch failure --
+        each logged, never raised).
     """
     getter = getattr(deps, "dispatch_getter", None)
     dispatcher = None
@@ -874,7 +1203,7 @@ def _dispatch_changed(
             logger.warning(
                 "Dreams track dispatch getter failed: {}", type(exc).__name__)
     if dispatcher is None:
-        return f"{note}; notification unavailable"
+        return False
     try:
         dispatcher.dispatch(
             category="dreams_track",
@@ -888,33 +1217,21 @@ def _dispatch_changed(
         logger.warning(
             "Dreams track notification dispatch failed: {}",
             type(exc).__name__)
-        return f"{note}; notification delivery degraded"
-    return note
+        return False
+    return True
 
 
 async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
     """Run one scheduled check of a tracked item; every outcome is a row.
 
-    Pipeline (spec §track loop): sweep the lifecycle first (Task 6,
-    below), then load the item (a missing one -- retired between emission
-    and dispatch -- is a clean ``skipped`` with no row), budget-guard
-    BEFORE spending anything, re-run the template as one search, digest
-    the result set, and compare against the most recent anchoring digest:
-
-    * no baseline yet → ``baseline`` run, ``notified=0``;
-    * identical digest → ``unchanged`` run, no LLM call at all;
-    * different digest → exactly one judge ``chat`` call whose prompt
-      carries only the query, the current top snippets, and the
-      JSON-verdict question (prior digests are hashes; prior snippets are
-      not stored). Verdict ``{"changed": true, ...}`` → ``changed`` run
-      (``notified=1``) plus one ``dreams_track`` notification; a judge
-      failure or unparseable verdict → ``error`` run. Notification
-      delivery degrades (logged, noted on the run), never raises.
-
-    Budgets: the check is skipped before any spend when either daily
-    counter is exhausted; the search bumps ``searches=1`` after it runs,
-    and any ATTEMPTED judge call bumps ``llm_calls=1`` (the attempted-call
-    accounting ``discovery.run_queries`` already applies to searches).
+    Per-item in-flight claim (Qodo #16, PR #2890): the projection keeps
+    an item due until ``touch_tracked_checked`` lands at the END of a
+    check, and the queue reloads (~every 30 minutes) while a slow search
+    or judge call is still running -- a re-dispatch of the same item
+    could otherwise run a second concurrent check and notify twice. The
+    claim mirrors ``cycle_service._ACTIVE_CYCLE_DATES``: a module-level
+    event-loop-only set, checked and added with NO await between, and
+    discarded in a ``finally`` so cancellations cannot leak it.
 
     Args:
         deps: Injected collaborators (see ``CycleDeps``; only
@@ -925,14 +1242,73 @@ async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
     Returns:
         ``{"status": <disposition>, "notified": bool}`` -- one of
         ``baseline``/``unchanged``/``changed``/``withheld``/``error``/
-        ``skipped``.
+        ``skipped``, or ``inflight`` when this item already has a check
+        executing (nothing spent, nothing recorded).
+    """
+    # No await between the check and the add: a second dispatch of the
+    # same item running on the same event loop cannot interleave here.
+    if tracked_item_id in _INFLIGHT_TRACK_CHECKS:
+        return {"status": "inflight", "notified": False}
+    _INFLIGHT_TRACK_CHECKS.add(tracked_item_id)
+    try:
+        return await _run_track_check_claimed(deps, tracked_item_id)
+    finally:
+        _INFLIGHT_TRACK_CHECKS.discard(tracked_item_id)
+
+
+async def _run_track_check_claimed(
+    deps: "CycleDeps", tracked_item_id: int
+) -> dict:
+    """The check pipeline proper; ``run_track_check`` holds the claim.
+
+    Pipeline (spec §track loop): sweep the lifecycle first (Task 6,
+    below), then load the item (a missing one -- retired between emission
+    and dispatch -- is a clean ``skipped`` with no row; a present but
+    non-ACTIVE one -- paused, or retired by the sweep just above --
+    records one ``skipped`` "not active" run and spends nothing, Qodo #5,
+    PR #2890; a PAGE-mechanism one is skipped the same way, Qodo #7 --
+    its subscription's own loop watches the page, and a Dreams search on
+    an empty template would only burn the shared budget), budget-guard
+    BEFORE spending anything, re-run the template as one search, digest
+    the result set, and compare against the most recent anchoring digest:
+
+    * no baseline yet → ``baseline`` run, ``notified=0``;
+    * identical digest → ``unchanged`` run, no LLM call at all;
+    * different digest → exactly one judge ``chat`` call whose prompt
+      carries only the query, the current top snippets, and the
+      JSON-verdict question (prior digests are hashes; prior snippets are
+      not stored). Verdict ``{"changed": true, ...}`` → ``changed`` run
+      plus one ``dreams_track`` notification, with ``notified=1`` ONLY
+      when the dispatch actually delivered (Qodo #4: a missing or failed
+      dispatcher records ``notified=0`` and a "(delivery degraded)"
+      verdict-note suffix -- the run no longer claims an alert that never
+      arrived); a judge failure or unparseable verdict → ``error`` run.
+      Notification delivery degrades (logged, noted on the run), never
+      raises.
+
+    Budgets: the check is skipped before any spend when either daily
+    counter is exhausted; the search bumps ``searches=1`` after it runs,
+    and any ATTEMPTED judge call bumps ``llm_calls=1`` (the attempted-call
+    accounting ``discovery.run_queries`` already applies to searches).
+
+    Args:
+        deps: Injected collaborators (see ``CycleDeps``).
+        tracked_item_id: The ``dream_tracked_items`` row to check.
+
+    Returns:
+        ``{"status": <disposition>, "notified": bool}``.
     """
     # Lifecycle sweep FIRST (Task 6): the item this task dispatches may
     # already be past its event or quiet -- and other active items may be
     # too. Degrade-never-abort: a sweep failure logs and the check itself
     # proceeds unchanged.
     try:
-        await sweep_track_lifecycle(deps.dreams_db, now=deps.now())
+        await sweep_track_lifecycle(
+            deps.dreams_db, now=deps.now(),
+            subs_service_getter=getattr(deps, "subs_service_getter", None),
+            scheduling_db_getter=getattr(
+                deps, "scheduling_db_getter", None),
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - the sweep must not kill a check
@@ -946,7 +1322,33 @@ async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
     item = await asyncio.to_thread(dreams_db.get_tracked_item, tracked_item_id)
     if item is None:
         return {"status": "skipped", "notified": False}
+    # Qodo #5 (PR #2890): existence is not liveness. A task dispatched
+    # before an untrack/pause/sweep finds a row whose watch is already
+    # stopped; it must record one cheap skip, not search and spend.
+    if str(item.get("status") or "") != "active":
+        await asyncio.to_thread(
+            _record_run, dreams_db, tracked_item_id,
+            status="skipped", digest=None, note="not active", notified=0,
+            now_iso=to_utc_iso(now))
+        return {"status": "skipped", "notified": False}
+    # Qodo #7 (PR #2890), defense in depth under the projection's
+    # question-only filter: a page item has no template to search -- its
+    # subscription's own loop watches the page -- and a blank template
+    # from any other writer has nothing to search either.
+    if str(item.get("mechanism") or "") != _QUESTION_MECHANISM:
+        await asyncio.to_thread(
+            _record_run, dreams_db, tracked_item_id,
+            status="skipped", digest=None,
+            note="page items are watched by subscription", notified=0,
+            now_iso=to_utc_iso(now))
+        return {"status": "skipped", "notified": False}
     query_template = str(item.get("query_template") or "")
+    if not query_template.strip():
+        await asyncio.to_thread(
+            _record_run, dreams_db, tracked_item_id,
+            status="skipped", digest=None, note="empty query template",
+            notified=0, now_iso=to_utc_iso(now))
+        return {"status": "skipped", "notified": False}
 
     # Budget guard FIRST: an exhausted day skips before the search, the
     # judge, and every bump -- spending nothing is the point.
@@ -1041,14 +1443,20 @@ async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
             now_iso=to_utc_iso(now))
         return {"status": "unchanged", "notified": False}
 
-    stored_note = _dispatch_changed(
+    delivered = _dispatch_changed(
         deps, query_template=query_template, note=note,
         tracked_item_id=tracked_item_id)
+    # Qodo #4 (PR #2890): ``notified`` records DELIVERY, not intent -- a
+    # degraded dispatch writes 0 and marks the note so the user can see
+    # the alert never arrived.
+    stored_note = note if delivered else (
+        f"{note}; notification delivery degraded")
     await asyncio.to_thread(
         _record_run, dreams_db, tracked_item_id,
-        status="changed", digest=digest, note=stored_note, notified=1,
+        status="changed", digest=digest, note=stored_note,
+        notified=1 if delivered else 0,
         now_iso=to_utc_iso(now))
-    return {"status": "changed", "notified": True}
+    return {"status": "changed", "notified": delivered}
 
 
 def rebaseline_track(dreams_db: Any, tracked_item_id: int) -> int | None:

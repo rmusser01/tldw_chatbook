@@ -15,8 +15,10 @@ the existing service method that routes into ``SubscriptionsDB.
 update_subscription``'s allowlisted ``is_active`` field -- no raw SQL, no new
 service method. Attached (not dream-created) subscriptions are never touched.
 """
+import asyncio
 import hashlib
 import json
+import threading
 from datetime import UTC, datetime
 
 import pytest
@@ -27,6 +29,7 @@ from tldw_chatbook.Dreams.cycle_service import CycleDeps
 from tldw_chatbook.Dreams.discovery import normalize_url
 from tldw_chatbook.Dreams.track_service import (
     TrackCapReached,
+    TrackInvalidURL,
     TrackSourceDisabled,
     promote_to_reminder,
     rebaseline_track,
@@ -490,8 +493,14 @@ def _today() -> str:
 
 
 def _expected_digest(results) -> str:
+    """The digest of a result set under the production rule (Qodo #3):
+    normalized URL + title + whitespace-collapsed, 200-char-capped
+    snippet per result, newline-joined, SHA-256."""
+    from tldw_chatbook.Dreams.track_service import _snippet_component
+
     return hashlib.sha256("\n".join(
-        normalize_url(url) + title for title, url, _snippet in results
+        normalize_url(url) + title + _snippet_component(snippet)
+        for title, url, snippet in results
     ).encode()).hexdigest()
 
 
@@ -974,11 +983,14 @@ async def test_track_check_dispatch_getter_none_still_writes_changed_run(
     search.results = _SET_B
     result = await run_track_check(deps, item_id)
 
-    assert result == {"status": "changed", "notified": True}
+    # Qodo #4 (PR #2890): a run whose alert never reached a dispatcher is
+    # ``changed`` but NOT ``notified`` -- the row no longer claims
+    # delivery that did not happen.
+    assert result == {"status": "changed", "notified": False}
     runs = dreams_db.list_recent_track_runs(item_id)
     assert runs[0]["status"] == "changed"
-    assert runs[0]["notified"] == 1
-    assert "notification unavailable" in runs[0]["verdict_note"], (
+    assert runs[0]["notified"] == 0
+    assert "notification delivery degraded" in runs[0]["verdict_note"], (
         "the missing dispatcher is noted, never raised"
     )
 
@@ -999,12 +1011,14 @@ async def test_track_check_dispatch_failure_still_writes_changed_run(
     search.results = _SET_B
     result = await run_track_check(deps, item_id)
 
-    assert result == {"status": "changed", "notified": True}
+    assert result == {"status": "changed", "notified": False}, (
+        "a failed dispatch must not report the run as notified"
+    )
     runs = dreams_db.list_recent_track_runs(item_id)
     assert runs[0]["status"] == "changed"
-    assert runs[0]["notified"] == 1
+    assert runs[0]["notified"] == 0
     assert "new dates announced" in runs[0]["verdict_note"]
-    assert "degraded" in runs[0]["verdict_note"]
+    assert "notification delivery degraded" in runs[0]["verdict_note"]
 
 
 # --- rebaseline_track ------------------------------------------------------------
@@ -1288,20 +1302,32 @@ async def test_sweep_leaves_mixed_healthy_items_untouched(dreams_db, settings):
 
 @pytest.mark.asyncio
 async def test_run_track_check_sweeps_before_checking(dreams_db, settings):
-    """The check loop sweeps first: an event-passed item retires, and the
-    dispatched check still completes with its normal disposition."""
+    """The check loop sweeps first -- and a sweep-retired item stops there.
+
+    Qodo #5 (PR #2890): the sweep retires the event-passed item BEFORE
+    the check's own row read, so the dispatched task now records one
+    cheap ``skipped`` "not active" run instead of searching and spending
+    budget on a watch that just died. Existence alone is no longer
+    liveness.
+    """
     settings["region"] = "kyoto"
     item_id = await track_question(
         dreams_db, query_template=_TEMPLATE, intent="event",
         event_date="2026-09-20")
-    deps = _track_deps(dreams_db, perform_search=_FakeSearch(_SET_A))
+    search = _FakeSearch(_SET_A)
+    deps = _track_deps(dreams_db, perform_search=search)
 
     result = await run_track_check(deps, item_id)
 
-    assert result["status"] == "baseline", "the check itself still runs"
+    assert result == {"status": "skipped", "notified": False}
     item = dreams_db.get_tracked_item(item_id)
     assert item["status"] == "retired"
     assert item["retired_reason"] == "event_passed"
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "skipped"
+    assert runs[0]["verdict_note"] == "not active"
+    assert search.calls == [], "a stopped watch must not search"
+    assert dreams_db.usage_get(_today()) == {"searches": 0, "llm_calls": 0}
 
 
 # --- re-track after a sweep auto-retire (final review, ruling P10) --------------
@@ -1312,12 +1338,13 @@ async def test_retrack_after_sweep_retire_keeps_dream_provenance(
         tmp_path, dreams_db, settings, subs_stack):
     """A sweep-retired watch must re-track with its provenance intact.
 
-    The sweep retires the WRAPPER but leaves the dream-created subscription
-    ``is_active=1``, so the re-track rides the plain attach branch. Without
-    the P10 provenance carry the new wrapper would land
-    ``created_by_dreams=0`` -- a later untrack would then (correctly) never
-    disable the subscription, leaving the page scheduled and alerting
-    forever with no wrapper to retire: an orphaned active subscription.
+    Qodo #1 (PR #2890) changed the sweep's teardown: retiring a
+    dream-created page wrapper now DISABLES its subscription too, so the
+    re-track lands on the P7 re-enable branch (a disabled source with
+    dream provenance pinned by the retired row) instead of the plain
+    attach -- the outcome word differs, the invariant does not: the
+    subscription is dream-owned, re-enabled, and a later untrack disables
+    it again. No orphaned active subscription may outlive the wrapper.
     """
     subs_db, service = subs_stack
     first = await track_page(
@@ -1326,23 +1353,25 @@ async def test_retrack_after_sweep_retire_keeps_dream_provenance(
     )
     assert first["outcome"] == "created"
 
-    # The sweep auto-retires the wrapper (event passed + grace) and leaves
-    # the subscription ACTIVE -- that asymmetry is the bug's setup.
-    await sweep_track_lifecycle(dreams_db, now=NOW)
+    # The sweep auto-retires the wrapper (event passed + grace) and, with
+    # the service wired, disables the dream-created subscription with it.
+    await sweep_track_lifecycle(
+        dreams_db, now=NOW, subs_service_getter=lambda: service)
     retired = dreams_db.get_tracked_item(first["tracked_item_id"])
     assert retired["status"] == "retired"
     assert retired["retired_reason"] == "event_passed"
     assert int(
         subs_db.get_subscription(first["subscription_id"])["is_active"]
-    ) == 1, "fixture: the sweep retires the wrapper, not the subscription"
+    ) == 0, "the sweep's teardown disabled the dream-owned subscription"
 
     second = await track_page(
         service, dreams_db, url=_URL, title="Festival", intent="event",
         origin_story_id=7,
     )
 
-    assert second["outcome"] == "attached", (
-        "the subscription is active, so this is a plain attach"
+    assert second["outcome"] == "re-enabled", (
+        "the subscription is disabled but dream-owned: re-enabled, "
+        "never refused and never duplicated"
     )
     assert second["subscription_id"] == first["subscription_id"], (
         "re-track adopts the same subscription, never a duplicate"
@@ -1358,3 +1387,368 @@ async def test_retrack_after_sweep_retire_keeps_dream_provenance(
     assert int(
         subs_db.get_subscription(first["subscription_id"])["is_active"]
     ) == 0, "no orphaned active subscription may outlive the wrapper"
+
+
+@pytest.mark.asyncio
+async def test_sweep_retire_without_service_keeps_legacy_behavior(
+        tmp_path, dreams_db, settings, subs_stack):
+    """The teardown getters are optional: a getter-less sweep (the legacy
+    call shape) retires the wrapper and leaves the subscription live --
+    degrade, never raise."""
+    subs_db, service = subs_stack
+    first = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-09-20", origin_story_id=7,
+    )
+
+    notes = await sweep_track_lifecycle(dreams_db, now=NOW)
+
+    assert any("event passed" in note for note in notes)
+    assert int(
+        subs_db.get_subscription(first["subscription_id"])["is_active"]
+    ) == 1, "without the service seam the sweep cannot disable anything"
+
+
+# --- Qodo review on PR #2890 -----------------------------------------------------
+
+
+class _RecordingSubsService:
+    """``update_source``-only stand-in that records every call."""
+
+    def __init__(self):
+        self.updates: list[tuple[int, dict]] = []
+
+    async def update_source(self, source_id, payload):
+        self.updates.append((source_id, dict(payload)))
+        return {"id": source_id, **dict(payload)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "ftp://example.com/file",          # unsupported scheme
+        "https://exa mple.com/a",          # raw whitespace
+        "https://user:pass@example.com/a",  # embedded credentials
+        "example.com/no-scheme",
+        "",
+    ],
+)
+async def test_track_page_refuses_invalid_url_before_any_write(
+        tmp_path, dreams_db, settings, subs_stack, bad_url):
+    """Qodo #8: the shared ``validate_url`` gate runs service-side, before
+    any lookup or write -- a malformed address never becomes a
+    subscription the watchlist loop would keep processing."""
+    subs_db, service = subs_stack
+
+    with pytest.raises(TrackInvalidURL) as excinfo:
+        await track_page(
+            service, dreams_db, url=bad_url, title="Bad", intent="topic")
+
+    assert excinfo.value.reason_code == "track_invalid_url"
+    assert dreams_db.list_tracked_items() == []
+    assert _count_rows(subs_db, "subscriptions") == 0
+    assert _count_rows(subs_db, "watchlists") == 0
+    assert _count_rows(subs_db, "local_watchlist_alert_rules") == 0
+
+
+@pytest.mark.asyncio
+async def test_track_page_twice_same_story_reuses_one_wrapper(
+        tmp_path, dreams_db, settings, subs_stack):
+    """Qodo #2: re-tracking a story that already owns an ACTIVE page
+    wrapper reuses it (plan refreshed) instead of stacking a second
+    wrapper whose retirement would strand the first."""
+    subs_db, service = subs_stack
+    first = await track_page(
+        service, dreams_db, url=_URL, title="Flights", intent="deal",
+        origin_story_id=7)
+    assert first["outcome"] == "created"
+
+    second = await track_page(
+        service, dreams_db, url=_URL, title="Flights", intent="deal",
+        origin_story_id=7,
+        cadence_seconds=86400, event_date="2026-10-01")
+
+    assert second["outcome"] == "attached"
+    assert second["tracked_item_id"] == first["tracked_item_id"]
+    assert second["subscription_id"] == first["subscription_id"]
+    active = dreams_db.list_tracked_items()
+    assert len(active) == 1, "one story, one wrapper"
+    # The caller's plan moved onto the reused row.
+    assert active[0]["cadence_seconds"] == 86400
+    assert active[0]["event_date"] == "2026-10-01"
+    assert _count_rows(subs_db, "subscriptions") == 1
+
+
+@pytest.mark.asyncio
+async def test_track_question_twice_same_story_reuses_wrapper(
+        dreams_db, settings):
+    """Qodo #2, question path: the story's existing ACTIVE question wrapper
+    is returned (plan refreshed), never duplicated."""
+    first = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal",
+        origin_story_id=3, cadence_seconds=86400)
+    second = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal",
+        origin_story_id=3, cadence_seconds=172800)
+
+    assert second == first
+    active = dreams_db.list_tracked_items()
+    assert len(active) == 1
+    assert active[0]["cadence_seconds"] == 172800
+
+
+@pytest.mark.asyncio
+async def test_track_check_snippet_only_change_reaches_judge(
+        dreams_db, settings):
+    """Qodo #3: a result keeping its URL and title while its snippet
+    changes (price, date, availability) must move the digest and reach
+    the judge -- not be declared ``unchanged`` forever."""
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    set_a = (("Flights round-up", "https://example.com/flights/roundup",
+              "prices unchanged"),)
+    set_b = (("Flights round-up", "https://example.com/flights/roundup",
+              "SOLD OUT everywhere"),)
+    search = _FakeSearch(set_a)
+    chat = _FakeChat()
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)
+    search.results = set_b
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "changed", "notified": True}
+    assert len(chat.calls) == 1, "the snippet change reaches the judge"
+    assert _expected_digest(set_a) != _expected_digest(set_b)
+
+
+@pytest.mark.asyncio
+async def test_track_check_on_paused_item_skips_without_spending(
+        dreams_db, settings):
+    """Qodo #5: a task dispatched after a pause records one cheap skip --
+    no search, no budget, no judge."""
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="topic")
+    dreams_db.set_tracked_status(item_id, "paused")
+    search = _FakeSearch(_SET_A)
+    deps = _track_deps(dreams_db, perform_search=search)
+
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "skipped", "notified": False}
+    assert search.calls == []
+    assert dreams_db.usage_get(_today()) == {"searches": 0, "llm_calls": 0}
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "skipped"
+    assert runs[0]["verdict_note"] == "not active"
+
+
+@pytest.mark.asyncio
+async def test_track_check_on_page_item_skips_no_spend(dreams_db, settings):
+    """Qodo #7 (defense in depth under the projection's question-only
+    filter): a page-mechanism item records a skip -- its subscription's
+    own loop watches the page; a Dreams search on an empty template would
+    only burn the shared budget."""
+    item_id = dreams_db.create_tracked_item(
+        mechanism="page", intent="topic", cadence_seconds=3600,
+        subscription_id=99, created_by_dreams=1)
+    search = _FakeSearch(_SET_A)
+    deps = _track_deps(dreams_db, perform_search=search)
+
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "skipped", "notified": False}
+    assert search.calls == []
+    assert dreams_db.usage_get(_today()) == {"searches": 0, "llm_calls": 0}
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "skipped"
+    assert runs[0]["verdict_note"] == "page items are watched by subscription"
+
+
+class _BlockingSearch:
+    """Sync search fake that parks inside the worker thread until released."""
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+
+    def __call__(self, engine, query, **kwargs):
+        self.calls += 1
+        self.started.set()
+        assert self.release.wait(timeout=10)
+        return {"results": [
+            {"title": "Flights round-up", "url":
+             "https://example.com/flights/roundup", "content": "nothing new"},
+        ]}
+
+
+@pytest.mark.asyncio
+async def test_track_check_second_concurrent_run_returns_inflight(
+        dreams_db, settings):
+    """Qodo #16: while one check of an item is still inside its search, a
+    re-dispatch returns ``inflight`` immediately -- no second search, no
+    second judge, no second notification."""
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _BlockingSearch()
+    deps = _track_deps(dreams_db, perform_search=search)
+
+    first = asyncio.create_task(run_track_check(deps, item_id))
+    # Yield the loop (a sync Event.wait would block it) until the spawned
+    # check is parked inside its worker-thread search.
+    for _ in range(200):
+        if search.started.is_set():
+            break
+        await asyncio.sleep(0.05)
+    assert search.started.is_set(), "first check reached its search"
+
+    second = await run_track_check(deps, item_id)
+
+    assert second == {"status": "inflight", "notified": False}
+    search.release.set()
+    result = await first
+    assert result == {"status": "baseline", "notified": False}
+    assert search.calls == 1, "exactly one search ran"
+    assert dreams_db.usage_get(_today()) == {"searches": 1, "llm_calls": 0}
+    # The claim is released: a later check of the same item runs normally
+    # (identical results -> unchanged, judge skipped).
+    same = (("Flights round-up", "https://example.com/flights/roundup",
+             "nothing new"),)
+    again = await run_track_check(
+        _track_deps(dreams_db, perform_search=_FakeSearch(same)), item_id)
+    assert again["status"] == "unchanged"
+
+
+@pytest.mark.asyncio
+async def test_sweep_retire_disables_dream_subscription_and_reminder(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Qodo #1 + #13: a sweep-retired dream-created page item takes its
+    subscription (disabled, never deleted) and its linked reminder with
+    it."""
+    subs_db, service = subs_stack
+    result = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-09-20", origin_story_id=7,
+        scheduling_db_getter=lambda: scheduling_db)
+    (task,) = scheduling_db.list_reminder_tasks()
+    assert task["enabled"] is True, "fixture: the reminder starts armed"
+
+    notes = await sweep_track_lifecycle(
+        dreams_db, now=NOW,
+        subs_service_getter=lambda: service,
+        scheduling_db_getter=lambda: scheduling_db)
+
+    assert any("event passed" in note for note in notes)
+    subscription = subs_db.get_subscription(result["subscription_id"])
+    assert subscription is not None, "disabled, never deleted"
+    assert int(subscription["is_active"]) == 0
+    (task,) = scheduling_db.list_reminder_tasks()
+    assert task["enabled"] is False, "the linked reminder stops firing"
+
+
+@pytest.mark.asyncio
+async def test_sweep_retire_of_question_item_touches_no_subscription(
+        dreams_db, settings):
+    """Qodo #1: a question item has no subscription -- its retirement must
+    not attempt any external subscription write (only its reminder dies)."""
+    item_id = dreams_db.create_tracked_item(
+        mechanism="question", intent="event", event_date="2026-09-20",
+        cadence_seconds=3600)
+    recorder = _RecordingSubsService()
+
+    await sweep_track_lifecycle(
+        dreams_db, now=NOW, subs_service_getter=lambda: recorder)
+
+    assert dreams_db.get_tracked_item(item_id)["status"] == "retired"
+    assert recorder.updates == [], "nothing external was touched"
+
+
+@pytest.mark.asyncio
+async def test_sweep_retire_of_attached_page_leaves_subscription_active(
+        tmp_path, dreams_db, settings, subs_stack):
+    """Qodo #1: a subscription Dreams merely attached to (the user's own)
+    is never disabled by the sweep -- only dream-created ones."""
+    subs_db, service = subs_stack
+    existing = await service.create_source(
+        {"name": "User's own feed", "url": _URL, "source_type": "url"})
+    tracked = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-09-20", origin_story_id=7)
+    assert tracked["outcome"] == "attached"
+
+    await sweep_track_lifecycle(
+        dreams_db, now=NOW, subs_service_getter=lambda: service)
+
+    assert dreams_db.get_tracked_item(tracked["tracked_item_id"])[
+        "status"] == "retired"
+    assert int(
+        subs_db.get_subscription(existing["source_id"])["is_active"]
+    ) == 1, "an attached subscription is NEVER ours to stop"
+
+
+@pytest.mark.asyncio
+async def test_untrack_disables_linked_reminder(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Qodo #13: manual untrack stops the watch AND its one-time reminder."""
+    service = subs_stack[1]
+    result = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-10-01",
+        scheduling_db_getter=lambda: scheduling_db)
+    (task,) = scheduling_db.list_reminder_tasks()
+    assert task["enabled"] is True
+
+    await untrack(
+        service, dreams_db, result["tracked_item_id"],
+        scheduling_db_getter=lambda: scheduling_db)
+
+    (task,) = scheduling_db.list_reminder_tasks()
+    assert task["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_untrack_without_scheduling_getter_leaves_reminder(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """Qodo #13 degrade path: no scheduling getter (wiring order) and the
+    retirement still succeeds -- the reminder simply stays armed."""
+    service = subs_stack[1]
+    result = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-10-01",
+        scheduling_db_getter=lambda: scheduling_db)
+
+    outcome = await untrack(service, dreams_db, result["tracked_item_id"])
+
+    assert outcome["status"] == "retired"
+    (task,) = scheduling_db.list_reminder_tasks()
+    assert task["enabled"] is True, "degrade, never raise"
+
+
+@pytest.mark.asyncio
+async def test_retrack_new_story_same_url_keeps_one_alert_rule(
+        tmp_path, dreams_db, settings, subs_stack):
+    """Qodo #15: a second wrapper on the same subscription (a new story,
+    same URL) must not pin a second identical change rule -- one
+    notification per qualifying run, not one per wrapper."""
+    _subs_db, service = subs_stack
+    first = await track_page(
+        service, dreams_db, url=_URL, title="Flights", intent="deal",
+        origin_story_id=7)
+    second = await track_page(
+        service, dreams_db, url=_URL, title="Flights again", intent="deal",
+        origin_story_id=8)
+    assert {first["outcome"], second["outcome"]} == {"created", "attached"}
+
+    rules = await service.list_alert_rules(job_id=first["subscription_id"])
+    dreams_rules = [rule for rule in rules
+                    if rule["name"].startswith("Change: ")]
+    assert len(dreams_rules) == 1, "one change rule per subscription"
+    assert dreams_rules[0]["condition_type"] == "items_above"
+    assert dreams_rules[0]["condition_value"] == {"threshold": 0}

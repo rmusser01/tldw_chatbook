@@ -115,6 +115,17 @@ class CycleDeps:
             (``track_service.run_track_check``) to deliver a ``changed``
             verdict's notification. ``None`` (the default) means a run row
             without delivery -- existing cycle construction is unaffected.
+        subs_service_getter: Returns the app's ``LocalWatchlistsService``
+            or ``None``; read only by the Phase 2 lifecycle sweep
+            (``track_service.sweep_track_lifecycle``) to disable the
+            dream-created subscription of a wrapper it retires (Qodo #1,
+            PR #2890). ``None`` (the default) keeps the legacy behavior --
+            retired page items keep their subscription -- never an error.
+        scheduling_db_getter: Returns the ``ScheduledTasksDB`` or
+            ``None``; read only by the Phase 2 lifecycle sweep and untrack
+            to disable the one-time reminder linked to a retired tracked
+            item (Qodo #13, PR #2890). ``None`` (the default) leaves
+            linked reminders enabled.
     """
     dreams_db: DreamsDB
     chachanotes_db_getter: Callable[[], Any]
@@ -127,6 +138,8 @@ class CycleDeps:
         default=lambda: datetime.now(UTC)
     )
     dispatch_getter: Callable[[], Any] | None = None
+    subs_service_getter: Callable[[], Any] | None = None
+    scheduling_db_getter: Callable[[], Any] | None = None
 
 
 @dataclass(slots=True)
@@ -597,11 +610,19 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         # maintenance passes): retire event-passed and quiet watches, pause
         # repeatedly failing ones. Degrade-never-abort -- a sweep exception
         # is a note on the collection, not a dead cycle -- and the sweep's
-        # own notes ride the same degradation channel.
+        # own notes ride the same degradation channel. The service getters
+        # let a retirement also disable its dream-created subscription and
+        # linked reminder (Qodo #1/#13, PR #2890); both are optional, and
+        # the sweep degrades without them.
         stage_notes: list[str] = []
         try:
             stage_notes += await track_service.sweep_track_lifecycle(
-                dreams_db, now=now)
+                dreams_db, now=now,
+                subs_service_getter=getattr(
+                    deps, "subs_service_getter", None),
+                scheduling_db_getter=getattr(
+                    deps, "scheduling_db_getter", None),
+            )
         except Exception as exc:  # noqa: BLE001 - the sweep degrades, never aborts
             stage_notes.append(f"track sweep failed: {exc}")
         # Profile stages (rulings R18/R19) run BEFORE the snapshot so it

@@ -257,3 +257,47 @@ def test_v1_file_upgrades_in_place_to_v2(tmp_path):
     assert reopened.count_active_tracked() == 1
     assert reopened.get_collection_by_date("2026-09-22")["status"] == "generating"
     reopened.close()
+
+
+# --- Qodo review on PR #2890 -----------------------------------------------------
+
+
+def test_list_tracked_items_is_bounded(db):
+    """Qodo #9: retired rows accumulate forever, so the status read is
+    capped (TRACKED_ITEMS_LIST_LIMIT, mirroring ``clamp_limit``'s spirit);
+    the default cap is respected, callers can page below it, and garbage
+    limits clamp instead of unbounding (SQLite reads negative LIMIT as
+    no-limit)."""
+    from tldw_chatbook.DB.Dreams_DB import TRACKED_ITEMS_LIST_LIMIT
+
+    seeded = TRACKED_ITEMS_LIST_LIMIT + 5
+    with db.transaction() as conn:
+        conn.executemany(
+            "INSERT INTO dream_tracked_items"
+            " (mechanism, intent, cadence_seconds, status, query_template,"
+            "  created_at, updated_at)"
+            " VALUES ('question', 'topic', 3600, 'retired', ?, ?, ?)",
+            [(f"q {i}", "2026-09-01T00:00:00+00:00",
+              "2026-09-01T00:00:00+00:00") for i in range(seeded)],
+        )
+
+    assert len(db.list_tracked_items("retired")) == TRACKED_ITEMS_LIST_LIMIT
+    assert len(db.list_tracked_items("retired", limit=10)) == 10
+    assert len(db.list_tracked_items("retired", limit=-5)) == 1, (
+        "a negative limit clamps to 1, the way ``clamp_limit`` does"
+    )
+
+
+def test_set_tracked_plan_rewrites_cadence_and_event_date(db):
+    """Qodo #2 support: the reuse path refreshes the caller's plan on the
+    existing active wrapper -- both fields, including clearing the date."""
+    item = db.create_tracked_item(
+        mechanism="page", intent="event", cadence_seconds=43200,
+        event_date="2026-10-01", subscription_id=9, created_by_dreams=1)
+
+    db.set_tracked_plan(item, cadence_seconds=86400, event_date=None)
+
+    row = db.get_tracked_item(item)
+    assert row["cadence_seconds"] == 86400
+    assert row["event_date"] is None
+    assert row["status"] == "active"

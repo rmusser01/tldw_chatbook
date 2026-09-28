@@ -31,12 +31,21 @@ Mirrors ``briefing_projection.py``'s shape and its two hard-won rules:
     never-attempted (both watermarks ``None``) is due NOW -- a freshly
     enabled Dreams fires on the next tick, not one cadence later.
 
-Phase 2 (Track) adds one task per ACTIVE tracked item: ``dream_track:<id>``
-whose ``next_run_at`` is ``last_checked + cadence_seconds`` with two clamps
--- a never-checked item is due immediately, and one overdue by more than
-48 hours skips to ``now + cadence`` (a slept laptop must not fire a pileup
-of stale checks on wake; spec's bounded catch-up). Paused and retired
-items emit nothing.
+Phase 2 (Track) adds one task per ACTIVE question tracked item:
+``dream_track:<id>`` whose ``next_run_at`` is ``last_checked +
+cadence_seconds`` with two clamps -- a never-checked item is due
+immediately, and one overdue by more than 48 hours skips whole missed
+cadences and lands on the first cadence slot inside the 48-hour window
+(``last_checked + k*cadence``, a slot derived from the ITEM, not from
+projection time: the queue reloads every ~30 minutes and replaces its
+tasks, so a ``now + cadence`` due time would slide forward on every
+reload and never arrive -- Qodo #6, PR #2890). Paused and retired items
+emit nothing. PAGE-mechanism items emit nothing either (Qodo #7): their
+subscription is already watched by ``WatchlistProjection``'s
+``watchlist:<subscription_id>`` task, and a Dreams search check on an
+empty page template would only burn the shared daily search budget
+(``run_track_check`` still guards non-question items as defense in
+depth).
 
 Unlike ``BriefingProjection`` (one task per watchlist row), the cycle half
 projects exactly ONE task: the single dated discovery cycle,
@@ -45,6 +54,7 @@ projects exactly ONE task: the single dated discovery cycle,
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -79,7 +89,9 @@ DREAMS_TRACK_PREFIX = "dream_track"
 DREAMS_TRACK_TASK_TYPE = "dream_track_check"
 
 #: Overdue clamp (spec's bounded catch-up): a check more than 48 hours past
-#: its scheduled time skips the stale pileup and lands one cadence out.
+#: its scheduled time skips the missed cadence slots and lands on the first
+#: slot inside this window (see ``_track_task`` -- the slot must derive
+#: from the item, never from projection time, or queue reloads slide it).
 _TRACK_OVERDUE_CLAMP = timedelta(hours=48)
 
 #: Defensive floor for a tracked item's cadence. ``track_page`` /
@@ -222,8 +234,10 @@ class DreamsProjection:
             available; otherwise the ``dreams:cycle`` task (whose
             ``next_run_at`` follows the attempt-aware watermark rule in
             the module docstring) followed by one ``dream_track:<id>``
-            task per ``status='active'`` tracked item under the clamps in
-            the module docstring. Paused/retired items emit nothing.
+            task per ``status='active'`` QUESTION tracked item under the
+            clamps in the module docstring. Paused/retired items and
+            page-mechanism items emit nothing (a page item's
+            subscription is ``WatchlistProjection``'s job).
         """
         if not dreams_setting("enabled"):
             return []
@@ -263,10 +277,14 @@ class DreamsProjection:
                 owner_id="local",
             )
         ]
-        # Phase 2 (Track): one task per ACTIVE tracked item. The list read
-        # runs on whatever thread the caller is on -- the queue's reload
-        # path already executes ``load()`` under ``asyncio.to_thread``.
+        # Phase 2 (Track): one task per ACTIVE QUESTION item (Qodo #7:
+        # page items are watched by their subscription's own projection).
+        # The list read runs on whatever thread the caller is on -- the
+        # queue's reload path already executes ``load()`` under
+        # ``asyncio.to_thread``.
         for row in db.list_tracked_items("active"):
+            if str(row.get("mechanism") or "") != "question":
+                continue
             projected.append(self._track_task(row, current))
         return projected
 
@@ -276,8 +294,19 @@ class DreamsProjection:
 
         ``next_run_at = last_checked + cadence`` with: a never-checked
         (or unparseable ``last_checked``) item due NOW, and an item
-        overdue by more than 48 hours skipping to ``now + cadence`` (the
-        bounded catch-up -- wake-from-sleep must not fire a stale pileup).
+        overdue by more than 48 hours skipping whole missed cadences to
+        the first slot inside the clamp window -- ``last_checked +
+        k*cadence`` for the smallest such k (Qodo #6, PR #2890). That
+        slot is derived from the ITEM, never from projection-time ``now``:
+        the queue reloads every ~30 minutes and replaces its pending
+        tasks wholesale, so the previous ``now + cadence`` shape slid the
+        due time forward on every reload -- always one full cadence in
+        the future, never popped, so ``last_checked`` never advanced and
+        an overdue item never fired again. The k-slot is stable across
+        reloads (only ``last_checked`` moves it) and, for the default
+        12-hour cadence, lands 36-48 hours in the past -- due
+        immediately, ONE catch-up check, then the touch restores the
+        normal cadence.
         """
         cadence = timedelta(seconds=max(
             _TRACK_CADENCE_FLOOR_SECONDS, int(row.get("cadence_seconds") or 0)))
@@ -287,7 +316,15 @@ class DreamsProjection:
         else:
             scheduled = last_checked + cadence
             if scheduled + _TRACK_OVERDUE_CLAMP < now:
-                next_run_at = now + cadence
+                # Smallest k >= 1 with last_checked + k*cadence at or
+                # after (now - clamp): skips every missed interval and
+                # never depends on the projection instant beyond the
+                # cadence-quantized k.
+                missed = (
+                    now - _TRACK_OVERDUE_CLAMP - last_checked
+                ).total_seconds() / cadence.total_seconds()
+                slots = max(1, math.ceil(missed))
+                next_run_at = last_checked + slots * cadence
             else:
                 next_run_at = scheduled
         title = "Dreams tracked check"

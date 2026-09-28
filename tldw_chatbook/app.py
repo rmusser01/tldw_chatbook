@@ -11266,6 +11266,17 @@ class TldwCli(
             # May raise RuntimeError when no provider resolves; run_cycle
             # catches that and degrades the cycle by design.
             chat_getter=resolve_dreams_chat,
+            # Dreams phase 2 (Qodo #1/#13, PR #2890): the track lifecycle
+            # sweep disables a retired wrapper's dream-created subscription
+            # and linked reminder through these seams. Same getter-lambda
+            # discipline as the rest of the bag -- resolved at sweep time,
+            # None degrades to the legacy sweep behavior, never an error.
+            subs_service_getter=lambda: getattr(
+                self, "local_watchlists_service", None
+            ),
+            scheduling_db_getter=lambda: getattr(
+                getattr(self, "scheduling_service", None), "db", None
+            ),
         )
 
     def _start_dreams_boot_catchup(self) -> None:  # dreams phase 1
