@@ -132,10 +132,14 @@ class ThemeOptionList(OptionList):
     ]
 
     def row_width(self) -> int | None:
-        """Cells a row may take (TASK-33074), or None before layout.
+        """Cells a row may take (TASK-33074).
 
         The vertical scrollbar is always reserved: the ~95-row catalog
         overflows at every size, and it appearing sends no Resize.
+
+        Returns:
+            The width in cells left for a row's text after the scrollbar and
+            the option padding; None before layout gives the list a width.
         """
         padding = self.get_component_styles("option-list--option").padding
         width = self.content_region.width - self.styles.scrollbar_size_vertical - padding.width

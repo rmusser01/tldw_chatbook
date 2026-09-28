@@ -1598,7 +1598,16 @@ class SettingsThemeEditor(Vertical):
 
     def dialog_label(self, name: str) -> str:
         """``_dialog_label`` for the saved theme ``name``, resolved through
-        the one scan (R12: its file may be named otherwise)."""
+        the one scan (R12: its file may be named otherwise).
+
+        Args:
+            name: The saved theme's name (untrusted file text).
+
+        Returns:
+            The markup-free dialog label naming the theme and its file;
+            ``<name>.toml`` when no scanned file claims the name or the
+            themes folder is unavailable.
+        """
         try:
             path = self._user_theme_files().get(name)
         except RecoveryRequired:
@@ -1607,7 +1616,16 @@ class SettingsThemeEditor(Vertical):
 
     def rename_refusal(self, old: str, new: str) -> str | None:
         """TASK-33070: why Rename would refuse ``new`` (the dialog shows it
-        inline), or None. The same checks ``rename_user_theme`` repeats."""
+        inline). The same checks ``rename_user_theme`` repeats.
+
+        Args:
+            old: The saved theme being renamed.
+            new: The name typed in the Rename dialog.
+
+        Returns:
+            A plain, path-free reason when Rename would refuse ``new``;
+            None when it would proceed (or ``new == old``, a no-op).
+        """
         checked = self._rename_check(old, new)
         return checked[0] if isinstance(checked, tuple) else None
 
@@ -1866,8 +1884,16 @@ class SettingsThemeEditor(Vertical):
 
     def import_refusal(self, source: str) -> str | None:
         """TASK-33070: why Import would refuse ``source`` (the dialog shows it
-        inline), or None. The same checks ``import_theme`` repeats; a name
-        that is already saved is not a refusal (Import asks to Replace)."""
+        inline). The same checks ``import_theme`` repeats; a name that is
+        already saved is not a refusal (Import asks to Replace).
+
+        Args:
+            source: The typed, pasted or dropped path to the theme file.
+
+        Returns:
+            A printable, path-free reason when Import would refuse
+            ``source``; None when it would import or ask to Replace.
+        """
         parsed = self._parse_import(source)
         if isinstance(parsed, str):
             return printable(parsed)  # R16/R39: path-free, printable
