@@ -682,6 +682,10 @@ class _SshModeConfig:
     #: The ``ssh -G`` host identity keying the per-host cap and probe
     #: debounce, so two aliases for one host share one budget.
     host_key: tuple[str | None, str, int | None] | None = None
+    #: The Console run key sessions are scoped to; ``None`` = one-shot only.
+    session_key: str | None = None
+    #: Test seam: replaces the session worker's ssh ``Popen``.
+    session_spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None
 
     def resolved_host_key(self) -> tuple[str | None, str, int | None]:
         return self.host_key or _host_key_tuple(self.loc)
@@ -768,6 +772,8 @@ class RemoteWorkspaceToolExecutor:
         sensitive_exclusions: Callable[[], tuple[Any, ...]] | None = None,
         expected_fingerprint: str | None = None,
         canonical_host_key: tuple[str | None, str, int | None] | None = None,
+        session_key: str | None = None,
+        session_spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None,
     ) -> RemoteWorkspaceToolExecutor:
         """Build the executor that drives one remote binding over ssh.
 
@@ -809,6 +815,12 @@ class RemoteWorkspaceToolExecutor:
                 locator with ``ssh -G`` and refuses a changed destination.
             canonical_host_key: The recorded ``ssh -G`` host identity; keys
                 the per-host call cap and probe debounce.
+            session_key: The Console run key. When set (and
+                ``[console_ssh] session_worker`` is on), calls ride one
+                per-run session worker per binding instead of one ssh
+                exchange each; ``None`` keeps the one-shot path.
+            session_spawn: TEST SEAM ONLY -- replaces the session worker's
+                ssh ``Popen`` (receives the ssh argv).
 
         Returns:
             An executor in ssh mode; :meth:`execute` and :meth:`ping`
@@ -857,6 +869,8 @@ class RemoteWorkspaceToolExecutor:
             recovery_probes=recovery_probes,
             expected_fingerprint=expected_fingerprint,
             host_key=canonical_host_key,
+            session_key=session_key,
+            session_spawn=session_spawn,
         )
         return executor
 
@@ -1275,6 +1289,10 @@ class RemoteWorkspaceToolExecutor:
         """
         cfg = self._ssh
         assert cfg is not None
+        if cfg.session_key:
+            result = self._ssh_session_call(request_bytes, budget=budget)
+            if result is not None:
+                return result
         cfg.masters.ensure_master(cfg.loc)
         semaphore = _host_semaphore(
             cfg.resolved_host_key(), cfg.max_concurrent_calls
@@ -1283,6 +1301,72 @@ class RemoteWorkspaceToolExecutor:
             return cfg.transport.call(
                 cfg.loc, request_bytes, budget=budget, python=cfg.python
             )
+
+    def _ssh_session_call(
+        self, request_bytes: bytes, *, budget: float
+    ) -> RemoteCallResult | None:
+        """Carry one call over the run's session worker, if one applies.
+
+        Returns ``None`` when the call belongs on the one-shot path: the
+        kill switch is off, the binding is BLOCKED (recovery probes stay
+        one-shot), or the session is disabled for this run key (protocol
+        start failure, or a second death). A transport-class start failure
+        IS the call's result -- no one-shot retry, which would pay a second
+        connect timeout. Results are recorded by the caller exactly like
+        one-shot results (the worker already classifies them).
+        """
+        from tldw_chatbook.config import get_console_ssh_settings
+        from tldw_chatbook.Tools.remote_binding_status import BindingState
+
+        cfg = self._ssh
+        assert cfg is not None and cfg.session_key
+        settings = get_console_ssh_settings()
+        if not settings.session_worker:
+            return None
+        if cfg.cache.status(cfg.binding_id).state is BindingState.BLOCKED:
+            return None
+
+        from tldw_chatbook.Tools.remote_session_registry import get_session_registry
+        from tldw_chatbook.Tools.remote_session_worker import (
+            RemoteSessionWorker,
+            SessionStartError,
+        )
+        from tldw_chatbook.Tools.remote_workspace_transport import (
+            RemoteCallResult,
+            TransportFailure,
+            TransportFailureKind,
+        )
+
+        registry = get_session_registry()
+        registry.reap_idle(time.monotonic(), settings.session_idle_s)
+
+        def create() -> RemoteSessionWorker:
+            # Raises destination_changed (and records BLOCKED) before any
+            # session exists for a retargeted alias.
+            self._verify_destination()
+            return RemoteSessionWorker(
+                cfg.loc,
+                transport=cfg.transport,
+                python=cfg.python,
+                max_children=cfg.max_concurrent_calls,
+                idle_s=settings.session_idle_s,
+                cache=settings.bundle_cache,
+                spawn=cfg.session_spawn,
+            )
+
+        try:
+            session = registry.acquire((cfg.session_key, cfg.binding_id), create)
+        except SessionStartError as error:
+            return RemoteCallResult(
+                False,
+                None,
+                error.failure
+                or TransportFailure(TransportFailureKind.UNREACHABLE, None, str(error)),
+            )
+        if session is None:
+            return None
+        with _host_semaphore(cfg.resolved_host_key(), cfg.max_concurrent_calls):
+            return session.call(request_bytes, budget=budget)
 
     def _map_ssh_result(
         self, result: RemoteCallResult, operation_id: str

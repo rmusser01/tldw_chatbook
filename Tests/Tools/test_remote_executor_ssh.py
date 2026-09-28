@@ -704,3 +704,128 @@ def test_missing_recorded_destination_fails_closed(env: SimpleNamespace) -> None
         env.read(executor)
     assert raised.value.code == "destination_changed"
     assert env.fake.call_invocations() == []
+
+
+# ---------------------------------------------------------------------------
+# session worker routing (SSH session worker spec 2026-09-27, Task 7)
+# ---------------------------------------------------------------------------
+#
+# The ``session_spawn`` seam ignores the ssh argv and runs the real
+# bootstrap locally (same approach as test_remote_session_worker.py), so
+# the real loader, bundle and fork-server answer every session frame. The
+# fake ssh still serves ``ssh -G``, the master lifecycle and the one-shot
+# path, so ``call_invocations()`` counts one-shot calls only.
+
+
+@pytest.fixture()
+def sessions(monkeypatch: pytest.MonkeyPatch):
+    """Fresh session registry, stubbed ``[console_ssh]`` settings, spawn seam."""
+    import subprocess
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+    from tldw_chatbook.Tools.build_remote_worker_bundle import loader_payload
+    from tldw_chatbook.Tools.remote_workspace_executor import bootstrap_source
+
+    monkeypatch.setattr(registry_module, "_REGISTRY", None)
+    state = SimpleNamespace(worker=True, spawns=[], key=f"run-{uuid.uuid4().hex[:8]}")
+    monkeypatch.setattr(
+        config_module,
+        "get_console_ssh_settings",
+        lambda: config_module.ConsoleSshSettings(
+            session_worker=state.worker, bundle_cache=False
+        ),
+    )
+
+    def spawn(ssh_argv: list[str]) -> subprocess.Popen[bytes]:
+        proc = subprocess.Popen(
+            [sys.executable, "-I", "-c", bootstrap_source(len(loader_payload()))],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        state.spawns.append(proc)
+        return proc
+
+    state.spawn = spawn
+    yield state
+    registry_module.close_all_remote_sessions()
+
+
+def _session_executor(env: SimpleNamespace, sessions: SimpleNamespace, **kwargs: Any):
+    return env.make(session_key=sessions.key, session_spawn=sessions.spawn, **kwargs)
+
+
+def test_calls_route_through_one_session_per_run_key(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    executor = _session_executor(env, sessions)
+    for _ in range(10):
+        assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 1
+    assert env.fake.call_invocations() == [], "one-shot transport never called"
+    assert env.cache.status("binding-1").state == BindingState.READY
+    # A second executor for the same run key and binding reuses the session.
+    assert env.read(_session_executor(env, sessions))["outcome"] == "success"
+    assert len(sessions.spawns) == 1
+
+
+def test_kill_switch_uses_one_shot(env: SimpleNamespace, sessions: SimpleNamespace) -> None:
+    sessions.worker = False
+    executor = _session_executor(env, sessions)
+    assert env.read(executor)["outcome"] == "success"
+    assert sessions.spawns == []
+    assert len(env.fake.call_invocations()) == 2  # ping + op, as before
+
+
+def test_blocked_binding_probe_uses_one_shot(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+
+    executor = _session_executor(env, sessions)
+    env.cache.record_transport_failure(
+        "binding-1", TransportFailureKind.UNREACHABLE, "down earlier"
+    )
+    assert env.cache.status("binding-1").state == BindingState.BLOCKED
+
+    executor.ping()
+
+    assert sessions.spawns == []
+    assert len(env.fake.call_invocations()) == 1
+    assert env.cache.status("binding-1").state == BindingState.READY
+
+
+def test_retargeted_destination_starts_no_session(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fingerprint = _recorded_fingerprint(env)
+    # Warm the identity one-shot so the session executor goes straight to
+    # a session start (no ping): the check inside the start must refuse.
+    assert env.read(env.make(expected_fingerprint=fingerprint))["outcome"] == "success"
+    monkeypatch.setenv("FAKE_SSH_G_HOST", "other-host.example")
+    executor = _session_executor(env, sessions, expected_fingerprint=fingerprint)
+
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(executor)
+
+    assert raised.value.code == "destination_changed"
+    assert sessions.spawns == []
+    assert env.cache.status("binding-1").state == BindingState.BLOCKED
+
+
+def test_protocol_start_failure_falls_back_for_rest_of_run(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.Tools import remote_session_worker as worker_module
+
+    monkeypatch.setattr(worker_module, "expected_bundle_stamp", lambda _data: "0" * 64)
+    executor = _session_executor(env, sessions)
+
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 1
+    assert len(env.fake.call_invocations()) == 2  # ping + op went one-shot
+
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 1, "a disabled key never restarts a session"
+    assert len(env.fake.call_invocations()) == 3

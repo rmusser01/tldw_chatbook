@@ -375,7 +375,9 @@ the pinned, confined operation server-side, and it vanishes when the
 call ends. A shared ControlMaster connection (sockets on your machine,
 never the server) keeps consecutive calls warm; the
 `[console_ssh]` config section tunes it (`control_persist`,
-`enable_multiplexing`, `connect_timeout_s`, `max_concurrent_calls`).
+`enable_multiplexing`, `connect_timeout_s`, `max_concurrent_calls`,
+and the per-run session worker keys `session_worker`, `session_idle_s`,
+`bundle_cache`).
 
 **Adding a binding.** Press **F9 → Workspaces**, select the workspace,
 and use the **SSH folders** editor: a target (`user@host[:port]` or an
@@ -969,7 +971,10 @@ exports, and snapshots can retain bytes. Full details are in
 - `config.toml` `[console_ssh]` — SSH workspace bindings' ControlMaster
   lifecycle: `control_persist`, `enable_multiplexing` (set `false` for
   per-call direct connections, e.g. where `ssh.exe` lacks ControlMaster),
-  `connect_timeout_s`, and `max_concurrent_calls`.
+  `connect_timeout_s`, and `max_concurrent_calls`; plus the per-run session
+  worker: `session_worker` (default `true`; `false` = one ssh exchange per
+  call), `session_idle_s` (default `60`), and `bundle_cache` (default
+  `true`; host-side bundle cache in `$XDG_RUNTIME_DIR`).
 - [Settings ▸ RAG](../settings/rag.md) — the profile that both auto- and
   manual Library RAG retrieval read for search mode and result depth.
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
