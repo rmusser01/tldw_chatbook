@@ -2674,6 +2674,45 @@ class ConsoleTraceService:
                 suffix += 1
             incoming_changed = len(descriptors) - prefix - suffix
             active_changed = len(active) - prefix - suffix
+
+            def record_refusal(kind: str) -> None:
+                from .console_send_diagnostics import record_send_stage
+
+                changed = active[prefix : len(active) - suffix]
+                sequences = [sequence for _ordinal, sequence, _key in changed]
+                record_send_stage(
+                    "trace_reservation",
+                    "failed",
+                    error=ValueError("unsupported_surface_change"),
+                    surface_refusal_kind=kind,
+                    surface_prefix=prefix,
+                    surface_suffix=suffix,
+                    surface_incoming_changed=incoming_changed,
+                    surface_active_changed=active_changed,
+                    surface_replacement_span=(
+                        max(sequences) - min(sequences) + 1 if sequences else 0
+                    ),
+                    surface_domains=tuple(
+                        sorted(
+                            {
+                                *domains[prefix : prefix + incoming_changed],
+                                *(
+                                    _surface_reference_domain(key)
+                                    for _, _, key in changed
+                                ),
+                            }
+                        )
+                    ),
+                    **(
+                        {
+                            "surface_start_sequence": min(sequences),
+                            "surface_end_sequence": max(sequences),
+                        }
+                        if kind == "sequence_gap" and sequences
+                        else {}
+                    ),
+                )
+
             compound = (
                 completed_tool_turn is not None
                 and active_changed > 0
@@ -2695,6 +2734,7 @@ class ConsoleTraceService:
             elif (
                 incoming_changed != 1 and not compound
             ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+                record_refusal("count_or_span")
                 raise ValueError("unsupported_surface_change")
             else:
                 changed_entries = active[prefix : len(active) - suffix]
@@ -2708,6 +2748,7 @@ class ConsoleTraceService:
                     and sequence not in changed_sequences
                     for sequence, _key in physical_active
                 ):
+                    record_refusal("sequence_gap")
                     raise ValueError("unsupported_surface_change")
                 anchors = self.repository.read_lineage_surface_nodes(
                     cursor,
@@ -5117,6 +5158,7 @@ class ConsoleTraceService:
             raise ValueError("system_composition_invalid")
         return cast(tuple[Mapping[str, object], ...], raw)
 
+    reconstruct_logical_header = reconstruct_header
 
     def _validate_owner(
         self,
@@ -6320,13 +6362,13 @@ def _response_projection_profile(resolution: object | None) -> dict[str, object]
         return None
     from tldw_chatbook.Chat.console_provider_gateway import (
         _DISPLAYABLE_THINKING_EXECUTION_KEYS,
+        _HOSTED_THINKING_FINISH_POLICIES,
         _thinking_protocol,
-        resolve_finish_policy,
     )
 
     execution_key = getattr(resolution, "execution_key", "")
     disposition = getattr(resolution, "thinking_stream_disposition", None)
-    hosted_policy = resolve_finish_policy(execution_key)
+    hosted_policy = _HOSTED_THINKING_FINISH_POLICIES.get(execution_key)
     if (
         execution_key not in _DISPLAYABLE_THINKING_EXECUTION_KEYS
         if disposition == "displayable"
@@ -6400,6 +6442,15 @@ def _saved_descriptors(
     return ()
 
 
+def _revision_only(descriptor: TraceProvenance) -> bool:
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return True
+    if type(descriptor) is not DerivedTraceProvenance:
+        return False
+    derived = cast(DerivedTraceProvenance, descriptor)
+    return derived.artifact is None and all(
+        _revision_only(item) for item in derived.inputs
+    )
 
 
 def _omitted_inputs(
@@ -6541,6 +6592,15 @@ def _header_structural_provenance(
     }
 
 
+def _omission_source(
+    provenance: ProviderRequestProvenance,
+) -> TraceProvenanceSource:
+    for descriptor in provenance.messages_payload:
+        if type(descriptor) is OmittedTraceProvenance:
+            return cast(OmittedTraceProvenance, descriptor).source
+        if type(descriptor) is ProviderArtifactTraceProvenance:
+            return cast(ProviderArtifactTraceProvenance, descriptor).source
+    return TraceProvenanceSource.PROVIDER_OVERLAY
 
 
 def _policies(

@@ -22833,11 +22833,18 @@ class ConsoleChatController:
                 if index > 0
             )
             origin_parameter = parameters.get("origin")
+            launch_parameter = parameters.get("launch")
         except (TypeError, ValueError):
             accepts_context = False
             origin_parameter = None
+            launch_parameter = None
         try:
-            if origin_parameter is not None:
+            if launch_parameter is not None:
+                # tasks-32951/32953: runtime capture is pinned to an admitted
+                # launch. A lease-free send has no evidence launch; never
+                # consult later staged state.
+                captured = await provider(draft, turn_context, launch=None)
+            elif origin_parameter is not None:
                 captured = await provider(draft, turn_context, origin=origin)
             elif accepts_context:
                 captured = await provider(draft, turn_context)
