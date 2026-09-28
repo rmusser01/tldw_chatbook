@@ -187,6 +187,18 @@ class RemoteSessionWorker:
         """Monotonic time the last call finished; ``None`` while calls are in flight."""
         return self._idle_since
 
+    def ended_cleanly(self) -> bool:
+        """Whether the session ended NATURALLY with ssh exit code 0 (R10).
+
+        A host idle-exit or clean EOF is a benign session end, not a death:
+        the registry recreates it without spending the run key's single
+        restart. Waits (bounded) for the reap so the real exit code is known.
+        """
+        if self._death_natural is not True:
+            return False
+        self._settled.wait(self._transport.grace_seconds + _CLOSE_WAIT_S)
+        return self._death_code == 0
+
     # -- start -------------------------------------------------------------
 
     def start(self) -> None:
@@ -494,7 +506,12 @@ class RemoteSessionWorker:
         return self._result(pending, budget, killed=killed)
 
     def _dead_session_result(self) -> RemoteCallResult:
-        """R9: a natural death classifies by the real ssh exit code; a laptop end is REMOTE_OP_FAILED."""
+        """R9: a natural death classifies by the real ssh exit code; a laptop end is REMOTE_OP_FAILED.
+
+        R10: a natural death with exit code 0 (host idle-exit, clean EOF) is
+        a benign session end -- REMOTE_OP_FAILED (status-preserving), never
+        a transport failure.
+        """
         if self._proc is None:  # never started
             return RemoteCallResult(
                 False,
@@ -506,6 +523,12 @@ class RemoteSessionWorker:
         if self._death_natural:
             self._settled.wait(self._transport.grace_seconds + _CLOSE_WAIT_S)
             code = self._death_code if self._death_code is not None else 255
+            if code == 0:
+                return RemoteCallResult(
+                    False,
+                    None,
+                    TransportFailure(TransportFailureKind.REMOTE_OP_FAILED, 0, "session ended"),
+                )
             failure = self._transport.classify_exchange_failure(
                 self._loc,
                 exit_code=code,

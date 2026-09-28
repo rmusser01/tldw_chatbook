@@ -728,12 +728,14 @@ def sessions(monkeypatch: pytest.MonkeyPatch):
     from tldw_chatbook.Tools.remote_workspace_executor import bootstrap_source
 
     monkeypatch.setattr(registry_module, "_REGISTRY", None)
-    state = SimpleNamespace(worker=True, spawns=[], key=f"run-{uuid.uuid4().hex[:8]}")
+    state = SimpleNamespace(
+        worker=True, idle=60, spawns=[], key=f"run-{uuid.uuid4().hex[:8]}"
+    )
     monkeypatch.setattr(
         config_module,
         "get_console_ssh_settings",
         lambda: config_module.ConsoleSshSettings(
-            session_worker=state.worker, bundle_cache=False
+            session_worker=state.worker, session_idle_s=state.idle, bundle_cache=False
         ),
     )
 
@@ -829,3 +831,105 @@ def test_protocol_start_failure_falls_back_for_rest_of_run(
     assert env.read(executor)["outcome"] == "success"
     assert len(sessions.spawns) == 1, "a disabled key never restarts a session"
     assert len(env.fake.call_invocations()) == 3
+
+
+def _live_session(sessions: SimpleNamespace):
+    from tldw_chatbook.Tools.remote_session_registry import get_session_registry
+
+    return get_session_registry()._sessions[(sessions.key, "binding-1")]
+
+
+def _wait_dead(worker, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while worker.alive and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not worker.alive, "session never ended"
+
+
+def test_host_idle_exit_gets_a_fresh_session_never_blocked(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R10: the host idling out (exit 0) is a benign end; the next call
+    starts a fresh session without spending the run's single restart."""
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+
+    # Simulate the laptop missing its reap so the HOST idle-exit is what ends it.
+    monkeypatch.setattr(registry_module.RemoteSessionRegistry, "reap_idle", lambda *a, **k: None)
+    sessions.idle = 1  # host idle = 1 + grace
+    executor = _session_executor(env, sessions, grace=0.2)
+    assert env.read(executor)["outcome"] == "success"
+    for expected_spawns in (2, 3):  # twice in one run
+        _wait_dead(_live_session(sessions))
+        assert env.read(executor)["outcome"] == "success"
+        assert len(sessions.spawns) == expected_spawns
+        assert env.cache.status("binding-1").state == BindingState.READY
+    assert env.fake.call_invocations() == [], "never fell back to one-shot"
+    assert env.cache.transient_failure_count("binding-1") == 0
+
+
+def test_laptop_tells_host_to_idle_out_after_the_laptop_reap(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.Tools import remote_session_worker as worker_module
+
+    seen = []
+    real_init = worker_module.RemoteSessionWorker.__init__
+
+    def spy(self, *args, **kwargs):
+        seen.append(kwargs["idle_s"])
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(worker_module.RemoteSessionWorker, "__init__", spy)
+    assert env.read(_session_executor(env, sessions, grace=0.5))["outcome"] == "success"
+    assert seen == [60.5]
+
+
+def test_dead_session_restarts_once_then_falls_back_to_one_shot(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    executor = _session_executor(env, sessions)
+    assert env.read(executor)["outcome"] == "success"
+
+    sessions.spawns[-1].kill()  # a genuine death: nonzero exit
+    _wait_dead(_live_session(sessions))
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2  # the one restart
+    assert env.fake.call_invocations() == []
+
+    sessions.spawns[-1].kill()
+    _wait_dead(_live_session(sessions))
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2, "no second restart"
+    assert len(env.fake.call_invocations()) == 1  # one-shot from here on
+
+
+def test_transport_start_failure_is_the_calls_failure_no_one_shot(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    def refuse(_argv):
+        raise OSError("no ssh")
+
+    sessions.spawn = refuse
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(_session_executor(env, sessions))
+    assert raised.value.code == "unreachable"
+    assert env.cache.status("binding-1").state == BindingState.BLOCKED
+    assert env.fake.call_invocations() == []
+
+
+def test_transport_start_failure_without_a_typed_failure_is_unreachable(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.Tools import remote_session_worker as worker_module
+
+    def start(self):
+        raise worker_module.SessionStartError(True, None, "connect timed out")
+
+    monkeypatch.setattr(worker_module.RemoteSessionWorker, "start", start)
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(_session_executor(env, sessions))
+    assert raised.value.code == "unreachable"
+    status = env.cache.status("binding-1")
+    assert status.state == BindingState.BLOCKED
+    assert env.fake.call_invocations() == []
+    assert sessions.spawns == []

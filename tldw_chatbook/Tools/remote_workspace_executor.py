@@ -1282,6 +1282,10 @@ class RemoteWorkspaceToolExecutor:
     def _ssh_call(self, request_bytes: bytes, *, budget: float) -> RemoteCallResult:
         """One transport call under the master and the host cap.
 
+        With a ``session_key`` the call first tries the run's session
+        worker (:meth:`_ssh_session_call`); it falls through to the
+        one-shot exchange below only when no session applies.
+
         ``ensure_master`` is a cheap no-op while the tracked socket
         lives; the per-host semaphore bounds concurrent ssh clients
         (shared across bindings on one host); the transport never
@@ -1338,7 +1342,6 @@ class RemoteWorkspaceToolExecutor:
         )
 
         registry = get_session_registry()
-        registry.reap_idle(time.monotonic(), settings.session_idle_s)
 
         def create() -> RemoteSessionWorker:
             # Raises destination_changed (and records BLOCKED) before any
@@ -1349,23 +1352,26 @@ class RemoteWorkspaceToolExecutor:
                 transport=cfg.transport,
                 python=cfg.python,
                 max_children=cfg.max_concurrent_calls,
-                idle_s=settings.session_idle_s,
+                # The host idles out later than the laptop reaps, so the
+                # laptop always retires a session before the host would.
+                idle_s=settings.session_idle_s + cfg.transport.grace_seconds,
                 cache=settings.bundle_cache,
                 spawn=cfg.session_spawn,
             )
 
-        try:
-            session = registry.acquire((cfg.session_key, cfg.binding_id), create)
-        except SessionStartError as error:
-            return RemoteCallResult(
-                False,
-                None,
-                error.failure
-                or TransportFailure(TransportFailureKind.UNREACHABLE, None, str(error)),
-            )
-        if session is None:
-            return None
         with _host_semaphore(cfg.resolved_host_key(), cfg.max_concurrent_calls):
+            registry.reap_idle(time.monotonic(), settings.session_idle_s)
+            try:
+                session = registry.acquire((cfg.session_key, cfg.binding_id), create)
+            except SessionStartError as error:
+                return RemoteCallResult(
+                    False,
+                    None,
+                    error.failure
+                    or TransportFailure(TransportFailureKind.UNREACHABLE, None, str(error)),
+                )
+            if session is None:
+                return None
             return session.call(request_bytes, budget=budget)
 
     def _map_ssh_result(

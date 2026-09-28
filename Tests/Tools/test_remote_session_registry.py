@@ -15,6 +15,10 @@ class FakeWorker:
     def __init__(self, start_error=None, idle_since=None, start_hook=None):
         self.start_error, self.idle_since, self.start_hook = start_error, idle_since, start_hook
         self.alive, self.closed = False, False
+        self.clean_end = False  # R10: natural death with exit code 0
+
+    def ended_cleanly(self):
+        return self.clean_end
 
     def start(self):
         if self.start_hook:
@@ -94,6 +98,7 @@ def test_close_key_and_idle_reap():
     w = reg.acquire(("run-1", "b1"), FakeWorker)
     reg.close_key("run-1")
     assert w.closed
+    assert reg._key_locks == {}
     w2 = reg.acquire(("run-2", "b1"), lambda: FakeWorker(idle_since=0.0))
     reg.reap_idle(now=100.0, idle_s=60)
     assert w2.closed
@@ -119,3 +124,14 @@ def test_module_helpers_close_the_singleton(monkeypatch):
     w = reg.acquire(("run-1", "b1"), FakeWorker)
     module.close_all_remote_sessions()
     assert w.closed
+    assert reg._key_locks == {}
+
+
+def test_clean_end_is_recreated_without_spending_the_restart():
+    reg = RemoteSessionRegistry()
+    for _ in range(3):  # host idle-exit (exit 0), repeatedly in one run
+        w = reg.acquire(("run-1", "b1"), FakeWorker)
+        w.alive, w.clean_end = False, True
+    died = reg.acquire(("run-1", "b1"), FakeWorker)
+    died.alive = False  # a genuine death (e.g. 255) still gets its one restart
+    assert reg.acquire(("run-1", "b1"), FakeWorker) is not None

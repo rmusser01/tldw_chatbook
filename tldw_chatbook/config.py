@@ -413,9 +413,11 @@ def get_canvas_execution_enabled() -> bool:
 
 # --- [console_ssh]: SSH ControlMaster lifecycle for remote bindings -------
 # (spec 2026-09-24-ssh-remote-workspace-bindings, "ControlMaster lifecycle —
-# explicit, and the executor owns its health"). These four values are the
-# whole section; `Tools/remote_workspace_transport.py` consumes the first
-# three, the executor's call cap consumes `max_concurrent_calls`.
+# explicit, and the executor owns its health"). `Tools/remote_workspace_transport.py`
+# consumes `control_persist`, `enable_multiplexing` and `connect_timeout_s`;
+# the executor's call cap consumes `max_concurrent_calls`; the per-run
+# session worker (spec 2026-09-27-ssh-session-worker-and-bundle-cache)
+# consumes `session_worker`, `session_idle_s` and `bundle_cache`.
 
 DEFAULT_CONSOLE_SSH_CONTROL_PERSIST = "10m"
 DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S = 3

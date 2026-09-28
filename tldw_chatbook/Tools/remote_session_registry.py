@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
+from loguru import logger
+
 from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
 
 
@@ -37,7 +39,11 @@ class RemoteSessionRegistry:
                 worker = self._sessions.get(key)
                 if worker is not None and worker.alive:
                     return worker
-                if worker is not None:  # died mid-run: one restart, then fall back
+            # ended_cleanly() may wait for the reap: outside the global lock.
+            if worker is not None and not worker.ended_cleanly():
+                # Died mid-run: one restart, then fall back. A clean end
+                # (R10: host idle-exit, exit 0) is recreated for free.
+                with self._lock:
                     self._sessions.pop(key, None)
                     if key in self._restarted:
                         self._disabled.add(key)
@@ -50,6 +56,12 @@ class RemoteSessionRegistry:
                 if not error.transport:
                     with self._lock:
                         self._disabled.add(key)
+                    # Only static text: a typed failure's reason may quote a
+                    # stderr line (mux errors can name the ControlPath).
+                    cause = error.failure.kind.value if error.failure else str(error)
+                    logger.info(
+                        f"ssh session worker disabled for this run; using one-shot calls: {cause}"
+                    )
                     return None
                 raise
             with self._lock:
@@ -58,6 +70,7 @@ class RemoteSessionRegistry:
 
     def close_key(self, session_key: str) -> None:
         """Close every session under one run key and forget its failure state."""
+        # ponytail: a start in flight for this run key still lands in _sessions after this; run end is not concurrent with calls.
         with self._lock:
             keys = [k for k in self._sessions if k[0] == session_key]
             workers = [self._sessions.pop(k) for k in keys]
@@ -71,7 +84,7 @@ class RemoteSessionRegistry:
         """Close every session (app shutdown)."""
         with self._lock:
             workers = list(self._sessions.values()); self._sessions.clear()
-            self._disabled.clear(); self._restarted.clear()
+            self._disabled.clear(); self._restarted.clear(); self._key_locks.clear()
         for worker in workers:
             worker.close()
 
