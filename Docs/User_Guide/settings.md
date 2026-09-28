@@ -707,7 +707,8 @@ four themes. Toasts name what happened: Try says
 session"; Use switches at once and saves the launch default in the
 background, then says "\<name\> is now your theme (was: \<previous\>)" (quitting
 waits for that save to finish; a Revert or palette switch right after Use
-drops that toast, since it no longer holds); if saving
+drops that toast, since it no longer holds — and Revert, too, saves in the
+background and always lands after Use's save); if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
 crashes and Revert stays available. If the save lands but the in-process
@@ -733,8 +734,10 @@ File actions (Save, Save as…, Rename, Delete, Import…, Export) also read and
 write in the background, so the screen stays responsive with many saved
 themes; they run one at a time, and a second one started meanwhile waits for
 the first — even one started after you left Theme and came back. Leaving
-Theme or quitting mid-action does not cut it short (quitting waits up to five
-seconds for it). An action finishes only its own file once you have moved on
+Theme or quitting mid-action does not cut it short — including an action
+you confirmed in its dialog. Quitting waits up to five seconds in all for
+running file actions and the launch-default save together, and starts no new
+file action ("Theme file action not started: the app is quitting"). An action finishes only its own file once you have moved on
 (Back, or opened another theme): it does not change what the editor now shows,
 and if it would have needed a confirmation it skips it and says so ("Did not
 delete '\<name\>': the theme editor changed meanwhile. Delete it again.").

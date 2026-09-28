@@ -819,7 +819,7 @@ async def test_revert_and_apply_failure_toasts_show_a_markup_name_literally(requ
         def boom(*_args, **_kwargs):
             raise ValueError("theme 'x[/]' is gone")
 
-        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.revert_theme", boom)
+        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.start_revert", boom)
         picker.query_one("#settings-theme-revert", Button).press()
         await pilot.pause()
         assert "Could not revert the theme: theme 'x[/]' is gone" in notes

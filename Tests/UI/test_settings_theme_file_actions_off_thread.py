@@ -689,7 +689,9 @@ async def test_use_then_quick_revert_shows_no_stale_use_toast(request, monkeypat
     the Use toast does not arrive after the Revert."""
     from textual.widgets import Button
 
-    _slow_config(monkeypatch, delay=0.2)
+    # The write outlasts the pause below (~0.5 s while the picker repaints),
+    # so the Revert really lands inside it; Use now queues at once (#2).
+    _slow_config(monkeypatch, delay=1.5)
     host = _host()
     notes = []
     async with host.run_test(size=(211, 44)) as pilot:
@@ -703,3 +705,145 @@ async def test_use_then_quick_revert_shows_no_stale_use_toast(request, monkeypat
         await _settle(host, pilot)
         assert str(host.theme) == before
         assert not any("is now your theme" in message for message, _ in notes)
+
+
+# -- PR #2877 Qodo round -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_waits_for_a_confirmed_delete_and_starts_no_new_action(request, monkeypatch):
+    """Review #1: a Delete confirmed in its dialog runs as a file action,
+    so the quit waits for its unlink; once the quit has begun, no new file
+    action starts (the exit would cut it between its steps)."""
+    from textual.widgets import Button
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    _saved_theme(host, "confirmed")
+    _saved_theme(host, "spared")
+    order = []
+    monkeypatch.setattr(
+        app_module,
+        "persist_cli_config_for_shutdown",
+        lambda: order.append((_themes_dir() / "confirmed.toml").exists()) or True,
+    )
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "confirmed")
+        await _settle(host, pilot)
+        editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
+        editor.run_file_action(editor.request_delete("confirmed"))
+        await _until(
+            pilot,
+            lambda: isinstance(host.screen, ConfirmationDialog) and host.screen.query("#confirm-button"),
+            "the delete confirmation",
+        )
+        entered, release = _gate(monkeypatch, "_unlink")
+        host.screen.query_one("#confirm-button", Button).press()
+        await _until(pilot, entered.is_set, "the confirmed unlink")
+        threading.Timer(0.3, release.set).start()
+        host._save_shutdown_caches_with_timeout = lambda: None
+        await asyncio.to_thread(app_module.TldwCli._run_blocking_quit_persistence, host)
+        assert order == [False]  # the confirmed delete landed before the quit went on
+        assert editor.run_file_action(editor.request_delete("spared")) is None
+        await _settle(host, pilot)
+        assert (_themes_dir() / "spared.toml").exists()
+
+
+@pytest.mark.asyncio
+async def test_quit_waits_for_theme_work_within_one_deadline():
+    """Review #8: file actions and launch-default writes that both stall
+    share the quit's one timeout -- not one each."""
+    loop = asyncio.get_running_loop()
+    stalled = SimpleNamespace(group=tc.THEME_FILE_ACTION_GROUP, wait=lambda: asyncio.sleep(10))
+    app = SimpleNamespace(
+        workers=[stalled],
+        call_from_thread=lambda fn, *a: asyncio.run_coroutine_threadsafe(fn(*a), loop).result(),
+    )
+    writer_stall = tc._LAUNCH_DEFAULT_WRITER.submit(time.sleep, 1.2)
+    started = time.monotonic()
+    await asyncio.to_thread(tc.wait_for_theme_quit_work, app, 0.4)
+    elapsed = time.monotonic() - started
+    await asyncio.wrap_future(writer_stall)
+    assert 0.35 < elapsed < 0.65, elapsed  # two separate 0.4 s waits took ~0.8 s
+    assert tc.theme_quit_started(app)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_before_the_use_worker_runs_restores_the_old_default_without_blocking(request, monkeypatch):
+    """Review #2: Revert pressed before Use's worker has run still writes
+    after Use's write, so the old launch default is what stays on disk.
+    Review #4: Revert does not wait for the writes on the UI thread."""
+    written = _slow_config(monkeypatch, delay=0.1)
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        picker = host.screen.query_one("#settings-theme-picker")
+        launch = tc.current_launch_default()
+        assert launch != "nord" and launch in host.available_themes
+        picker.use_highlighted()
+        started = time.perf_counter()
+        picker._revert_pressed(SimpleNamespace(stop=lambda: None))  # no yield: the Use worker has not run
+        blocked = time.perf_counter() - started
+        await _settle(host, pilot)
+        assert [name for name, _ in written] == ["nord", launch]
+        assert blocked < 0.05, blocked
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_superseded_use_failure_is_not_reported(request, monkeypatch):
+    """Review #9: Use's write fails after a Revert asked for a later write;
+    the later write owns the outcome, so no stale "not saved" toast."""
+
+    def apply(mutation):
+        time.sleep(0.1)
+        if mutation["general"]["default_theme"] == "nord":
+            raise OSError("disk full")
+        return SimpleNamespace(file_replaced=True, caches_reloaded=True)
+
+    monkeypatch.setattr(tc, "_apply_config_mutation", apply)
+    host = _host()
+    notes = []
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        picker = host.screen.query_one("#settings-theme-picker")
+        host.notify = lambda message, **kw: notes.append(message)
+        picker.use_highlighted()
+        picker._revert_pressed(SimpleNamespace(stop=lambda: None))
+        await _settle(host, pilot)
+        assert not any("not saved" in message or "not restored" in message for message in notes), notes
+    # The catalog API: a superseded failure settles as not the latest.
+    first = asyncio.ensure_future(tc.persist_launch_default_async(SimpleNamespace(), "nord"))
+    await asyncio.sleep(0)
+    assert await tc.persist_launch_default_async(SimpleNamespace(), "later") == (True, True, True)
+    assert await first == (False, False, False)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_older_slower_scan_does_not_replace_a_newer_one(request, monkeypatch):
+    """Review #6: scans run on worker threads; the inline checks keep the
+    one started last, even when an earlier scan finishes after it."""
+    editor = SettingsThemeEditor()
+    first_in, first_go = threading.Event(), threading.Event()
+    scans = iter([({"old": None}, {}), ({"new": None}, {})])
+
+    def read(self):
+        scan = next(scans)
+        if "old" in scan[0]:
+            first_in.set()
+            assert first_go.wait(5)
+        return scan
+
+    monkeypatch.setattr(SettingsThemeEditor, "_read_theme_folder", read)
+    slow = threading.Thread(target=editor._scan_theme_files)
+    slow.start()
+    assert first_in.wait(5)
+    editor._scan_theme_files()
+    first_go.set()
+    slow.join()
+    assert "new" in editor._last_scan[0]

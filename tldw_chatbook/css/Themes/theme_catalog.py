@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import time
 from collections import Counter
 from collections.abc import Collection, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from loguru import logger
 from textual.color import Color
@@ -288,11 +289,59 @@ def _write_launch_default(name: str) -> Any:
     return _apply_config_mutation({"general": {"default_theme": name}})
 
 
-def _submit_launch_default(name: str) -> tuple[int, Any]:
-    """Queue ``name``'s write; return ``(its number, its future)``."""
+class QueuedLaunchDefault(NamedTuple):
+    """A launch-default write on the writer thread: its name, its number in
+    the order asked (review M-1), and its future."""
+
+    name: str
+    number: int
+    future: Future[Any]
+
+
+def queue_launch_default(name: str) -> QueuedLaunchDefault:
+    """Queue ``name``'s launch-default write now, without waiting for it.
+
+    Review #2: a caller that reports later (Use's worker) queues on the UI
+    thread, so a Revert pressed before that worker runs still queues after.
+
+    Args:
+        name: The theme to write as the launch default.
+
+    Returns:
+        The queued write, for ``settle_launch_default``.
+    """
     global _latest_launch_default_write
     number = _latest_launch_default_write = next(_LAUNCH_DEFAULT_SEQUENCE)
-    return number, _LAUNCH_DEFAULT_WRITER.submit(_write_launch_default, name)
+    return QueuedLaunchDefault(name, number, _LAUNCH_DEFAULT_WRITER.submit(_write_launch_default, name))
+
+
+async def settle_launch_default(app: Any, write: QueuedLaunchDefault) -> tuple[bool, bool, bool]:
+    """Await a queued launch-default write without blocking the UI thread.
+
+    The write runs to the end even if the awaiting worker is cancelled.
+
+    Args:
+        app: The running app; its ``app_config`` records the latest write.
+        write: From ``queue_launch_default``.
+
+    Returns:
+        ``(file_replaced, caches_reloaded, latest)``. ``latest`` is False
+        when another launch-default write was asked for after this one
+        (review M-1); that later write owns ``app_config`` and the report,
+        so the caller should say nothing -- also when this one failed
+        (review #9: its failure is obsolete).
+
+    Raises:
+        Exception: whatever the config write raised, when it is the latest.
+    """
+    try:
+        result = await asyncio.shield(asyncio.wrap_future(write.future))
+    except Exception:
+        if write.number != _latest_launch_default_write:
+            return False, False, False
+        raise
+    latest = write.number == _latest_launch_default_write
+    return (*_record_launch_default(app, write.name, result, latest=latest), latest)
 
 
 def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
@@ -301,31 +350,27 @@ def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
     Blocks the caller; queued behind any write still pending off the UI
     thread, so writes land in the order they were asked for.
     """
-    _, future = _submit_launch_default(name)
-    return _record_launch_default(app, name, future.result())
+    return _record_launch_default(app, name, queue_launch_default(name).future.result())
 
 
 async def persist_launch_default_async(app: Any, name: str) -> tuple[bool, bool, bool]:
     """``persist_launch_default`` with the config write off the UI thread.
 
-    TASK-33121: the write is ~140 ms. It is queued at once and runs to the
-    end even if the awaiting worker is cancelled; ``wait_for_launch_default_
-    writes`` lets the quit path wait for it.
+    TASK-33121: the write is ~140 ms. ``queue_launch_default`` then
+    ``settle_launch_default``; ``wait_for_launch_default_writes`` lets the
+    quit path wait for it.
+
+    Args:
+        app: The running app; its ``app_config`` records the latest write.
+        name: The theme to write as the launch default.
 
     Returns:
-        ``(file_replaced, caches_reloaded, latest)``. ``latest`` is False
-        when another launch-default write was asked for after this one
-        (review M-1: a Revert or palette switch in the ~140 ms window); that
-        later write owns ``app_config`` and the report, so this one left
-        ``app_config`` alone and its caller should say nothing.
+        See ``settle_launch_default``.
 
     Raises:
-        Exception: whatever the config write raised.
+        Exception: whatever the config write raised, when it is the latest.
     """
-    number, future = _submit_launch_default(name)
-    result = await asyncio.shield(asyncio.wrap_future(future))
-    latest = number == _latest_launch_default_write
-    return (*_record_launch_default(app, name, result, latest=latest), latest)
+    return await settle_launch_default(app, queue_launch_default(name))
 
 
 def wait_for_launch_default_writes(timeout: float | None = None) -> bool:
@@ -352,6 +397,10 @@ def wait_for_launch_default_writes(timeout: float | None = None) -> bool:
 #: Save as, Rename, Delete, Import, Export).
 THEME_FILE_ACTION_GROUP = "settings-theme-file-action"
 
+#: The quit path's whole budget for theme work -- running file actions,
+#: then queued launch-default writes -- one deadline across both waits.
+THEME_QUIT_WAIT_SECONDS = 5.0
+
 
 async def wait_for_theme_file_actions(app: Any, timeout: float) -> bool:
     """Wait, on the app loop, for the theme file actions still running.
@@ -359,6 +408,11 @@ async def wait_for_theme_file_actions(app: Any, timeout: float) -> bool:
     Review M-2: an action is several steps (Rename: write new, move the
     launch default, remove old); the exit's worker cancel must not cut one
     between them.
+
+    Args:
+        app: The running app, whose ``THEME_FILE_ACTION_GROUP`` workers
+            are waited for.
+        timeout: Seconds to wait at most.
 
     Returns:
         False when the timeout passed first.
@@ -374,16 +428,40 @@ async def wait_for_theme_file_actions(app: Any, timeout: float) -> bool:
     return True
 
 
-def wait_for_theme_quit_work(app: Any, timeout: float = 5.0) -> None:
-    """The quit path's theme step, off the app loop: let running theme file
-    actions finish (they may queue a launch-default write), then the
-    queued launch-default writes (TASK-33121)."""
+def theme_quit_started(app: Any) -> bool:
+    """Whether the quit path has begun waiting for theme work.
+
+    Args:
+        app: The running app.
+
+    Returns:
+        True once ``wait_for_theme_quit_work`` ran: no new file action may
+        start (the exit would cut it between its steps).
+    """
+    return bool(getattr(app, "_theme_quit_started", False))
+
+
+def wait_for_theme_quit_work(app: Any, timeout: float = THEME_QUIT_WAIT_SECONDS) -> None:
+    """The quit path's theme step, off the app loop.
+
+    The quit contract: no new theme file action starts from here on
+    (``theme_quit_started``); the ones already running -- confirmed ones
+    included -- finish, then the queued launch-default writes land, all
+    within one ``timeout``. Work still running past it is abandoned to the
+    exit, and logged.
+
+    Args:
+        app: The quitting app.
+        timeout: Seconds for both waits together.
+    """
+    deadline = time.monotonic() + timeout
+    app._theme_quit_started = True
     if callable(getattr(app, "call_from_thread", None)):
-        try:
+        try:  # Textual's call_from_thread awaits the coroutine on the app loop
             app.call_from_thread(wait_for_theme_file_actions, app, timeout)
         except Exception as exc:  # noqa: BLE001 - the quit goes on regardless
             logger.warning(f"Could not wait for theme file actions at quit: {type(exc).__name__}")
-    wait_for_launch_default_writes(timeout)
+    wait_for_launch_default_writes(max(0.0, deadline - time.monotonic()))
 
 
 def _record_launch_default(app: Any, name: str, result: Any, *, latest: bool = True) -> tuple[bool, bool]:
@@ -492,10 +570,32 @@ def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
         textual.app.InvalidThemeError: the previous theme is no longer
             registered.
     """
+    write = start_revert(app, change)
+    if write is None:
+        return True, True
+    return _record_launch_default(app, write.name, write.future.result())
+
+
+def start_revert(app: Any, change: ThemeChange) -> QueuedLaunchDefault | None:
+    """``revert_theme`` without the wait: the theme switches now and the
+    launch-default write is queued (after any pending Use's), for the
+    caller to ``settle_launch_default`` off the UI thread (review #4).
+
+    Args:
+        app: The running app.
+        change: The pending change to undo.
+
+    Returns:
+        The queued write; None when no launch default is restored.
+
+    Raises:
+        textual.app.InvalidThemeError: the previous theme is no longer
+            registered.
+    """
     app.theme = change.previous_active
     if change.persisted and launch_default_restorable(app, change):
-        return _persist_launch_default(app, change.previous_launch_default)
-    return True, True
+        return queue_launch_default(change.previous_launch_default)
+    return None
 
 
 def launch_default_restorable(app: Any, change: ThemeChange) -> bool:

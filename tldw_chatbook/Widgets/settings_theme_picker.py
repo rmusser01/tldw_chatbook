@@ -26,14 +26,16 @@ from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
     CACHE_REFRESH_FAILED,
     ORIGIN_LABELS,
+    QueuedLaunchDefault,
     ThemeChange,
     ThemeEntry,
     build_catalog,
     current_launch_default,
     display_name,
     launch_default_restorable,
-    persist_launch_default_async,
-    revert_theme,
+    queue_launch_default,
+    settle_launch_default,
+    start_revert,
     use_theme,
     use_theme_toast,
     user_theme_names,
@@ -739,17 +741,35 @@ class ThemePicker(Vertical):
             return
         change, self._revert = self._revert, None
         try:
-            restored, caches_reloaded = revert_theme(self.app, change)
+            write = start_revert(self.app, change)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Theme revert failed: {exc}")
             self.app.notify(f"Could not revert the theme: {escape_markup(exc)}", severity="error")
         else:
-            if not restored:
-                self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
-            elif not caches_reloaded:
-                self.app.notify(f"Reverted the theme; {CACHE_REFRESH_FAILED}", severity="warning")
+            if write is not None:
+                # Review #4: the write queues behind a pending Use's (so it
+                # wins) and is awaited off the UI thread.
+                self.app.run_worker(self._report_revert(write), group="settings-theme-use", exit_on_error=False)
         self._sync_revert_chip()
         self.refresh_catalog(rescan=False)
+
+    async def _report_revert(self, write: QueuedLaunchDefault) -> None:
+        """Await Revert's launch-default write, then warn if it did not land.
+
+        Args:
+            write: The queued write restoring the previous launch default.
+        """
+        try:
+            restored, caches_reloaded, latest = await settle_launch_default(self.app, write)
+        except Exception as exc:  # noqa: BLE001 - reported as "not restored" below
+            logger.warning(f"Restoring the launch default {printable(write.name)!r} failed: {type(exc).__name__}")
+            restored, caches_reloaded, latest = False, False, True
+        if not latest:
+            return
+        if not restored:
+            self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
+        elif not caches_reloaded:
+            self.app.notify(f"Reverted the theme; {CACHE_REFRESH_FAILED}", severity="warning")
 
     # -- actions -------------------------------------------------------
     def use_highlighted(self) -> None:
@@ -847,21 +867,25 @@ class ThemePicker(Vertical):
         if not persist:
             self.app.notify(f"Trying {escape_markup(display_name(theme_id))} for this session", severity="information")
         else:
-            # App-owned: leaving Settings mid-write must not drop the report.
-            self.app.run_worker(self._persist_use(theme_id, change), group="settings-theme-use", exit_on_error=False)
+            # Review #2: queued now, so a Revert pressed before the worker
+            # runs still queues after it. App-owned: leaving Settings
+            # mid-write must not drop the report.
+            write = queue_launch_default(theme_id)
+            self.app.run_worker(self._persist_use(change, write), group="settings-theme-use", exit_on_error=False)
         self.refresh_catalog(highlight=theme_id, rescan=False)
 
-    async def _persist_use(self, theme_id: str, change: ThemeChange) -> None:
-        """Write Use's launch default off the UI thread, then say how it went.
+    async def _persist_use(self, change: ThemeChange, write: QueuedLaunchDefault) -> None:
+        """Await Use's launch-default write off the UI thread, then say how it went.
 
         Args:
-            theme_id: The theme Use switched to.
             change: The switch, for the toast's "was:" name.
+            write: The queued write of the theme Use switched to.
         """
+        theme_id = write.name
         try:
-            persisted, caches_reloaded, latest = await persist_launch_default_async(self.app, theme_id)
+            persisted, caches_reloaded, latest = await settle_launch_default(self.app, write)
         except Exception as exc:  # noqa: BLE001 - reported as "not saved" below
-            logger.warning(f"Saving the launch default failed: {type(exc).__name__}")
+            logger.warning(f"Saving the launch default {printable(theme_id)!r} failed: {type(exc).__name__}")
             persisted, caches_reloaded, latest = False, False, True
         if not latest:
             # Review M-1: a Revert or palette switch asked for a later write

@@ -6,8 +6,9 @@ import asyncio
 import os
 import re
 import stat
+import threading
 import weakref
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -38,6 +39,7 @@ from ..css.Themes.theme_catalog import (
     display_name,
     is_catalog_theme,
     persist_launch_default_async,
+    theme_quit_started,
 )
 from ..css.Themes.themes import (
     ALL_THEMES,
@@ -295,6 +297,11 @@ class SettingsThemeEditor(Vertical):
         # The last folder scan (or the pause it hit), for the Rename/Import
         # dialogs' inline checks; the action itself scans again.
         self._last_scan: _Scan | RecoveryRequired | None = None
+        # Review #6: scans run on worker threads and can finish out of
+        # order; only a scan started later than the remembered one replaces it.
+        self._scan_lock = threading.Lock()
+        self._scans_started = 0
+        self._last_scan_started = 0
 
     def compose(self) -> ComposeResult:
         """Compose the theme editor widget.
@@ -539,13 +546,23 @@ class SettingsThemeEditor(Vertical):
         Raises:
             RecoveryRequired: see ``_read_theme_folder``.
         """
+        with self._scan_lock:
+            self._scans_started += 1
+            started = self._scans_started
         try:
             scan = self._read_theme_folder()
         except RecoveryRequired as exc:
-            self._last_scan = exc
+            self._remember_scan(started, exc)
             raise
-        self._last_scan = scan
+        self._remember_scan(started, scan)
         return scan
+
+    def _remember_scan(self, started: int, scan: _Scan | RecoveryRequired) -> None:
+        """Keep ``scan`` for the inline checks unless a later-started scan
+        already landed (review #6: an older, slower scan must not win)."""
+        with self._scan_lock:
+            if started > self._last_scan_started:
+                self._last_scan_started, self._last_scan = started, scan
 
     async def _scan_off_thread(self) -> _Scan | RecoveryRequired:
         """TASK-33078: one scan on a worker thread (~4 ms a file); the pause
@@ -555,20 +572,46 @@ class SettingsThemeEditor(Vertical):
         except RecoveryRequired as exc:
             return exc
 
-    def run_file_action(self, action: Coroutine[Any, Any, Any]) -> Worker[Any]:
+    def run_file_action(self, action: Coroutine[Any, Any, Any]) -> Worker[Any] | None:
         """Run a file action (Save, Rename, Delete, Import, Export) as a worker.
 
         App-owned, so leaving the editor or Settings mid-action cannot stop
         it between its write and the registration/launch-default steps
-        that follow. The actions queue on ``_file_lock``.
+        that follow; the quit path waits for this worker group. The actions
+        queue on ``_file_lock``. Once the quit has begun none starts
+        (``theme_quit_started``): the exit would cut it between its steps.
 
         Args:
             action: The action's coroutine, e.g. ``editor.request_delete(name)``.
 
         Returns:
-            The worker.
+            The worker; None when the app is quitting.
         """
+        if theme_quit_started(self.app):
+            action.close()
+            logger.warning("Theme file action not started: the app is quitting")
+            self.app.notify("Theme file action not started: the app is quitting", severity="warning")
+            return None
         return self.app.run_worker(action, group=THEME_FILE_ACTION_GROUP, exit_on_error=False)
+
+    def _as_file_action(self, confirmed: Callable[[], Coroutine[Any, Any, Any]]) -> Callable[[], Awaitable[None]]:
+        """A dialog's confirm callback that runs ``confirmed`` as a file action.
+
+        Review #1: the dialog awaits its callback on its own message pump,
+        outside the worker group the quit waits for; as a worker the
+        confirmed write and its follow-up steps finish before the exit.
+
+        Args:
+            confirmed: The confirmed step, e.g. the overwrite write.
+
+        Returns:
+            The callback for ``ConfirmationDialog(confirm_callback=...)``.
+        """
+
+        async def start() -> None:
+            self.run_file_action(confirmed())
+
+        return start
 
     def _read_theme_folder(self) -> _Scan:
         """One pass over the themes directory: readable and unreadable files.
@@ -1094,7 +1137,7 @@ class SettingsThemeEditor(Vertical):
                     ),
                     confirm_label="Overwrite",
                     cancel_label="Keep existing",
-                    confirm_callback=_confirmed_overwrite,
+                    confirm_callback=self._as_file_action(_confirmed_overwrite),
                 ),
                 f"Theme '{escape_markup(theme_name)}' was not saved: a saved theme already has that name. "
                 "Save it again from the editor to replace it.",
@@ -1526,7 +1569,7 @@ class SettingsThemeEditor(Vertical):
                 ),
                 confirm_label="Delete theme",
                 cancel_label="Keep theme",
-                confirm_callback=_confirmed_delete,
+                confirm_callback=self._as_file_action(_confirmed_delete),
             ),
             f"Did not delete '{escape_markup(theme_name)}': the theme editor changed meanwhile. Delete it again.",
         )
@@ -1659,7 +1702,7 @@ class SettingsThemeEditor(Vertical):
             persisted, caches_reloaded, _latest = await persist_launch_default_async(self.app, name)
             return persisted, caches_reloaded
         except Exception as exc:  # noqa: BLE001 - reported by the caller
-            logger.error(f"Saving the launch default failed: {type(exc).__name__}")
+            logger.error(f"Saving the launch default {printable(name)!r} failed: {type(exc).__name__}")
             return False, False
 
     def _notify_saved(self, message: str, caches_reloaded: bool) -> None:
@@ -1991,7 +2034,7 @@ class SettingsThemeEditor(Vertical):
                 message=f"{export_path} already exists. Replace it?",
                 confirm_label="Overwrite",
                 cancel_label="Keep existing",
-                confirm_callback=_confirmed_export,
+                confirm_callback=self._as_file_action(_confirmed_export),
             ),
             f"Did not export to {escape_markup(export_path)}: the theme editor changed meanwhile. Export again.",
         )
@@ -2095,7 +2138,7 @@ class SettingsThemeEditor(Vertical):
                     message=f"Replace the saved theme {self.dialog_label(name)}?",
                     confirm_label="Replace",
                     cancel_label="Keep existing",
-                    confirm_callback=_confirmed_replace,
+                    confirm_callback=self._as_file_action(_confirmed_replace),
                 ),
                 f"Did not import '{escape_markup(name)}': the theme editor changed meanwhile. Import it again.",
             )
