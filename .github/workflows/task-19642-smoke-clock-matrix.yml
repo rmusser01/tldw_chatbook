@@ -1,0 +1,36 @@
+name: TASK-19642 smoke clock matrix
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/task-19642-smoke-clock-matrix.yml
+      - Tests/STT/test_task602_platform_smoke.py
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-clock:
+    name: Smoke clock - Python ${{ matrix.python }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        python: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install focused test dependency
+        run: python -m pip install 'pytest>=8,<10'
+      - name: Verify the bounded smoke clock
+        run: >-
+          python -m pytest
+          Tests/STT/test_task602_platform_smoke.py::test_run_smoke_returns_only_bounded_allowlisted_observations
+          --confcutdir=Tests/STT -q
