@@ -4651,7 +4651,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     streaming = true
 
     [api_settings.stepfun] # Matches key in [providers]
-    api_key_env_var = "STEPFUN_API_KEY" # STEP_API_KEY also read
+    api_key_env_var = "STEPFUN_API_KEY" # or "STEP_API_KEY", the name StepFun's own samples use
     # api_key = "" # Less secure fallback - use env var instead
     api_base_url = "https://api.stepfun.ai/v1" # China: https://api.stepfun.com/v1
     timeout = 90

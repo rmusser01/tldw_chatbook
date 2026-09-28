@@ -503,7 +503,7 @@ protocol error instead of being passed through.
 | **Xiaomi MiMo** | `https://api.xiaomimimo.com/v1` | `MIMO_API_KEY` | seeded (`mimo-v2.6-flash`, `mimo-v2.6-pro`, …) |
 | **Tencent TokenHub** | `https://tokenhub-intl.tencentcloudmaas.com/v1` | `TOKENHUB_API_KEY` | Discover models (Hy4 is `hy4-preview`) |
 | **ByteDance Seed (BytePlus)** | `https://ark.ap-southeast.bytepluses.com/api/v3` | `ARK_API_KEY` | seeded (`seed-2-0-lite-260228`, `seed-1-8-251228`) |
-| **StepFun** | `https://api.stepfun.ai/v1` | `STEPFUN_API_KEY` (or `STEP_API_KEY`) | Discover models |
+| **StepFun** | `https://api.stepfun.ai/v1` | `STEPFUN_API_KEY` | Discover models |
 
 - **Seeded lists go stale.** MiMo and BytePlus document no usable
   models route, so their lists ship with the models the docs name and are
@@ -522,7 +522,9 @@ protocol error instead of being passed through.
   `api_base_url` to `https://ark.cn-beijing.volces.com/api/v3`.
 - **StepFun** ships with function tools off: its documentation shows
   tool calls arriving with a `stop` finish, which the strict engine rejects.
-  China users set `api_base_url` to `https://api.stepfun.com/v1`.
+  China users set `api_base_url` to `https://api.stepfun.com/v1`. If you keep
+  your key in `STEP_API_KEY` (the name StepFun's own samples use), set
+  `api_key_env_var = "STEP_API_KEY"` in `[api_settings.stepfun]`.
 - Reasoning from MiMo, TokenHub, and BytePlus models stays private (kept off
   the live stream, like Z.ai) and is sent back to the provider on later
   turns, which TokenHub and MiMo require for multi-step tool use. StepFun's

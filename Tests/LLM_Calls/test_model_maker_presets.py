@@ -88,7 +88,7 @@ EXPECTED: dict[str, dict[str, Any]] = {
     "stepfun": {
         "config_key": "StepFun",
         "base_url": "https://api.stepfun.ai/v1",
-        "env_vars": ("STEPFUN_API_KEY", "STEP_API_KEY"),
+        "env_vars": ("STEPFUN_API_KEY",),
         "auth_scheme": "bearer",
         "native_tools": False,
         "models_url": "https://api.stepfun.ai/v1/models",
@@ -447,3 +447,46 @@ def test_stepfun_stream_drops_its_reasoning_field(monkeypatch: pytest.MonkeyPatc
     frames = list(stream)
     assert stream.terminal_turn.text == "ok"
     assert all("reasoning" not in json.dumps(frame.get("choices", [])) for frame in frames)
+
+
+# --- StepFun's env-var name (Qodo, PR #2889) ---
+
+
+def _stepfun_config(env_var: str) -> dict[str, Any]:
+    record = RECORDS_BY_KEY["stepfun"]
+    table = dict(record.settings_defaults) | {
+        "api_base_url": record.default_base_url,
+        "api_key_env_var": env_var,
+    }
+    return {"api_settings": {"stepfun": table}, "providers": {"StepFun": ["step-3.7-flash"]}}
+
+
+def test_stepfun_sample_env_name_works_via_api_key_env_var() -> None:
+    """Setting ``api_key_env_var = "STEP_API_KEY"`` makes both Console readiness
+    and the engine use StepFun's own sample name.
+    """
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    environ = {"STEP_API_KEY": "sk-stepfun-sample-name"}
+    config = _stepfun_config("STEP_API_KEY")
+    readiness = get_provider_readiness("stepfun", config, environ=environ)
+    assert readiness.ready is True
+    resolution = hosted_provider_engine.resolve_hosted_request(
+        RECORDS_BY_KEY["stepfun"], app_config=config, environ=environ
+    )
+    assert resolution.api_key == "sk-stepfun-sample-name"
+
+
+def test_stepfun_default_table_does_not_silently_accept_the_bare_alias() -> None:
+    """Negative control: with the shipped table, ``STEP_API_KEY`` alone is not
+    a credential for readiness OR the engine (the two can no longer disagree).
+    """
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    environ = {"STEP_API_KEY": "sk-stepfun-sample-name"}
+    config = _stepfun_config("STEPFUN_API_KEY")
+    assert get_provider_readiness("stepfun", config, environ=environ).ready is False
+    with pytest.raises(Exception):
+        hosted_provider_engine.resolve_hosted_request(
+            RECORDS_BY_KEY["stepfun"], app_config=config, environ=environ
+        )

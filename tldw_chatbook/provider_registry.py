@@ -651,21 +651,24 @@ BYTEPLUS = ProviderRecord(
     auth_scheme="bearer",
 )
 # StepFun (international) -- platform.stepfun.ai/docs/en/api-reference/chat/
-# chat-completion-create: Bearer auth (samples use ``STEP_API_KEY``; tooling
-# commonly ``STEPFUN_API_KEY`` -- both are walked), ``GET /v1/models`` is
+# chat-completion-create: Bearer auth, ``GET /v1/models`` is
 # OpenAI-shaped, ``stream_options.include_usage`` is supported. Reasoning
 # models return ``reasoning`` (StepFun's own name, message and delta) --
 # tolerated and dropped. Tool calling ships OFF: the tool-call reference shows
 # ``finish_reason: "stop"`` alongside ``tool_calls``, which the strict finish
 # policy rejects; enabling it needs a live check. China users point
 # ``api_base_url`` at https://api.stepfun.com/v1.
+# Env var: ``STEPFUN_API_KEY`` only. StepFun's own samples use
+# ``STEP_API_KEY``; users who keep that name set ``api_key_env_var =
+# "STEP_API_KEY"`` in the table. A second candidate here would be walked by
+# the engine but not by Console readiness or discovery (Qodo, PR #2889).
 STEPFUN = ProviderRecord(
     key="stepfun",
     config_key="StepFun",
     display_name="StepFun",
     classification=_CLOUD,
     api_key_env_var="STEPFUN_API_KEY",
-    api_key_env_candidates=("STEPFUN_API_KEY", "STEP_API_KEY"),
+    api_key_env_candidates=("STEPFUN_API_KEY",),
     default_base_url="https://api.stepfun.ai/v1",
     native_tools=False,
     reasoning_effort=False,
