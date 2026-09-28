@@ -27,7 +27,10 @@ from tldw_chatbook.Chat.sampling_params import (
     params_to_tuple,
     validate_sampling_params,
 )
-from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.input_validation import (
+    validate_env_var_reference,
+    validate_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,15 @@ _DISPLAY_NAME_TOO_LONG_COPY = (
 )
 _INVALID_BASE_URL_COPY = f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL."
 _SLUG_COLLISION_COPY = "That name is already in use; choose another."
+#: The ``api_key_env`` naming rule, shared by the Edit form and readiness.
+ENV_VAR_NAME_RULE_COPY = (
+    "Credential variable names may contain only letters, digits, and "
+    "underscores, and must not start with a digit."
+)
+#: ``(slug, api_key_env)`` pairs already warned about: every readiness read
+#: reloads the registry, so an unguarded warning floods the app log (400 lines
+#: in 30s live). In memory only; the value is never logged.
+_WARNED_INVALID_API_KEY_ENV: set[tuple[str, str]] = set()
 
 
 class CustomEndpointSlugError(ValueError):
@@ -301,6 +313,21 @@ def load_custom_endpoints(
         if reasons:
             logger.warning("custom endpoint '%s' ignored: %s", slug, "; ".join(reasons))
             continue
+        warn_key = (slug, config.api_key_env or "")
+        if (
+            config.api_key_env is not None
+            and not validate_env_var_reference(config.api_key_env)
+            and warn_key not in _WARNED_INVALID_API_KEY_ENV
+        ):
+            # Kept, not dropped: readiness names the problem (Qodo #2876) where
+            # a dropped entry would read "Endpoint not found". The value may
+            # be a secret pasted into the name field, so it is never logged.
+            _WARNED_INVALID_API_KEY_ENV.add(warn_key)
+            logger.warning(
+                "custom endpoint '%s': api_key_env is not a valid environment "
+                "variable name; it resolves no credential",
+                slug,
+            )
         entries[slug] = CustomEndpointEntry(
             slug=slug,
             display_name=display_name.strip(),

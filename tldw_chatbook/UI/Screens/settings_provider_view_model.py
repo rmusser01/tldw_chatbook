@@ -12,6 +12,7 @@ from ...Chat.console_provider_endpoints import (
 from ...Chat.console_session_settings import normalize_llamacpp_base_url
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    ENV_VAR_NAME_RULE_COPY,
     CustomEndpointEntry,
     build_entry_mutation,
     derive_slug,
@@ -465,10 +466,7 @@ def build_entry_edit_mutation(
     """
     env_var = str(api_key_env or "").strip()
     if env_var and not validate_env_var_reference(env_var):
-        raise ValueError(
-            "Credential variable names may contain only letters, digits, and "
-            "underscores, and must not start with a digit."
-        )
+        raise ValueError(ENV_VAR_NAME_RULE_COPY)
     models: list[str] = []
     for part in str(models_text or "").split(","):
         model_id = part.strip()

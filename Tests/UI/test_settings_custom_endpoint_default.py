@@ -8,11 +8,14 @@ resolves through the registry, and a dangling slug reads as an honest
 not-ready state.
 """
 
+import logging
+import os
 from types import SimpleNamespace
 
 import pytest
 from textual.content import Content
-from textual.widgets import Static
+from textual.css.query import QueryError
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
@@ -21,6 +24,7 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
 )
 from Tests.UI.test_settings_configuration_hub import (
+    _click_scrolled_settings_button,
     _open_settings_category,
     _settle_settings_mount_storm,
 )
@@ -28,8 +32,17 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
 )
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Chat.custom_endpoint_registry import entry_for
+from tldw_chatbook.Chat.provider_readiness import (
+    ENDPOINT_NOT_FOUND_REASON,
+    get_provider_readiness,
+)
+from tldw_chatbook.config import save_settings_to_cli_config
+from tldw_chatbook.UI.Screens.settings_screen import (
+    ENDPOINT_NOT_FOUND_SETTINGS_COPY,
+    PROVIDER_MANUAL_SELECT_VALUE,
+    SettingsScreen,
+)
 
 _ENTRY = {
     "display_name": "GPU box",
@@ -104,7 +117,7 @@ async def test_settings_opens_on_a_dangling_registry_default_honestly(request):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
         rendered = _all_static_text(screen)
-        assert "Not ready · endpoint not found" in rendered, rendered
+        assert ENDPOINT_NOT_FOUND_SETTINGS_COPY in rendered, rendered
 
 
 # --- readiness seam (no mount) -------------------------------------------
@@ -179,7 +192,7 @@ def test_registry_readiness_blocks_an_unresolved_declared_credential():
 def test_dangling_registry_readiness_is_an_honest_not_ready_state():
     readiness = get_provider_readiness("custom-ep:gone", _config(), environ={})
     assert readiness.ready is False
-    assert readiness.reason == "Endpoint not found"
+    assert readiness.reason == ENDPOINT_NOT_FOUND_REASON
     assert readiness.configuration_issue == "endpoint_missing"
     assert "custom-ep:gone" in readiness.user_message
 
@@ -189,7 +202,10 @@ def test_dangling_registry_readiness_is_an_honest_not_ready_state():
 )
 def test_dangling_registry_readiness_never_echoes_an_invalid_slug(provider):
     readiness = get_provider_readiness(provider, _config(), environ={})
-    assert (readiness.reason, readiness.provider) == ("Endpoint not found", "Custom endpoint")
+    assert (readiness.reason, readiness.provider) == (
+        ENDPOINT_NOT_FOUND_REASON,
+        "Custom endpoint",
+    )
 
 
 @pytest.mark.parametrize("api_key_env", [None, "GPU_KEY"])
@@ -204,6 +220,20 @@ def test_settings_test_findings_render_a_markup_like_entry_name(api_key_env):
     )
     for text in (detail, summary):
         assert "GPU [/]" in Content.from_markup(text).plain, text
+
+
+@pytest.mark.parametrize("spelling", ["custom-ep:gpu-box", "custom_ep:gpu_box"])
+def test_settings_registry_facts_resolve_either_spelling(spelling):
+    """Readiness accepts both spellings, so the Settings facts must too."""
+    screen = SettingsScreen.__new__(SettingsScreen)
+    screen.app_instance = SimpleNamespace(app_config=_config())
+    assert screen._provider_display_name(spelling) == "GPU box"
+    assert screen._provider_endpoint_row(spelling) == (
+        "Endpoint key: custom_endpoints.gpu-box.base_url"
+    )
+    assert screen._provider_endpoint_display_value(spelling) == (
+        "http://192.168.1.5:8080"
+    )
 
 
 @pytest.mark.parametrize(
@@ -230,3 +260,252 @@ def test_home_console_readiness_seam_handles_a_registry_default(provider, blocke
         settings, app_config=config, environ={}, background_credentials=False
     )
     assert readiness.native_send_supported is not blocked
+
+
+# --- Qodo #2876 round: malformed entries degrade; read-only registry detail --
+#
+# F1 / rider TASK-33002.18: a hand-edited entry must degrade to an honest
+# not-ready state, never a ValueError or MarkupError. F3-F5: for a registry
+# default, Providers & Models states the entry's own facts (URL, credential
+# source) and offers no field whose draft Save would reject.
+
+_INVALID_ENV_NAMES = ["gpu-key", "$GPU_KEY", "GPU KEY", "\x1b[31mGPU", "G" * 129]
+
+
+@pytest.mark.parametrize("api_key_env", _INVALID_ENV_NAMES)
+def test_registry_readiness_names_an_invalid_api_key_env_instead_of_raising(
+    api_key_env,
+):
+    readiness = get_provider_readiness(
+        "custom-ep:gpu-box", _config(api_key_env=api_key_env), environ={}
+    )
+    assert (readiness.ready, readiness.reason) == (False, "Invalid provider settings")
+    assert readiness.env_var is None
+    assert "credential env var name is invalid" in readiness.user_message
+    # The bad value may be a pasted secret: the problem is named, not echoed.
+    assert api_key_env not in readiness.user_message
+
+
+def test_an_invalid_api_key_env_does_not_block_a_resolving_stored_key():
+    config = _config(api_key_env="gpu-key", api_key="sk-stored-entry-key-123")
+    assert get_provider_readiness("custom-ep:gpu-box", config, environ={}).ready
+
+
+def test_console_readiness_seam_survives_an_invalid_api_key_env():
+    config = {
+        **_config(api_key_env="gpu-key"),
+        "chat_defaults": {"provider": "custom-ep:gpu-box", "model": "model-a"},
+    }
+    settings = build_default_console_session_settings(config)
+    readiness = build_console_settings_readiness(
+        settings, app_config=config, environ={}, background_credentials=False
+    )
+    assert readiness.native_send_supported is False
+
+
+def test_registry_load_flags_an_invalid_api_key_env_without_logging_it(caplog):
+    secret_like = "sk-pasted-into-the-name-field-123"
+    with caplog.at_level(
+        logging.WARNING, logger="tldw_chatbook.Chat.custom_endpoint_registry"
+    ):
+        entry = entry_for(_config(api_key_env=secret_like), "custom-ep:gpu-box")
+    assert entry is not None  # kept, so its readiness can name the problem
+    assert "gpu-box" in caplog.text and "api_key_env" in caplog.text
+    assert secret_like not in caplog.text
+    # Every readiness read reloads the registry: warn once, not per read.
+    caplog.clear()
+    with caplog.at_level(
+        logging.WARNING, logger="tldw_chatbook.Chat.custom_endpoint_registry"
+    ):
+        entry_for(_config(api_key_env=secret_like), "custom-ep:gpu-box")
+    assert "api_key_env" not in caplog.text
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_opens_on_an_entry_with_an_invalid_api_key_env(request):
+    app = _registry_default_app("custom-ep:gpu-box")
+    app.app_config["custom_endpoints"]["gpu-box"]["api_key_env"] = "gpu-key"
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        overview = _text(screen, "#settings-overview-configuration")
+        assert "Not ready: Invalid provider settings" in overview, overview
+
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle_settings_mount_storm(pilot)
+        for selector in (
+            "#settings-provider-credential-status",
+            "#settings-provider-key-status",
+        ):
+            status = _text(screen, selector)
+            assert "credential env var name is invalid" in status, status
+        assert "gpu-key" not in _all_static_text(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_opens_on_a_dangling_markup_registry_default(request):
+    host = DestinationHarness(_registry_default_app("custom-ep:gone[/]"), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle_settings_mount_storm(pilot)
+        # Rows fold long dotted keys at separators; compare without them.
+        key_row = "".join(_text(screen, "#settings-provider-endpoint-key").split())
+        assert "custom_endpoints.gone[/].base_url" in key_row, key_row
+
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _settle_settings_mount_storm(pilot)
+        result = _text(screen, "#settings-provider-test-result")
+        assert "gone[/]" in result and "api_settings" not in result, result
+
+
+_FAMILY_SLOT_SECRET = "sk-family-slot-key-999"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("entry_fields", "env", "expected"),
+    [
+        ({"api_key_env": "GPU_KEY"}, {"GPU_KEY": "sk-entry-env-secret-123"}, "env var GPU_KEY"),
+        ({"api_key": "sk-entry-stored-secret-123"}, {}, "saved in this endpoint"),
+        ({}, {}, "none required"),
+    ],
+)
+async def test_providers_models_states_the_entry_endpoint_and_credential(
+    request, monkeypatch, entry_fields, env, expected
+):
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    app = _registry_default_app("custom-ep:gpu-box")
+    app.app_config["custom_endpoints"]["gpu-box"].update(entry_fields)
+    # The family slot's own key must never be reported as the entry's.
+    app.app_config.setdefault("api_settings", {})["llama_cpp"] = {
+        "api_key": _FAMILY_SLOT_SECRET
+    }
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle_settings_mount_storm(pilot)
+        for selector in (
+            "#settings-provider-credential-status",
+            "#settings-provider-key-status",
+        ):
+            assert expected in _text(screen, selector), _text(screen, selector)
+        assert "http://192.168.1.5:8080" in _text(screen, "#settings-provider-endpoint")
+        key_row = "".join(_text(screen, "#settings-provider-endpoint-key").split())
+        assert "custom_endpoints.gpu-box.base_url" in key_row, key_row
+
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _settle_settings_mount_storm(pilot)
+        result = _text(screen, "#settings-provider-test-result")
+        assert "http://192.168.1.5:8080" in result, result
+        assert "api_settings.custom_ep" not in result, result
+        assert expected in result, result
+        if entry_fields:
+            assert "No API key is required" not in result, result
+        rendered = _all_static_text(screen)
+        assert "sk-entry" not in rendered and _FAMILY_SLOT_SECRET not in rendered
+
+
+_REGISTRY_LOCKED_FIELDS = (
+    "#settings-model-value",
+    "#settings-provider-endpoint-value",
+    "#settings-provider-api-key",
+    "#settings-provider-api-key-clear",
+    "#settings-provider-credential-env-var",
+    "#settings-model-context-window",
+    "#settings-model-context-window-reset",
+    "#settings-generation-defaults",
+    "#settings-discover-provider-models",
+)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_locks_a_registry_default_and_links_to_its_editor(
+    request,
+):
+    # The Custom endpoints editor reads the on-disk registry; this is the
+    # private profile's per-test sandbox config, never a real one.
+    assert os.environ.get("TLDW_TEST_PRIVATE_PROFILE_NODE")
+    assert save_settings_to_cli_config({"custom_endpoints.gpu-box": dict(_ENTRY)})
+    app = _registry_default_app("custom-ep:gpu-box")
+    # A saved context-window override would otherwise enable Reset.
+    app.app_config["model_capabilities"] = {
+        "models": {"model-a": {"context_window": 4096}}
+    }
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle_settings_mount_storm(pilot)
+        for selector in _REGISTRY_LOCKED_FIELDS:
+            assert screen.query_one(selector).disabled, selector
+        edit = screen.query_one("#settings-provider-edit-custom-endpoint", Button)
+        assert edit.display
+
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-provider-edit-custom-endpoint"
+        )
+        await _settle_settings_mount_storm(pilot)
+        url_input = screen.query_one("#settings-cep-edit-url", Input)
+        assert url_input.value == "http://192.168.1.5:8080"
+        assert screen.focused is url_input
+        # Live 211x44 review: focus alone left the editor below the fold.
+        body = screen.query_one("#settings-detail-pane-body")
+        assert body.region.overlaps(url_input.region), (body.region, url_input.region)
+        assert screen._provider_draft() is None
+
+        # Choosing an ordinary provider gives the form back.
+        screen._apply_provider_value_change("llama_cpp")
+        await pilot.pause()
+        for selector in (
+            "#settings-model-value",
+            "#settings-provider-endpoint-value",
+            "#settings-provider-api-key",
+            "#settings-provider-credential-env-var",
+            "#settings-model-context-window",
+            "#settings-generation-defaults",
+        ):
+            assert not screen.query_one(selector).disabled, selector
+        assert not edit.display
+
+
+def test_provider_widget_value_reads_the_saved_provider_before_the_select_mounts(
+    monkeypatch,
+):
+    """The 0.25s subscription poll can tick between compose and mount.
+
+    Textual applies a Select's ``value`` only in ``_on_mount``, so a composed
+    Select reads NULL until then; the poll resolved that to "" and repainted
+    the credential rows with the no-provider copy ("not required for this
+    provider") -- flaky for the registry facts above under load.
+    """
+    select = Select(
+        [("Manual", PROVIDER_MANUAL_SELECT_VALUE)],
+        value=PROVIDER_MANUAL_SELECT_VALUE,
+        allow_blank=False,
+    )
+    assert select.value == Select.NULL  # not mounted yet
+
+    def query_one(selector, expect_type=None):
+        if selector == "#settings-provider-value" and expect_type is Select:
+            return select
+        raise QueryError(selector)
+
+    screen = SettingsScreen.__new__(SettingsScreen)
+    monkeypatch.setattr(screen, "query_one", query_one)
+    monkeypatch.setattr(
+        screen,
+        "_provider_setting_values_mapping",
+        lambda: {"provider": "custom-ep:gpu-box"},
+    )
+    assert screen._provider_widget_value() == "custom-ep:gpu-box"

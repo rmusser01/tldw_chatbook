@@ -159,6 +159,9 @@ _MAX_SOURCE_CHARS = 256
 _MAX_ENV_VAR_CHARS = 128
 _MAX_REASON_CHARS = 128
 _MAX_RECOVERY_CHARS = 1024
+#: ADR-146: the readiness reason for a ``custom-ep:<slug>`` id whose registry
+#: entry is gone (TASK-33002.12).
+ENDPOINT_NOT_FOUND_REASON = "Endpoint not found"
 _CONFIGURATION_STATE_BY_REASON: dict[
     str, tuple[ConfigurationFacet, ConfigurationIssueCode | None]
 ] = {
@@ -178,8 +181,7 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Missing workspace URL": ("incomplete", "endpoint_missing"),
     "Invalid provider settings": ("incomplete", "invalid_settings"),
     "Unknown provider": ("incomplete", "invalid_settings"),
-    # ADR-146: a ``custom-ep:<slug>`` id whose registry entry is gone.
-    "Endpoint not found": ("incomplete", "endpoint_missing"),
+    ENDPOINT_NOT_FOUND_REASON: ("incomplete", "endpoint_missing"),
 }
 _PERSISTED_CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment"})
 
@@ -646,7 +648,7 @@ def _custom_endpoint_readiness(
             api_key=None,
             api_key_source=None,
             env_var=None,
-            reason="Endpoint not found",
+            reason=ENDPOINT_NOT_FOUND_REASON,
             recovery=(
                 "No custom endpoint with that id is saved. Choose another "
                 "provider, or recreate the endpoint under Custom endpoints."

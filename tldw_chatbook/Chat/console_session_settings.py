@@ -79,7 +79,10 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
-from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.input_validation import (
+    validate_env_var_reference,
+    validate_url,
+)
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
@@ -2167,12 +2170,33 @@ def _custom_endpoint_missing_key_readiness(
     if env_key is not None or stored_key is not None:
         return None
     # Lazy import: custom_endpoint_registry imports this module.
-    from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        ENV_VAR_NAME_RULE_COPY,
+    )
 
     # TASK-33002.12: a name the record cannot carry reads as the entry's id.
     label = safe_provider_label(
         entry.display_name, f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}"
     )
+    if entry.api_key_env and not validate_env_var_reference(entry.api_key_env):
+        # Qodo #2876: a hand-edited name the record rejects was an unhandled
+        # ValueError. Name the problem, never the value (it may be a secret
+        # pasted into the name field).
+        return ProviderReadiness(
+            provider=label,
+            provider_key=provider_key,
+            requires_api_key=True,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Invalid provider settings",
+            recovery=(
+                f"The '{label}' endpoint's credential env var name is invalid. "
+                f"{ENV_VAR_NAME_RULE_COPY} Fix it under Custom endpoints."
+            ),
+        )
     if entry.api_key_env:
         recovery = (
             f"Set {entry.api_key_env} or update the stored api_key for the "
