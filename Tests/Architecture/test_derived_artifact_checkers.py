@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -674,6 +675,58 @@ def test_readable_task_file_shapes_are_not_flagged(tmp_path):
 
     assert backlog_files.unreadable_task_files(tasks) == {}
     assert backlog_files.main(["--tasks-dir", str(tasks)]) == 0
+
+
+@pytest.mark.parametrize("invalid_kind", ["nul", "file", "missing"])
+def test_custom_task_directory_is_validated_before_any_scan(
+    tmp_path, capsys, invalid_kind
+):
+    """An invalid explicit root must not be silently skipped beside a valid one."""
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-4 - Wrapped.md", WRAPPED_QUOTED_TITLE)
+    selected_file = tmp_path / "not-a-directory.md"
+    selected_file.write_text("not a task folder", encoding="utf-8")
+    invalid = {
+        "nul": str(tmp_path) + "\x00suffix",
+        "file": str(selected_file),
+        "missing": str(tmp_path / "absent"),
+    }[invalid_kind]
+
+    assert backlog_files.main(["--tasks-dir", str(tasks), "--tasks-dir", invalid]) == 1
+    captured = capsys.readouterr()
+    assert "::error::invalid --tasks-dir:" in captured.out
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_custom_task_directory_keeps_relative_and_external_roots(tmp_path, monkeypatch):
+    """A user-selected local directory need not live in the repository."""
+    tasks = tmp_path / "tasks & notes"
+    _task_file(tasks, "task-4 - Wrapped.md", WRAPPED_QUOTED_TITLE)
+    monkeypatch.chdir(tmp_path)
+
+    assert backlog_files.main(["--tasks-dir", "tasks & notes"]) == 0
+
+
+def test_task_readability_cli_validates_roots_without_site_packages(tmp_path):
+    """The central CI job installs nothing; exercise real validation under -S."""
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-4 - Wrapped.md", WRAPPED_QUOTED_TITLE)
+    script = backlog_files.REPO_ROOT / "scripts" / "check_backlog_task_files.py"
+    command = [sys.executable, "-S", str(script), "--tasks-dir", str(tasks)]
+    valid = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert valid.returncode == 0, valid.stdout + valid.stderr
+    assert "All 1 task files" in valid.stdout
+
+    selected_file = tasks / "task-4 - Wrapped.md"
+    invalid = subprocess.run(
+        [*command, "--tasks-dir", str(selected_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert invalid.returncode == 1, invalid.stdout + invalid.stderr
+    assert "::error::invalid --tasks-dir:" in invalid.stdout
+    assert "Traceback" not in invalid.stdout + invalid.stderr
 
 
 def test_quoted_scalar_can_close_on_an_unindented_quote_line(tmp_path):

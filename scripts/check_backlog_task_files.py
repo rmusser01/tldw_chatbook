@@ -31,11 +31,23 @@ four rules are the ones with evidence behind them; anything subtler is left to
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# Load the shared stdlib-only validator directly, without importing the app
+# package or bootstrapping its config/metrics. The required CI job installs
+# nothing; the same module is also used in bare remote worker bundles.
+_PATH_VALIDATION_SPEC = importlib.util.spec_from_file_location(
+    "_backlog_path_validation", REPO_ROOT / "tldw_chatbook/Utils/path_validation.py"
+)
+if _PATH_VALIDATION_SPEC is None or _PATH_VALIDATION_SPEC.loader is None:
+    raise RuntimeError("Shared path validator is unavailable")
+_path_validation = importlib.util.module_from_spec(_PATH_VALIDATION_SPEC)
+_PATH_VALIDATION_SPEC.loader.exec_module(_path_validation)
+
 # The buckets a task file can live in, mirroring check_backlog_task_ids.py.
 TASK_DIRS = (
     REPO_ROOT / "backlog" / "tasks",
@@ -243,20 +255,6 @@ def main(argv: list[str] | None = None) -> int:
         int: ``0`` when every task file parses, ``1`` otherwise (with
             ``::error::`` annotations naming each file and its problems).
     """
-    # NOTE (Qodo, "Unvalidated --tasks-dir used"): deliberately NOT routed
-    # through Utils/path_validation.py, for the same three reasons recorded in
-    # check_backlog_task_ids.py, where this finding was first declined on
-    # PR #1947:
-    #   1. path_validation.py imports Metrics.metrics_logger -> psutil. These
-    #      checkers are stdlib-only and install-free by design; derived-
-    #      artifacts.yml installs nothing.
-    #   2. Neither workflow passes --tasks-dir; both invoke the script bare, so
-    #      there is no CI-reachable externally-controlled input and no privilege
-    #      boundary for a traversal to cross.
-    #   3. --tasks-dir is intentionally usable outside the repo, which is how
-    #      Tests/Architecture/test_derived_artifact_checkers.py exercises it
-    #      with a pytest tmp_path.
-    # Every operation here (glob, read_text) is read-only.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--tasks-dir",
@@ -267,7 +265,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    task_dirs = tuple(args.tasks_dirs) if args.tasks_dirs else TASK_DIRS
+    if args.tasks_dirs:
+        # Each explicit directory is authorized by the local caller. Normalize
+        # relative/home paths before shared validation, without confining them
+        # to the repo. Unlike absent optional default buckets, a misspelled or
+        # invalid explicit root is an error, even beside a valid directory.
+        try:
+            task_dirs = tuple(
+                _path_validation.validate_existing_absolute_directory(
+                    path.expanduser().absolute()
+                )
+                for path in args.tasks_dirs
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            print(f"::error::invalid --tasks-dir: {error}")
+            return 1
+    else:
+        task_dirs = TASK_DIRS
     if not any(task_dir.is_dir() for task_dir in task_dirs):
         print(
             f"::error::no backlog task directory at {', '.join(str(d) for d in task_dirs)}"
