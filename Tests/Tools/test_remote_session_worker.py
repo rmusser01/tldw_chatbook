@@ -354,12 +354,37 @@ def test_call_after_close_raises_session_closed(worker_factory, workspace):
 
 
 def test_call_after_a_stuck_kill_is_still_remote_op_failed(worker_factory, workspace):
-    """Only a laptop close of a HEALTHY session is retryable; a killed one is not."""
+    """Only a laptop close of a HEALTHY session is retryable; a killed one is not.
+
+    The run-end/reap path always calls close() on whatever it pops out of
+    the registry, dead or alive, so the real sequence to pin is death THEN
+    close() THEN a straggler call -- not just death then call (TASK-33401's
+    was_alive guard in close() is only exercised by the close() step)."""
     worker, _ = worker_factory()
     worker.start()
     worker._die(natural=False)
+    worker.close()
     result = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not result.admitted
     assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
+
+
+def test_call_after_close_following_a_natural_death_is_still_classified(worker_factory, workspace):
+    """A close() after a NATURAL death (host exited 255 on its own) must not
+    retire the session either: close()'s was_alive guard only fires for a
+    session that was still ALIVE when close() ran (TASK-33401)."""
+    artifact, _, _ = _bundle_payload()
+    worker, _ = worker_factory(
+        spawn_argv=[sys.executable, "-c", _EXIT_255_HOST, expected_bundle_stamp(artifact)]
+    )
+    worker.start()
+    inflight = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not inflight.admitted
+    assert inflight.failure.kind is TransportFailureKind.UNREACHABLE
+    worker.close()
+    result = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not result.admitted
+    assert result.failure.kind is TransportFailureKind.UNREACHABLE
 
 
 def test_mid_frame_stall_kills_the_session(worker_factory, workspace):
