@@ -58,11 +58,18 @@ _REQUIRED_TOOL_CALL_KEYS = frozenset({"id", "type", "function"})
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 # Auth schemes the shared transport accepts (ADR-179 engine). ``"bearer"``
 # hard-requires a non-empty key; ``"bearer_optional"`` (Phase 2) admits an
-# empty key and then sends no Authorization header at all. ``"api_key_header"``
-# is the Phase 3 engine scheme and is deliberately absent until it has a
-# header contract, so an unknown scheme fails closed as invalid transport
-# configuration.
-_SUPPORTED_AUTH_SCHEMES = frozenset({"bearer", "bearer_optional"})
+# empty key and then sends no Authorization header at all.
+# ``"api_key_header"`` (Phase 3, TASK-33350) hard-requires a key too and
+# sends it as ``api-key: <key>`` instead of an Authorization header -- the
+# header Xiaomi MiMo documents (Azure OpenAI uses the same one). Any other
+# scheme fails closed as invalid transport configuration.
+_SUPPORTED_AUTH_SCHEMES = frozenset({"bearer", "bearer_optional", "api_key_header"})
+_KEY_REQUIRED_AUTH_SCHEMES = frozenset({"bearer", "api_key_header"})
+_API_KEY_HEADER = "api-key"
+# Header names only the transport may set: the credential carriers for every
+# scheme plus Content-Type. A provider's extra_headers can never override or
+# duplicate the credential.
+_RESERVED_HEADER_NAMES = frozenset({"authorization", _API_KEY_HEADER, "content-type"})
 # Upper bound on a provider-named Retry-After sleep (seconds). The engine's
 # workers run on threads Stop cannot interrupt, and every hosted provider's
 # api_base_url is user-configurable -- a hostile endpoint naming
@@ -123,15 +130,17 @@ class HostedHTTPTransportConfig:
     retries: int
     retry_delay: float
     # Provider-requested additional request headers (TASK-32851). The
-    # engine's Authorization/Content-Type pair is not overridable; any other
-    # header a provider's wire contract requires rides through here.
+    # credential headers (Authorization, api-key) and Content-Type are not
+    # overridable; any other header a provider's wire contract requires rides
+    # through here.
     extra_headers: Mapping[str, str] = field(default_factory=dict, compare=False)
     # Auth contract (engine, ADR-179 Phase 2): ``"bearer"`` requires a
     # non-empty key; ``"bearer_optional"`` admits an empty key (keyless
     # endpoint, ADR-146) and then sends no Authorization header at all.
-    # ``"api_key_header"`` is the Phase 3 engine scheme and is rejected by
-    # validation until it has a header contract. Legacy adapters construct
-    # without the field and keep the byte-identical ``"bearer"`` default.
+    # ``"api_key_header"`` (Phase 3) requires a key and sends it as
+    # ``api-key: <key>`` with no Authorization header. Legacy adapters
+    # construct without the field and keep the byte-identical ``"bearer"``
+    # default.
     auth_scheme: str = "bearer"
 
 
@@ -678,7 +687,7 @@ def owned_json_post(
         or not config.provider
         or not isinstance(config.api_key, str)
         or config.auth_scheme not in _SUPPORTED_AUTH_SCHEMES
-        or (config.auth_scheme == "bearer" and not config.api_key)
+        or (config.auth_scheme in _KEY_REQUIRED_AUTH_SCHEMES and not config.api_key)
         or isinstance(config.timeout, bool)
         or not isinstance(config.timeout, (int, float))
         or not math.isfinite(float(config.timeout))
@@ -696,7 +705,7 @@ def owned_json_post(
             or not name
             or not isinstance(value, str)
             or not value
-            or name.lower() in {"authorization", "content-type"}
+            or name.lower() in _RESERVED_HEADER_NAMES
             for name, value in config.extra_headers.items()
         )
     ):
@@ -704,7 +713,13 @@ def owned_json_post(
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
-    if config.api_key:
+    if config.api_key and config.auth_scheme == "api_key_header":
+        headers = {
+            _API_KEY_HEADER: config.api_key,
+            "Content-Type": "application/json",
+            **config.extra_headers,
+        }
+    elif config.api_key:
         headers = {
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json",

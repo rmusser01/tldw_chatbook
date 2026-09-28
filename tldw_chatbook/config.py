@@ -4311,6 +4311,13 @@ Novita = [] # fills via /openai/v1/models discovery or manual seeding
 # MiniMax documents no /models route: seeded from the `model` enum at
 # platform.minimax.io/docs/api-reference/text-chat-openai (2026-09-27).
 MiniMax = ["MiniMax-M3", "MiniMax-M3.1-Flash-Preview", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"]
+# Top-15 OpenRouter model makers (TASK-33350). MiMo and BytePlus document no
+# usable models route, so they ship seeded from their documented model IDs
+# (any other ID can be entered as a custom model); the rest fill via discovery.
+MiMo = ["mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed", "mimo-v2.5-pro", "mimo-v2.5"]
+TokenHub = [] # Tencent TokenHub: fills via /v1/models discovery (Hy4 is hy4-preview)
+BytePlus = ["seed-2-0-lite-260228", "seed-1-8-251228"] # also accepts your own ep-... endpoint IDs
+StepFun = [] # fills via /v1/models discovery or manual seeding
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4610,6 +4617,43 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     api_key_env_var = "MINIMAX_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
     api_base_url = "https://api.minimax.io/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # Top-15 OpenRouter model makers (TASK-33350): same shape as above.
+    [api_settings.mimo] # Matches key in [providers]
+    api_key_env_var = "MIMO_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.xiaomimimo.com/v1" # sent as an api-key header, not Bearer
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.tokenhub] # Matches key in [providers]
+    api_key_env_var = "TOKENHUB_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://tokenhub-intl.tencentcloudmaas.com/v1" # US: tokenhub-us..., China: tokenhub.tencentcloudmaas.com
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.byteplus] # Matches key in [providers]
+    api_key_env_var = "ARK_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://ark.ap-southeast.bytepluses.com/api/v3" # China (Volcengine): https://ark.cn-beijing.volces.com/api/v3
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.stepfun] # Matches key in [providers]
+    api_key_env_var = "STEPFUN_API_KEY" # STEP_API_KEY also read
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.stepfun.ai/v1" # China: https://api.stepfun.com/v1
     timeout = 90
     retries = 3
     retry_delay = 5.0

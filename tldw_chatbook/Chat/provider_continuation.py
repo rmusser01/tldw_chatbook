@@ -46,6 +46,11 @@ ContinuationProvider = Literal[
     "nebius",
     "novita",
     "minimax",
+    # TASK-33350 model-maker presets.
+    "mimo",
+    "tokenhub",
+    "byteplus",
+    "stepfun",
 ]
 ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
@@ -107,6 +112,10 @@ _PAIRINGS = frozenset(
         ("nebius", "chat_completions"),
         ("novita", "chat_completions"),
         ("minimax", "chat_completions"),
+        ("mimo", "chat_completions"),
+        ("tokenhub", "chat_completions"),
+        ("byteplus", "chat_completions"),
+        ("stepfun", "chat_completions"),
     }
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})

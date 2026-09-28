@@ -18,6 +18,7 @@ from tldw_chatbook.config import normalize_provider_config_key
 PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "anthropic": "Anthropic",
     "aphrodite": "Aphrodite Engine",
+    "byteplus": "ByteDance Seed (BytePlus)",
     "cerebras": "Cerebras",
     "cohere": "Cohere",
     "custom": "Custom OpenAI-compatible",
@@ -41,6 +42,7 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "local_onnx": "ONNX Runtime (local)",
     "local_transformers": "Transformers (local)",
     "local_vllm": "vLLM (legacy alias)",
+    "mimo": "Xiaomi MiMo",
     "minimax": "MiniMax",
     "mistral": "Mistral AI (legacy alias)",
     "mistralai": "Mistral AI",
@@ -54,8 +56,10 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "openrouter": "OpenRouter",
     "qwencloud": "QwenCloud",
     "sambanova": "SambaNova",
+    "stepfun": "StepFun",
     "tabbyapi": "TabbyAPI",
     "together": "Together",
+    "tokenhub": "Tencent TokenHub",
     "vllm": "vLLM",
     "zai": "Z.ai",
 }

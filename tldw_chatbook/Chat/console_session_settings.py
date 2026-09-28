@@ -106,6 +106,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
     {
         "anthropic",
         "aphrodite",
+        "byteplus",
         "cerebras",
         "cohere",
         "custom-openai-api",
@@ -125,6 +126,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "local_mlx_lm",
         "local_ollama",
         "local_vllm",
+        "mimo",
         "minimax",
         "mistral",
         "mistralai",
@@ -139,8 +141,10 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "openrouter",
         "qwencloud",
         "sambanova",
+        "stepfun",
         "tabbyapi",
         "together",
+        "tokenhub",
         "vllm",
         "zai",
     }
