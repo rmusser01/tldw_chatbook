@@ -970,8 +970,9 @@ async def test_settings_theme_editor_launch_default_write_failure_is_reported(
 ):
     """Qodo #7: a failed config write is reported as an error, not success.
 
-    TASK-32948 removed the "Set as launch default" button; Delete still resets
-    the launch default through ``_save_launch_default``, so it is driven directly.
+    Delete's fallback (``_fall_back_after_delete``) is the editor's one
+    launch-default writer, through the queued ``_persist_launch_default``
+    (final-wave review M-2 removed the dead synchronous one).
     """
     import tldw_chatbook.config as config_module
 
@@ -980,15 +981,16 @@ async def test_settings_theme_editor_launch_default_write_failure_is_reported(
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        monkeypatch.setattr(config_module, "get_cli_setting", lambda section, key, default=None: "ocean")
         monkeypatch.setattr(
             config_module,
             "apply_settings_mutation_to_cli_config",
             lambda *a, **k: ConfigMutationResult(False, False, "before_replace"),
         )
-        editor._save_launch_default("textual-dark", "reset")
+        await editor._fall_back_after_delete("ocean")  # the deleted theme was the launch default
         await pilot.pause()
         message, kwargs = app.notify.call_args.args[0], app.notify.call_args.kwargs
-        assert "Could not save" in message
+        assert "could not save the launch default" in message
         assert kwargs.get("severity") == "error"
 
 

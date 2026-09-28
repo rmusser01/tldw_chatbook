@@ -1396,27 +1396,6 @@ class SettingsThemeEditor(Vertical):
             data["variables"] = variables
         return data
 
-    def _save_launch_default(self, name: str, success_message: str) -> None:
-        from ..config import apply_settings_mutation_to_cli_config
-
-        result = apply_settings_mutation_to_cli_config(
-            {"general": {"default_theme": name}}
-        )
-        if not result.file_replaced:
-            self.app.notify(
-                "Could not save the launch default; check the config file",
-                severity="error",
-            )
-            return
-        self.post_message(self.LaunchDefaultChanged(name))
-        if result.caches_reloaded:
-            self.app.notify(success_message, severity="success")
-        else:
-            self.app.notify(
-                "Launch default saved, but configuration refresh failed. Reopen Settings to refresh.",
-                severity="warning",
-            )
-
     @on(Button.Pressed, "#settings-theme-reset")
     def on_reset_theme(self) -> None:
         """Reset theme to original values (confirms before discarding edits)."""
