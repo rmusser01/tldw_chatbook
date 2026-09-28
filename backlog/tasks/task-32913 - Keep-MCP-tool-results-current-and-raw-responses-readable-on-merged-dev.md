@@ -50,4 +50,12 @@ Reason: bounded repair of existing result replacement and token-backed disclosur
 Implemented full result replacement after argument validation failure and token-backed compact raw disclosure sizing. Reuses existing server/tool/profile guards and preserves drafts. Eight regressions reproduced on merged dev and pass with the repair; 281 related inspector/Workbench cases, 43 layout/governance cases and 21 runner-admission cases pass. The dimension ratchet still flags the same twelve inherited declarations; no allowances changed. Inspector harness now retains its collection-time config source via the existing bootstrap_profile marker after an isolated run exposed recovery admission errors. Independent review found no product issues; its native cleanup finding was fixed. Four real-stdio native theme/size journeys and private lifecycle checks pass. Requalifying incoming dev startup changes before publication; owner visual approval, CI/review and merge remain pending. Existing ADRs 150, 161 and 031 apply; no new ADR.
 
 Conflict-free rebase onto dev9e33252708 is qualified: 17 post-rebase cases pass (eight repeated regressions plus nine incoming cases), all nine artifact guards pass again, and sixteen new native captures preserve the inspector appearance. Final native lifecycle is clean with fixture deletion/teardown postconditions verified. Total 362 distinct targeted passes; one inherited dimension-ratchet failure remains unchanged. Independent integration review is clear. Evidence and limitations: Docs/superpowers/qa/2026-09-18-mcp-inspector-results/current-dev/README.md. Remains In Progress for owner visual approval and final PR gates.
+
+2026-09-27 Windows integration: rebased onto dev 7cda012822 without conflict;
+eight current-result regressions pass in a private profile. CSS bundle
+reproduction and task ID/path integrity (4,472 files) pass. Original native
+captures are presented in a review gallery; no new native capture claim is made.
+The unrelated global dimension guard retains inherited literals and has an
+additional Windows path-spelling false positive, detailed in the evidence README.
+Owner visual approval, remote CI/review and actual merge remain pending.
 <!-- SECTION:NOTES:END -->

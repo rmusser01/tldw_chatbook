@@ -84,3 +84,22 @@ architecture decision or authority/runtime/storage boundary is introduced.
 
 PR2722's approved merge closeout is retained separately. Other MCP and destination
 reviews remain open. The old PR2707 heartbeat stays paused.
+
+## 2026-09-27 Windows integration onto dev 7cda012822
+
+The three existing commits rebased without conflict. The incoming Inspector
+changes are the newer detached-safe advanced payload editor and the explicit
+Allow risk-floor notice; the saved result repair is preserved. All eight result
+regressions pass in a private Windows profile on the rebased head. The complete
+CSS bundle reproduces and the task ID/path guard passes across 4,472 files.
+No new native terminal captures are claimed: the gallery renders the original
+qualified real-stdio SVG receipts listed above.
+
+The separate global dimension guard still fails on inherited source declarations
+(one in the agentic sheet, two in Settings splash/theme, eleven in Workflows).
+Windows also reports 36 declarations in the exempt token sheet because that
+existing test compares a native backslash path with a POSIX-spelled exemption.
+These findings are outside this bounded repair; its new declarations use tokens,
+and no budget or governance assertion was relaxed. The required CI job does not
+include this global dimension test. Owner appearance approval, current-head CI,
+and actual merge verification remain pending.
