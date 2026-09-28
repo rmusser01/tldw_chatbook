@@ -4430,7 +4430,14 @@ def _retire_generation_before_agent_handoff(method: Callable[..., Any]):
 
 
 def _close_remote_sessions_at_run_end(method: Callable[..., Any]):
-    """Close the run's SSH session workers however the run ends.
+    """Give each run its own SSH session key and close it however the run ends.
+
+    The key is unique per invocation (R12: assistant message id plus a
+    fresh uuid), so a regenerate/variant/recovery re-run of the same row
+    never shares a session with an earlier run; the body receives it as
+    ``_remote_session_key``. Closing tombstones the key, so a surviving
+    sub-agent or Stop straggler falls back to one-shot calls instead of
+    reopening an unowned session.
 
     Wraps the WHOLE run, not just its finalize step: the provider-failure,
     cancel and pre-dispatch refusal paths all return or raise before
@@ -4441,6 +4448,8 @@ def _close_remote_sessions_at_run_end(method: Callable[..., Any]):
 
     @functools.wraps(method)
     async def wrapped(self, *args, **kwargs):
+        run_key = f"{kwargs['assistant_message_id']}:{uuid4().hex}"
+        kwargs["_remote_session_key"] = run_key
         try:
             return await method(self, *args, **kwargs)
         finally:
@@ -4448,9 +4457,7 @@ def _close_remote_sessions_at_run_end(method: Callable[..., Any]):
                 close_remote_sessions,
             )
 
-            await asyncio.to_thread(
-                close_remote_sessions, kwargs["assistant_message_id"]
-            )
+            await asyncio.to_thread(close_remote_sessions, run_key)
 
     return wrapped
 
@@ -27748,6 +27755,7 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         _generation_handoff: _GenerationTokenHandoff | None = None,
+        _remote_session_key: str | None = None,
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
@@ -27948,7 +27956,7 @@ class ConsoleChatController:
                         await self._resolve_remote_project_instruction_startup(
                             project_selection,
                             registry=registry,
-                            session_key=assistant_message_id,
+                            session_key=_remote_session_key,
                             startup_max_bytes=coerce_int_setting(
                                 turn_context.tool_configuration.get(
                                     "project_instructions_startup_max_bytes",
@@ -28140,7 +28148,7 @@ class ConsoleChatController:
                 registry=getattr(self.app, "workspace_registry_service", None),
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
-                remote_session_key=assistant_message_id,
+                remote_session_key=_remote_session_key,
             )
             worktree_repo_authority = None
             if (

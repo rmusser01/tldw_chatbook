@@ -117,8 +117,8 @@ def test_module_helpers_close_the_singleton(monkeypatch):
     from tldw_chatbook.Tools import remote_session_registry as module
 
     monkeypatch.setattr(module, "_REGISTRY", None)
-    module.close_remote_sessions("run-1")  # no registry yet: no-op
-    module.close_all_remote_sessions()
+    module.close_all_remote_sessions()  # no registry yet: no-op
+    assert module._REGISTRY is None
     reg = module.get_session_registry()
     assert module.get_session_registry() is reg
     w = reg.acquire(("run-1", "b1"), FakeWorker)
@@ -135,3 +135,50 @@ def test_clean_end_is_recreated_without_spending_the_restart():
     died = reg.acquire(("run-1", "b1"), FakeWorker)
     died.alive = False  # a genuine death (e.g. 255) still gets its one restart
     assert reg.acquire(("run-1", "b1"), FakeWorker) is not None
+
+
+def test_closed_key_is_tombstoned_and_never_reopens():
+    reg = RemoteSessionRegistry()
+    w = reg.acquire(("run-1", "b1"), FakeWorker)
+    reg.close_key("run-1")
+    assert w.closed
+    # A straggler after run end goes one-shot: create is never called.
+    assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("reopened")) is None
+    assert reg.acquire(("run-1", "b2"), lambda: pytest.fail("reopened")) is None
+    assert reg.acquire(("run-2", "b1"), FakeWorker) is not None
+
+
+def test_module_close_tombstones_even_before_any_session(monkeypatch):
+    from tldw_chatbook.Tools import remote_session_registry as module
+
+    monkeypatch.setattr(module, "_REGISTRY", None)
+    module.close_remote_sessions("run-1")
+    reg = module.get_session_registry()
+    assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("reopened")) is None
+
+
+def test_tombstones_are_bounded(monkeypatch):
+    from tldw_chatbook.Tools import remote_session_registry as module
+
+    monkeypatch.setattr(module, "_CLOSED_KEYS_MAX", 3)
+    reg = RemoteSessionRegistry()
+    for index in range(5):
+        reg.close_key(f"run-{index}")
+    assert list(reg._closed_keys) == ["run-2", "run-3", "run-4"]
+    # The evicted oldest key may open again; the kept ones may not.
+    assert reg.acquire(("run-0", "b1"), FakeWorker) is not None
+    assert reg.acquire(("run-4", "b1"), lambda: pytest.fail("reopened")) is None
+
+
+def test_start_in_flight_when_run_closes_is_closed_not_kept():
+    reg = RemoteSessionRegistry()
+    made = []
+
+    def create():
+        worker = FakeWorker(start_hook=lambda: reg.close_key("run-1"))
+        made.append(worker)
+        return worker
+
+    assert reg.acquire(("run-1", "b1"), create) is None
+    assert made[0].closed
+    assert reg._sessions == {}

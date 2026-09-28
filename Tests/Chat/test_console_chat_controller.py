@@ -7502,23 +7502,12 @@ async def test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge():
     assert bridge_calls[0]["trace_request"] is trace_request
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("provider_raises", [False, True])
-async def test_run_agent_reply_closes_the_runs_remote_sessions_at_run_end(
-    monkeypatch, provider_raises
-):
-    """The run key's SSH sessions close however the run ends (finally path)."""
+async def _remote_session_run_fixture(monkeypatch, run_reply):
+    """Controller, assistant row and turn context for run-key/close tests."""
     store = ConsoleChatStore()
-    gateway = StreamingGateway()
-
-    def run_reply(**kwargs):
-        if provider_raises:
-            raise RuntimeError("provider exploded")
-        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
-
     controller = ConsoleChatController(
         store=store,
-        provider_gateway=gateway,
+        provider_gateway=StreamingGateway(),
         agent_runtime_enabled=True,
         agent_bridge=SimpleNamespace(run_reply=run_reply),
     )
@@ -7538,44 +7527,162 @@ async def test_run_agent_reply_closes_the_runs_remote_sessions_at_run_end(
         configuration,
     )
     assert turn_context is not None
-    policy = FrozenTracePolicy(
-        policy_id=new_opaque_id(),
-        credential_filter_version="credentials-v1",
-        pii_redaction_enabled=False,
-        pii_ruleset_revision_id=None,
-    )
-    trace_request = build_console_request(
-        [{"role": "user", "content": "hello"}],
-        message_provenance=(
-            ProviderArtifactTraceProvenance(
-                TraceProvenanceSource.ACTIVE_REQUEST,
-                policy,
-            ),
-        ),
-        memory_provenance=(),
-        mandatory_provenance=(),
-        tool_provenance=(),
-        capture_policy=policy,
-        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
-    )
-    closed = []
+    closed: list[str] = []
     monkeypatch.setattr(
         "tldw_chatbook.Tools.remote_session_registry.close_remote_sessions",
         closed.append,
     )
+    composed_keys: list[str | None] = []
+    real_capture = controller_module.capture_run_admitted_workspace_roots
 
-    await controller._run_agent_reply(
+    def spy_capture(**kwargs):
+        composed_keys.append(kwargs.get("remote_session_key"))
+        return real_capture(**kwargs)
+
+    monkeypatch.setattr(
+        controller_module, "capture_run_admitted_workspace_roots", spy_capture
+    )
+    return SimpleNamespace(
+        controller=controller,
+        assistant=assistant,
         resolution=resolution,
-        provider_messages=[{"role": "user", "content": "hello"}],
-        assistant_message_id=assistant.id,
-        prepare_retry=False,
-        variant_mode=False,
         turn_context=turn_context,
-        capture_mode_override=ConsoleTraceCaptureMode.CAPTURE_ON,
-        trace_request=trace_request,
+        closed=closed,
+        composed_keys=composed_keys,
     )
 
-    assert closed == [assistant.id]
+
+async def _run_remote_session_reply(fixture, **overrides):
+    kwargs = dict(
+        resolution=fixture.resolution,
+        provider_messages=[{"role": "user", "content": "hello"}],
+        assistant_message_id=fixture.assistant.id,
+        prepare_retry=False,
+        variant_mode=False,
+        turn_context=fixture.turn_context,
+    )
+    kwargs.update(overrides)
+    return await fixture.controller._run_agent_reply(**kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["completes", "provider_raises", "cancelled"])
+async def test_run_agent_reply_closes_the_runs_remote_sessions_at_run_end(
+    monkeypatch, ending
+):
+    """The run key's SSH sessions close however the run ends (finally path)."""
+
+    def run_reply(**kwargs):
+        if ending == "provider_raises":
+            raise RuntimeError("provider exploded")
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    fixture = await _remote_session_run_fixture(monkeypatch, run_reply)
+    if ending == "cancelled":
+        # The Stop path: the run task is cancelled before the worker runs.
+        async def cancelled(**_kwargs):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(
+            fixture.controller, "_compose_agent_request_providers", cancelled
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await _run_remote_session_reply(fixture)
+    else:
+        await _run_remote_session_reply(fixture)
+
+    assert len(fixture.closed) == 1
+    assert fixture.closed[0].startswith(f"{fixture.assistant.id}:")
+    if ending != "cancelled":
+        # The key the run composed its executors with is the key closed.
+        assert fixture.composed_keys == fixture.closed
+
+
+@pytest.mark.asyncio
+async def test_rerunning_the_same_assistant_row_gets_a_fresh_session_key(
+    monkeypatch,
+):
+    """R12: regenerate/variant/recovery re-runs never share a session key."""
+
+    def run_reply(**kwargs):
+        # A failed run leaves the row re-runnable (a completed one is final).
+        raise RuntimeError("provider exploded")
+
+    fixture = await _remote_session_run_fixture(monkeypatch, run_reply)
+    await _run_remote_session_reply(fixture)
+    await _run_remote_session_reply(fixture, prepare_retry=True)  # the retry
+
+    assert len(fixture.closed) == 2
+    assert fixture.closed[0] != fixture.closed[1]
+    assert all(key.startswith(f"{fixture.assistant.id}:") for key in fixture.closed)
+    assert fixture.composed_keys == fixture.closed
+
+
+@pytest.mark.asyncio
+async def test_run_agent_reply_passes_the_run_key_to_the_remote_instruction_reader(
+    monkeypatch,
+):
+    """The startup AGENTS.md read shares the run's SSH session key."""
+    from pathlib import PurePosixPath
+
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    def run_reply(**kwargs):
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    fixture = await _remote_session_run_fixture(monkeypatch, run_reply)
+    selection = SimpleNamespace(
+        binding=SimpleNamespace(binding_id="b1"),
+        root=RemoteRoot(
+            alias="b1",
+            canonical_locator="ssh://devbox/srv/www",
+            root=PurePosixPath("/srv/www"),
+            binding_id="b1",
+        ),
+        locator_fingerprint="f" * 64,
+    )
+    project_authority = SimpleNamespace(
+        workspace_id=(
+            fixture.turn_context.provider_selection.workspace_context.active_workspace_id
+        ),
+        options=(),
+        enabled=True,
+        working_folder_binding_id="b1",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key=None,
+        selected=object(),
+    )
+    monkeypatch.setattr(
+        type(fixture.turn_context),
+        "project_authority",
+        property(lambda _self: project_authority),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_project_selection_from_snapshot",
+        lambda _selected: selection,
+    )
+    reader_keys: list[str | None] = []
+
+    class _StopAfterRead(Exception):
+        pass
+
+    async def spy_reader(project_selection, **kwargs):
+        assert project_selection is selection
+        reader_keys.append(kwargs.get("session_key"))
+        raise _StopAfterRead()
+
+    monkeypatch.setattr(
+        fixture.controller,
+        "_resolve_remote_project_instruction_startup",
+        spy_reader,
+    )
+    with pytest.raises(_StopAfterRead):
+        await _run_remote_session_reply(fixture)
+
+    assert len(reader_keys) == 1
+    assert reader_keys[0] is not None
+    assert reader_keys == fixture.closed
 
 
 @pytest.mark.asyncio

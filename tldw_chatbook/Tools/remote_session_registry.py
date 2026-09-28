@@ -7,6 +7,10 @@ from typing import Callable
 
 from loguru import logger
 
+#: How many closed run keys stay tombstoned (R12). A closed key never
+#: reopens a session; the oldest tombstone is evicted past this bound.
+_CLOSED_KEYS_MAX = 1024
+
 from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
 
 
@@ -19,6 +23,8 @@ class RemoteSessionRegistry:
         self._sessions: dict[tuple[str, str], RemoteSessionWorker] = {}
         self._disabled: set[tuple[str, str]] = set()
         self._restarted: set[tuple[str, str]] = set()
+        # R12: insertion-ordered tombstones of closed run keys (bounded).
+        self._closed_keys: dict[str, None] = {}
 
     def acquire(self, key: tuple[str, str], create: Callable[[], RemoteSessionWorker]) -> RemoteSessionWorker | None:
         """Return the live session for ``key``, starting one if needed.
@@ -34,7 +40,10 @@ class RemoteSessionRegistry:
             key_lock = self._key_locks.setdefault(key, threading.Lock())
         with key_lock:
             with self._lock:
-                if key in self._disabled:
+                # A closed run key is one-shot for good: surviving
+                # sub-agents and Stop stragglers never reopen an unowned
+                # session.
+                if key in self._disabled or key[0] in self._closed_keys:
                     return None
                 worker = self._sessions.get(key)
                 if worker is not None and worker.alive:
@@ -65,13 +74,21 @@ class RemoteSessionRegistry:
                     return None
                 raise
             with self._lock:
-                self._sessions[key] = worker
+                closed_meanwhile = key[0] in self._closed_keys
+                if not closed_meanwhile:
+                    self._sessions[key] = worker
+            if closed_meanwhile:
+                # The run ended while this start was in flight: nobody owns it.
+                worker.close()
+                return None
             return worker
 
     def close_key(self, session_key: str) -> None:
-        """Close every session under one run key and forget its failure state."""
-        # ponytail: a start in flight for this run key still lands in _sessions after this; run end is not concurrent with calls.
+        """Close every session under one run key and tombstone the key."""
         with self._lock:
+            self._closed_keys[session_key] = None
+            while len(self._closed_keys) > _CLOSED_KEYS_MAX:
+                del self._closed_keys[next(iter(self._closed_keys))]
             keys = [k for k in self._sessions if k[0] == session_key]
             workers = [self._sessions.pop(k) for k in keys]
             self._disabled = {k for k in self._disabled if k[0] != session_key}
@@ -112,9 +129,13 @@ def get_session_registry() -> RemoteSessionRegistry:
 
 
 def close_remote_sessions(session_key: str) -> None:
-    """Close one run's sessions (run end); a no-op before any session existed."""
-    if _REGISTRY is not None:
-        _REGISTRY.close_key(session_key)
+    """Close one run's sessions (run end) and tombstone its key.
+
+    Always reaches the registry (creating it if needed) so the tombstone is
+    recorded even when the run never opened a session: a straggler call
+    after run end must not open one either.
+    """
+    get_session_registry().close_key(session_key)
 
 
 def close_all_remote_sessions() -> None:

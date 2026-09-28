@@ -772,6 +772,21 @@ def test_calls_route_through_one_session_per_run_key(
     assert len(sessions.spawns) == 1
 
 
+def test_call_after_run_end_goes_one_shot_without_a_new_session(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    """R12: a closed run key is tombstoned; stragglers never reopen a session."""
+    from tldw_chatbook.Tools.remote_session_registry import close_remote_sessions
+
+    executor = _session_executor(env, sessions)
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 1
+    close_remote_sessions(sessions.key)
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 1, "no new session after run end"
+    assert len(env.fake.call_invocations()) >= 1, "served by one-shot"
+
+
 def test_kill_switch_uses_one_shot(env: SimpleNamespace, sessions: SimpleNamespace) -> None:
     sessions.worker = False
     executor = _session_executor(env, sessions)
