@@ -1175,3 +1175,125 @@ async def test_export_to_an_existing_file_still_confirms(request, tmp_path, monk
         await pilot.click("#cancel-button")
         await pilot.pause()
         assert existing.read_text(encoding="utf-8") == "old"
+
+
+# -- Qodo 4118068772 / 4118068777: the write itself enforces the export checks --
+
+
+def _export_notices(app) -> str:
+    return " ".join(str(call.args[0]) for call in app.notify.call_args_list)
+
+
+@pytest.mark.parametrize("pinned", [True, False], ids=["pinned", "unpinned"])
+@pytest.mark.parametrize("swap", ["parent", "ancestor"])
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_write_refuses_a_folder_swapped_for_the_themes_folder(
+    request, tmp_path, monkeypatch, tmp_path_factory, swap, pinned
+):
+    """The folder is validated when typed; if a link swapped in before the
+    write makes it the themes folder, the write itself refuses it. Pinned
+    POSIX IO already refuses the link; unpinned IO (no dir_fd, e.g. Windows)
+    relied on the typed-path check alone."""
+    if not pinned:
+        monkeypatch.setattr(raw_participants, "_pinned_io_available", lambda: False)
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    # "parent": out/a/<themes name> becomes a link to the themes folder.
+    # "ancestor": out/a becomes a link to the folder holding the themes
+    # folder, so out/a/<themes name> is the themes folder by a real name.
+    (out / "a" / tmp_path.name).mkdir(parents=True)
+    target = out / "a" / tmp_path.name / "x.toml"
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert editor._export_target(str(target)) == target  # valid when typed
+        if swap == "parent":
+            target.parent.rmdir()
+            target.parent.symlink_to(tmp_path, target_is_directory=True)
+        else:
+            target.parent.rmdir()
+            (out / "a").rmdir()
+            (out / "a").symlink_to(tmp_path.parent, target_is_directory=True)
+        assert target.parent.samefile(tmp_path)
+        app.notify.reset_mock()
+        editor._export(target, {"colors": MINE})
+        await pilot.pause()
+        assert "Failed to export theme" in _export_notices(app)
+        assert not (tmp_path / "x.toml").exists()
+        assert not (tmp_path / "x.toml.tmp").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_export_refuses_a_file_that_appears_before_the_write(
+    request, tmp_path, monkeypatch, tmp_path_factory
+):
+    """An absent destination is created exclusively: a file another process
+    creates after the check is kept, not silently replaced."""
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    target = out / "new.toml"
+    real_file = raw_participants._file
+
+    def racing_file(operation, path, mode):
+        if Path(path).name == "new.toml.tmp":
+            target.write_text("intruder", encoding="utf-8")
+        return real_file(operation, path, mode)
+
+    monkeypatch.setattr(raw_participants, "_file", racing_file)
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        editor.export_theme("mine")
+        await _accept_export(pilot, app, target)
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "nothing was replaced" in _export_notices(app)
+        assert target.read_text(encoding="utf-8") == "intruder"
+        assert sorted(p.name for p in out.iterdir()) == ["new.toml"]  # no stray .tmp
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_confirmed_overwrite_replaces_only_the_confirmed_file(
+    request, tmp_path, monkeypatch, tmp_path_factory
+):
+    """Overwrite replaces the file seen when the user confirmed; a different
+    file put there while the dialog was open is kept."""
+    _write(tmp_path, "mine")
+    home = tmp_path_factory.mktemp("export-home")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = tmp_path_factory.mktemp("export-out")
+    existing = out / "keep.toml"
+    existing.write_text("old", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        # The unchanged file: a confirmed overwrite still replaces it.
+        editor.export_theme("mine")
+        await _accept_export(pilot, app, existing)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert toml.load(existing)["colors"] == MINE
+
+        # A different file swapped in while the dialog is open: kept.
+        editor.export_theme("mine")
+        await _accept_export(pilot, app, existing)
+        assert app.screen.confirm_label == "Overwrite"
+        newer = out / "newer"
+        newer.write_text("newer", encoding="utf-8")
+        newer.replace(existing)
+        app.notify.reset_mock()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert "nothing was replaced" in _export_notices(app)
+        assert existing.read_text(encoding="utf-8") == "newer"
+        assert sorted(p.name for p in out.iterdir()) == ["keep.toml"]

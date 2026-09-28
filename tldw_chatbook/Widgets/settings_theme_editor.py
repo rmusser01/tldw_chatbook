@@ -1746,27 +1746,49 @@ class SettingsThemeEditor(Vertical):
         return path
 
     def _export(self, export_path: Path, theme_data: dict[str, Any]) -> None:
-        """Write ``theme_data`` to ``export_path``, confirming an overwrite."""
-        if export_path.exists():
-            # TASK-31258: never silently replace an earlier export.
-            async def _confirmed_export() -> None:
-                self._write_export(export_path, theme_data)
+        """Write ``theme_data`` to ``export_path``, confirming an overwrite.
 
-            self.app.push_screen(
-                ConfirmationDialog(
-                    title="Overwrite export",
-                    message=f"{export_path} already exists. Replace it?",
-                    confirm_label="Overwrite",
-                    cancel_label="Keep existing",
-                    confirm_callback=_confirmed_export,
-                )
+        The file seen here is the only one an export may replace: absent, the
+        write creates it exclusively; present, the confirmed write replaces
+        only that same file (Qodo 4118068777).
+        """
+        try:
+            info = os.lstat(export_path)
+        except FileNotFoundError:
+            self._write_export(export_path, theme_data, None)
+            return
+        except OSError as exc:
+            self.app.notify(
+                f"Failed to export theme: {escape_markup(self._failure_reason(exc))}", severity="error"
             )
             return
+        observed = (info.st_dev, info.st_ino)
 
-        self._write_export(export_path, theme_data)
+        # TASK-31258: never silently replace an earlier export.
+        async def _confirmed_export() -> None:
+            self._write_export(export_path, theme_data, observed)
 
-    def _write_export(self, export_path: Path, theme_data: dict[str, Any]) -> None:
-        """Write the export TOML and report the path."""
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Overwrite export",
+                message=f"{export_path} already exists. Replace it?",
+                confirm_label="Overwrite",
+                cancel_label="Keep existing",
+                confirm_callback=_confirmed_export,
+            )
+        )
+
+    def _write_export(
+        self, export_path: Path, theme_data: dict[str, Any], expected: tuple[int, int] | None
+    ) -> None:
+        """Write the export TOML and report the path.
+
+        Args:
+            export_path: The validated destination.
+            theme_data: The theme TOML to write.
+            expected: None to create a file that must still be absent, or
+                the ``(st_dev, st_ino)`` of the file the user agreed to replace.
+        """
         try:
             with raw._scope(self, "theme_export", writing=True, selected_read=export_path) as operation:
                 raw._mkdirs(operation)
@@ -1774,12 +1796,20 @@ class SettingsThemeEditor(Vertical):
                 try:
                     with raw._file(operation, temporary, "w") as f:
                         toml.dump(theme_data, f)
-                    raw._replace(operation, temporary, export_path)
+                    raw._replace(operation, temporary, export_path, expected=expected)
                 finally:
                     raw._remove_temporary(operation, temporary)
 
             self.app.notify(f"Theme exported to: {escape_markup(export_path)}", severity="success")
             self.post_message(self.Exported(export_path))
+        except FileExistsError:
+            # The file changed after it was checked: keep it, never replace
+            # something the user did not confirm.
+            self.app.notify(
+                f"{escape_markup(export_path)} changed before the export was written; "
+                "nothing was replaced. Export again to choose.",
+                severity="error",
+            )
         except Exception as e:
             logger.error(f"Failed to export theme: {e}")
             self.app.notify(f"Failed to export theme: {escape_markup(self._failure_reason(e))}", severity="error")
