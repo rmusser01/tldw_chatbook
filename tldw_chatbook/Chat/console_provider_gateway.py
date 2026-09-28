@@ -6,6 +6,7 @@ from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import math
@@ -2717,6 +2718,10 @@ class ConsoleProviderGateway:
 
     deferred_dispatch_boundary = True
 
+    #: How long a projected ``ContextWindowTarget`` stays memoized for the
+    #: hot ``cached_context_window`` path (task-33081).
+    CONTEXT_WINDOW_TARGET_MEMO_TTL = 10.0
+
     def __init__(
         self,
         *,
@@ -2792,6 +2797,16 @@ class ConsoleProviderGateway:
         self._config_provider = config_provider or (lambda: {})
         self._context_windows: ContextWindowCache | None = None
         self._context_windows_lock = threading.Lock()
+        # task-33081: keeps background metadata refreshes referenced so
+        # asyncio cannot garbage-collect an in-flight task. The reasoning
+        # map is keyed by metadata key so overlapping sends reuse one
+        # refresh instead of racing an older probe against a newer one
+        # (Qodo round).
+        self._context_window_refreshes: set[asyncio.Task[None]] = set()
+        self._reasoning_metadata_refreshes: dict[str, asyncio.Task[None]] = {}
+        self._context_window_target_memo: dict[
+            tuple[str, str, str], tuple[float, "ContextWindowTarget"]
+        ] = {}
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
@@ -3807,7 +3822,54 @@ class ConsoleProviderGateway:
         )
 
     def _context_window_target(self, settings: Any) -> ContextWindowTarget:
-        """Project only the selected metadata endpoint and its own credential."""
+        """Project only the selected metadata endpoint and its own credential.
+
+        task-33081: ``cached_context_window`` runs on hot UI paths (debounced
+        keystrokes, the 0.2s Console tick) and this projection resolves
+        provider identity, endpoints and -- for URL-based families --
+        credentials via ``get_provider_readiness``. Memoize it briefly instead
+        of re-resolving readiness per call; the key covers every settings
+        field that feeds the projection, and config-level edits go stale for
+        at most the TTL below.
+        """
+        from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
+
+        # Qodo round: registry edits can change the projected endpoint and
+        # credential WITHOUT touching the selected settings, so fold the
+        # custom-endpoint identity (family, base URL, credential digest)
+        # into the memo key. Keyless families resolve from env/config
+        # tables whose edits are bounded by the TTL below.
+        config = self._config_provider() or {}
+        entry = entry_for(config, str(getattr(settings, "provider", "")))
+        if entry is not None:
+            entry_api_key, _ = _custom_entry_credential(entry, self._environ)
+            entry_identity = (
+                entry.family,
+                entry.base_url,
+                hashlib.sha256((entry_api_key or "").encode()).hexdigest(),
+            )
+        else:
+            entry_identity = None
+        memo_key = (
+            str(getattr(settings, "provider", "")),
+            str(getattr(settings, "model", "")),
+            str(getattr(settings, "base_url", "") or ""),
+            entry_identity,
+        )
+        now = monotonic()
+        memoized = self._context_window_target_memo.get(memo_key)
+        if memoized and memoized[0] > now:
+            return memoized[1]
+        target = self._project_context_window_target(settings)
+        if len(self._context_window_target_memo) > 32:
+            self._context_window_target_memo.clear()
+        self._context_window_target_memo[memo_key] = (
+            now + self.CONTEXT_WINDOW_TARGET_MEMO_TTL,
+            target,
+        )
+        return target
+
+    def _project_context_window_target(self, settings: Any) -> ContextWindowTarget:
         from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
 
         config = self._config_provider() or {}
@@ -3896,60 +3958,12 @@ class ConsoleProviderGateway:
         now = monotonic()
         template, native_tools = cached[1:] if cached else (None, False)
         if resolution.ready and (cached is None or now >= cached[0]):
-            from .local_reasoning import _LOCAL_FAMILIES
-
-            family = _LOCAL_FAMILIES.get(resolution.provider.lower())
-            # Ollama exposes Go templates; until reviewed, use its server default.
-            route = {"llama_cpp": "/props", "vllm": "/tokenizer_info"}.get(family)
-            if route:
-                base = resolution.base_url.rstrip("/").removesuffix("/chat/completions")
-                base = base.removesuffix("/v1")
-
-                async def read_template():
-                    async with self._active_http_client().stream(
-                        "GET",
-                        base + route,
-                        headers=self._authorization_headers(resolution.api_key),
-                        timeout=1.0,
-                    ) as response:
-                        response.raise_for_status()
-                        data = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            data.extend(chunk)
-                            if len(data) > 262144:
-                                raise ValueError(
-                                    "Template metadata exceeds size limit."
-                                )
-                        payload = json.loads(data)
-                        return payload if isinstance(payload, dict) else {}
-
-                try:
-                    metadata = await asyncio.wait_for(read_template(), timeout=1.0)
-                    raw_template = metadata.get("chat_template")
-                    template = raw_template if isinstance(raw_template, str) else None
-                    caps = metadata.get("chat_template_caps", {})
-                    native_tools = (
-                        family == "llama_cpp"
-                        and isinstance(caps, Mapping)
-                        and caps.get("supports_tool_calls") is True
-                        and caps.get("supports_tools") is True
-                    )
-                    ttl = REASONING_METADATA_TTL_SECONDS
-                except (httpx.HTTPError, ValueError, TimeoutError):
-                    # Back off missing routes and keep the last successful facts.
-                    # Preferences are reapplied below, never cached with metadata.
-                    ttl = REASONING_METADATA_RETRY_SECONDS
-                self._reasoning_metadata_cache[key] = (
-                    monotonic() + ttl,
-                    template,
-                    native_tools,
-                )
-                while (
-                    len(self._reasoning_metadata_cache) > REASONING_METADATA_CACHE_SIZE
-                ):
-                    self._reasoning_metadata_cache.pop(
-                        next(iter(self._reasoning_metadata_cache))
-                    )
+            # task-33081: template metadata is best-effort input to the
+            # reasoning policy -- a slow /props or /tokenizer_info must never
+            # block the send. Serve the last known facts (defaults on a cold
+            # cache, exactly what a failed fetch already produced) and
+            # refresh in the background; the next send picks up the facts.
+            self._schedule_reasoning_metadata_refresh(resolution, key)
         overrides = console.get("reasoning_native_tool_overrides", {})
         if isinstance(overrides, Mapping) and overrides.get(key) is True:
             native_tools = True
@@ -3975,6 +3989,86 @@ class ConsoleProviderGateway:
             ),
         )
 
+    def _schedule_reasoning_metadata_refresh(
+        self, resolution: ConsoleProviderResolution, key: str
+    ) -> None:
+        """Refresh /props or /tokenizer_info template facts off the send path."""
+        in_flight = self._reasoning_metadata_refreshes.get(key)
+        if in_flight is not None and not in_flight.done():
+            # An unfinished refresh for this exact target already holds the
+            # facts; a second concurrent probe could only finish out of
+            # order and clobber the newer result (Qodo round).
+            return
+        try:
+            task = asyncio.create_task(
+                self._refresh_reasoning_metadata(resolution, key)
+            )
+        except RuntimeError:  # no running loop -- the next call reschedules
+            return
+        self._reasoning_metadata_refreshes[key] = task
+
+        def _release(finished: asyncio.Task[None]) -> None:
+            if self._reasoning_metadata_refreshes.get(key) is finished:
+                self._reasoning_metadata_refreshes.pop(key, None)
+
+        task.add_done_callback(_release)
+
+    async def _refresh_reasoning_metadata(
+        self, resolution: ConsoleProviderResolution, key: str
+    ) -> None:
+        from .local_reasoning import _LOCAL_FAMILIES
+
+        family = _LOCAL_FAMILIES.get(resolution.provider.lower())
+        # Ollama exposes Go templates; until reviewed, use its server default.
+        route = {"llama_cpp": "/props", "vllm": "/tokenizer_info"}.get(family)
+        if not route:
+            return
+        base = resolution.base_url.rstrip("/").removesuffix("/chat/completions")
+        base = base.removesuffix("/v1")
+        cached = self._reasoning_metadata_cache.get(key)
+        template, native_tools = cached[1:] if cached else (None, False)
+        try:
+            async with asyncio.timeout(1.0):
+                async with self._active_http_client().stream(
+                    "GET",
+                    base + route,
+                    headers=self._authorization_headers(resolution.api_key),
+                    timeout=1.0,
+                ) as response:
+                    response.raise_for_status()
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > 262144:
+                            raise ValueError(
+                                "Template metadata exceeds size limit."
+                            )
+                    payload = json.loads(data)
+                    metadata = payload if isinstance(payload, dict) else {}
+            raw_template = metadata.get("chat_template")
+            template = raw_template if isinstance(raw_template, str) else None
+            caps = metadata.get("chat_template_caps", {})
+            native_tools = (
+                family == "llama_cpp"
+                and isinstance(caps, Mapping)
+                and caps.get("supports_tool_calls") is True
+                and caps.get("supports_tools") is True
+            )
+            ttl = REASONING_METADATA_TTL_SECONDS
+        except Exception:  # noqa: BLE001 -- background metadata must never raise
+            # Back off missing routes and keep the last successful facts.
+            # Preferences are reapplied per send, never cached with metadata.
+            ttl = REASONING_METADATA_RETRY_SECONDS
+        self._reasoning_metadata_cache[key] = (
+            monotonic() + ttl,
+            template,
+            native_tools,
+        )
+        while len(self._reasoning_metadata_cache) > REASONING_METADATA_CACHE_SIZE:
+            self._reasoning_metadata_cache.pop(
+                next(iter(self._reasoning_metadata_cache))
+            )
+
     async def resolve_for_send(
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
@@ -3983,16 +4077,20 @@ class ConsoleProviderGateway:
 
         resolution = await self._resolve_for_send_unclassified(selection)
         if resolution.ready:
-            window = await self._get_context_windows().resolve(
-                ContextWindowTarget(
-                    selection.provider,
-                    resolution.readiness_key or resolution.provider,
-                    resolution.base_url,
-                    resolution.model or "",
-                    resolution.api_key,
-                ),
-                self._active_http_client(),
+            target = ContextWindowTarget(
+                selection.provider,
+                resolution.readiness_key or resolution.provider,
+                resolution.base_url,
+                resolution.model or "",
+                resolution.api_key,
             )
+            # task-33081: sends must never wait on optional serving metadata
+            # -- a slow or unreachable metadata endpoint could add the full
+            # probe timeout to EVERY send. Attach the best cached window and
+            # refresh the cache in the background so the NEXT send picks up
+            # the verified value.
+            window = self._get_context_windows().cached(target)
+            self._schedule_context_window_refresh(target)
             resolution = replace(resolution, context_window=window)
         resolution = replace(
             resolution,
@@ -4002,6 +4100,26 @@ class ConsoleProviderGateway:
             resolution,
             resolved_destination=resolve_console_destination(resolution),
         )
+
+    def _schedule_context_window_refresh(self, target: "ContextWindowTarget") -> None:
+        """Warm serving metadata off the send path; never blocks the caller."""
+        cache = self._get_context_windows()
+        if not cache.needs_refresh(target):
+            return
+        try:
+            task = asyncio.create_task(self._refresh_context_window(target))
+        except RuntimeError:  # no running loop -- the next call reschedules
+            return
+        self._context_window_refreshes.add(task)
+        task.add_done_callback(self._context_window_refreshes.discard)
+
+    async def _refresh_context_window(self, target: "ContextWindowTarget") -> None:
+        try:
+            await self._get_context_windows().resolve(
+                target, self._active_http_client()
+            )
+        except Exception:  # noqa: BLE001 -- background metadata must never raise
+            logger.debug("Context-window metadata refresh failed", exc_info=True)
 
     async def _resolve_for_send_unclassified(
         self, selection: ConsoleProviderSelection

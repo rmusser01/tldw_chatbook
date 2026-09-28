@@ -259,3 +259,38 @@ def test_subscription_summary_names_the_actual_credential_source(
     assert "private-token" not in repr(summary)
     if state != "ready":
         assert "Claude Code" in presentation.primary_label
+
+
+@pytest.mark.asyncio
+async def test_unchanged_refresh_does_not_bump_revision(credential_cache, tmp_path):
+    """task-33081: same-state TTL refreshes must not wake UI pollers.
+
+    The 4Hz readiness polls rebuild full console summaries whenever the
+    revision moves; a background re-read that observed the identical
+    (present, expires_at) state publishes no new revision.
+    """
+    path = subscription.DEFAULT_CREDENTIALS_PATH
+    path.write_text(json.dumps({"claudeAiOauth": {"accessToken": "private-token"}}))
+
+    assert subscription.subscription_credential_status(background=True) == "pending"
+    await wait_until(lambda: credential_cache._completed_at is not None)
+    first_revision = credential_cache.revision
+    assert first_revision >= 1
+
+    # Force a stale TTL so status() starts a refresh, then let it complete
+    # observing the SAME credential file.
+    with credential_cache._lock:
+        credential_cache._completed_at = 0.0
+    assert subscription.subscription_credential_status(background=True) == "pending"
+    await wait_until(lambda: credential_cache._completed_at not in (None, 0.0))
+    await wait_until(lambda: not credential_cache._refreshing)
+    assert credential_cache.revision == first_revision
+
+    # A real state change (credential removed) must publish a new revision.
+    path.unlink()
+    with credential_cache._lock:
+        credential_cache._completed_at = 0.0
+    assert subscription.subscription_credential_status(background=True) == "pending"
+    await wait_until(lambda: credential_cache._completed_at not in (None, 0.0))
+    await wait_until(lambda: not credential_cache._refreshing)
+    assert credential_cache.revision == first_revision + 1

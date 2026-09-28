@@ -27021,10 +27021,14 @@ class ConsoleChatController:
 
         def project_thinking(update: Any) -> None:
             if update.envelope is not None:
+                # task-33081: validated=True -- the capture enforces the
+                # canonical limits incrementally per delta; re-validating
+                # the whole growing envelope here was quadratic.
                 self.store.replace_message_thinking(
                     assistant_message_id,
                     update.envelope,
                     generation_token=generation_token,
+                    validated=True,
                 )
 
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
@@ -27879,7 +27883,15 @@ class ConsoleChatController:
                         ),
                         project_instruction_notice_key=None,
                     )
-                    self.store.set_session_project_instruction_state(session_id, state)
+                    # task-33081: both steps write SQLite / scan the binding
+                    # root -- they must not run on the UI event loop that
+                    # owns this coroutine (the resolve-time preview twin
+                    # already runs them via asyncio.to_thread).
+                    await asyncio.to_thread(
+                        self.store.set_session_project_instruction_state,
+                        session_id,
+                        state,
+                    )
                 if is_remote(project_selection.root):
                     # Task 19: AGENTS.md reads route through the remote
                     # executor (reader strategy). ADR-069 prep-failure
@@ -27901,7 +27913,8 @@ class ConsoleChatController:
                         )
                     )
                 else:
-                    startup_candidate = ProjectInstructionResolver().resolve_startup(
+                    startup_candidate = await asyncio.to_thread(
+                        ProjectInstructionResolver().resolve_startup,
                         binding_id=project_selection.binding.binding_id,
                         binding_root=project_selection.root,
                         locator_fingerprint=project_selection.locator_fingerprint,

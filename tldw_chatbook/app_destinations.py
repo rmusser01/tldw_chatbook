@@ -1144,11 +1144,13 @@ async def _run_personal_context_link(app) -> None:
         )
         if existing is not None and existing["state"] == "complete":
             await coordinator.resume()
-            app._load_personal_context_sync_runtime(
+            # task-33081: this restore reads the link storage key from
+            # the OS keyring (D-Bus SecretService on Linux) -- run it
+            # off the UI event loop.
+            await asyncio.to_thread(
+                app._load_personal_context_sync_runtime,
                 server_profile_id=str(server_profile_id),
-                authenticated_principal_id=scope.get(
-                    "authenticated_principal_id"
-                ),
+                authenticated_principal_id=scope.get("authenticated_principal_id"),
             )
             app.notify("Profile is already linked. Sync is ready.")
             app._reload_personal_context_settings_panel()
