@@ -3037,6 +3037,13 @@ class SettingsScreen(BaseAppScreen):
     #: running `__init__`).
     _settings_mount_visit_refreshed: bool = False
 
+    #: TASK-33242: set on suspend when the cover is a dialog raised over the
+    #: Theme category (Rename, Delete, Export, Import, Save as, leave prompt).
+    #: The user never left Settings, so the resume skips its sync-rows
+    #: refresh -- ~550 ms of backup-scoped DB work per dialog close whose
+    #: rows Theme does not show. Class-level default for `__new__` fixtures.
+    _suspended_under_theme_dialog: bool = False
+
     #: task-15475: True from the moment a category switch schedules its pane
     #: swap until that swap finishes. `_after_category_panes` queues follow-up
     #: work behind it (see that method for the ordering this preserves).
@@ -4339,12 +4346,14 @@ class SettingsScreen(BaseAppScreen):
         # have moved while Settings was suspended).
         mount_already_refreshed = self._settings_mount_visit_refreshed
         self._settings_mount_visit_refreshed = False
+        under_theme_dialog = self._suspended_under_theme_dialog
+        self._suspended_under_theme_dialog = False
         if self._manual_sync_run_in_flight:
             # task-1369: a manual sync run is in flight; the resume refresh
             # would overwrite the "running" rows the confirm callback just
             # set. The run worker applies the result rows itself.
             return
-        if not mount_already_refreshed:
+        if not mount_already_refreshed and not under_theme_dialog:
             self._queue_sync_rows_refresh()
             self._refresh_provider_defaults_on_resume()
         self._maybe_refresh_rag_index_status_on_show()
@@ -28590,6 +28599,10 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
 
     def on_screen_suspend(self) -> None:
+        self._suspended_under_theme_dialog = (
+            isinstance(self.app.screen, ModalScreen)
+            and self._active_category_id() is SettingsCategoryId.THEME
+        )
         if self.app.screen is not self._tool_profile_review_modal:
             self._tool_profile_review_intent = None
         self._discard_workspace_memory_confirmation(

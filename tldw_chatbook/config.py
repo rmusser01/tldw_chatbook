@@ -413,13 +413,16 @@ def get_canvas_execution_enabled() -> bool:
 
 # --- [console_ssh]: SSH ControlMaster lifecycle for remote bindings -------
 # (spec 2026-09-24-ssh-remote-workspace-bindings, "ControlMaster lifecycle —
-# explicit, and the executor owns its health"). These four values are the
-# whole section; `Tools/remote_workspace_transport.py` consumes the first
-# three, the executor's call cap consumes `max_concurrent_calls`.
+# explicit, and the executor owns its health"). `Tools/remote_workspace_transport.py`
+# consumes `control_persist`, `enable_multiplexing` and `connect_timeout_s`;
+# the executor's call cap consumes `max_concurrent_calls`; the per-run
+# session worker (spec 2026-09-27-ssh-session-worker-and-bundle-cache)
+# consumes `session_worker`, `session_idle_s` and `bundle_cache`.
 
 DEFAULT_CONSOLE_SSH_CONTROL_PERSIST = "10m"
 DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S = 3
 DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS = 8
+DEFAULT_CONSOLE_SSH_SESSION_IDLE_S = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,12 +440,21 @@ class ConsoleSshSettings:
         connect_timeout_s: Ceiling on the master handshake and per-call
             connects, in seconds.
         max_concurrent_calls: Cap on in-flight per-binding ssh calls.
+        session_worker: Kill switch for the per-run SSH session worker;
+            False is pure one-shot (one ssh exchange per call).
+        session_idle_s: Idle close for a session worker, in seconds (both
+            the laptop registry and the host-side parent).
+        bundle_cache: Whether the host loader may cache the worker bundle
+            in ``$XDG_RUNTIME_DIR``.
     """
 
     control_persist: str = DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
     enable_multiplexing: bool = True
     connect_timeout_s: int = DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
     max_concurrent_calls: int = DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS
+    session_worker: bool = True
+    session_idle_s: int = DEFAULT_CONSOLE_SSH_SESSION_IDLE_S
+    bundle_cache: bool = True
 
 
 def get_console_ssh_settings() -> ConsoleSshSettings:
@@ -474,7 +486,18 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
     # multiplexing kill switch no user asked for.
     raw_enabled = get_cli_setting("console_ssh", "enable_multiplexing", True)
     enable_multiplexing = raw_enabled if type(raw_enabled) is bool else True
+    raw_session = get_cli_setting("console_ssh", "session_worker", True)
+    raw_cache = get_cli_setting("console_ssh", "bundle_cache", True)
     return ConsoleSshSettings(
+        session_worker=raw_session if type(raw_session) is bool else True,
+        session_idle_s=coerce_int_setting(
+            get_cli_setting(
+                "console_ssh", "session_idle_s", DEFAULT_CONSOLE_SSH_SESSION_IDLE_S
+            ),
+            DEFAULT_CONSOLE_SSH_SESSION_IDLE_S,
+            minimum=1,
+        ),
+        bundle_cache=raw_cache if type(raw_cache) is bool else True,
         control_persist=control_persist,
         enable_multiplexing=enable_multiplexing,
         connect_timeout_s=coerce_int_setting(
@@ -3836,6 +3859,14 @@ enable_multiplexing = true
 connect_timeout_s = 3
 # Cap on in-flight per-binding ssh calls (consumed by the transport executor).
 max_concurrent_calls = 8
+# Per-run SSH session worker: one long-lived channel per binding per Console
+# run instead of one ssh exchange per call. false = pure one-shot.
+session_worker = true
+# Seconds a session worker may sit idle before it closes (both sides).
+session_idle_s = 60
+# Let the host cache the worker bundle in $XDG_RUNTIME_DIR (tmpfs, 0700,
+# sha256-verified on every load; skipped when that directory is absent).
+bundle_cache = true
 
 [hooks]
 enabled = true  # master switch for Console run hooks (external commands on session/run lifecycle events)

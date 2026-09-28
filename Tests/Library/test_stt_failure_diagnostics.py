@@ -38,7 +38,7 @@ def test_failure_callback_normalizes_progress_without_app_or_file_sink(
     monkeypatch, progress, expected_phase
 ):
     error_log = Mock()
-    monkeypatch.setattr("tldw_chatbook.app.logger", SimpleNamespace(error=error_log))
+    monkeypatch.setattr("tldw_chatbook.app_ingest_queue.logger", SimpleNamespace(error=error_log))
     host = SimpleNamespace(
         _ingest_shutdown=False,
         _local_stt_terminal_matches=lambda *_: True,

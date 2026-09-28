@@ -25572,8 +25572,9 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
 def _library_ingest_mixin_state_reads() -> set[str]:
     """AST-derive every ingest-runtime attribute LibraryIngestQueueMixin reads.
 
-    task-3315 guard input: the ingest coordinator/writer (``app.py``'s
-    ``LibraryIngestQueueMixin``) reads host state like
+    task-3315 guard input: the ingest coordinator/writer
+    (``LibraryIngestQueueMixin``, in ``app_ingest_queue.py`` since TASK-33011)
+    reads host state like
     ``self._ingest_local_stt_jobs``; a harness that fakes the host but
     misses one of those attributes dies with AttributeError deep inside a
     pilot (the exact drift that broke ~20 job-lifecycle pilots here when
@@ -25583,9 +25584,13 @@ def _library_ingest_mixin_state_reads() -> set[str]:
     reads), minus its own method names -- so the required set is derived
     from the real code, never hand-listed.
     """
-    import tldw_chatbook.app as _app_module
+    import inspect
 
-    source = Path(_app_module.__file__).read_text(encoding="utf-8")
+    # Parse whichever module defines the class (TASK-33011 moved it out of
+    # app.py), so a future move cannot leave this reading a stale file.
+    source = Path(inspect.getsourcefile(LibraryIngestQueueMixin)).read_text(
+        encoding="utf-8"
+    )
     module = ast.parse(source)
     mixin = next(
         node

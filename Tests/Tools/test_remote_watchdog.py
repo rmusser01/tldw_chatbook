@@ -410,20 +410,28 @@ def test_exit_75_is_reserved_to_the_watchdog() -> None:
                 calls.append(ast.unparse(node))
         return calls
 
+    # The session fork server's child is the one other hard exit: it must
+    # never return into the parent's loop, and it exits with the worker's
+    # own return code -- the same code a one-shot worker passes to
+    # SystemExit -- so it never mints 75 itself.
+    child_exit = "os._exit(code if isinstance(code, int) else _CHILD_CRASH_EXIT)"
+    allowed = {
+        "tldw_chatbook.Tools.worker_watchdog": ["os._exit(WATCHDOG_EXIT_CODE)"],
+        "tldw_chatbook.Tools.remote_session_serve": [child_exit],
+    }
     for module_name in BUNDLE_MODULES:
         source = Path(importlib.import_module(module_name).__file__).read_text(
             encoding="utf-8"
         )
         calls = exit_calls(source)
-        if module_name == "tldw_chatbook.Tools.worker_watchdog":
-            assert calls == ["os._exit(WATCHDOG_EXIT_CODE)"], calls
-        else:
-            assert not calls, f"{module_name} hard-exits: {calls}"
+        assert calls == allowed.get(module_name, []), f"{module_name} hard-exits: {calls}"
 
-    # The committed artifact flattens the same closure: exactly one
-    # hard-exit call site, the watchdog's.
+    # The committed artifact flattens the same closure: exactly those
+    # hard-exit call sites.
     artifact = _BUNDLE_PATH.read_text(encoding="utf-8")
-    assert exit_calls(artifact) == ["os._exit(WATCHDOG_EXIT_CODE)"]
+    assert sorted(exit_calls(artifact)) == sorted(
+        ["os._exit(WATCHDOG_EXIT_CODE)", child_exit]
+    )
 
 
 # ---------------------------------------------------------------------------

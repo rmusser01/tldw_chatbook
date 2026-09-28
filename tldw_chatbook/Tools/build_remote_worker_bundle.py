@@ -57,6 +57,7 @@ import importlib
 import importlib.util
 import inspect
 import sys
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,8 @@ from typing import Any
 #: by parsing the artifact under a real 3.10.
 REMOTE_PYTHON_FLOOR = (3, 10)
 
-#: Frozen true import closure of ``workspace_tool_worker``, excluding
+#: Frozen true import closure of ``workspace_tool_worker`` plus the
+#: session fork-server (``remote_session_serve``), excluding
 #: package ``__init__`` modules, in dependency order (dependencies first,
 #: so every dropped cross-module import finds its name already bound).
 BUNDLE_MODULES: tuple[str, ...] = (
@@ -79,6 +81,8 @@ BUNDLE_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Tools.git_tool_impls",
     "tldw_chatbook.Tools.patch_tool_impls",
     "tldw_chatbook.Tools.workspace_tool_dispatch",
+    "tldw_chatbook.Tools.remote_session_frames",
+    "tldw_chatbook.Tools.remote_session_serve",
     "tldw_chatbook.Tools.workspace_tool_worker",
 )
 
@@ -87,7 +91,17 @@ BUNDLE_MODULES: tuple[str, ...] = (
 #: builder renders its data into the artifact (see ``_denylist_section``).
 REMOTE_DENYLIST_MODULE = "tldw_chatbook.Tools.remote_sensitive_paths"
 
+#: Headroom above the protocol's per-frame ``MAX_RESPONSE_BYTES`` for a
+#: whole exchange's stdout (admitted frame + a maximum terminal frame +
+#: newlines). Shared by the one-shot capture cap
+#: (``remote_workspace_executor._STDOUT_CAPTURE_CAP``) and the session
+#: per-child cap (``_SESSION_MAX_RESPONSE_BYTES``) so the two cannot drift.
+RESPONSE_HEADROOM_BYTES = 64 * 1024
+
 _WORKER_MODULE = "tldw_chatbook.Tools.workspace_tool_worker"
+#: Session fork-server: not imported by the worker, but the bundle's
+#: ``serve_session`` entry calls its ``serve`` — a second closure root.
+_SESSION_SERVE_MODULE = "tldw_chatbook.Tools.remote_session_serve"
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLE_PATH = Path(__file__).resolve().parent / "remote_worker_bundle.py"
 
@@ -159,7 +173,7 @@ def _worker_closure_modules() -> set[str]:
     """Derive the worker's real dependency closure by AST traversal.
 
     Walks module-level absolute ``tldw_chatbook.*`` imports breadth-first,
-    starting at the worker, and NEVER traverses into package ``__init__``
+    starting at the worker and the session fork-server, and NEVER traverses into package ``__init__``
     modules: importing ``tldw_chatbook.Tools.workspace_tool_worker``
     transitively executes the root and ``Tools``/``Utils`` package inits
     (which pull ``tool_executor``/``tiktoken_runtime``), but those chains
@@ -170,7 +184,7 @@ def _worker_closure_modules() -> set[str]:
     lazy third-party imports are rewritten to loud raises, not shipped.
     """
     visited: set[str] = set()
-    frontier = [_WORKER_MODULE]
+    frontier = [_WORKER_MODULE, _SESSION_SERVE_MODULE]
     while frontier:
         name = frontier.pop()
         if name in visited:
@@ -490,6 +504,42 @@ def main(stream: Any, *, bundle_sha256: str = "") -> int:
     )
 
 
+#: Per-child TOTAL output cap for the session fork-server: the admitted
+#: frame plus a maximum terminal frame must fit, so it is
+#: ``workspace_tool_protocol.MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES``
+#: (the one-shot path's whole-stdout allowance). The bundle cannot import
+#: the parent's pydantic-side protocol module, so this is a LITERAL; the
+#: builder refuses to build when it differs.
+_SESSION_MAX_RESPONSE_BYTES = 6131072
+
+
+def serve_session(in_stream: Any, out_stream: Any) -> int:
+    """Session entry: HELLO then frames until EOF/idle (loader calls this).
+
+    The loader has consumed exactly its own bytes from ``in_stream``
+    (lockstep contract), so the buffered reader is empty and the loop can
+    read fd 0 directly.
+    """
+    import io as _io
+
+    out_stream.flush()
+
+    def _run_request(raw: bytes, out: Any) -> int:
+        # BUNDLE_SHA256 is bound by the stamp line, which runs after this
+        # function is defined but before the loader calls serve_session.
+        return run_workspace_worker(
+            _io.BytesIO(raw), out, _io.BytesIO(), bundle_sha256=globals()["BUNDLE_SHA256"]
+        )
+
+    return serve(
+        0,
+        1,
+        run_request=_run_request,
+        max_request_bytes=MAX_REQUEST_BYTES,
+        max_response_bytes=_SESSION_MAX_RESPONSE_BYTES,
+    )
+
+
 def _enter_worker_exchange(stamp: str) -> str:
     """Bootstrap entry seam — run the exchange when exec'd as ``__main__``.
 
@@ -586,9 +636,158 @@ BUNDLE_SHA256 = _enter_worker_exchange("{stamp}")
 '''
 
 
+# ---------------------------------------------------------------------------
+# Stage-1 loader (Task 4): sent through the fixed bootstrap; asks for the
+# bundle only on a cache miss.
+# ---------------------------------------------------------------------------
+
+_LOADER_SOURCE = r'''
+import hashlib, json, os, stat, sys, tempfile, time, types, zlib
+_in = sys.stdin.buffer
+_out = sys.stdout.buffer
+_MAGIC = b"TLDW-REMOTE-0001"
+_MAX_BUNDLE = 8 << 20
+#: A crashed writer's ".tmp-" leftover is only reclaimed once it is this
+#: old, so a live concurrent writer's own temp file is never touched.
+_STALE_TMP_SECONDS = 600
+_header_line = _in.readline(4096)
+if not _header_line.endswith(b"\n"):
+    sys.exit(3)
+try:
+    _header = json.loads(_header_line)
+    if not isinstance(_header, dict):
+        raise ValueError("header must be a JSON object")
+    _hash = str(_header["hash"])
+except (ValueError, KeyError, TypeError):
+    sys.exit(3)
+if len(_hash) != 64 or any(c not in "0123456789abcdef" for c in _hash):
+    sys.exit(3)
+
+def _private_dir(path):
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077
+
+def _cache_dir():
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if _header.get("cache") is not True or not base or not _private_dir(base):
+        return None
+    path = os.path.join(base, "tldw-worker")
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    except OSError:
+        return None
+    return path if _private_dir(path) else None
+
+def _read_cached(directory):
+    try:
+        fd = os.open(
+            os.path.join(directory, _hash),
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
+                return None
+            data = handle.read(_MAX_BUNDLE + 1)
+    except OSError:
+        return None
+    return data if hashlib.sha256(data).hexdigest() == _hash else None
+
+def _store(directory, data):
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, os.path.join(directory, _hash))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return
+    now = time.time()
+    for name in os.listdir(directory):
+        if name == _hash:
+            continue
+        path = os.path.join(directory, name)
+        if name.startswith(".tmp-"):
+            try:
+                if now - os.lstat(path).st_mtime < _STALE_TMP_SECONDS:
+                    continue
+            except OSError:
+                continue
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+_dir = _cache_dir()
+_data = _read_cached(_dir) if _dir else None
+if _data is None:
+    _out.write(_MAGIC + b"NEED " + _hash.encode() + b"\n"); _out.flush()
+    _size_bytes = _in.read(4)
+    if len(_size_bytes) != 4:
+        sys.exit(3)
+    _size = int.from_bytes(_size_bytes, "big")
+    if _size > _MAX_BUNDLE:
+        sys.exit(3)
+    _data = _in.read(_size)
+    if hashlib.sha256(_data).hexdigest() != _hash:
+        sys.exit(3)
+    if _dir:
+        try:
+            _store(_dir, _data)
+        except OSError:
+            pass  # the cache is strictly best-effort: a write failure
+                   # (e.g. a read-only cache dir) only costs a re-send later
+_module = types.ModuleType("tldw_remote_worker")
+sys.modules[_module.__name__] = _module
+exec(compile(zlib.decompress(_data), "tldw_remote_worker", "exec"), _module.__dict__)
+_out.write(_MAGIC + b"READY " + _module.BUNDLE_SHA256.encode() + b"\n"); _out.flush()
+sys.exit(_module.serve_session(_in, _out))
+'''
+
+
+def build_loader_text() -> str:
+    """Return the stage-1 loader source (stdlib-only, Python >= 3.10)."""
+    return _LOADER_SOURCE.lstrip("\n")
+
+
+def loader_payload() -> bytes:
+    """Return the zlib-compressed loader the bootstrap decompresses."""
+    return zlib.compress(build_loader_text().encode("utf-8"), 9)
+
+
+def _assert_session_response_cap_matches_protocol() -> None:
+    """Refuse to build when the adapter's session cap drifts from the parent's."""
+    from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
+
+    expected = MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES
+    if f"\n_SESSION_MAX_RESPONSE_BYTES = {expected}\n" not in _IO_ADAPTER_SOURCE:
+        raise BundleBuildError(
+            "_SESSION_MAX_RESPONSE_BYTES in the bundle IO adapter must equal "
+            "workspace_tool_protocol.MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES "
+            f"({expected})"
+        )
+
+
 def build_bundle_text() -> str:
     """Build the complete bundle text deterministically from live sources."""
     _assert_frozen_list_matches_closure()
+    _assert_session_response_cap_matches_protocol()
 
     sections: list[str] = []
     top_level: dict[str, set[str]] = {}

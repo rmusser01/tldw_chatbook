@@ -583,26 +583,89 @@ def _class_body_reactive_names(class_node: ast.ClassDef) -> frozenset[str]:
 
 
 def _local_tldw_root_classes(path: Path) -> tuple[ast.ClassDef, ...]:
-    """Return ``TldwCli`` and its transitive, in-module class mixins."""
-    module = _parse(path)
-    classes = {
-        node.name: node for node in module.body if isinstance(node, ast.ClassDef)
-    }
-    root = classes["TldwCli"]
-    ordered: list[ast.ClassDef] = []
-    seen: set[str] = set()
+    """Return ``TldwCli`` and its transitive, package-local class mixins."""
+    return tuple(node for _path, node in _tldw_root_classes_with_paths(path))
 
-    def add_with_local_bases(class_node: ast.ClassDef) -> None:
-        if class_node.name in seen:
+
+def _package_class_module_path(
+    module: ast.Module, name: str
+) -> tuple[Path, str] | None:
+    """Resolve ``name``'s ``from tldw_chatbook... import`` source file, if any.
+
+    Returns the source file and the class's name THERE: ``name`` may be a
+    local ``as`` alias, and the source module defines the original name.
+
+    TASK-33011 moved ``LibraryIngestQueueMixin`` out of ``app.py`` into
+    ``app_ingest_queue.py``; following a base class through its package import
+    keeps the moved mixin inside the root-state sweeps. Bases imported from
+    outside the package (``textual``) resolve to ``None`` and stay excluded.
+    """
+    for node in module.body:
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        imported = next(
+            (alias.name for alias in node.names if (alias.asname or alias.name) == name),
+            None,
+        )
+        if imported is None:
+            continue
+        if node.level == 1:
+            dotted = node.module
+        elif node.level == 0 and node.module.startswith("tldw_chatbook."):
+            dotted = node.module.removeprefix("tldw_chatbook.")
+        else:
+            return None
+        candidate = PRODUCTION_ROOT.joinpath(*dotted.split(".")).with_suffix(".py")
+        return (candidate, imported) if candidate.is_file() else None
+    return None
+
+
+def test_package_class_module_path_follows_an_import_alias() -> None:
+    """An ``as``-aliased mixin import resolves to the class's original name."""
+    module = ast.parse(
+        "from tldw_chatbook.app_ingest_queue import LibraryIngestQueueMixin as _Ingest\n"
+    )
+    resolved = _package_class_module_path(module, "_Ingest")
+    assert resolved == (
+        PRODUCTION_ROOT / "app_ingest_queue.py",
+        "LibraryIngestQueueMixin",
+    )
+
+
+def _tldw_root_classes_with_paths(
+    path: Path,
+) -> tuple[tuple[Path, ast.ClassDef], ...]:
+    """Return ``TldwCli`` and its transitive package-local mixins, with files.
+
+    A base is followed when it is a class defined in the same module, or a
+    class imported by name from another ``tldw_chatbook`` module.
+    """
+    ordered: list[tuple[Path, ast.ClassDef]] = []
+    seen: set[tuple[Path, str]] = set()
+
+    def add_with_local_bases(owner_path: Path, class_name: str) -> None:
+        if (owner_path, class_name) in seen:
             return
-        seen.add(class_node.name)
-        ordered.append(class_node)
+        module = _parse(owner_path)
+        classes = {
+            node.name: node for node in module.body if isinstance(node, ast.ClassDef)
+        }
+        class_node = classes.get(class_name)
+        if class_node is None:
+            return
+        seen.add((owner_path, class_name))
+        ordered.append((owner_path, class_node))
         for base in class_node.bases:
-            base_class = classes.get(base.id) if isinstance(base, ast.Name) else None
-            if base_class is not None:
-                add_with_local_bases(base_class)
+            if not isinstance(base, ast.Name):
+                continue
+            if base.id in classes:
+                add_with_local_bases(owner_path, base.id)
+                continue
+            imported_from = _package_class_module_path(module, base.id)
+            if imported_from is not None:
+                add_with_local_bases(*imported_from)
 
-    add_with_local_bases(root)
+    add_with_local_bases(path, "TldwCli")
     return tuple(ordered)
 
 
@@ -976,6 +1039,41 @@ class TldwCli(QueueMixin, external.App):
     ]
 
 
+def test_root_classes_follow_mixins_imported_from_package_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Follow a base imported from a package module (TASK-33011 moved
+    ``LibraryIngestQueueMixin`` to ``app_ingest_queue.py``); skip externals."""
+    queue_path = PRODUCTION_ROOT / "app_ingest_queue.py"
+    trees = {
+        APP_PATH: ast.parse(
+            """from tldw_chatbook.app_ingest_queue import QueueMixin
+from textual.app import App
+
+class TldwCli(QueueMixin, App):
+    pass
+"""
+        ),
+        queue_path: ast.parse(
+            """class RootStateMixin:
+    pass
+
+class QueueMixin(RootStateMixin):
+    pass
+"""
+        ),
+    }
+    monkeypatch.setitem(globals(), "_parse", lambda path: trees[path])
+
+    assert [
+        (path.name, node.name) for path, node in _tldw_root_classes_with_paths(APP_PATH)
+    ] == [
+        ("app.py", "TldwCli"),
+        ("app_ingest_queue.py", "QueueMixin"),
+        ("app_ingest_queue.py", "RootStateMixin"),
+    ]
+
+
 def test_app_destinations_functions_take_the_root_app_as_app() -> None:
     """Keep the moved TldwCli bodies inside the root-app sweeps (TASK-33011).
 
@@ -1276,7 +1374,9 @@ def test_legacy_ccp_prompt_handlers_and_compatibility_exports_are_absent() -> No
 
 def test_tldw_cli_final_reactive_ownership_contract_is_exact() -> None:
     """Freeze the reviewed 61-descriptor disposition at the app boundary."""
-    root_owner_classes = _local_tldw_root_classes(APP_PATH)
+    root_owner_classes_with_paths = _tldw_root_classes_with_paths(APP_PATH)
+    root_owner_classes = tuple(node for _path, node in root_owner_classes_with_paths)
+    assert "LibraryIngestQueueMixin" in {node.name for node in root_owner_classes}
     assert len(RETAINED_TLDW_REACTIVES) == 2
     assert len(RETIRED_TLDW_REACTIVES) == 59
     assert RETAINED_TLDW_REACTIVES.isdisjoint(RETIRED_TLDW_REACTIVES)
@@ -1294,8 +1394,8 @@ def test_tldw_cli_final_reactive_ownership_contract_is_exact() -> None:
         occurrences: list[
             tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]
         ] = []
-        for root_owner_class in root_owner_classes:
-            collector = _TldwCliRootOccurrenceCollector(APP_PATH, name)
+        for owner_path, root_owner_class in root_owner_classes_with_paths:
+            collector = _TldwCliRootOccurrenceCollector(owner_path, name)
             collector.collect(root_owner_class)
             occurrences.extend(collector.occurrences)
         if occurrences:

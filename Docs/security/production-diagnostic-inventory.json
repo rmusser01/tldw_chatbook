@@ -925,8 +925,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 13,
-      "diagnostic_digest": "dcee889a10f412d3bf38",
+      "call_count": 19,
+      "diagnostic_digest": "979a29383924467f5439",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Dreams/track_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2560,6 +2560,20 @@
       "diagnostic_digest": "67a11620e21e3b573980",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/rag_search_tool.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 4,
+      "diagnostic_digest": "8ad34c1968f03db885c8",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_session_registry.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "adb8552185aa74541fc4",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_session_worker.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
@@ -4271,8 +4285,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 352,
-      "diagnostic_digest": "eb824c96be3476d56a88",
+      "call_count": 305,
+      "diagnostic_digest": "6557d79cb865052071cd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4289,6 +4303,13 @@
       "diagnostic_digest": "3ee90cdaafc682f9f563",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_entry.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 48,
+      "diagnostic_digest": "1f026d93569682c394ef",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_ingest_queue.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10589,42 +10610,6 @@
     {
       "candidates": [
         {
-          "call_digest": "3aef1d3ee8d4bed1",
-          "method": "warning",
-          "path_expressions": [
-            "source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._expand_library_ingest_source",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "5fcc24e58b863179",
-          "method": "error",
-          "path_expressions": [
-            "job.source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "edd2f12aaf46a1f7",
-          "method": "warning",
-          "path_expressions": [
-            "job.source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "3a5b5b3fe0493385",
-          "method": "error",
-          "path_expressions": [
-            "source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._top_up_ingest_parse_pool",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "223c765bca0719fa",
           "method": "error",
           "path_expressions": [
@@ -10730,6 +10715,47 @@
         }
       ],
       "path": "tldw_chatbook/app_entry.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "3aef1d3ee8d4bed1",
+          "method": "warning",
+          "path_expressions": [
+            "source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._expand_library_ingest_source",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "5fcc24e58b863179",
+          "method": "error",
+          "path_expressions": [
+            "job.source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "edd2f12aaf46a1f7",
+          "method": "warning",
+          "path_expressions": [
+            "job.source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "3a5b5b3fe0493385",
+          "method": "error",
+          "path_expressions": [
+            "source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._top_up_ingest_parse_pool",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/app_ingest_queue.py"
     },
     {
       "candidates": [

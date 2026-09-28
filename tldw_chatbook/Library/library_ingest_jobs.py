@@ -76,8 +76,9 @@ from tldw_chatbook.STT.persistence import (
 
 # The default chunk size (in words) used whenever a caller doesn't supply
 # one -- the lowest-level pure module in the Library ingest stack, so
-# ``library_ingest_state.py`` and ``app.py``'s ``submit_library_ingest_job``
-# both import this rather than each hardcoding their own copy of ``500``.
+# ``library_ingest_state.py`` and ``app_ingest_queue.py``'s
+# ``submit_library_ingest_job`` both import this rather than each hardcoding
+# their own copy of ``500``.
 DEFAULT_CHUNK_SIZE: int = 500
 
 
@@ -662,7 +663,7 @@ class LibraryIngestJobRegistry:
         ever re-offers them: without this they were silently absent from the
         store, gone after the next launch, and any stale persisted row that
         shared their id was restored in their place. Attach the store BEFORE
-        calling this (see ``TldwCli._apply_ingest_job_restore``); with none
+        calling this (see ``LibraryIngestQueueMixin._apply_ingest_job_restore``); with none
         attached the write-through is a no-op and the pure/in-memory contract
         is unchanged.
         """
@@ -984,7 +985,8 @@ class LibraryIngestJobRegistry:
             job_id: The job to transition.
             detected_type: The file type detected by the ingest seam, when
                 already known at submission time. Optional: the coordinator
-                (``app.py``'s ``LibraryIngestQueueMixin._top_up_ingest_parse_pool``)
+                (``app_ingest_queue.py``'s
+                ``LibraryIngestQueueMixin._top_up_ingest_parse_pool``)
                 calls this before the parse pool has even started the job --
                 real detection (and permanent-vs-retryable classification on
                 failure) happens inside the pool worker itself, so this is
@@ -1080,7 +1082,7 @@ class LibraryIngestJobRegistry:
         No state-machine guard: unlike ``mark_parsing``/``mark_writing``,
         this unconditionally overwrites whatever state a *visible* job was
         in (it does not check that it was ``WRITING`` first). The writer
-        (the exclusive thread worker; see ``app.py``) is the sole intended
+        (the exclusive thread worker; see ``app_ingest_queue.py``) is the sole intended
         caller and only ever reaches this after a preceding ``mark_writing``
         on the same job (a real writer-claim call, see
         ``LibraryIngestQueueMixin._claim_next_ingest_job_or_release``).

@@ -5449,21 +5449,21 @@ StatCard:hover {
 #settings-theme-pane.-stacked #settings-theme-picker-columns {
     layout: vertical;
 }
-#settings-theme-pane.-picker #settings-theme-picker,
-#settings-theme-pane.-picker #settings-theme-picker-columns,
-#settings-theme-pane.-picker #settings-theme-list-column,
-#settings-theme-pane.-picker #settings-theme-list {
+#settings-theme-pane #settings-theme-picker,
+#settings-theme-pane #settings-theme-picker-columns,
+#settings-theme-pane #settings-theme-list-column,
+#settings-theme-pane #settings-theme-list {
     height: $ds-height-fill;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-pane.-picker,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker-columns,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list-column,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-picker-columns,
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-list-column,
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-list {
     height: auto;
     min-height: $ds-size-0;
 }
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-list {
     min-height: $ds-size-8;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-picker-columns {

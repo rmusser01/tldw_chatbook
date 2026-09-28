@@ -229,6 +229,14 @@ def test_theme_config_integration():
             # Test theme switching saves to config
             provider.switch_theme("test-theme")
 
+            # TASK-33243: the write is queued off the UI thread; wait for
+            # the shared writer to drain before checking it landed. Its own
+            # settle/notify runs through the (unawaited, MagicMock) run_worker
+            # coroutine, which is not this test's concern.
+            from tldw_chatbook.css.Themes import theme_catalog as tc
+
+            assert tc.wait_for_launch_default_writes(timeout=5) is True
+
             # Should save to config
             mock_apply.assert_called_once_with(
                 {"general": {"default_theme": "test-theme"}}

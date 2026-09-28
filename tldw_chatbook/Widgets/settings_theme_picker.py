@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -20,6 +20,7 @@ from textual.css.query import QueryError
 from textual.message import Message
 from textual.widgets import Button, ContentSwitcher, Input, OptionList, Static
 from textual.widgets.option_list import Option
+from textual.worker import Worker
 
 from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_themes_dir
@@ -33,6 +34,7 @@ from ..css.Themes.theme_catalog import (
     current_launch_default,
     display_name,
     launch_default_restorable,
+    launch_default_signal,
     queue_launch_default,
     settle_launch_default,
     start_revert,
@@ -383,6 +385,9 @@ class ThemePicker(Vertical):
         self._sync_revert_chip()
         self.query_one("#settings-theme-empty").display = False
         self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_catalog(rescan=False))
+        # Review I-1: the launch marker moves when the write lands, whoever
+        # asked for it (Use, Revert, the palette) -- after the switch's rebuild.
+        launch_default_signal(self.app).subscribe(self, lambda _name: self.refresh_catalog(rescan=False))
         self.refresh_catalog(highlight=str(self.app.theme))
 
     # -- catalog -------------------------------------------------------
@@ -470,7 +475,11 @@ class ThemePicker(Vertical):
         )
         self._sync_revert_chip()  # a rename/delete may have retargeted it
         self._sync_launch_missing()
-        self._render_list(highlight or self.highlighted_id)
+        # Review I-1 fix: a rebuild (a launch-default write landing) can run
+        # between an arrow key moving the list and its highlight message
+        # reaching us -- keep the row the list shows, not the stale id.
+        shown = self.query_one("#settings-theme-list", ThemeOptionList).highlighted_option
+        self._render_list(highlight or (shown.id if shown is not None and shown.id else self.highlighted_id))
 
     def _sync_launch_missing(self) -> None:
         """Spec §9: the launch default may point at a theme id that is no
@@ -894,8 +903,6 @@ class ThemePicker(Vertical):
         outcome = replace(change, persisted=persisted, caches_reloaded=caches_reloaded)
         message, severity = use_theme_toast(theme_id, outcome)
         self.app.notify(message, severity=severity)
-        if self.is_attached:
-            self.refresh_catalog(rescan=False)  # the launch marker moves now
 
 
 class ThemePane(ContentSwitcher):
@@ -939,7 +946,12 @@ class ThemePane(ContentSwitcher):
         super().watch_current(old, new)
         # TASK-33064: the picker fills the detail pane (CSS `-picker`); the
         # taller editor keeps the auto height so the pane body scrolls it.
-        self.set_class(new == "settings-theme-picker", "-picker")
+        # TASK-33241: restyle the pane alone -- a plain set_class restyles
+        # its whole subtree (~180 nodes with the editor: ~165 ms per switch
+        # at 211x44), and `-picker` only styles the pane's own compound
+        # (the CSS rule, pinned by test_picker_class_styles_only_the_pane).
+        self.set_class(new == "settings-theme-picker", "-picker", update=False)
+        self.app.stylesheet.update_nodes([self])
 
     def compose(self) -> ComposeResult:
         # The editor is composed first so the picker's first refresh_catalog
@@ -963,32 +975,62 @@ class ThemePane(ContentSwitcher):
         files, unreadable = self._editor().user_theme_listing()
         return set(files), unreadable
 
-    def show_picker(self) -> None:
+    def show_picker(self, highlight: str | None = None) -> None:
         # Review I-1: every Back undoes an unsaved Try and ends the session.
         self._editor().end_session()
         self.current = "settings-theme-picker"
         picker = self.query_one(ThemePicker)
-        picker.refresh_catalog()
+        picker.refresh_catalog(highlight=highlight)
         picker.focus_list()
 
-    def open_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> None:
+    def open_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> Worker[Any] | None:
+        """Open the editor on ``theme_id`` (Edit, Clone or New).
+
+        TASK-33240: a saved theme's file is read on a worker thread; the
+        picker stays up until it lands, so the editor never shows its
+        previous palette, and a read superseded meanwhile (Back, another
+        Edit, leaving Settings) opens nothing.
+
+        Returns:
+            The load's worker for a saved theme, else None (opened at once).
+        """
         editor = self._editor()
         picker = self.query_one(ThemePicker)
         entry = next((e for e in picker.entries if e.id == theme_id), None)
         if entry is not None and entry.origin == "yours":
-            if not editor.load_user_theme(theme_id):
+            load = editor.load_user_theme(theme_id)
+            worker = editor.run_file_action(self._open_saved(load, theme_id, mode))
+            if worker is None:  # quitting: the load never runs
+                load.close()
+            return worker
+        editor.load_theme(theme_id)
+        self._show_editor(theme_id, mode)
+        return None
+
+    async def _open_saved(
+        self, load: Coroutine[Any, Any, bool | None], theme_id: str, mode: Literal["clone", "new", "edit"]
+    ) -> None:
+        loaded = await load
+        if loaded is None:  # superseded, or the editor was torn down
+            return
+        try:
+            if not loaded:
                 # Qodo 4104047302: never open on the previous palette; the
                 # load said why, and the listing may be stale.
-                picker.refresh_catalog()
+                self.query_one(ThemePicker).refresh_catalog()
                 return
-        else:
-            editor.load_theme(theme_id)
+            self._show_editor(theme_id, mode)
+        except QueryError:
+            return  # the pane left the DOM meanwhile
+
+    def _show_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> None:
+        editor = self._editor()
         if mode == "clone":
             editor.on_clone_theme()
         elif mode == "new":
             editor.on_new_theme()
         editor.set_editing_context(theme_id, mode)
-        editor.set_files_available(picker.files_available)
+        editor.set_files_available(self.query_one(ThemePicker).files_available)
         self.current = "settings-theme-editor-view"
         editor.query_one("#settings-theme-name").focus()
 
@@ -1020,8 +1062,8 @@ class ThemePane(ContentSwitcher):
         if not self.is_attached:
             return
         try:
-            self.show_picker()
-            self.query_one(ThemePicker).refresh_catalog(highlight=event.theme_name)
+            # TASK-33241: one rescan, not show_picker's plus a second one.
+            self.show_picker(highlight=event.theme_name)
         except QueryError:
             return
 

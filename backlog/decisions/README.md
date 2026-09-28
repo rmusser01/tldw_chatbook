@@ -131,6 +131,12 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-185](185-network-chat-ircv3-and-tldw-pydle-boundary.md) | Accepted; ADR-186 amendments proposed | Preserve the approved Network Chat ownership and separately maintained Codeberg pydle fork boundary. |
 | [ADR-186](186-network-chat-handoff-reliability-amendments.md) | Proposed | Clarify bounded callback/transport delivery, late-reply isolation, current screen lifecycle and truthful release completion for the PTO handoff. |
 
+| [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
+| [ADR-197](197-console-hook-configuration-review.md) | Accepted | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
+| [ADR-162](162-managed-agent-plugins.md) | Accepted | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |
+| [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
+| [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.

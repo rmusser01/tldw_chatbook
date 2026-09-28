@@ -46,6 +46,12 @@
    the card (title + preview + grouped chips, ~18 rows; ~27 with its chips
    stacked) whole on a short terminal: the body scrolls instead. The editor
    view keeps `auto`, and compact restores the auto chain below.
+   TASK-33241: `-picker` may only appear on the pane's OWN compound (never
+   as an ancestor, e.g. `.-picker #x`): ThemePane restyles just itself when
+   it toggles the class -- a subtree restyle (the 136-node editor too) cost
+   ~165 ms per view switch at 211x44. The inner chain is 1fr unconditionally;
+   it only shows while the picker does. Pinned by
+   test_picker_class_styles_only_the_pane.
    ThemePane sets `-stacked` from its own width (below 100 cols the two
    columns squeeze the list to ~26 cols, e.g. 120x36 and 150x40): the card
    then sits under a list that still takes the remaining height. */
@@ -62,21 +68,21 @@
 #settings-theme-pane.-stacked #settings-theme-picker-columns {
     layout: vertical;
 }
-#settings-theme-pane.-picker #settings-theme-picker,
-#settings-theme-pane.-picker #settings-theme-picker-columns,
-#settings-theme-pane.-picker #settings-theme-list-column,
-#settings-theme-pane.-picker #settings-theme-list {
+#settings-theme-pane #settings-theme-picker,
+#settings-theme-pane #settings-theme-picker-columns,
+#settings-theme-pane #settings-theme-list-column,
+#settings-theme-pane #settings-theme-list {
     height: $ds-height-fill;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-pane.-picker,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker-columns,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list-column,
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-picker-columns,
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-list-column,
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-list {
     height: auto;
     min-height: $ds-size-0;
 }
-#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+#settings-workbench.settings-workbench-compact #settings-theme-pane #settings-theme-list {
     min-height: $ds-size-8;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-picker-columns {

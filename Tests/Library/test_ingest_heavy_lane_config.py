@@ -1,27 +1,27 @@
 import tomllib
 from types import SimpleNamespace
 
-import tldw_chatbook.app as app_module
+import tldw_chatbook.app_ingest_queue as ingest_queue_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.config import CONFIG_TOML_CONTENT
 
 
 def test_heavy_lane_default_when_unset(monkeypatch):
-    monkeypatch.setattr(app_module, "get_cli_setting", lambda *a, **k: None)
+    monkeypatch.setattr(ingest_queue_module, "get_cli_setting", lambda *a, **k: None)
     assert (
         LibraryIngestQueueMixin._ingest_heavy_lane_max_workers(SimpleNamespace()) == 1
     )
 
 
 def test_heavy_lane_uses_configured_value(monkeypatch):
-    monkeypatch.setattr(app_module, "get_cli_setting", lambda *a, **k: 2)
+    monkeypatch.setattr(ingest_queue_module, "get_cli_setting", lambda *a, **k: 2)
     assert (
         LibraryIngestQueueMixin._ingest_heavy_lane_max_workers(SimpleNamespace()) == 2
     )
 
 
 def test_heavy_lane_clamps_non_positive_to_one(monkeypatch):
-    monkeypatch.setattr(app_module, "get_cli_setting", lambda *a, **k: 0)
+    monkeypatch.setattr(ingest_queue_module, "get_cli_setting", lambda *a, **k: 0)
     assert (
         LibraryIngestQueueMixin._ingest_heavy_lane_max_workers(SimpleNamespace()) == 1
     )

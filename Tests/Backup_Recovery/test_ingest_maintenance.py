@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-import tldw_chatbook.app as app_module
+import tldw_chatbook.app_ingest_queue as ingest_queue_module
 from Tests.Backup_Recovery.test_finite_db_retirement import worker_leases
 from Tests.Backup_Recovery.test_participant_lifetimes import (
     local_root as local_root,  # noqa: PLC0414
@@ -138,7 +138,7 @@ async def test_remote_poll_settles_current_batch_without_an_extra_sleep(monkeypa
     app = IngestHost()
     app.server_media_reading_service = object()
     monkeypatch.setattr(
-        app_module, "pending_remote_batches", lambda registry: ("batch",)
+        ingest_queue_module, "pending_remote_batches", lambda registry: ("batch",)
     )
     entered, release = asyncio.Event(), asyncio.Event()
     finished = []

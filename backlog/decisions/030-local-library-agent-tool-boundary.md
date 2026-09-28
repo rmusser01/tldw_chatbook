@@ -5,6 +5,8 @@ Date: 2026-08-02
 Related Task: [TASK-1337 - Add direct local Library tools for Console agents and MCP](../tasks/task-1337%20-%20Add-direct-local-Library-tools-for-Console-agents-and-MCP.md)
 Supersedes: N/A
 
+Partially superseded by: [ADR-166](166-agent-assisted-archive-recovery.md) for the dedicated Console archive-recovery capability in RAG-only mode when Assistant Library access is Allowed. General Library retrieval selection and external MCP contracts remain governed here.
+
 ## Decision
 
 Expose local Library reads through one descriptor-backed, synchronous service
