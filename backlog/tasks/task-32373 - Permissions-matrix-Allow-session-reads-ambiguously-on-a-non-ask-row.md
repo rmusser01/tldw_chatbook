@@ -1,6 +1,6 @@
 ---
 id: TASK-32373
-title: Permissions matrix: Allow (session) reads ambiguously on a non-ask row
+title: "Permissions matrix: Allow (session) reads ambiguously on a non-ask row"
 status: To Do
 assignee: []
 created_date: '2026-09-11 01:55'
