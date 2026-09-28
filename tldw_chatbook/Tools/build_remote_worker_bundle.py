@@ -66,7 +66,8 @@ from typing import Any
 #: by parsing the artifact under a real 3.10.
 REMOTE_PYTHON_FLOOR = (3, 10)
 
-#: Frozen true import closure of ``workspace_tool_worker``, excluding
+#: Frozen true import closure of ``workspace_tool_worker`` plus the
+#: session fork-server (``remote_session_serve``), excluding
 #: package ``__init__`` modules, in dependency order (dependencies first,
 #: so every dropped cross-module import finds its name already bound).
 BUNDLE_MODULES: tuple[str, ...] = (
@@ -80,6 +81,8 @@ BUNDLE_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Tools.git_tool_impls",
     "tldw_chatbook.Tools.patch_tool_impls",
     "tldw_chatbook.Tools.workspace_tool_dispatch",
+    "tldw_chatbook.Tools.remote_session_frames",
+    "tldw_chatbook.Tools.remote_session_serve",
     "tldw_chatbook.Tools.workspace_tool_worker",
 )
 
@@ -89,6 +92,9 @@ BUNDLE_MODULES: tuple[str, ...] = (
 REMOTE_DENYLIST_MODULE = "tldw_chatbook.Tools.remote_sensitive_paths"
 
 _WORKER_MODULE = "tldw_chatbook.Tools.workspace_tool_worker"
+#: Session fork-server: not imported by the worker, but the bundle's
+#: ``serve_session`` entry calls its ``serve`` — a second closure root.
+_SESSION_SERVE_MODULE = "tldw_chatbook.Tools.remote_session_serve"
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLE_PATH = Path(__file__).resolve().parent / "remote_worker_bundle.py"
 
@@ -160,7 +166,7 @@ def _worker_closure_modules() -> set[str]:
     """Derive the worker's real dependency closure by AST traversal.
 
     Walks module-level absolute ``tldw_chatbook.*`` imports breadth-first,
-    starting at the worker, and NEVER traverses into package ``__init__``
+    starting at the worker and the session fork-server, and NEVER traverses into package ``__init__``
     modules: importing ``tldw_chatbook.Tools.workspace_tool_worker``
     transitively executes the root and ``Tools``/``Utils`` package inits
     (which pull ``tool_executor``/``tiktoken_runtime``), but those chains
@@ -171,7 +177,7 @@ def _worker_closure_modules() -> set[str]:
     lazy third-party imports are rewritten to loud raises, not shipped.
     """
     visited: set[str] = set()
-    frontier = [_WORKER_MODULE]
+    frontier = [_WORKER_MODULE, _SESSION_SERVE_MODULE]
     while frontier:
         name = frontier.pop()
         if name in visited:
@@ -491,6 +497,40 @@ def main(stream: Any, *, bundle_sha256: str = "") -> int:
     )
 
 
+#: Per-child output cap for the session fork-server. The bundle cannot
+#: import the parent's pydantic-side protocol module, so this is the same
+#: LITERAL as ``workspace_tool_protocol.MAX_RESPONSE_BYTES``; the builder
+#: refuses to build when the two differ.
+_SESSION_MAX_RESPONSE_BYTES = 6065536
+
+
+def serve_session(in_stream: Any, out_stream: Any) -> int:
+    """Session entry: HELLO then frames until EOF/idle (loader calls this).
+
+    The loader has consumed exactly its own bytes from ``in_stream``
+    (lockstep contract), so the buffered reader is empty and the loop can
+    read fd 0 directly.
+    """
+    import io as _io
+
+    out_stream.flush()
+
+    def _run_request(raw: bytes, out: Any) -> int:
+        # BUNDLE_SHA256 is bound by the stamp line, which runs after this
+        # function is defined but before the loader calls serve_session.
+        return run_workspace_worker(
+            _io.BytesIO(raw), out, _io.BytesIO(), bundle_sha256=globals()["BUNDLE_SHA256"]
+        )
+
+    return serve(
+        0,
+        1,
+        run_request=_run_request,
+        max_request_bytes=MAX_REQUEST_BYTES,
+        max_response_bytes=_SESSION_MAX_RESPONSE_BYTES,
+    )
+
+
 def _enter_worker_exchange(stamp: str) -> str:
     """Bootstrap entry seam — run the exchange when exec'd as ``__main__``.
 
@@ -722,9 +762,21 @@ def loader_payload() -> bytes:
     return zlib.compress(build_loader_text().encode("utf-8"), 9)
 
 
+def _assert_session_response_cap_matches_protocol() -> None:
+    """Refuse to build when the adapter's cap literal drifts from the parent's."""
+    from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
+
+    if f"\n_SESSION_MAX_RESPONSE_BYTES = {MAX_RESPONSE_BYTES}\n" not in _IO_ADAPTER_SOURCE:
+        raise BundleBuildError(
+            "_SESSION_MAX_RESPONSE_BYTES in the bundle IO adapter must equal "
+            f"workspace_tool_protocol.MAX_RESPONSE_BYTES ({MAX_RESPONSE_BYTES})"
+        )
+
+
 def build_bundle_text() -> str:
     """Build the complete bundle text deterministically from live sources."""
     _assert_frozen_list_matches_closure()
+    _assert_session_response_cap_matches_protocol()
 
     sections: list[str] = []
     top_level: dict[str, set[str]] = {}

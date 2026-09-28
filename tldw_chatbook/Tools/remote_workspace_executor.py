@@ -41,8 +41,11 @@ stay inside the ssh entry points: the transport imports this module (for
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import select
 import subprocess
 import sys
 import threading
@@ -55,7 +58,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tldw_chatbook.Tools.build_remote_worker_bundle import expected_bundle_stamp
+from tldw_chatbook.Tools import remote_session_frames as session_frames
+from tldw_chatbook.Tools.build_remote_worker_bundle import (
+    expected_bundle_stamp,
+    loader_payload,
+)
 from tldw_chatbook.Tools.remote_worker_bundle import RESPONSE_MAGIC
 from tldw_chatbook.Tools.workspace_tool_executor import (
     WORKSPACE_HELPER_TIMEOUT_SECONDS,
@@ -69,6 +76,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolResponse,
 )
 from tldw_chatbook.Tools.workspace_wire_decode import WIRE_VERSION
+from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 if TYPE_CHECKING:  # pragma: no cover - import-cycle guard (see for_ssh)
     from tldw_chatbook.Tools.remote_binding_locator import RemoteLocator
@@ -383,6 +391,196 @@ def run_bundle_loopback(
     return run_bundle_loopback_frames(
         root, request, budget_seconds=budget_seconds
     )[-1]
+
+
+# ---------------------------------------------------------------------------
+# Session loopback (SSH session worker, Task 5): bootstrap -> loader ->
+# bundle ``serve_session`` fork-server, driven over binary frames.
+# ---------------------------------------------------------------------------
+
+#: HELLO limits the session harness sends (spec defaults).
+_SESSION_HELLO = {"max_children": 4, "idle_s": 30}
+
+
+def _session_request(spec: Mapping[str, Any], chain: Any) -> dict[str, Any]:
+    """Expand one plain op dict into a wire-legal pinned request.
+
+    ``spec`` is ``{"op": <operation>, **arguments}`` plus two harness-only
+    keys: ``budget`` (the request's ``timeout_seconds``, default 30) and
+    ``stale_identity`` (perturb the root inode so the pin must fail).
+    Exclusion lists the wire requires default to empty.
+    """
+    arguments = dict(spec)
+    operation = arguments.pop("op")
+    budget = arguments.pop("budget", 30)
+    stale = arguments.pop("stale_identity", False)
+    if operation in _EXCLUSION_CARRYING_OPERATIONS:
+        arguments.setdefault("sensitive_exclusions", [])
+    if operation == "fs_grep":
+        arguments.setdefault("content_exclusions", [])
+    identities = [
+        {
+            "device": identity.device,
+            "inode": identity.inode,
+            "mode": identity.mode,
+            "reparse": identity.reparse,
+        }
+        for identity in chain.identities
+    ]
+    if stale:
+        identities[0] = {**identities[0], "inode": identities[0]["inode"] + 1}
+    return {
+        "version": WIRE_VERSION,
+        "operation_id": uuid.uuid4().hex,
+        "operation": operation,
+        "intent": "read",
+        "root_locator": str(chain.canonical_root),
+        "root_identity": identities[0],
+        "ancestor_identities": identities,
+        "arguments": arguments,
+        "timeout_seconds": budget,
+        "output_max_bytes": MAX_RESPONSE_BYTES,
+    }
+
+
+def _read_ready(fd: int, deadline: float) -> None:
+    """Block until ``fd`` is readable or raise ``loopback_timeout``."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+        raise RemoteWorkspaceLoopbackError("loopback_timeout")
+
+
+def _read_line(fd: int, deadline: float) -> bytes:
+    """Read one newline-terminated line byte-by-byte (no read-ahead)."""
+    line = bytearray()
+    while not line.endswith(b"\n"):
+        _read_ready(fd, deadline)
+        byte = os.read(fd, 1)
+        if not byte:
+            raise RemoteWorkspaceLoopbackError("protocol_failure", "loader EOF")
+        line += byte
+        if len(line) > 4096:
+            raise RemoteWorkspaceLoopbackError("protocol_failure", "loader line too long")
+    return bytes(line)
+
+
+def run_session_loopback(
+    root: Path,
+    requests: list[dict[str, Any]],
+    *,
+    cache_dir: Path | None = None,
+    python: str = sys.executable,
+    budget_seconds: float = 60.0,
+) -> dict[int, list[dict[str, Any]]]:
+    """Run ``requests`` concurrently through ONE loopback bundle session.
+
+    Spawns ``python -I -c <bootstrap>``, sends the stage-1 loader and its
+    header, answers ``NEED`` with the compressed bundle, asserts
+    ``READY <committed stamp>``, sends HELLO and every REQUEST frame, and
+    collects LINE/STATUS frames until each request has its STATUS.
+
+    Args:
+        root: Workspace root (pinned via its locally captured chain — the
+            same host, so identical to what ``ping`` would report).
+        requests: Plain op dicts (see ``_session_request``).
+        cache_dir: ``XDG_RUNTIME_DIR`` for the loader cache; ``None``
+            removes the variable and disables caching. When it already
+            holds this bundle, the loader's first line MUST be ``READY``.
+        python: Interpreter running the remote side (3.10 floor tests).
+        budget_seconds: Whole-session wall-clock ceiling.
+
+    Returns:
+        Request index -> parsed LINE dicts, then ``{"status": (exit,
+        signal)}`` as the last element.
+
+    Raises:
+        RemoteWorkspaceLoopbackError: On a missing root, loader/protocol
+            violations, or the session outrunning ``budget_seconds``.
+    """
+    if not root.is_dir():
+        raise RemoteWorkspaceLoopbackError("loopback_root_missing")
+    chain = capture_directory_chain(root)
+    frames_out = [
+        _encode_request(_session_request(spec, chain)) for spec in requests
+    ]
+    bundle, compressed, _bootstrap = _bundle_payload()
+    bundle_hash = hashlib.sha256(compressed).hexdigest()
+    magic = RESPONSE_MAGIC
+    ready_line = magic + b"READY " + expected_bundle_stamp(bundle).encode() + b"\n"
+    cached = cache_dir is not None and (cache_dir / "tldw-worker" / bundle_hash).is_file()
+
+    env = dict(os.environ)
+    env.pop("XDG_RUNTIME_DIR", None)
+    if cache_dir is not None:
+        env["XDG_RUNTIME_DIR"] = str(cache_dir)
+    loader = loader_payload()
+    header = json.dumps({"hash": bundle_hash, "cache": cache_dir is not None})
+    deadline = time.monotonic() + budget_seconds
+    process = subprocess.Popen(
+        [python, "-I", "-c", bootstrap_source(len(loader))],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=env,
+    )
+    assert process.stdin is not None and process.stdout is not None
+    out_fd = process.stdout.fileno()
+    try:
+        process.stdin.write(loader + header.encode() + b"\n")
+        process.stdin.flush()
+        line = _read_line(out_fd, deadline)
+        if line == magic + b"NEED " + bundle_hash.encode() + b"\n" and not cached:
+            process.stdin.write(len(compressed).to_bytes(4, "big") + compressed)
+            process.stdin.flush()
+            line = _read_line(out_fd, deadline)
+        if line != ready_line:
+            raise RemoteWorkspaceLoopbackError(
+                "protocol_failure", f"expected READY, got {line[:200]!r}"
+            )
+
+        wire = session_frames.encode_frame(
+            session_frames.HELLO, 0, json.dumps(_SESSION_HELLO).encode()
+        )
+        for index, body in enumerate(frames_out):
+            wire += session_frames.encode_frame(session_frames.REQUEST, index + 1, body)
+        process.stdin.write(wire)
+        process.stdin.flush()
+
+        results: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(requests))}
+        pending = set(results)
+        reader = session_frames.FrameReader(max_body=MAX_RESPONSE_BYTES + 1)
+        while pending:
+            _read_ready(out_fd, deadline)
+            data = os.read(out_fd, 65536)
+            if not data:
+                raise RemoteWorkspaceLoopbackError("protocol_failure", "session EOF")
+            for kind, request_id, body in reader.feed(data):
+                index = request_id - 1
+                if index not in results:
+                    raise RemoteWorkspaceLoopbackError("protocol_failure", "unknown request id")
+                if kind == session_frames.LINE:
+                    results[index].append(json.loads(body))
+                elif kind == session_frames.STATUS:
+                    results[index].append({"status": session_frames.decode_status(body)})
+                    pending.discard(index)
+        process.stdin.close()  # EOF: serve returns 0
+        returncode = process.wait(max(0.1, deadline - time.monotonic()))
+        if returncode != 0:
+            raise RemoteWorkspaceLoopbackError(
+                "protocol_failure", f"session exited {returncode}"
+            )
+        return results
+    except subprocess.TimeoutExpired as error:
+        raise RemoteWorkspaceLoopbackError("loopback_timeout") from error
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+        if not process.stdin.closed:
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -1233,5 +1431,6 @@ __all__ = [
     "parse_fs_read_stamps",
     "run_bundle_loopback",
     "run_bundle_loopback_frames",
+    "run_session_loopback",
     "split_fs_read_result",
 ]
