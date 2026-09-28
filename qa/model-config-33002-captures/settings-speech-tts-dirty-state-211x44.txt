@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Speech & TTS
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 1 unsaved | Leaving Speech & TTS resolves this draft: save or discard first.                 │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Speech & TTS                                                                                                              │  │  │ Selected category: Speech & TTS         │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Unsaved changes                         │
+│  Core                        │  │  │ │  Editing application-wide Speech & TTS defaults — Speech Studio preferences stay separate.                            │  │  │  │  Guided edits: Save or Revert changes.  │
+│     Overview (view)          │  │  │ │  Voice profiles: Speech Lab (open it from the actions below). Per-character voices: the Roleplay character editor.    │  │  │  │     Save (s)                            │
+│     Providers & Models       │  │  │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │    Revert (r)                           │
+│     Web Search               │  │  │                                                                                                                            │  │  │ Local-only: saves write your config     │
+│   > Speech & TTS *           │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ file.                                   │
+│  Interface                   │  │  │ │                                                                                                                       │▅ │  │  │ Impact and boundaries                   │
+│     Appearance               │  │  │ │  Global defaults                                                                                                      │  │  │  │ Application-wide speech, TTS, voice,    │
+│     Theme                    │  │  │ │  Default voice setup: Unsaved.                                                                                        │  │  │  │ audio.cpp, OpenAI, ElevenLabs, Kokoro,  │
+│     Splash Screen            │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ Chatterbox, Higgs, AllTalk, and         │
+│     Console Behavior         │  │  │ │ Default voice profile   │ None — use the fields below                                                             ▼ │ │  │  │  │ OmniVoice defaults and setup.           │
+│  Data & Privacy              │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Runtime owner: Settings persisted      │
+│     Storage                  │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  global defaults; Speech Lab runtime    │
+│     Workspaces               │  │  │ │ Default TTS provider    │ OpenAI                                                                                  ▼ │ │  │  │  │  operations                             │
+│     Tool Profiles            │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │                                         │
+│     Privacy & Security       │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  Writes allowed: Yes                    │
+│     Network                  │  │  │ │ Model policy            │ Exact                                                                                   ▼ │ │  │  │  │                                         │
+│     My Profile               │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Owns: app_tts global defaults          │
+│  Troubleshooting             │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  app_tts provider connection and        │
+│     Diagnostics (view)       │  │  │ │ Model value             │ TTS-1-HD (High Quality)                                                                 ▼ │ │  │  │  │  initialization                         │
+│     About (view)             │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  API OpenAI and ElevenLabs              │
+│     Agents                   │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  credentials                            │
+│  Expert                      │  │  │ │ Voice policy            │ Exact                                                                                   ▼ │ │  │  │  │  HiggsSettings initialization           │
+│     Internal Prompts         │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  OmniVoiceSettings initialization     ▇ │
+│     Advanced Config          │  │  │ │                         ┌────────────────────────────────────────────────────────────────────┐ Browse in Speech Lab   │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │ Voice value             │ Alloy                                                            ▼ │                        │  │  │  │  Affected config: application-wide      │
+│                              │  │  │ │                         └────────────────────────────────────────────────────────────────────┘                        │  │  │  │  Speech & TTS defaults and selected     │
+│                              │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  provider setup                         │
+│                              │  │  │ │ Output format           │ Opus                                                                                    ▼ │ │  │  │  │                                         │
+│                              │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Output format
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
