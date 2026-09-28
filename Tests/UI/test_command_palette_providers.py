@@ -257,7 +257,8 @@ class TestThemeProvider:
         assert "Type 'theme'" in call_args[0]
         assert "command palette" in call_args[0]
 
-    def test_switch_theme_success(self, theme_provider):
+    @pytest.mark.asyncio
+    async def test_switch_theme_success(self, theme_provider):
         """Test successful theme switching."""
         with (
             patch(
@@ -269,15 +270,25 @@ class TestThemeProvider:
             ),
         ):
             mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=True)
+            # TASK-33243: the launch-default write is queued and awaited off
+            # the UI thread via run_worker; capture the coroutine and await
+            # it here the way the app's worker loop would.
+            captured = {}
+            theme_provider.app.run_worker = MagicMock(
+                side_effect=lambda coro, **kw: captured.setdefault("coro", coro)
+            )
             theme_provider.switch_theme("test-theme")
 
             assert theme_provider.app.theme == "test-theme"
+            await captured["coro"]
+
             theme_provider.app.notify.assert_called_once_with(
                 "Test Theme is now your theme (was: Textual Dark)", severity="information"
             )
             mock_apply.assert_called_once_with({"general": {"default_theme": "test-theme"}})
 
-    def test_switch_theme_persisted_but_cache_reload_failed(self, theme_provider):
+    @pytest.mark.asyncio
+    async def test_switch_theme_persisted_but_cache_reload_failed(self, theme_provider):
         """Palette toast parity (TASK-32948): a failed cache refresh after a
         persisted switch gets its own warning, same wording as elsewhere in
         Settings ("configuration refresh failed -- reopen Settings...")."""
@@ -291,9 +302,15 @@ class TestThemeProvider:
             ),
         ):
             mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=False)
+            captured = {}
+            theme_provider.app.run_worker = MagicMock(
+                side_effect=lambda coro, **kw: captured.setdefault("coro", coro)
+            )
             theme_provider.switch_theme("test-theme")
 
             assert theme_provider.app.theme == "test-theme"
+            await captured["coro"]
+
             theme_provider.app.notify.assert_called_once_with(
                 "Test Theme is now your theme (was: Textual Dark); configuration "
                 "refresh failed — reopen Settings to refresh",

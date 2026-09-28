@@ -1034,3 +1034,89 @@ async def test_a_reset_read_landing_after_back_changes_nothing(request, monkeypa
         await _settle(host, pilot)
         assert _primary(editor) == "#123456"
         assert not any("reset" in message for message in notes), notes
+
+
+# -- TASK-33243: the command palette shares the picker's write queue -----------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_palette_switch_leaves_the_ui_thread_free(request, monkeypatch):
+    """TASK-33243: the palette's launch-default write (``ThemeProvider.
+    _persist_switch``) runs off the UI thread, like the picker's Use
+    (TASK-33121 tail check below) -- and ``switch_theme`` returns at once,
+    not waiting for a slow write."""
+    from tldw_chatbook.app import ThemeProvider
+
+    config_threads = []
+    real_write = tc._write_launch_default
+
+    def recorded_config_write(name):
+        config_threads.append(threading.current_thread())
+        time.sleep(0.2)
+        return real_write(name)
+
+    monkeypatch.setattr(tc, "_write_launch_default", recorded_config_write)
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        provider = ThemeProvider(host.screen)
+        started = time.perf_counter()
+        provider.switch_theme("nord")
+        blocked = time.perf_counter() - started
+        assert blocked < 0.05, blocked
+        assert str(host.theme) == "nord"
+        await _settle(host, pilot)
+    assert config_threads and all(t is not threading.main_thread() for t in config_threads)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_palette_switch_then_picker_use_lands_the_pickers_theme(request, monkeypatch):
+    """TASK-33243: the palette shares the picker's numbered write queue
+    (review M-1) -- a picker Use started right after a palette switch is
+    the later write, so it wins on disk and owns the toast; the palette's
+    own write reports nothing (superseded)."""
+    from tldw_chatbook.app import ThemeProvider
+
+    written = _slow_config(monkeypatch, delay=0.2)
+    host = _host()
+    notes = []
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        picker = host.screen.query_one("#settings-theme-picker")
+        host.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+        provider = ThemeProvider(host.screen)
+        provider.switch_theme("gruvbox_dark")  # palette: queued first
+        picker.use_highlighted()  # picker Use: queued second, wins
+        await _settle(host, pilot)
+        assert [name for name, _ in written] == ["gruvbox_dark", "nord"]
+        assert str(host.theme) == "nord"
+        assert not any("Gruvbox Dark is now your theme" in m for m, _ in notes)
+        assert any("Nord is now your theme" in m for m, _ in notes)
+
+
+@pytest.mark.asyncio
+async def test_quit_waits_for_a_pending_palette_write(monkeypatch):
+    """TASK-33243/AC#2: the palette's queued write is the one the quit
+    path (``wait_for_theme_quit_work``) waits for -- the same mechanism a
+    picker Use's write already relies on."""
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.app import ThemeProvider
+
+    written = _slow_config(monkeypatch, delay=0.3)
+    monkeypatch.setattr(tc, "current_launch_default", lambda: "textual-dark")
+    order: list[str] = []
+    monkeypatch.setattr(
+        app_module, "persist_cli_config_for_shutdown", lambda: order.append("config") or True
+    )
+    mock_app = SimpleNamespace(
+        theme="textual-dark",
+        notify=lambda *a, **kw: None,
+        run_worker=lambda coro, **kw: coro.close(),  # the toast is not this test's concern
+    )
+    provider = ThemeProvider(SimpleNamespace(app=mock_app))
+    provider.switch_theme("chosen")
+    quitting = SimpleNamespace(_save_shutdown_caches_with_timeout=lambda: None)
+    await asyncio.to_thread(app_module.TldwCli._run_blocking_quit_persistence, quitting)
+    assert [name for name, _ in written] == ["chosen"]  # written before the quit went on
+    assert order == ["config"]
