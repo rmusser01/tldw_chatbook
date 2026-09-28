@@ -57,7 +57,7 @@ snapshot N messages in order to walk backwards and usually stop at the first mat
 4. Extend the mounted census to count all transcript snapshots and projection traversal, not only `messages_for_session` calls; establish the failing baseline.
 5. Add a store-owned projection revision that advances on transcript/payload, streaming, and late usage mutations. Keep screen-owned settled context and cost aggregates keyed to that revision and session/settings identity; count draft text as a separate incremental contribution.
 6. Test invalidation and display parity for late terminal usage, edits, and branch changes. Run focused mounted/projection/store tests and lint only.
-7. Rebase integration: preserve TASK-33081's one-second active-stream context estimate bound with a constant-time key checked before transcript materialization; retain immediate draft/payload/settings/run-owner invalidation and test the combined cache behavior.
+7. Rebase integration: preserve dev's one-second active-stream context estimate bound with a constant-time key checked before transcript materialization; retain immediate draft/payload/settings/run-owner invalidation and test the combined cache behavior.
 
 ADR required: yes
 ADR path: backlog/decisions/190-console-incremental-display-projections.md
@@ -104,5 +104,29 @@ Review continuation (2026-09-27): added [ADR-190](../decisions/190-console-incre
 
 Focused evidence: the mounted empty-versus-400-message census passed with exact census equality (397.77 s), zero transcript snapshot/history/cost/context row traversals in both arms, and at most one draft row in any context estimate. The one-app 400-message guard also passed (272.51 s). Store/context/history mutation and token-parity cases and all six cost-cache regressions passed in scoped runs, including a terminal usage update that reprices Current to $0.60 without changing the payload revision. Focused Ruff/format checks and edited source ranges passed; no full test sweep was run.
 
-The census records maximum estimator input rows because Textual coalesces a variable number of one-row draft repaints; summing those calls gave 19 versus 17 with zero history work. The exact comparison and zero-history assertions remain. Windows widget admission receives a 120 s watchdog before the burst after the default 30 s wait timed out; this changes no work assertion. Task status remains In Progress pending coordinated commit, rebase, push, and protected CI.
+The census records maximum estimator input rows because Textual coalesces a variable number of one-row draft repaints; summing those calls gave 19 versus 17 with zero history work. The exact comparison and zero-history assertions remain. Windows widget admission receives a 120 s watchdog before the burst after the default 30 s wait timed out; this changes no work assertion. Task status remains In Progress pending independent review, push, and protected CI.
+Rebased onto dev `7cda012822a9ea26be84b446ec68d83e48b299c5`: the two original performance commits replayed unchanged. Resolved the testing-lessons append conflict by preserving both entries, and integrated the active-stream context TTL with the incremental projections. The one-second key is checked before snapshots; payload/settings/run-owner changes and equal-length draft edits still invalidate immediately. The newer tool lifecycle, deferred stream persistence, context-window probe, and other stall fixes remain in the base. The added cache-order regression plus focused store/config/tokenizer tests and three upstream deferred-persistence cases passed together (36 tests, 6.61 s). All six mounted cost-cache tests passed (330.77 s), including late terminal usage and warm projected cost. The first post-rebase two-app census passed (373.71 s); direct cost aggregation and warm-projection estimator row counters were then added to cover aggregate-only walks over cached rows, and both exact census dictionaries are retained as child JUnit properties.
+
+The bundled-tokenizer child now removes inherited `TIKTOKEN_CACHE_DIR` and `DATA_GYM_CACHE_DIR` overrides. A combined run exposed that earlier parity cases had selected the bundled cache in their parent; the child inherited that override and correctly bypassed import-hook arming, making its bundled-hook assertion order-dependent. Removing the overrides inside that specific child restored the combined 36-test run. Production override behavior is preserved.
+
+The final strengthened post-rebase two-app gate passed (384.60 s; 382.96 s call). Each arm typed 24 keys; the loaded arm was verified to contain 400 messages before measurement. Both child JUnit properties recorded this exact dictionary:
+
+```json
+{
+  "context_estimate_max_rows": 1,
+  "context_rows": 0,
+  "cost_projection_estimate_rows": 0,
+  "cost_rows": 0,
+  "cost_snapshot_rows": 0,
+  "messages_for_session": 0,
+  "settings_readiness_builds": 0,
+  "snapshot_rows": 0,
+  "snapshots": 0,
+  "spend_history_rows": 0,
+  "template_default_builds": 0
+}
+```
+
+Post-rebase static evidence: modified test files passed Ruff, eight full files plus the added gateway-method range passed formatting, source undefined-name checks and the edited context-method range passed, and `git diff --check` passed. The cost-chip helper file retains three pre-existing assertion formatting differences outside the edits. No full test sweep was run. ADR-190 was rechecked against the actual decisions trees on all 24 live PR heads and live dev `3af9f9121d27d3dd637ebdd345afae7b9d67ef11`: no collision. This branch remains based on the requested `7cda012822` for independent review and has not been pushed.
+
 <!-- SECTION:NOTES:END -->

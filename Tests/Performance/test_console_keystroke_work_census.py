@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -131,6 +132,8 @@ async def _census(
         "snapshot_rows": 0,
         "spend_history_rows": 0,
         "cost_rows": 0,
+        "cost_snapshot_rows": 0,
+        "cost_projection_estimate_rows": 0,
         "context_rows": 0,
         "context_estimate_max_rows": 0,
     }
@@ -183,6 +186,10 @@ async def _census(
     )
     _count_projected_rows(
         spend_module, "build_console_context_messages", "context_rows"
+    )
+    _count_projected_rows(screen_module, "build_cost_snapshot", "cost_snapshot_rows")
+    _count_projected_rows(
+        screen_module, "_estimate_tokens_locally", "cost_projection_estimate_rows"
     )
     real_context_estimate = screen_module.build_console_context_estimate
 
@@ -319,6 +326,8 @@ async def test_settled_400_message_typing_traverses_no_history(
         "snapshot_rows",
         "spend_history_rows",
         "cost_rows",
+        "cost_snapshot_rows",
+        "cost_projection_estimate_rows",
         "context_rows",
     ):
         assert counts[key] == 0, f"unchanged typing traversed {counts[key]} {key}"
@@ -345,6 +354,12 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
     """
     empty = await _census(monkeypatch, tmp_path / "empty", seeded_messages=0)
     loaded = await _census(monkeypatch, tmp_path / "loaded", seeded_messages=400)
+    request.node.user_properties.extend(
+        [
+            ("empty_census", json.dumps(empty, sort_keys=True)),
+            ("400_message_census", json.dumps(loaded, sort_keys=True)),
+        ]
+    )
 
     assert empty == loaded, (
         f"per-keystroke work differs with transcript length: empty={empty}, "
@@ -357,6 +372,8 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
         "snapshot_rows",
         "spend_history_rows",
         "cost_rows",
+        "cost_snapshot_rows",
+        "cost_projection_estimate_rows",
         "context_rows",
     ):
         assert (

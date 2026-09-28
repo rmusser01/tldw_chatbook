@@ -24,7 +24,9 @@ def _run_child(source: str) -> subprocess.CompletedProcess[str]:
 def test_token_counter_import_leaves_bundled_arming_intact() -> None:
     """A tokenizer availability probe cannot consume the one-shot import hook."""
     result = _run_child(
-        "import sys\n"
+        "import os, sys\n"
+        "os.environ.pop('TIKTOKEN_CACHE_DIR', None)\n"
+        "os.environ.pop('DATA_GYM_CACHE_DIR', None)\n"
         "import tldw_chatbook\n"
         "import tldw_chatbook.Utils.token_counter\n"
         "assert 'tiktoken' not in sys.modules\n"
