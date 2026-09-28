@@ -1,9 +1,11 @@
 """Credential and generation facets for provider test evidence."""
 
+import contextlib
 from dataclasses import fields
 from threading import Event, Thread
 
 import pytest
+from hypothesis import given, settings as hypothesis_settings, strategies as st
 
 from tldw_chatbook.Chat import provider_test_evidence as evidence_module
 from tldw_chatbook.Chat.provider_test_evidence import (
@@ -513,3 +515,98 @@ def test_evidence_identity_rejects_noncanonical_entry_ids(entry_id):
 
     with pytest.raises(ValueError, match="Custom endpoint identity"):
         replace(_identity(), custom_endpoint_id=entry_id)
+
+
+_STORE_OPS = (
+    "begin",
+    "settle",
+    "cancel",
+    "begin_generation",
+    "settle_generation",
+    "cancel_generation",
+    "invalidate",
+    "mark_generation_changed",
+    "save",
+)
+
+
+@hypothesis_settings(max_examples=500, derandomize=True, deadline=None)
+@given(
+    st.lists(
+        st.tuples(
+            st.sampled_from(_STORE_OPS),
+            st.integers(0, 3),
+            st.integers(0, 3),
+            st.booleans(),
+        ),
+        max_size=30,
+    )
+)
+def test_evidence_for_an_identity_implies_begin_accepts_it(steps):
+    """TASK-33001.3: Settings Test drops the stored evidence copy whenever it
+    probes, and on the path where ``begin`` refuses an older draft generation
+    the settled line then carries no endpoint fact. That is only lossless if
+    ``evidence_for(identity)`` never matches an identity ``begin`` would
+    refuse; this pins that invariant across every store mutator."""
+    import copy
+    from types import SimpleNamespace
+
+    pool = [_identity(draft_generation=generation) for generation in range(3)]
+    pool.append(
+        _identity(
+            draft_generation=1,
+            endpoint="https://b.example.test/v1/chat/completions",
+        )
+    )
+    store = ProviderTestEvidenceStore()
+    tokens: list[object] = []
+    generation_tokens: list[object] = []
+    for op, i, j, flag in steps:
+        identity = pool[i]
+        if op == "begin":
+            with contextlib.suppress(ValueError):
+                tokens.append(store.begin(identity))
+        elif op == "begin_generation":
+            with contextlib.suppress(ValueError):
+                generation_tokens.append(store.begin_generation(identity))
+        elif op == "settle" and tokens:
+            store.settle(
+                tokens[j % len(tokens)],
+                ProviderProbeResult("reachable", ("m",))
+                if flag
+                else ProviderProbeResult("unreachable", (), "connection_refused"),
+            )
+        elif op == "cancel" and tokens:
+            store.cancel_probe(tokens[j % len(tokens)])
+        elif op == "settle_generation" and generation_tokens:
+            store.settle_generation(
+                generation_tokens[j % len(generation_tokens)],
+                ProviderGenerationProbeResult("succeeded")
+                if flag
+                else ProviderGenerationProbeResult("failed", "timeout"),
+            )
+        elif op == "cancel_generation" and generation_tokens:
+            store.cancel_generation_probe(generation_tokens[j % len(generation_tokens)])
+        elif op == "invalidate":
+            store.invalidate(identity if flag else None)
+        elif op == "mark_generation_changed":
+            store.mark_generation_changed(identity)
+        elif op == "save":
+            # Save what the store owns (as Settings does), so the rebase path
+            # is reached often enough to be explored.
+            evidence = store.latest_evidence()
+            tested = evidence.identity if evidence is not None else identity
+            lease = store.begin_save(tested)
+            if lease is not None:
+                store.rebase_after_save(
+                    tested,
+                    pool[j],
+                    SimpleNamespace(
+                        fully_applied=flag, file_replaced=True, conflict=not flag
+                    ),
+                    lease=lease,
+                )
+        for candidate in pool:
+            if store.evidence_for(candidate) is not None:
+                # begin() mutates, so probe a copy (the app copies stores too).
+                copy.copy(store).begin(candidate)

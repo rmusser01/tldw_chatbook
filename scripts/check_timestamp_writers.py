@@ -163,6 +163,10 @@ class _Visitor(ast.NodeVisitor):
         #: call is visited, which ``generic_visit`` always reaches before its
         #: own receiver.
         self._canonicalised: set[int] = set()
+        #: `id()` of every Attribute node that is a Call's `func`, so
+        #: `visit_Attribute` can count the BARE references only and not
+        #: double-count what `visit_Call` already saw.
+        self._called: set[int] = set()
 
     @property
     def _symbol(self) -> str:
@@ -179,6 +183,8 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
+        if isinstance(func, ast.Attribute):
+            self._called.add(id(func))
         # datetime.utcnow()  (attr == "utcnow", any receiver)
         if isinstance(func, ast.Attribute) and func.attr == "utcnow":
             self.hits[(self.module, self._symbol, KIND_UTCNOW)] += 1
@@ -226,6 +232,16 @@ class _Visitor(ast.NodeVisitor):
         ):
             self.hits[(self.module, self._symbol, KIND_STRFTIME_ISO)] += 1
 
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # A BARE `datetime.utcnow` reference -- no `()`. This is how a
+        # pydantic field spells it: `Field(default_factory=datetime.utcnow)`.
+        # Matching calls only reported "0 sites ... OK" over a live
+        # occurrence (`tldw_api/chat_loop_schemas.py`, tier-2 review S06).
+        # Equally forbidden: the value it produces is the same naive one.
+        if node.attr == "utcnow" and id(node) not in self._called:
+            self.hits[(self.module, self._symbol, KIND_UTCNOW)] += 1
         self.generic_visit(node)
 
 

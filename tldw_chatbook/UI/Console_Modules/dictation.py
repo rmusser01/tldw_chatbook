@@ -564,7 +564,8 @@ class ConsoleStreamingDictationSession:
         exactly once, with the whole transcript, at that moment.
 
         Never returns an empty transcript for an ordinary capture, matching
-        the one-shot backend this replaced (`Audio/console_dictation.py`): it
+        the one-shot backend this replaced (`Audio/console_dictation.py`,
+        deleted once this module fully superseded it): it
         raised rather than hand back nothing, and the screen's insertion has
         no empty case for dictated text -- an empty transcript still pads to
         a stray space at the caret, silently, and gets persisted to the

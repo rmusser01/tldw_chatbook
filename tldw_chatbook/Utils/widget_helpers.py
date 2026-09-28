@@ -5,7 +5,12 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, Button, Label
 from textual.message import Message
+from textual.widget import Widget
 from typing import Optional, List
+
+from tldw_chatbook.TTS.omnivoice_artifact_catalog import (  # noqa: E402
+    missing_omnivoice_modules,
+)
 
 
 class FeatureNotAvailableDialog(Container):
@@ -272,15 +277,27 @@ def alert_ocr_not_available(parent) -> None:
     )
 
 
-def alert_tts_not_available(parent) -> None:
-    """Show alert for missing TTS dependencies."""
+def alert_voice_cloning_not_available(parent: Widget) -> None:
+    """Show alert when no local voice-cloning backend is installed.
+
+    Voice cloning runs on OmniVoice, Higgs Audio or Chatterbox -- never on
+    Kokoro -- so the alert recommends the lightest cloning backend (OmniVoice:
+    CPU ONNX, no torch) and names the alternatives.
+
+    Args:
+        parent: The widget showing the alert.
+    """
     show_feature_alert(
         parent,
-        feature_name="Text-to-Speech",
-        feature_key="tts_processing",
-        extra_name="local_tts",
-        missing_deps=["kokoro-onnx", "pyaudio"],
-        additional_info="Audio playback requires pyaudio. On macOS, install with: brew install portaudio && pip install pyaudio",
+        feature_name="Voice Cloning",
+        feature_key="voice_cloning",
+        extra_name="omnivoice_tts",
+        missing_deps=missing_omnivoice_modules() or ["omnivoice_tts"],
+        additional_info=(
+            "Voice cloning needs one local backend: OmniVoice (the command "
+            "above; CPU-only), Higgs Audio (pip extra higgs_tts) or Chatterbox "
+            "(pip extra chatterbox)."
+        ),
     )
 
 

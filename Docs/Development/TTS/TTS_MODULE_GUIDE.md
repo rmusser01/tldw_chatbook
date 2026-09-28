@@ -14,8 +14,9 @@ Native adapters use canonical provider IDs and `TTSService.synthesize()`.
 canonical ID `audio_cpp`, with display label `audio.cpp` and no alias. The
 adapter remains unmaterialized until its first operation.
 
-The following six entries remain unchanged behind the temporary compatibility
-bridge: `openai`, `elevenlabs`, `kokoro`, `chatterbox`, `higgs`, and `alltalk`.
+The following seven entries remain unchanged behind the temporary compatibility
+bridge: `openai`, `elevenlabs`, `kokoro`, `chatterbox`, `higgs`, `alltalk`, and
+`omnivoice`.
 Each bridge adapter lazily owns one provider-scoped `TTSBackendManager`;
 application and UI code must not access that manager or any concrete adapter.
 The bridge is removed only after every retained provider has a native adapter
@@ -1193,6 +1194,7 @@ The compatibility generator accepts only these internal model IDs:
 - `local_higgs_v2` → `higgs`
 - `alltalk_default` → `alltalk`
 - `alltalk_alltalk` → `alltalk`
+- `local_omnivoice_default` → `omnivoice`
 
 These IDs are temporary bridge inputs, not native provider/model identities.
 New native-adapter code selects a canonical provider and opaque model ID

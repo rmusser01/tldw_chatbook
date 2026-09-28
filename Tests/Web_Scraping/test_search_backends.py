@@ -24,6 +24,18 @@ class _FakeResponse:
     def json(self):
         return self._payload
 
+    #: TASK-32894: credentialed backends now go through
+    #: `_credentialed_search_request`, which refuses a redirect and reads the
+    #: body in capped chunks. A fake that only offers `.json()` would model a
+    #: transport the shipped path no longer uses.
+    is_redirect = False
+
+    def iter_content(self, chunk_size=65536):
+        yield json.dumps(self._payload).encode()
+
+    def close(self):
+        return None
+
     def raise_for_status(self):
         if self.status_code >= 400:
             raise WebSearch_APIs.requests.exceptions.HTTPError(f"status {self.status_code}", response=self)
@@ -1010,3 +1022,31 @@ def test_live_yandex(monkeypatch):
     )
     assert result["processing_error"] is None
     assert result["results"] and result["results"][0]["url"]
+
+
+# --- task-32902 (tier-2 review, slice S14 P3) --------------------------------
+
+
+def test_extract_domain_strips_only_a_leading_www():
+    """`domain.replace("www.", "")` cut `www.` anywhere in the netloc, so
+    `newww.example.com` came back as `neexample.com` (tier-2 S14)."""
+    assert WebSearch_APIs.extract_domain("https://www.example.com/a") == "example.com"
+    assert (
+        WebSearch_APIs.extract_domain("https://newww.example.com/a")
+        == "newww.example.com"
+    )
+    # Only an exact leading "www." label goes; "wwww." is a different host.
+    assert (
+        WebSearch_APIs.extract_domain("https://wwww.example.com/a")
+        == "wwww.example.com"
+    )
+    # A malformed URL has no netloc; urlparse does not raise for it.
+    assert WebSearch_APIs.extract_domain("not a url at all") == ""
+    # A bracketed-IPv6 parse failure still falls back to the raw input.
+    assert WebSearch_APIs.extract_domain("http://[oops") == "http://[oops"
+
+
+def test_duckduckgo_tag_stripper_is_compiled_once():
+    """The pattern was re-compiled inside a nested function called per result
+    inside a five-iteration page loop (tier-2 S14)."""
+    assert WebSearch_APIs._STRIP_TAGS_RE.sub("", "<b>hi</b> there") == "hi there"

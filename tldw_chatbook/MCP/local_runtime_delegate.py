@@ -645,6 +645,18 @@ class LocalMCPRuntimeDelegate:
         del arguments
         return await self._get_tools().list_available_characters()
 
+    async def _tool_create_character(self, arguments: dict[str, Any]) -> Any:
+        return await self._get_tools().create_character(
+            arguments.get("name"), arguments.get("fields")
+        )
+
+    async def _tool_update_character(self, arguments: dict[str, Any]) -> Any:
+        return await self._get_tools().update_character(
+            arguments.get("character_id"),
+            arguments.get("expected_version"),
+            arguments.get("fields"),
+        )
+
     async def _tool_get_conversation_history(self, arguments: dict[str, Any]) -> Any:
         return await self._get_tools().get_conversation_history(
             conversation_id=int(arguments.get("conversation_id")),

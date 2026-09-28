@@ -380,7 +380,9 @@ def test_first_tool_batch_uses_atomic_handoff_and_publishes_committed_proof(
         _producer,
     ) = _started_portable(tmp_path)
 
+    display_revision = store.display_projection_revision(session_id)
     store.persist_provider_continuation_event(_event())
+    assert store.display_projection_revision(session_id) > display_revision
 
     row = db.get_message_by_id("assistant-1")
     assert row is not None

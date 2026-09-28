@@ -6,7 +6,11 @@ import pytest
 import tldw_chatbook.Chat.console_settings_apply as settings_apply
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    build_console_settings_readiness,
+    validate_console_session_settings,
+)
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -26,21 +30,18 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 
 
-_COMMON_MODEL_FIELDS = frozenset(
+# TASK-33001.2: Anthropic's request map carries no Min P, Seed or penalties,
+# so its draft never exposes them (this pin used to list all nine samplers).
+_ANTHROPIC_MODEL_FIELDS = frozenset(
     {
         "temperature",
         "top_p",
-        "min_p",
         "top_k",
         "max_tokens",
-        "seed",
-        "presence_penalty",
-        "frequency_penalty",
         "streaming",
+        "thinking_effort",
+        "thinking_budget_tokens",
     }
-)
-_ANTHROPIC_MODEL_FIELDS = _COMMON_MODEL_FIELDS | frozenset(
-    {"thinking_effort", "thinking_budget_tokens"}
 )
 
 
@@ -350,6 +351,38 @@ def test_rebase_uses_target_defaults_keeps_supported_dirty_fields_and_clears_oth
     )
 
 
+def test_rebase_drops_fields_the_target_request_never_sends() -> None:
+    """TASK-33001.2: the draft keeps only fields the target request carries.
+
+    llama.cpp forwards Min P and Seed; Anthropic's request drops both, so a
+    dirty value never carries into the Anthropic draft, while Top P does.
+    """
+    explicit = ConsoleSettingsFieldProvenance.EXPLICIT
+    source = _state(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="local-gguf",
+            top_p=0.9,
+            min_p=0.07,
+            seed=11,
+        ),
+        _field("top_p", 0.9, profile_override=0.9, provenance=explicit, dirty=True),
+        _field("min_p", 0.07, profile_override=0.07, provenance=explicit, dirty=True),
+        _field("seed", 11, profile_override=11, provenance=explicit, dirty=True),
+    )
+
+    rebased = _rebase(
+        source,
+        provider="anthropic",
+        model="claude-sonnet-4-5",
+        app_config={"api_settings": {"anthropic": {"api_key": "test-key"}}},
+    )
+
+    assert {field.name for field in rebased.field_drafts} == _ANTHROPIC_MODEL_FIELDS
+    assert (rebased.settings.min_p, rebased.settings.seed) == (None, None)
+    assert rebased.settings.top_p == 0.9
+
+
 def test_rebase_quick_materializes_inherited_profile_values() -> None:
     source = _state(
         ConsoleSessionSettings(provider="openai", model="source"),
@@ -522,8 +555,10 @@ def test_rebase_full_inherit_same_target_uses_refreshed_lower_precedence_default
             False,
             ConsoleSettingsFieldProvenance.EXPLICIT,
         ),
+        # TASK-33001.2: OpenAI's request carries no top_k, so this int case
+        # uses seed, which takes the same optional-int normalization path.
         (
-            "top_k",
+            "seed",
             "0",
             7,
             0,
@@ -743,6 +778,100 @@ def test_rebase_keyed_a_b_a_drafts_restore_deliberate_a_edits() -> None:
     )
 
 
+# The shipped chat_defaults pair (config.py [chat_defaults]).
+_SHIPPED_CHAT_DEFAULTS = {"provider": "OpenAI", "model": "gpt-5.6-terra"}
+
+
+@pytest.mark.parametrize(
+    "exposed_fields",
+    [QUICK_MODEL_DEFAULT_FIELDS, FULL_MODEL_DEFAULT_FIELDS],
+    ids=["alt-m-popover", "conversation-settings-modal"],
+)
+def test_rebase_local_to_cloud_without_a_model_takes_the_target_providers_model(
+    exposed_fields: frozenset[str],
+) -> None:
+    """TASK-33001.1: llama.cpp -> Anthropic must not inherit gpt-5.6-terra."""
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")),
+        provider="anthropic",
+        model=None,
+        app_config={
+            "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://127.0.0.1:8080",
+                    "model": "local-gguf",
+                },
+                "anthropic": {"model": "claude-sonnet-5"},
+            },
+        },
+        exposed_fields=exposed_fields,
+    )
+
+    assert rebased.settings.provider == "anthropic"
+    assert rebased.settings.model == "claude-sonnet-5"
+
+
+def test_rebase_cloud_to_cloud_without_a_model_takes_the_target_providers_model() -> (
+    None
+):
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-5")),
+        provider="deepseek",
+        model=None,
+        app_config={
+            "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+            "api_settings": {
+                "anthropic": {"model": "claude-sonnet-5"},
+                "deepseek": {"api_model": "deepseek-v4-flash"},
+            },
+        },
+    )
+
+    assert rebased.settings.provider == "deepseek"
+    assert rebased.settings.model == "deepseek-v4-flash"
+
+
+def test_rebase_to_a_provider_with_no_model_needs_one_and_borrows_none() -> None:
+    # A stored key and no model: readiness must name the missing model.
+    app_config = {
+        "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+        "api_settings": {"moonshot": {"api_key": "sk-test-moonshot"}},
+    }
+
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="openai", model="gpt-5.6-terra")),
+        provider="moonshot",
+        model=None,
+        app_config=app_config,
+    )
+
+    assert rebased.settings.provider == "moonshot"
+    assert rebased.settings.model is None
+    assert "Model is required." in validate_console_session_settings(
+        rebased.settings, app_config=app_config
+    )
+    readiness = build_console_settings_readiness(
+        rebased.settings, app_config=app_config, environ={}
+    )
+    assert readiness.blocker == "model_missing"
+
+
+def test_rebase_onto_the_chat_defaults_provider_keeps_the_default_model() -> None:
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-5")),
+        provider="openai",
+        model=None,
+        app_config={
+            "chat_defaults": dict(_SHIPPED_CHAT_DEFAULTS),
+            "api_settings": {"openai": {"model": "legacy-model"}},
+        },
+    )
+
+    assert rebased.settings.provider == "openai"
+    assert rebased.settings.model == "gpt-5.6-terra"
+
+
 def _registry_entry_config() -> dict[str, object]:
     """App config whose registry resolves the ``custom-ep:gpu-box`` id."""
     return {
@@ -774,6 +903,83 @@ def test_rebase_preserves_registry_entry_provider_identity() -> None:
     )
 
     assert rebased.settings.provider == "custom-ep:gpu-box"
+
+
+@pytest.mark.parametrize(
+    ("family", "dropped", "carried"),
+    [
+        ("ollama", {"min_p"}, {"top_k", "seed"}),
+        ("llama_cpp", set(), {"min_p", "reasoning_effort", "thinking_budget_tokens"}),
+        ("openai_compatible", set(), {"min_p", "reasoning_effort"}),
+    ],
+)
+def test_rebase_onto_a_named_endpoint_uses_its_family_request(
+    family, dropped, carried
+) -> None:
+    """TASK-33001.2 AC#3: a ``custom-ep`` id sends through its entry's family
+    (ADR-146, the gateway's ``family_execution_key``), so the draft carries
+    exactly the fields that family's request forwards -- an ollama box never
+    offers Min P, which the ollama request drops."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        supported_generation_fields,
+    )
+    from tldw_chatbook.Chat.custom_endpoint_registry import family_execution_key
+
+    app_config = _registry_entry_config()
+    app_config["custom_endpoints"]["gpu-box"]["family"] = family
+
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="openai", model="gpt-test")),
+        provider="custom-ep:gpu-box",
+        model="model-a",
+        app_config=app_config,
+    )
+
+    fields = {field.name for field in rebased.field_drafts}
+    assert not fields & dropped
+    assert carried <= fields
+    assert fields == FULL_MODEL_DEFAULT_FIELDS & supported_generation_fields(
+        family_execution_key(family), "model-a"
+    )
+
+
+@pytest.mark.parametrize("family", ["ollama", "llama_cpp", "openai_compatible"])
+def test_settings_model_default_rows_decide_a_named_endpoint_like_the_rebase(
+    family,
+) -> None:
+    """Final-review M1 (parent TASK-33001 AC#2): Settings' model-default rows
+    ask the same registry-aware decision as the Console rebase, so an
+    ollama-family endpoint hides Min P in both instead of only in Console."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+        SettingsScreen,
+    )
+
+    app_config = _registry_entry_config()
+    app_config["custom_endpoints"]["gpu-box"]["family"] = family
+    rebased = _rebase(
+        _state(ConsoleSessionSettings(provider="openai", model="gpt-test")),
+        provider="custom-ep:gpu-box",
+        model="model-a",
+        app_config=app_config,
+    )
+    screen = SimpleNamespace(_app_config_mapping=lambda: app_config)
+    row_fields = set(PROVIDER_MODEL_PROFILE_FIELD_KEYS.values())
+    settings_fields = {
+        field
+        for draft_key, field in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
+        if SettingsScreen._model_profile_field_supported(
+            screen, "custom-ep:gpu-box", draft_key, "model-a"
+        )
+    }
+
+    assert settings_fields & FULL_MODEL_DEFAULT_FIELDS == (
+        {field.name for field in rebased.field_drafts} & row_fields
+    )
+    if family == "ollama":
+        assert "min_p" not in settings_fields
 
 
 def test_remember_model_draft_keeps_registry_entry_provider_identity() -> None:
@@ -888,8 +1094,7 @@ def test_rebase_exact_key_restores_provenance_exactly_as_remembered() -> None:
         "temperature": ConsoleSettingsFieldProvenance.EXPLICIT,
         "top_p": ConsoleSettingsFieldProvenance.INHERITED,
         "streaming": ConsoleSettingsFieldProvenance.CARRIED,
-        "min_p": ConsoleSettingsFieldProvenance.INHERITED,
-        "top_k": ConsoleSettingsFieldProvenance.INHERITED,
+        # TASK-33001.2: no min_p or top_k -- OpenAI's request drops both.
         "max_tokens": ConsoleSettingsFieldProvenance.INHERITED,
         "seed": ConsoleSettingsFieldProvenance.INHERITED,
         "presence_penalty": ConsoleSettingsFieldProvenance.INHERITED,

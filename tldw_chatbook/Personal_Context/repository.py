@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import sqlite3
+import stat
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
@@ -14,6 +15,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import local
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
@@ -35,6 +37,7 @@ from tldw_profile_core.canonical import canonical_json_bytes
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.sql_validation import validate_identifier
+from tldw_chatbook.Utils.private_paths import verify_trusted_directory
 
 from .crypto import EncryptedEnvelope, EnvelopeCipher
 from .key_protector import (
@@ -53,6 +56,8 @@ _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
 MAX_UNRESOLVED_PROPOSALS = 200
 _COLLECTION_PAGE_SIZE = 128
+# Device, inode, owner, mode and link count; size/timestamps track content only.
+_STORAGE_IDENTITY_FIELD_COUNT = 5
 _REBASELINE_TABLES = ("local_runtime_policy", "local_scope_bindings")
 _PROFILE_CONTENT_TABLES = (
     "encrypted_outbox",
@@ -361,6 +366,7 @@ class PersonalContextRepository:
         )
         self._protector = key_protector or KeyringProfileKeyProtector()
         self._keys: ProfileKeyMaterial | None = None
+        self._read_operation = local()
 
         with self._transaction() as connection:
             is_new = self._inspect_schema(connection)
@@ -438,6 +444,105 @@ class PersonalContextRepository:
             connection.close()
             raise
 
+    def storage_signature(self) -> tuple:
+        """Read content-free identity/change metadata under the trusted path guard.
+
+        This can invalidate an absent-state cache; it never grants profile access.
+        SQLite sidecars may be created or retired by another connection.
+
+        Returns:
+            Parent identity followed by DB, WAL, SHM and journal metadata tuples.
+            Missing or content-neutral sidecars are represented by None.
+        """
+
+        verify_trusted_directory(self.db_path.parent, allow_shared_sticky=False)
+        parent = self.db_path.parent.stat()
+        metadata = [(parent.st_dev, parent.st_ino, parent.st_uid, parent.st_mode)]
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            try:
+                observed = Path(f"{self.db_path}{suffix}").lstat()
+            except FileNotFoundError:
+                if not suffix:
+                    raise
+                metadata.append(None)
+                continue
+            if (
+                not stat.S_ISREG(observed.st_mode)
+                or observed.st_nlink != 1
+                or (
+                    os.name == "posix"
+                    and (
+                        observed.st_uid != os.geteuid()
+                        or stat.S_IMODE(observed.st_mode) != 0o600
+                    )
+                )
+            ):
+                raise ProfileIntegrityError(
+                    "Personal Context storage authority changed."
+                )
+            # SHM contains coordination, not committed data. Opening a WAL reader
+            # creates SHM and an empty WAL; their retirement must not defeat an
+            # absent cache. Still validate their ownership/privacy above.
+            if suffix == "-shm" or (suffix and observed.st_size == 0):
+                metadata.append(None)
+                continue
+            metadata.append(
+                (
+                    observed.st_dev,
+                    observed.st_ino,
+                    observed.st_uid,
+                    observed.st_mode,
+                    observed.st_nlink,
+                    observed.st_size,
+                    observed.st_mtime_ns,
+                    observed.st_ctime_ns,
+                )
+            )
+        return tuple(metadata)
+
+    @contextmanager
+    def operation(self) -> Iterator[None]:
+        """Reuse one lazy autocommit read connection within this synchronous thread.
+
+        Nested operations borrow the outer lifetime. Mutations retain their own
+        transactions; no read snapshot spans the live authorization fences.
+
+        Returns:
+            A context manager yielding None and closing its owned read connection
+            when the outermost operation exits, including on errors.
+        """
+
+        if getattr(self._read_operation, "state", None) is not None:
+            yield
+            return
+        state = {"connection": None, "identity": None}
+        self._read_operation.state = state
+        try:
+            yield
+        finally:
+            del self._read_operation.state
+            if state["connection"] is not None:
+                state["connection"].close()
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        state = getattr(self._read_operation, "state", None)
+        if state is None:
+            with closing(self._connect()) as connection:
+                yield connection
+            return
+        signature = self.storage_signature()
+        # Content/WAL changes are expected: final fences must observe them live.
+        identity = signature[0], signature[1][:_STORAGE_IDENTITY_FIELD_COUNT]
+        if state["connection"] is None:
+            state["connection"] = self._connect()
+            state["identity"] = identity
+            signature = self.storage_signature()
+            identity = signature[0], signature[1][:_STORAGE_IDENTITY_FIELD_COUNT]
+        if identity != state["identity"]:
+            raise ProfileIntegrityError("Personal Context storage identity changed.")
+        yield state["connection"]
+
     def _iter_head_rows(self, object_type: str) -> Iterator[sqlite3.Row]:
         """Yield one complete head set through bounded, stable keyset pages."""
 
@@ -445,7 +550,7 @@ class PersonalContextRepository:
             raise ValueError("Unsupported collection object type.")
         after_object_id = ""
         while True:
-            with closing(self._connect()) as connection:
+            with self._connection() as connection:
                 rows = connection.execute(
                     "SELECT encrypted_objects.* FROM object_heads "
                     "JOIN encrypted_objects USING (object_type, object_id, version_id) "
@@ -469,7 +574,7 @@ class PersonalContextRepository:
     def is_destroyed(self) -> bool:
         """Return the content-free durable local-removal marker."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT destroyed FROM profile_meta WHERE singleton = 1"
             ).fetchone()
@@ -678,7 +783,7 @@ class PersonalContextRepository:
         """Release WAL history that a completed repository snapshot had pinned."""
 
         try:
-            with closing(self._connect()) as connection:
+            with self._connection() as connection:
                 self._truncate_wal_if_possible(connection)
         except (OSError, sqlite3.Error, ProfileIntegrityError):
             return
@@ -811,7 +916,7 @@ class PersonalContextRepository:
     def first_link_freeze_plan_id(self) -> str | None:
         """Return the content-free durable freeze owner for restart recovery."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT plan_id FROM first_link_freeze WHERE singleton = 1"
             ).fetchone()
@@ -820,7 +925,7 @@ class PersonalContextRepository:
     def first_link_rebaseline_commit_plan_id(self) -> str | None:
         """Return the durable rebaseline-marker owner without key material."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT plan_id FROM first_link_rebaseline_commit WHERE singleton = 1"
             ).fetchone()
@@ -837,7 +942,7 @@ class PersonalContextRepository:
     ) -> bool:
         """Return whether the exact v7 marker still lacks key-record identity."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT 1 FROM first_link_rebaseline_commit "
                 "WHERE singleton = 1 AND target_key_record_id IS NULL "
@@ -872,7 +977,7 @@ class PersonalContextRepository:
     ) -> tuple[str, int | None]:
         """Classify an interrupted apply using only exact content-free evidence."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             marker = connection.execute(
                 "SELECT * FROM first_link_rebaseline_commit WHERE singleton = 1"
             ).fetchone()
@@ -998,7 +1103,7 @@ class PersonalContextRepository:
     def first_link_reconciliation_writes(self, *, plan_id: str) -> Iterator[None]:
         """Authorize only dedicated reconciliation writes under the exact freeze."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT plan_id FROM first_link_freeze WHERE singleton = 1"
             ).fetchone()
@@ -1172,7 +1277,7 @@ class PersonalContextRepository:
         return plaintext
 
     def _head_row(self, object_type: str, object_id: str) -> sqlite3.Row | None:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             return connection.execute(
                 """
                 SELECT encrypted_objects.*
@@ -1417,7 +1522,7 @@ class PersonalContextRepository:
         """Return the current authenticated manifest, if one exists."""
 
         self._require_keys()
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             meta = connection.execute(
                 "SELECT profile_id, current_manifest_version FROM profile_meta WHERE singleton = 1"
             ).fetchone()
@@ -2229,7 +2334,7 @@ class PersonalContextRepository:
     def first_link_head_rows(self) -> tuple[tuple[str, str, str], ...]:
         """Return content-free canonical head identities for convergence checks."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 "SELECT object_type, object_id, version_id FROM object_heads "
                 "WHERE object_type IN ('manifest', 'scope', 'record', 'proposal') "
@@ -2295,7 +2400,7 @@ class PersonalContextRepository:
             for domain, objects in heads.items()
             for object_id, version_id in objects.items()
         }
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             lineage.update(
                 (
                     f"personal_context.{row['object_type']}",
@@ -2894,7 +2999,7 @@ class PersonalContextRepository:
     def get_record_derivation(self, record_id: str) -> str | None:
         """Return the encrypted peer-local source identity for a private record."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             metadata = connection.execute(
                 "SELECT encrypted_link_version FROM local_record_links "
                 "WHERE record_id = ?",
@@ -3208,7 +3313,10 @@ class PersonalContextRepository:
     ]:
         """Read all canonical export heads from one SQLite snapshot."""
 
-        connection = self._connect()
+        with self._connection() as connection:
+            return self._read_export_snapshot(connection)
+
+    def _read_export_snapshot(self, connection: sqlite3.Connection) -> tuple:
         try:
             connection.execute("BEGIN")
             meta = connection.execute(
@@ -3262,7 +3370,6 @@ class PersonalContextRepository:
             connection.rollback()
             raise
         finally:
-            connection.close()
             self._checkpoint_after_snapshot()
 
     def resolve_proposal(
@@ -3665,7 +3772,7 @@ class PersonalContextRepository:
     def is_scope_explicitly_unlinked(self, scope_id: str) -> bool:
         """Return whether first-link review retained this workspace as local-only."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT 1 FROM local_unlinked_scopes WHERE scope_id = ?",
                 (scope_id,),
@@ -3686,7 +3793,7 @@ class PersonalContextRepository:
         )
 
     def list_scope_bindings(self) -> dict[str, dict[str, Any]]:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 "SELECT scope_id FROM local_scope_bindings ORDER BY scope_id"
             ).fetchall()
@@ -3724,7 +3831,7 @@ class PersonalContextRepository:
     def list_validated_scope_bindings(self) -> dict[str, dict[str, Any]]:
         """Return only authenticated exact-v1 workspace mappings."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             scope_ids = [
                 row["scope_id"]
                 for row in connection.execute(
@@ -3740,7 +3847,7 @@ class PersonalContextRepository:
     def _get_local_version(
         self, table: str, version_column: str, scope_id: str
     ) -> str | None:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 f"SELECT {version_column} FROM {table} WHERE scope_id = ?",
                 (scope_id,),
@@ -3985,7 +4092,7 @@ class PersonalContextRepository:
         object_type: str,
         scope_id: str,
     ) -> dict[str, Any] | None:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             version = connection.execute(
                 f"SELECT {version_column} FROM {table} WHERE scope_id = ?", (scope_id,)
             ).fetchone()
@@ -4120,7 +4227,7 @@ class PersonalContextRepository:
             )
 
     def get_outbox_body(self, outbox_id: str) -> dict[str, Any] | None:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             outbox = connection.execute(
                 "SELECT envelope_version FROM encrypted_outbox WHERE outbox_id = ?",
                 (outbox_id,),
@@ -4141,7 +4248,7 @@ class PersonalContextRepository:
 
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("Outbox limit must be between 1 and 500.")
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 "SELECT outbox_id, object_type, object_id, version_id, status, "
                 "created_at FROM encrypted_outbox WHERE status = 'pending' "
@@ -4176,7 +4283,7 @@ class PersonalContextRepository:
         if ordered_scope_ids:
             placeholders = ",".join("?" for _ in ordered_scope_ids)
             scope_filter = f"canonical.scope_id IN ({placeholders})"
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 "SELECT outbox.outbox_id, outbox.object_type, outbox.object_id, "
                 "outbox.version_id, outbox.status, outbox.created_at "
@@ -4250,7 +4357,7 @@ class PersonalContextRepository:
             )
 
     def get_outbox_receipt(self, outbox_id: str) -> str | None:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT destination_envelope_id FROM encrypted_outbox WHERE outbox_id = ?",
                 (outbox_id,),
@@ -4258,7 +4365,7 @@ class PersonalContextRepository:
         return None if row is None else row["destination_envelope_id"]
 
     def get_outbox_quarantine_reason(self, outbox_id: str) -> str | None:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT quarantine_reason FROM encrypted_outbox WHERE outbox_id = ?",
                 (outbox_id,),
@@ -4313,7 +4420,7 @@ class PersonalContextRepository:
     def _is_quarantined(
         self, object_type: str, object_id: str, version_id: str | None
     ) -> bool:
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             return (
                 connection.execute(
                     "SELECT 1 FROM quarantine WHERE object_type = ? AND object_id = ? "
@@ -4326,7 +4433,7 @@ class PersonalContextRepository:
     def list_quarantine(self) -> list[QuarantineEntry]:
         """Return content-free quarantine metadata."""
 
-        with closing(self._connect()) as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 "SELECT * FROM quarantine ORDER BY created_at, quarantine_id"
             ).fetchall()

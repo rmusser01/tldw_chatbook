@@ -1,6 +1,6 @@
 # ADR-103: Fast PR lane and required gate aggregation
 
-Status: Accepted (amended 2026-08-30 for admin/current-base enforcement)
+Status: Accepted (amended 2026-08-30 for admin/current-base enforcement); amended 2026-09-27 (nightly disabled, guards removed, GGUF evidence narrowed)
 Date: 2026-08-29
 Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-25705](../tasks/task-25705%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 Supersedes: N/A
@@ -12,6 +12,9 @@ result is aggregated by the existing required `Derived artifacts reproduce from
 their sources` context; comprehensive test coverage runs on `main`, manual
 events, and a dedicated default-branch-owned nightly workflow instead of every
 pull-request update.
+
+   (Clarified 2026-09-27: since TASK-32908 the fast test runs as two parallel jobs,
+   PR Fast Lane and UI Fast Lane; see Consequences.)
 
 ## Amendment (2026-08-30, TASK-25705) — adopted
 
@@ -41,6 +44,12 @@ by it and its result describes the current base. The additional queue/rebase
 cost is accepted: administrators wait for the same gate as other contributors,
 and a base update may require a fresh result before merge. Force-push policy is
 unchanged by this amendment.
+
+**Note (2026-09-27):** the owner relaxed strict to `false` on 2026-09-12, recorded
+in `backlog/docs/branch-protection-baseline.md` but not here. The owner restored
+strict to `true` on 2026-09-27 after stale-base merges caused breakage, so this
+amendment's rule is in force again. See the baseline doc for the reasons and
+the runner-starvation root cause found the same day.
 
 ## Context
 
@@ -92,14 +101,14 @@ cron entry on `dev`.
 
 - The existing required job name remains unchanged, so branch protection needs
   no migration and existing PRs are not stranded.
-- The fast-test job and derived-artifact job remain separate. The required job
-  declares the fast lane as a prerequisite, runs with `always()`, and fails
-  explicitly on pull requests unless the prerequisite result is `success`.
-- The required workflow consumes at most one runner at a time: the fast lane
-  runs first, followed by the install-free derived checks. Together with the
-  three routine path-scoped guards, an ordinary unlabeled, non-GGUF PR has a
-  peak of at most four runners instead of approximately thirteen.
-- That four-runner figure is not a global maximum. The two path-scoped GGUF
+- The fast-test jobs and derived-artifact job remain separate. The required job
+  declares both fast lanes as prerequisites, runs with `always()`, and fails
+  explicitly on pull requests unless both prerequisite results are `success`.
+- The required workflow runs its two fast lanes in parallel (at most two
+  runners at a time), then the install-free derived-artifact checks. With
+  one routine path-scoped guard (perf-guard), an ordinary unlabeled, non-GGUF PR has a
+  peak of at most three runners instead of approximately thirteen.
+- That three-runner figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
   suites retain their explicit contracts.
@@ -134,3 +143,28 @@ cron entry on `dev`.
 - [TASK-19600](../tasks/task-19600%20-%20Nightly-deep-test-tier-has-never-fired-cron-registers-only-from-the-default-branch.md)
 - [Fast PR lane design](../../Docs/superpowers/specs/2026-08-29-fast-pr-lane-design.md)
 - [TASK-22250](../tasks/task-22250%20-%20CI%20runs%20are%20swept%20by%20simultaneous%20burst%20cancellations.md)
+
+## Amendment (2026-09-27): nightly disabled; duplicated guards removed
+
+- **Full-tree cadence change.** `nightly-deep.yml` was disabled with
+  `gh workflow disable` on 2026-09-27 (owner decision). It had produced 0 complete
+  runs in 8 nights while using about 22% of the account's runner-minutes and 64% of
+  its macOS minutes. Until CI throughput sub-project 3 restores it (`gh workflow
+  enable`, once a run can finish and report), full-tree coverage comes only from
+  `main` pushes and manual dispatch. The last `main` push was 2026-09-14. This
+  records the loss rather than hiding it; the nightly had not produced a complete
+  verdict before the change either.
+- **Guards.** `css-bundle-guard.yml` and `backlog-guard.yml` were deleted. Their
+  checks already ran inside the required job on every pull request and on every
+  `dev`/`main` push. The Consequences runner count above is updated to match.
+- **GGUF evidence narrowed.** `task-2062-1`/`-2` evidence workflows no longer fire on
+  `app.py`, `config.py` or `css/**` edits (about 244 of the PR merges that triggered
+  them in 30 days). They still fire on GGUF code, their own tests, `pyproject.toml`
+  (the only native macOS/Windows install signal a PR gets) and the shared
+  test-harness files they import. Their UI test files are not in the PR gate's UI
+  census because neither is green on the fast lane's minimal dependency set (all 11
+  failures are `RecoveryRequired: raw_source_selection_changed`). So until that
+  harness gate is fixed (CI throughput sub-project 3), an edit confined to `app.py`,
+  `config.py` or `css/**` does not exercise the GGUF screens on any PR.
+- **Strict.** Restored on 2026-09-27 (see the note under the 2026-08-30 amendment).
+- Spec: `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.

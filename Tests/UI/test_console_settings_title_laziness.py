@@ -27,6 +27,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
@@ -117,3 +118,63 @@ async def test_the_title_seam_still_consults_the_registry():
             "laziness over-reached into creation, or the counter is unwired"
         )
         assert title.endswith(" Chat")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rebuilds_and_keystrokes_rederive_pristine_defaults_at_most_once(
+    request, monkeypatch
+):
+    """TASK-33001.5 AC#10: one derivation per saved config, not per rebuild.
+
+    D1 removed the send-capable early return that used to keep a pristine
+    chat's defaults off this path, so the refresh now re-derives them from
+    the fresh config. It must do so at most once between two saves, and the
+    discarded creation-time defaults must not be derived per rebuild either.
+    """
+    import tldw_chatbook.UI.Console_Modules.session as session_module
+    from tldw_chatbook import config as config_module
+
+    derivations: list[object] = []
+    real = session_module.blank_console_session_settings
+
+    def counting(app_config):
+        derivations.append(app_config)
+        return real(app_config)
+
+    _app, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._session._ensure_console_chat_store()
+        settings = console._session._ensure_active_console_session_settings()
+        session = next(
+            item for item in store.sessions() if item.id == store.active_session_id
+        )
+        assert settings.provider == "llama_cpp"  # keyless: reads Ready
+        assert not session.has_user_work
+        assert session.canonical_settings_baseline == settings
+        assert not store.messages_for_session(session.id)
+        monkeypatch.setattr(
+            session_module, "blank_console_session_settings", counting
+        )
+
+        for _ in range(5):
+            console._session._ensure_active_console_session_settings()
+            console._active_console_provider_model_display_uncached()
+        assert derivations == [], "rebuilds re-derived an unchanged config"
+
+        # One saved default through the real config writer.
+        assert config_module.save_setting_to_cli_config(
+            "chat_defaults", "model", "saved-after-mount"
+        )
+        for _ in range(5):
+            shown = console._session._ensure_active_console_session_settings()
+            console._active_console_provider_model_display_uncached()
+        assert shown.model == "saved-after-mount"
+        assert len(derivations) == 1, derivations
+
+        console.query_one("#console-native-composer").focus()
+        await pilot.press("h", "i")
+        await pilot.pause()
+        console._active_console_provider_model_display_uncached()
+        assert len(derivations) == 1, derivations

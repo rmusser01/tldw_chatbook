@@ -106,6 +106,8 @@ _TOOL_ACTION_IDS = {
     "create_note": "notes.create.local",
     "search_notes": "notes.list.local",
     "list_characters": "character.persona.list.local",
+    "create_character": "character.persona.create.local",
+    "update_character": "character.persona.update.local",
     "get_conversation_history": "chat.detail.local",
     "export_conversation": "chat.detail.local",
     **{

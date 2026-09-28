@@ -81,6 +81,7 @@ LEGACY_PROVIDER_IDS = (
     "chatterbox",
     "higgs",
     "alltalk",
+    "omnivoice",
 )
 _STATIC_ROUTES = {
     "local_kokoro_default_onnx": "kokoro",
@@ -90,6 +91,7 @@ _STATIC_ROUTES = {
     "local_higgs_v2": "higgs",
     "alltalk_default": "alltalk",
     "alltalk_alltalk": "alltalk",
+    "local_omnivoice_default": "omnivoice",
 }
 LEGACY_ROUTES = {
     **{internal_id: "openai" for internal_id in OPENAI_INTERNAL_IDS},
@@ -104,6 +106,7 @@ _DISPLAY_NAMES = {
     "chatterbox": "Chatterbox (Local)",
     "higgs": "Higgs Audio (Local)",
     "alltalk": "AllTalk (Local)",
+    "omnivoice": "OmniVoice (Local)",
 }
 _CONTENT_TYPES = {
     "mp3": "audio/mpeg",
@@ -120,6 +123,7 @@ _APP_TTS_PREFIXES = {
     "chatterbox": "CHATTERBOX_",
     "higgs": "HIGGS_",
     "alltalk": "ALLTALK_",
+    "omnivoice": "OMNIVOICE_",
 }
 _BACKEND_PREFIXES = {
     "openai": "openai_official",
@@ -128,6 +132,7 @@ _BACKEND_PREFIXES = {
     "chatterbox": "local_chatterbox_",
     "higgs": "local_higgs_",
     "alltalk": "alltalk_",
+    "omnivoice": "local_omnivoice_",
 }
 
 
@@ -253,14 +258,18 @@ def legacy_provider_config(
             ("API", "openai_api_key"),
         )
         if authentication_mode is OpenAIAuthenticationMode.API_KEY:
-            api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
-                raw,
-                openai_key_locations,
-            )
+            # Stored config BEFORE the environment (Qodo review of #2800).
+            # This projection feeds `TTSBackendManager.app_config`, whose
+            # `_prepare_backend_config` copies it into the backend's
+            # explicit-override slot -- so resolving the env var first here
+            # re-inverted ADR-012's stored-outranks-env rule one layer up
+            # from where it was just fixed.
+            api_key = _first_mapping_value(raw, openai_key_locations)
             api_key = api_key or _first_mapping_value(
                 app_config,
                 openai_key_locations,
             )
+            api_key = api_key or os.getenv("OPENAI_API_KEY")
             if api_key:
                 projected["openai_api"] = {"api_key": api_key}
         else:
@@ -273,14 +282,13 @@ def legacy_provider_config(
             ("API", "elevenlabs_api_key"),
             ("elevenlabs_api", "api_key"),
         )
-        api_key = os.getenv("ELEVENLABS_API_KEY") or _first_mapping_value(
-            raw,
-            elevenlabs_key_locations,
-        )
+        # Stored config before the environment, as above.
+        api_key = _first_mapping_value(raw, elevenlabs_key_locations)
         api_key = api_key or _first_mapping_value(
             app_config,
             elevenlabs_key_locations,
         )
+        api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
         if api_key:
             projected["elevenlabs_api"] = {"api_key": api_key}
     elif provider_id == "kokoro":
@@ -307,6 +315,22 @@ def legacy_provider_config(
         if "HIGGS_MODEL_PATH" in os.environ:
             effective_higgs["model_path"] = os.environ["HIGGS_MODEL_PATH"]
         projected["HiggsSettings"] = effective_higgs
+        projected["app_tts"] = {}
+    elif provider_id == "omnivoice":
+        omnivoice_settings = raw.get("OmniVoiceSettings")
+        effective_omnivoice = (
+            deepcopy(dict(omnivoice_settings))
+            if isinstance(omnivoice_settings, Mapping)
+            else {}
+        )
+        for key, value in raw.items():
+            if str(key).startswith("OMNIVOICE_"):
+                effective_omnivoice[
+                    str(key).removeprefix("OMNIVOICE_").lower()
+                ] = deepcopy(value)
+        if "OMNIVOICE_MODEL_ROOT" in os.environ:
+            effective_omnivoice["model_root"] = os.environ["OMNIVOICE_MODEL_ROOT"]
+        projected["OmniVoiceSettings"] = effective_omnivoice
         projected["app_tts"] = {}
 
     return {"app_config": projected}

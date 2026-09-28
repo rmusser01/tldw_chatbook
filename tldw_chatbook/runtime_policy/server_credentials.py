@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote
@@ -398,6 +399,17 @@ def build_default_server_credential_store(
     return KeyringServerCredentialStore(keyring_backend=secure_backend)
 
 
+# TASK-32922: `build_client` resolves the token before its client cache can
+# hit, so every server API call re-read the keyring on the UI loop -- one
+# SecretService D-Bus round trip per call on Linux. Reads are cached briefly;
+# any write or delete through this store drops the whole cache.
+# Kept short (Qodo review on #2820): tldw_server drops a rotated key at once,
+# so a key rotated by ANOTHER process can fail requests for up to this window.
+# ponytail: bounded staleness; invalidate-and-retry on 401 would need a hook
+# in every server service -- add one if rotation from other processes grows.
+_SECRET_READ_TTL_SECONDS = 5.0
+
+
 class KeyringServerCredentialStore:
     def __init__(
         self,
@@ -410,6 +422,27 @@ class KeyringServerCredentialStore:
 
             keyring_backend = keyring
         self._keyring = keyring_backend
+        self._reads: dict[str, tuple[float, str | None]] = {}
+        # Bumped AFTER every write/delete so a read that raced one is not
+        # cached, and nothing cached before it survives.
+        self._read_generation = 0
+
+    def _cached_get(self, username: str) -> str | None:
+        now = time.monotonic()
+        hit = self._reads.get(username)
+        if hit is not None and hit[0] > now:
+            return hit[1]
+        generation = self._read_generation
+        value = self._keyring.get_password(self.service_name, username)
+        if generation == self._read_generation:
+            # Expiry starts when the (possibly prompting) read returns.
+            expires = time.monotonic() + _SECRET_READ_TTL_SECONDS
+            self._reads[username] = (expires, value)
+        return value
+
+    def _drop_cached_reads(self) -> None:
+        self._read_generation += 1
+        self._reads.clear()
 
     def _load_index(self) -> list[ServerCredentialScope]:
         payload = self._keyring.get_password(self.service_name, _KEYRING_INDEX_USERNAME)
@@ -515,10 +548,13 @@ class KeyringServerCredentialStore:
     def set_scoped_secret(self, scope: ServerCredentialScope, secret: str) -> None:
         scope = _normalize_scope(scope)
         with _RECOVERY_SCOPE_LOCK:
-            self._keyring.set_password(
-                self.service_name, _username_for_scope(scope), secret
-            )
-            self._add_scope_to_index(scope)
+            try:
+                self._keyring.set_password(
+                    self.service_name, _username_for_scope(scope), secret
+                )
+                self._add_scope_to_index(scope)
+            finally:
+                self._drop_cached_reads()
 
     def set_recovery_secret_if_absent(self, scope: ServerCredentialScope, secret: str) -> None:
         """Create an operation-unique scope; never replace an existing value."""
@@ -529,18 +565,20 @@ class KeyringServerCredentialStore:
 
     def get_scoped_secret(self, scope: ServerCredentialScope) -> str | None:
         scope = _normalize_scope(scope)
-        secret = self._keyring.get_password(
-            self.service_name, _username_for_scope(scope)
-        )
+        secret = self._cached_get(_username_for_scope(scope))
         if secret is not None:
             return secret
         if not _is_legacy_scope(scope):
             return None
-        return self._keyring.get_password(
-            self.service_name, _legacy_username_for_scope(scope)
-        )
+        return self._cached_get(_legacy_username_for_scope(scope))
 
     def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
+        try:
+            self._delete_scoped_secret(scope)
+        finally:
+            self._drop_cached_reads()
+
+    def _delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
         scope = _normalize_scope(scope)
         username = _username_for_scope(scope)
         legacy_username = _legacy_username_for_scope(scope)

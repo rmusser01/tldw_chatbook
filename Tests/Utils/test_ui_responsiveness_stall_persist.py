@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import time
+import types
 
 import pytest
 
@@ -186,6 +187,96 @@ class TestStallPersistenceIntegration:
         }
         missing = sent - allowed
         assert not missing, f"monitor sends fields the sink rejects: {missing}"
+
+
+# Rebound into a fake Chatbook module by TestStallAttribution.
+def load_marker() -> None:
+    time.sleep(0.5)
+
+
+def status_for_skill() -> None:
+    load_marker()
+
+
+class TestStallAttribution:
+    """TASK-32920: a stall record names the code the loop was stuck in.
+
+    The heartbeat only notices a stall after the loop recovers, when the
+    culprit is gone from the stack; a watchdog thread samples the loop
+    thread's frames DURING the stall. Runs the real schema path.
+    """
+
+    def test_stall_record_names_the_blocking_frames(self, monkeypatch) -> None:
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        logger = logging.getLogger("tldw_chatbook.diagnostics.ui")
+        monkeypatch.setattr(logger, "handlers", [_Capture()])
+        monkeypatch.setattr(logger, "propagate", False)
+        monkeypatch.setattr(logger, "level", logging.INFO)
+
+        # Two frames that look like Chatbook code (the watchdog keys on the
+        # frame's module name), the inner one blocking the way a D-Bus keyring
+        # read or a locked SQLite write does.
+        namespace: dict = {"__name__": "tldw_chatbook.fake_trust", "time": time}
+        for fn in (load_marker, status_for_skill):
+            namespace[fn.__name__] = types.FunctionType(fn.__code__, namespace)
+        monitor = UIResponsivenessMonitor(
+            stall_threshold_ms=150, heartbeat_interval_seconds=0.05
+        )
+        try:
+            monitor.heartbeat()  # arms the watchdog on this ("loop") thread
+            namespace["status_for_skill"]()
+            monitor.heartbeat()
+            _drain(monitor, expected=1)
+        finally:
+            monitor.close()
+        assert not monitor._watchdog_thread.is_alive()
+
+        message = records[0].getMessage()
+        assert "event=event_loop_stall" in message
+        assert "site_module=tldw_chatbook.fake_trust" in message
+        assert "site_function=load_marker" in message
+        assert f"site_line={load_marker.__code__.co_firstlineno + 1}" in message
+        assert "caller_function=status_for_skill" in message
+        # Qodo review on #2820: the innermost frame carries its line too.
+        assert f"leaf_line={load_marker.__code__.co_firstlineno + 1}" in message
+        assert "invalid" not in message
+
+    def test_a_stall_before_the_first_heartbeat_is_attributed(
+        self, monkeypatch
+    ) -> None:
+        """Qodo review on #2820: the watchdog started at the first heartbeat,
+        so a stall between timer install and that beat went unattributed.
+        ``arm()`` is called where the heartbeat timer is installed."""
+        persisted = _patch_persist(monkeypatch)
+        namespace: dict = {"__name__": "tldw_chatbook.fake_trust", "time": time}
+        for fn in (load_marker, status_for_skill):
+            namespace[fn.__name__] = types.FunctionType(fn.__code__, namespace)
+        monitor = UIResponsivenessMonitor(
+            stall_threshold_ms=150, heartbeat_interval_seconds=0.05
+        )
+        try:
+            monitor.arm()
+            namespace["status_for_skill"]()  # stall before any heartbeat
+            monitor.heartbeat()
+            _drain(monitor, expected=1)
+        finally:
+            monitor.close()
+        assert persisted[0]["site_function"] == "load_marker"
+
+    def test_no_attribution_without_a_live_stall(self, monkeypatch) -> None:
+        persisted = _patch_persist(monkeypatch)
+        monitor = UIResponsivenessMonitor(stall_threshold_ms=250)
+        try:
+            monitor.record_heartbeat_delta(0.9)  # synthetic, never sampled
+            _drain(monitor, expected=1)
+        finally:
+            monitor.close()
+        assert "site_function" not in persisted[0]
 
 
 def _drain(

@@ -32,6 +32,8 @@ from textual import work
 from ..TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
 from ..TTS.backends.chatterbox_voice_manager import ChatterboxVoiceManager
 from ..TTS.backends.voice_manager_base import VoiceManagerBase
+from ..TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
+from ..TTS.omnivoice_voice_manager import OmniVoiceVoiceManager
 from ..config import get_cli_setting
 from ..Utils.input_validation import escape_markup
 from ..Widgets.enhanced_file_picker import (
@@ -47,6 +49,28 @@ from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixi
 #
 # Voice Cloning Window
 #
+
+
+#: Cloning backends in default-preference order (Higgs stays the default
+#: whenever it is installed).
+_CLONING_BACKEND_ORDER = ("higgs", "omnivoice", "chatterbox")
+
+
+def default_cloning_backend(local: Any) -> Optional[str]:
+    """Pick the backend the Voice Cloning window should open on.
+
+    Args:
+        local: A ``SpeechLocalDependencyAvailability`` snapshot (anything with
+            boolean ``higgs``/``omnivoice``/``chatterbox`` attributes).
+
+    Returns:
+        The first installed cloning backend in preference order, or None when
+        no cloning backend is installed (the window then shows its alert).
+    """
+    return next(
+        (name for name in _CLONING_BACKEND_ORDER if getattr(local, name, False)),
+        None,
+    )
 
 
 class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
@@ -193,6 +217,7 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
                     options=[
                         ("Higgs Audio", "higgs"),
                         ("Chatterbox", "chatterbox"),
+                        ("OmniVoice", "omnivoice"),
                         ("GPT-SoVITS (Coming Soon)", "gpt-sovits"),
                     ],
                     value="higgs",
@@ -267,14 +292,23 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
 
     async def on_mount(self) -> None:
         """Initialize the window on mount"""
-        # Check if TTS dependencies are available
-        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+        # Warn only when no cloning backend is installed. This used to test
+        # `tts_processing` (Kokoro + pyaudio), which no cloning backend uses,
+        # so the window blocked OmniVoice/Higgs/Chatterbox users with a
+        # "Text-to-Speech not available" alert for packages they don't need.
+        from .Lab_Modules.lab_speech_status import speech_local_dependency_availability
 
-        if not DEPENDENCIES_AVAILABLE.get("tts_processing", False):
-            from ..Utils.widget_helpers import alert_tts_not_available
+        backend = default_cloning_backend(
+            speech_local_dependency_availability(refresh=True)
+        )
+        if backend is None:
+            from ..Utils.widget_helpers import alert_voice_cloning_not_available
 
             # Show alert after a short delay to ensure UI is ready
-            self.set_timer(0.1, lambda: alert_tts_not_available(self))
+            self.set_timer(0.1, lambda: alert_voice_cloning_not_available(self))
+        elif backend != self.current_backend:
+            self.current_backend = backend
+            self.query_one("#backend-select", Select).value = backend
 
         # Initialize backend managers
         await self._initialize_backends()
@@ -309,6 +343,16 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
                 )
             ).expanduser()
             self.backend_managers["chatterbox"] = ChatterboxVoiceManager(chatterbox_dir)
+
+            # Initialize OmniVoice
+            omnivoice_dir = Path(
+                get_cli_setting(
+                    "OmniVoiceSettings",
+                    "voice_samples_dir",
+                    OMNIVOICE_DEFAULT_VOICES_DIR,
+                )
+            ).expanduser()
+            self.backend_managers["omnivoice"] = OmniVoiceVoiceManager(omnivoice_dir)
 
             # GPT-SoVITS placeholder
             # self.backend_managers["gpt-sovits"] = GPTSoVITSVoiceManager(...)
@@ -501,23 +545,33 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
                     # Create profile using the current backend manager
                     manager = self.backend_managers.get(self.current_backend)
                     if manager:
-                        success, message = manager.create_profile(
-                            profile_name=profile_data["name"],
-                            reference_audio_path=str(path),
-                            display_name=profile_data["display_name"],
-                            language=profile_data["language"],
-                            description=profile_data["description"],
-                            tags=profile_data["tags"],
+                        create_kwargs: Dict[str, Any] = {
+                            "profile_name": profile_data["name"],
+                            "reference_audio_path": str(path),
+                            "display_name": profile_data["display_name"],
+                            "language": profile_data["language"],
+                            "description": profile_data["description"],
+                            "tags": profile_data["tags"],
+                        }
+                        if self.current_backend == "omnivoice":
+                            # Only OmniVoice consumes the transcript; sibling
+                            # manager signatures do not accept it.
+                            create_kwargs["reference_text"] = profile_data.get(
+                                "reference_text", ""
+                            )
+                        # Creation probes/decodes the clip and copies it:
+                        # keep that file I/O off the UI thread.
+                        self._spawn_action(
+                            self._create_profile_off_thread(manager, create_kwargs),
+                            "voice_cloning_create_profile",
                         )
 
-                        if success:
-                            self.notify(message, severity="information")
-                            self._load_profiles()
-                        else:
-                            self.notify(message, severity="error")
-
                 # Push the profile dialog
-                dialog = VoiceProfileDialog(str(path), on_submit=handle_profile_data)
+                dialog = VoiceProfileDialog(
+                    str(path),
+                    on_submit=handle_profile_data,
+                    request_reference_text=(self.current_backend == "omnivoice"),
+                )
                 self.app.push_screen(dialog)
 
         # Show file picker
@@ -644,6 +698,24 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         file_open.on_file_selected = handle_import_selection
         self.app.push_screen(file_open)
 
+    async def _create_profile_off_thread(
+        self, manager: VoiceManagerBase, create_kwargs: Dict[str, Any]
+    ) -> None:
+        """Create a profile on a worker thread, then report on the UI thread.
+
+        Args:
+            manager: The current backend's voice manager.
+            create_kwargs: Keyword arguments for ``manager.create_profile``.
+        """
+        success, message = await asyncio.to_thread(
+            manager.create_profile, **create_kwargs
+        )
+        if success:
+            self.notify(message, severity="information")
+            self._load_profiles()
+        else:
+            self.notify(message, severity="error")
+
     async def _test_generate_voice(self) -> None:
         """Generate test audio with selected profile"""
         test_profile = self.query_one("#test-profile-select", Select).value
@@ -673,7 +745,13 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
 
         # Post TTS generation event
         # The actual generation will be handled by the STTS event handler
-        provider = "higgs" if self.current_backend == "higgs" else "chatterbox"
+        # Each cloning backend synthesizes its own profiles; OmniVoice's need
+        # its transcript-aware loader, never Chatterbox's.
+        provider = (
+            self.current_backend
+            if self.current_backend in {"higgs", "chatterbox", "omnivoice"}
+            else "chatterbox"
+        )
 
         # For profile-based voices, format as "profile:name"
         voice = f"profile:{test_profile}"

@@ -32,6 +32,7 @@ Dependencies:
 
 #
 # Import necessary libraries
+import asyncio
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -39,13 +40,22 @@ import json
 import os
 import random
 from typing import Any, Dict, List, Union, Optional, Tuple
+from urllib.parse import urljoin, urlparse
+from xml.dom import minidom
+# Stdlib ElementTree for document BUILDING only (`Element`/
+# `SubElement`/`tostring`/`ElementTree` have no defusedxml
+# counterparts, and a tree we construct ourselves carries no
+# attacker-controlled input). Every PARSE of foreign bytes goes
+# through `_safe_fromstring`/`_safe_parse` below -- the shape
+# `Subscriptions/watchlist_opml_service.py` established. A fetched
+# sitemap is a billion-laughs vector that `MAX_FETCH_BYTES_SITEMAP`
+# cannot bound, because amplification is the whole point.
+import xml.etree.ElementTree as xET
 
 #
 # 3rd-Party Imports
-import asyncio
-from urllib.parse import urljoin, urlparse
-from xml.dom import minidom
-import xml.etree.ElementTree as xET
+from defusedxml.ElementTree import fromstring as _safe_fromstring
+from defusedxml.ElementTree import parse as _safe_parse
 
 #
 # External Libraries
@@ -164,6 +174,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter  # n
 from tldw_chatbook.Logging_Config import logging  # noqa: E402
 from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new  # noqa: E402
 from tldw_chatbook.Utils.input_validation import validate_url  # noqa: E402
+from tldw_chatbook.Utils.path_validation import validate_path_simple  # noqa: E402
 from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager  # noqa: E402
 from tldw_chatbook.Utils.egress import (  # noqa: E402
     EgressBlockedError,
@@ -867,29 +878,97 @@ def scrape_and_no_summarize_then_ingest(url, keywords, custom_article_title):
         return f"Failed to process URL {url}: {str(e)}"
 
 
+def _sitemap_log_name(source: str) -> str:
+    """A sitemap source safe to name in a persistent log.
+
+    Without this, every refusal logged the same "Error parsing sitemap" line
+    and nothing said which import or fetch produced it (Qodo review of
+    #2800). What may be logged is narrower than the source itself:
+
+    * A URL keeps only scheme, host and path. Userinfo carries credentials
+      and the query carries tokens; neither belongs in a persistent sink.
+    * A local path keeps only its basename -- a full path under the user's
+      home is exactly what ``scripts/check_profile_owned_paths.py`` polices.
+
+    Args:
+        source: The sitemap URL or local file path the caller supplied.
+
+    Returns:
+        A short, attributable label. Never the raw source.
+    """
+    parsed = urlparse(source)
+    if parsed.scheme in ("http", "https"):
+        return f"{parsed.scheme}://{parsed.hostname or ''}{parsed.path}"
+    return os.path.basename(source) or "<unnamed>"
+
+
 def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
     """
     Scrape articles from a sitemap file, applying an additional filter function.
 
-    :param sitemap_file: Path to the sitemap file
+    :param sitemap_file: Path to the sitemap file. Rejected by
+        `Utils.path_validation` -- and the file never opened -- if it is a
+        traversal spelling, carries shell metacharacters, or does not exist.
     :param filter_function: A function that takes a URL and returns True if it should be scraped
-    :return: List of scraped articles
+    :return: List of scraped articles (empty if the path or the XML is refused)
     """
+    # The LOCAL path is caller-controlled and used to reach `_safe_parse`
+    # unvalidated (Qodo review of #2800), so traversal spellings and
+    # out-of-scope absolute paths were opened as-is. This is the one place
+    # the local branch reads the filesystem -- `scrape_and_convert_with_
+    # filter` forwards its `source` straight here -- so the guard belongs
+    # here and covers both. The URL branch is untouched: it goes to
+    # `scrape_from_sitemap`, which fetches rather than opens.
+    #
+    # `validate_path_simple` (not `validate_path`) is the right mode: there
+    # is no app-owned sitemap directory to confine to -- a user may keep a
+    # sitemap anywhere -- which is the same reasoning `UI/Evals/snippet_
+    # editor.py` and `Character_Chat_Lib.parse_character_card` document for
+    # their user-chosen files.
     try:
-        tree = xET.parse(sitemap_file)
-        root = tree.getroot()
-
-        articles = []
-        for url in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"):
-            if filter_function(url.text):
-                article_data = scrape_article(url.text)
-                if article_data:
-                    articles.append(article_data)
-
-        return articles
-    except xET.ParseError as e:
-        logging.error(f"Error parsing sitemap: {e}")
+        sitemap_path = validate_path_simple(sitemap_file, require_exists=True)
+    except ValueError:
+        # The reason is NOT logged: `validate_path_simple`'s catch-all
+        # message embeds the rejected path, which is exactly what
+        # `_sitemap_log_name` exists to keep out of a persistent sink.
+        logging.error(
+            f"Refused sitemap path {_sitemap_log_name(sitemap_file)}: "
+            "failed path validation"
+        )
         return []
+
+    # PARSE only. `ValueError` is a broad net -- it is how defusedxml's
+    # `EntitiesForbidden` refusal arrives, since that is not an
+    # `ET.ParseError` -- so the block it guards must hold nothing else.
+    # `filter_function` is CALLER-SUPPLIED code (Qodo review of #2800):
+    # running it under this handler reported any `ValueError` it raised as
+    # "Error parsing sitemap" and returned an empty list, so a broken filter
+    # looked like an empty sitemap.
+    try:
+        tree = _safe_parse(sitemap_path)
+        root = tree.getroot()
+    except (xET.ParseError, ValueError) as e:
+        # Type only, never the message: `EntitiesForbidden` names the
+        # offending ENTITY, i.e. text the hostile document chose, and this
+        # sink is persistent (`local_watchlists_service._check_url_isolated`
+        # states the rule). The file's BASENAME is safe and is what
+        # attributes the failure when several imports refuse alike; the
+        # directory is not logged, because a full local path in a persistent
+        # sink is what the profile-owned-path census exists to police.
+        logging.error(
+            f"Error parsing sitemap {_sitemap_log_name(sitemap_file)}: "
+            f"{type(e).__name__}"
+        )
+        return []
+
+    articles = []
+    for url in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"):
+        if filter_function(url.text):
+            article_data = scrape_article(url.text)
+            if article_data:
+                articles.append(article_data)
+
+    return articles
 
 
 def is_content_page(url: str) -> bool:
@@ -1051,8 +1130,16 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
             user-intended. Applied to the sitemap fetch alone.
 
     Returns:
-        The scraped articles, or ``[]`` if the sitemap could not be fetched.
+        The scraped articles, or ``[]`` if the sitemap could not be fetched
+        or could not be parsed (malformed, or refused by the hardened
+        parser).
     """
+    # Fetch and PARSE only. `ValueError` is a broad net -- it is how
+    # defusedxml's `EntitiesForbidden` refusal arrives, since that is not an
+    # `ET.ParseError` -- so the block it guards must contain nothing but the
+    # parse. Scraping under it too (Qodo review of #2800) turned any
+    # `ValueError` raised while scraping an article into "Error parsing
+    # sitemap" plus a successful-looking empty result.
     try:
         response = guarded_fetch_requests(
             sitemap_url,
@@ -1061,21 +1148,30 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
             timeout=30,
         )
         response.raise_for_status()
-        root = xET.fromstring(response.content)
-
-        return [
-            article
-            for url in root.findall(
-                ".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
-            )
-            if (article := scrape_article(url.text))
-        ]
+        root = _safe_fromstring(response.content)
     except (EgressBlockedError, EgressFetchError) as e:
         logging.error(f"Sitemap fetch blocked or too large: {e}")
+        return []
+    except (xET.ParseError, ValueError) as e:
+        # A refused sitemap yields no articles, not a crash. Type only --
+        # the refusal message names the entity the hostile document chose,
+        # and this sink is persistent. The URL is safe to name (it is the
+        # operator's own argument) and is what attributes the failure when
+        # several fetches refuse alike.
+        logging.error(
+            f"Error parsing sitemap {_sitemap_log_name(sitemap_url)}: "
+            f"{type(e).__name__}"
+        )
         return []
     except requests.RequestException as e:
         logging.error(f"Error fetching sitemap: {e}")
         return []
+
+    return [
+        article
+        for url in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+        if (article := scrape_article(url.text))
+    ]
 
 
 #
@@ -1210,7 +1306,7 @@ def generate_sitemap_for_url(url: str) -> List[Dict[str, str]]:
     with secure_temp_file(suffix=".xml", prefix="filtered_sitemap_") as temp_file:
         create_filtered_sitemap(url, temp_file.name, is_content_page)
         temp_file.seek(0)
-        tree = xET.parse(temp_file.name)
+        tree = _safe_parse(temp_file.name)
         root = tree.getroot()
 
         sitemap = []
@@ -1627,7 +1723,10 @@ class ContentMetadataHandler:
         """
         metadata = {
             "url": url,
-            "ingestion_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            # Canonical UTC, matching this class's other copy in
+            # Article_Scraper/utils.py; the naive local spelling this
+            # replaces is on the live scrape_article path (tier-2 S14).
+            "ingestion_date": utc_now_iso(),
             "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
             "scraping_pipeline": pipeline,
         }

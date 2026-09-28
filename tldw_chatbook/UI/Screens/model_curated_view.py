@@ -1041,11 +1041,15 @@ class CuratedView(Widget):
             self._recovery_message = message
             self._recovery_reference = reference
         self.refresh(recompose=True)
-        if self._recovery_reference is not None:
+        # Return to the row the user acted on. The recompose rebuilds every
+        # card, so a plain decline at the consent modal would otherwise drop
+        # them back at the top of a long catalog.
+        target = self._recovery_reference or reference
+        if target is not None:
             self.call_after_refresh(
                 self.call_later,
                 self.restore_focus,
-                (self._recovery_reference, "install"),
+                (target, "install"),
             )
 
     def finish_install(self, message: str | None = None) -> None:

@@ -66,7 +66,6 @@ if __name__ == "__main__":
     quiet_startup_stderr()
 
 # Imports
-import argparse
 import concurrent.futures
 import contextlib
 import functools
@@ -78,14 +77,12 @@ import multiprocessing
 import multiprocessing.connection
 import queue
 import random
-import re
 import sqlite3
 import subprocess
 import sys
 import threading
 import time
 import uuid
-import traceback
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Iterable, Mapping
@@ -97,6 +94,7 @@ import asyncio
 from loguru import logger as loguru_logger, logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on, work
+from textual.content import Content
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.events import AppFocus, Resize
 from textual.keys import KEY_DISPLAY_ALIASES
@@ -126,7 +124,6 @@ from pathlib import Path, PurePath
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_artifact_ownership import (
     CitationArtifactOwnershipCoordinator,
 )
@@ -135,10 +132,6 @@ from tldw_chatbook.Chat.citation_service_factory import (
 )
 from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
-)
-from tldw_chatbook.Chat.console_live_work import (
-    ConsoleLiveWorkLaunch,
-    resolve_console_live_work_primary_action,
 )
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
@@ -187,14 +180,10 @@ from tldw_chatbook.Constants import (
     TAB_WATCHLISTS_COLLECTIONS,
     TAB_WORKFLOWS,
     TAB_WRITING,
-    WATCHLISTS_NAV_CONTEXT_BACKEND,
-    WATCHLISTS_NAV_CONTEXT_RUN_ID,
-    WATCHLISTS_NAV_CONTEXT_SECTION,
-    WATCHLISTS_SECTION_RUNS,
     WIDE_VIEWPORT_COLUMNS,
     get_tab_display_label,
 )
-from tldw_chatbook.css import build_css, widget_css
+from tldw_chatbook.css import build_css
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
@@ -215,7 +204,6 @@ from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
-    HomeControlResultStatus,
     LocalNotificationHomeActiveWorkAdapter,
     UnavailableHomeActiveWorkAdapter,
 )
@@ -282,12 +270,10 @@ from tldw_chatbook.Logging_Config import RichLogHandler
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
 from tldw_chatbook.Metrics.metrics import (
-    init_metrics_server,
     log_counter,
     log_histogram,
     log_resource_usage,
 )
-from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 from tldw_chatbook.Prompt_Management import (
     LocalPromptService,
     PromptChatbookScopeService,
@@ -332,7 +318,6 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.Utils.app_shutdown import (
     arm_exit_watchdog,
-    install_termination_handlers,
     register_running_app,
     unregister_running_app,
 )
@@ -343,12 +328,6 @@ from tldw_chatbook.Utils.boot_worker_policy import (
     StaggeredBootWorkerGate,
 )
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
-from tldw_chatbook.Utils.Emoji_Handling import (
-    EMOJI_TITLE_BRAIN,
-    FALLBACK_TITLE_BRAIN,
-    get_char,
-    supports_emoji,
-)
 from tldw_chatbook.Utils.instance_lock import (
     InstanceLockStatus,
     acquire_profile_instance_lock,
@@ -415,11 +394,8 @@ from .config import (
     get_cli_config_path,
     load_settings,
     get_cli_providers_and_models,
-    API_MODELS_BY_PROVIDER,
     LOCAL_PROVIDERS,
-    load_cli_config_and_ensure_existence,
     persist_cli_config_for_shutdown,
-    set_encryption_password,
     get_config_load_failure,
     get_config_schema_conflict,
 )
@@ -523,7 +499,6 @@ from .Scheduling.scheduler.handlers.briefing_handler import BriefingJobHandler
 from .Scheduling.services.watchlist_projection import WatchlistProjection
 from .Scheduling.services.briefing_projection import BriefingProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
-from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
 # chat_message_enhanced is deliberately NOT imported at module scope
@@ -542,9 +517,7 @@ from tldw_chatbook.config import (
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
 from .UI.Navigation.pending_handoff_store import (
-    ConsoleProviderIntent,
     HandoffChannel,
-    HandoffValueError,
     PendingHandoffStore,
 )
 from .UI.Navigation.screen_state_store import (
@@ -567,9 +540,7 @@ from .UI.Navigation.shell_destinations import (
     get_shell_destination,
 )
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
-from .UI.Screens.study_scope_models import StudyScopeContext
 from .UI.stable_command_palette import StableCommandPalette
-from .Prompt_Management.prompt_variables import PromptVariableApplication
 
 # task-24458: import the MESSAGE, not the deprecated window. Importing
 # `Tools_Settings_Window` here dragged `Agents.local_tool_provider` ->
@@ -793,7 +764,28 @@ else:
 if TYPE_CHECKING:
     from .Workflows.session import WorkflowSession
 
+# Annotation-only for the cluster D stubs (TASK-33011); the bodies that use
+# these at runtime live in ``app_destinations``.
+if TYPE_CHECKING:
+    from .ACP_Interop.runtime_session import ACPRuntimeSessionState
+    from .Chat.chat_handoff_models import ChatHandoffPayload
+    from .Prompt_Management.prompt_variables import PromptVariableApplication
+    from .UI.Screens.study_scope_models import StudyScopeContext
+
 _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
+
+
+def _destinations():
+    """Import ``app_destinations`` on first use (never at boot; ADR-097).
+
+    TldwCli's destination launchers, handoffs, Home controls, Roleplay
+    character-conversation activation and Personal Context launchers are thin
+    stubs that delegate here (TASK-33011). Tests that patch a module-level
+    name those bodies use must patch it on ``tldw_chatbook.app_destinations``.
+    """
+    from tldw_chatbook import app_destinations
+
+    return app_destinations
 
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
@@ -1084,14 +1076,6 @@ _TTS_GLOBAL_OVERRIDE_PROMPT_COPY: dict[str | None, str] = {
 #
 #######################################################################################################################
 #
-# Statics
-
-
-AVAILABLE_PROVIDERS = list({**API_MODELS_BY_PROVIDER, **LOCAL_PROVIDERS}.keys())  # provider order for sidebar defaults
-#
-#
-#####################################################################################################################
-#
 # Functions:
 
 
@@ -1102,6 +1086,15 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
         return False
     console = config.get("console")
     return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
+
+def _disabled_builtin_skills(config: Any) -> frozenset[str]:
+    """Built-in skills disabled in config; imported lazily (off boot path, ADR-097)."""
+    from tldw_chatbook.Skills_Interop.builtin_skills import (
+        disabled_builtins_from_config,
+    )
+
+    return disabled_builtins_from_config(config)
 
 
 def _build_terminal_backend() -> "TerminalBackend":
@@ -1188,11 +1181,20 @@ class ThemeProvider(Provider):
                 command_text = f"Theme: Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}"
                 score = matcher.match(command_text)
                 if score > 0:
+                    # Both the display and the help parse markup; a saved
+                    # theme's name is untrusted file text (R28). ponytail: a
+                    # name with "[" shows unhighlighted -- highlight offsets
+                    # would not line up with an escaped candidate.
+                    display = (
+                        Content(command_text)
+                        if "[" in command_text
+                        else matcher.highlight(command_text)
+                    )
                     yield Hit(
                         score * 0.9,  # Slightly lower priority than main command
-                        matcher.highlight(command_text),
+                        display,
                         partial(self.switch_theme, theme_name),
-                        help=f"Change theme to {theme_name}",
+                        help=f"Change theme to {escape_markup(theme_name)}",
                     )
 
     async def discover(self) -> Hits:
@@ -1212,17 +1214,16 @@ class ThemeProvider(Provider):
         )
 
     def switch_theme(self, theme_name: str) -> None:
-        """Switch to the specified theme and save to config."""
+        """Switch to the specified theme and keep it as the launch default."""
+        from .css.Themes.theme_catalog import use_theme, use_theme_toast
+
         try:
-            self.app.theme = theme_name
-            self.app.notify(f"Theme changed to {theme_name}", severity="information")
-
-            # Save the theme preference to config
-
-            save_setting_to_cli_config("general", "default_theme", theme_name)
-
-        except Exception as e:
-            self.app.notify(f"Failed to apply theme: {e}", severity="error")
+            change = use_theme(self.app, theme_name, persist=True)
+        except Exception as e:  # noqa: BLE001 - palette commands must not raise
+            self.app.notify(f"Failed to apply theme: {escape_markup(e)}", severity="error")
+            return
+        message, severity = use_theme_toast(theme_name, change)
+        self.app.notify(message, severity=severity)
 
 
 def _navigate_via_screen(
@@ -1488,119 +1489,6 @@ class TabNavigationProvider(Provider):
             self.app.notify(f"Switched to {label}", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
-
-
-class LLMProviderProvider(Provider):
-    """Provider for LLM provider management commands."""
-
-    def __init__(self, screen, *args, **kwargs):
-        """Initialize the LLMProviderProvider with required screen parameter."""
-        super().__init__(screen, *args, **kwargs)
-
-    async def search(self, query: str) -> Hits:
-        matcher = self.matcher(query)
-
-        # Get available providers from the app
-        available_providers = (
-            AVAILABLE_PROVIDERS if "AVAILABLE_PROVIDERS" in globals() else []
-        )
-
-        provider_commands = [
-            (
-                "LLM Provider Management: Show Current Provider",
-                None,
-                "Display currently selected LLM provider",
-            ),
-        ]
-
-        # Add provider switching commands
-        for provider in available_providers:
-            provider_name = provider.replace("_", " ").title()
-            command_text = f"LLM Provider Management: Switch to {provider_name}"
-            provider_commands.append(
-                (command_text, provider, f"Switch to {provider_name} provider")
-            )
-
-        for command_text, provider_id, help_text in provider_commands:
-            score = matcher.match(command_text)
-            if score > 0:
-                yield Hit(
-                    score,
-                    matcher.highlight(command_text),
-                    partial(self.handle_llm_command, provider_id, command_text),
-                    help=help_text,
-                )
-
-    async def discover(self) -> Hits:
-        popular_providers = ["OpenAI", "Anthropic", "Cohere", "Groq", "Ollama"]
-
-        yield Hit(
-            1.0,
-            "LLM Provider Management: Show Current Provider",
-            partial(self.handle_llm_command, None, "show_current"),
-            help="Display currently selected LLM provider",
-        )
-
-        for provider in popular_providers:
-            yield Hit(
-                0.9,
-                f"LLM Provider Management: Switch to {provider}",
-                partial(self.handle_llm_command, provider, f"switch_{provider}"),
-                help=f"Switch to {provider} provider",
-            )
-
-    def handle_llm_command(self, provider_id: str | None, command: str) -> None:
-        """Handle LLM provider commands."""
-        try:
-            if provider_id is None or "show_current" in command:
-                current = self._current_provider()
-                self.app.notify(
-                    f"Current LLM provider: {current}", severity="information"
-                )
-            else:
-                self.app.pending_handoffs.stage(
-                    HandoffChannel.CONSOLE_PROVIDER,
-                    ConsoleProviderIntent(provider=provider_id),
-                )
-                chat_screen = self._mounted_chat_screen()
-                if chat_screen is not None:
-                    chat_screen.consume_pending_console_provider_intent()
-                else:
-                    self.app.notify(
-                        "Provider selection queued for the next Console entry.",
-                        severity="information",
-                    )
-        except Exception as e:
-            self.app.notify(
-                f"Failed to execute LLM command ({type(e).__name__}).",
-                severity="error",
-            )
-
-    def _mounted_chat_screen(self):
-        """Return the active production Console screen beneath any modal."""
-        if getattr(self.app, "current_tab", None) != TAB_CHAT:
-            return None
-        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-        for screen in reversed(tuple(getattr(self.app, "screen_stack", ()))):
-            if isinstance(screen, ChatScreen):
-                return screen
-        return None
-
-    def _current_provider(self) -> str:
-        """Resolve current provider from its lifetime owner."""
-        chat_screen = self._mounted_chat_screen()
-        if chat_screen is not None:
-            provider = chat_screen.current_console_provider_for_command()
-            if provider:
-                return provider
-        config = getattr(self.app, "app_config", {})
-        defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
-        if isinstance(defaults, dict):
-            provider = str(defaults.get("provider") or "").strip()
-            if provider:
-                return provider
-        return "Unknown"
 
 
 #: task-18812 / ADR-071: the command-palette entry for the Console focus
@@ -7776,7 +7664,6 @@ class TldwCli(
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
         TabNavigationProvider,
-        LLMProviderProvider,
         QuickActionsProvider,
         SettingsProvider,
         CharacterProvider,
@@ -8891,6 +8778,11 @@ class TldwCli(
                 store_dir=default_local_skills_store_dir(get_user_data_dir()),
                 policy_enforcer=policy_enforcer,
                 trust_service_factory=lambda: self.local_skill_trust_service,
+                # In-memory config read: this runs on every skills read,
+                # including the Console's per-send capture.
+                builtin_disabled_loader=lambda: _disabled_builtin_skills(
+                    getattr(self, "app_config", None)
+                ),
             )
         if self._skills_scope_service is None:
             self._skills_scope_service = SkillsScopeService(
@@ -8905,6 +8797,28 @@ class TldwCli(
         if self._local_skill_trust_service is None:
             self._local_skill_trust_service = self._build_local_skill_trust_service()
         return self._local_skill_trust_service
+
+    async def ensure_local_skill_trust_service(self) -> Any:
+        """First-use trust service build, OFF the UI event loop (task-33081).
+
+        The build performs OS keyring backend discovery (SecretService/D-Bus
+        on Linux -- the deferred-wiring notes' timing figure never measured
+        that platform). The sync property keeps its contract for callers
+        already on worker threads; UI-loop callers must come here so the
+        discovery never blocks the loop.
+
+        Returns:
+            The shared local skill trust service, built once; concurrent
+            first callers await the same build under the build lock.
+        """
+        if self._local_skill_trust_service is not None:
+            return self._local_skill_trust_service
+        async with self._local_skill_trust_service_build_lock:
+            if self._local_skill_trust_service is None:
+                self._local_skill_trust_service = await asyncio.to_thread(
+                    self._build_local_skill_trust_service
+                )
+            return self._local_skill_trust_service
 
     @local_skill_trust_service.setter
     def local_skill_trust_service(self, service: Any) -> None:
@@ -8988,155 +8902,56 @@ class TldwCli(
     def server_credential_store_unavailable_reason(self, reason: str | None) -> None:
         self._server_credential_store_unavailable_reason = reason
 
+    # Cluster D (TASK-33011): destination launchers, typed handoffs and Home
+    # controls. Each stub delegates to the same-named ``app_destinations``
+    # function; the ``_local_*_count`` Home providers stay here because the
+    # boot-time wiring hands them to the Home adapter.
     def open_study_screen(
         self,
-        scope_context: Optional[StudyScopeContext] = None,
+        scope_context: "StudyScopeContext | None" = None,
         *,
-        initial_section: Optional[str] = None,
-        origin: Optional[str] = None,
+        initial_section: str | None = None,
+        origin: str | None = None,
     ) -> None:
-        """Stage Study handoffs and navigate to the Study screen.
-
-        Args:
-            scope_context: Scoped study context to apply, or None to clear
-                any pending scope.
-            initial_section: Study section to land on, or None to clear any
-                pending section.
-            origin: Where the user is coming FROM (``STUDY_ORIGINS``:
-                "home" or "library"), threaded to StudyScreen so its
-                breadcrumb and Escape target name the actual origin
-                (task-4011). None clears the channel and StudyScreen falls
-                back to its historical Library default (task-2854's one
-                considered origin).
-        """
-        if scope_context is None:
-            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_SCOPE)
-        elif not self._stage_handoff(
-            HandoffChannel.STUDY_SCOPE,
+        return _destinations().open_study_screen(
+            self,
             scope_context,
-            recovery="Study scope could not be opened. Try again.",
-        ):
-            return
-
-        if initial_section is None:
-            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_INITIAL_SECTION)
-        elif not self._stage_handoff(
-            HandoffChannel.STUDY_INITIAL_SECTION,
-            initial_section,
-            recovery="Study section could not be opened. Try again.",
-        ):
-            return
-
-        if origin is None:
-            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_ORIGIN)
-        elif not self._stage_handoff(
-            HandoffChannel.STUDY_ORIGIN,
-            origin,
-            recovery="Study could not be opened. Try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_STUDY))
+            initial_section=initial_section,
+            origin=origin,
+        )
 
     def open_notes_workspace(
         self,
         workspace_id: str,
         subview: Any = None,
     ) -> None:
-        """Return to Library's Notes list after leaving it for another screen.
-
-        The standalone Notes tab's per-workspace scope has no equivalent in
-        Library, which browses notes as a flat list -- this always re-opens
-        the shared Library Notes list rather than any workspace-scoped view.
-
-        Args:
-            workspace_id: The retired Notes tab's workspace identifier.
-                Accepted for backward compatibility with existing callers
-                (e.g. Study's "back to workspace" action) but no longer
-                applied.
-            subview: The retired Notes tab's workspace subview. Accepted for
-                backward compatibility; no longer applied.
-        """
-        self.post_message(
-            NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"})
-        )
+        return _destinations().open_notes_workspace(self, workspace_id, subview)
 
     def open_conversation_archive(
         self, query: str = "", archive_scope: str = "archived"
     ) -> None:
-        """Open Library conversation search with an explicit archive scope.
-
-        Args:
-            query: Initial title/message search text; empty lists the scope.
-            archive_scope: "active", "archived" (default), or "all" saved chats.
-        """
-        self.post_message(
-            NavigateToScreen(
-                TAB_LIBRARY,
-                {
-                    LIBRARY_NAV_CONTEXT_MODE: "conversations",
-                    "conversation_archive_scope": archive_scope,
-                    "conversation_query": query,
-                },
-            )
-        )
+        return _destinations().open_conversation_archive(self, query, archive_scope)
 
     def resume_console_conversation(self, conversation_id: str) -> None:
-        """Review restoration scope and resume the original local conversation."""
-        from .UI.Console_Modules.archive import request_conversation_resume
-
-        self.run_worker(
-            request_conversation_resume(self, conversation_id),
-            name="resume-saved-conversation",
-            group="resume-saved-conversation",
-            exclusive=True,
-        )
+        return _destinations().resume_console_conversation(self, conversation_id)
 
     def open_chat_with_handoff(
         self,
-        payload: ChatHandoffPayload,
+        payload: "ChatHandoffPayload",
         *,
         action_label: str = "Use in Chat",
     ) -> None:
-        """Stage a handoff payload for Chat and navigate there.
-
-        Args:
-            payload: The handoff payload to stage as pending Chat context.
-            action_label: The calling surface's own action label (e.g. "Use
-                in Chat" for the legacy MediaWindow_v2/search_rag_window
-                surfaces, "Use in Console" for Library). Currently unused
-                inside this method -- it previously fed the retired
-                chat-tabs gate's blocked notify (task-577 U5, which removed
-                the gate so handoffs proceed unconditionally); kept for
-                caller-signature compatibility.
-        """
-        if not self._stage_handoff(
-            HandoffChannel.CHAT,
+        return _destinations().open_chat_with_handoff(
+            self,
             payload,
-            recovery="Chat context could not be staged. Try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_CHAT))
+            action_label=action_label,
+        )
 
     def stage_console_prompt_insert(
         self,
-        application: PromptVariableApplication,
+        application: "PromptVariableApplication",
     ) -> None:
-        """Stage a guarded Prompt application and then navigate to Console.
-
-        The typed, memory-only application carries the final selected lanes
-        plus destination/session/staleness guards. Console remains the only
-        owner allowed to settle the claim and mutate its active draft.
-
-        Args:
-            application: Validated Prompt application to stage.
-        """
-        if not self._stage_handoff(
-            HandoffChannel.CONSOLE_PROMPT_INSERT,
-            application,
-            recovery="Console prompt could not be staged. Review it and try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_CHAT))
+        return _destinations().stage_console_prompt_insert(self, application)
 
     def open_console_for_live_work(
         self,
@@ -9148,21 +8963,15 @@ class TldwCli(
         recovery: str | None = None,
         action_label: str | None = None,
     ) -> None:
-        """Open Console for live work launched from another destination."""
-        if not self._stage_handoff(
-            HandoffChannel.CONSOLE_LIVE_WORK,
-            {
-                "source": source,
-                "title": title,
-                "payload": payload,
-                "status": status,
-                "recovery": recovery,
-                "action_label": action_label,
-            },
-            recovery="Console live work could not be staged. Try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_CHAT))
+        return _destinations().open_console_for_live_work(
+            self,
+            source=source,
+            title=title,
+            payload=payload,
+            status=status,
+            recovery=recovery,
+            action_label=action_label,
+        )
 
     def _stage_handoff(
         self,
@@ -9171,75 +8980,13 @@ class TldwCli(
         *,
         recovery: str,
     ) -> bool:
-        """Stage one typed handoff without exposing its value in recovery."""
-        try:
-            self.pending_handoffs.stage(channel, value)
-        except HandoffValueError:
-            self.notify(recovery, severity="warning")
-            return False
-        return True
+        return _destinations()._stage_handoff(self, channel, value, recovery=recovery)
 
-    def get_acp_runtime_session_state(self) -> ACPRuntimeSessionState:
-        """Return current ACP runtime/session state for ACP and Console surfaces."""
-        explicit_state = getattr(self, "acp_runtime_session_state", None)
-        normalized_state = ACPRuntimeSessionState.from_any(explicit_state)
-        if normalized_state.runtime_configured:
-            return normalized_state
-        manager = getattr(self, "acp_runtime_process_manager", None)
-        snapshot = getattr(manager, "snapshot", None)
-        if callable(snapshot):
-            return ACPRuntimeSessionState.from_any(snapshot())
-        return normalized_state
+    def get_acp_runtime_session_state(self) -> "ACPRuntimeSessionState":
+        return _destinations().get_acp_runtime_session_state(self)
 
     def open_console_live_work_primary_action(self, launch: Any) -> bool:
-        """Follow through on a supported Console live-work status-card action."""
-        normalized_launch = ConsoleLiveWorkLaunch.from_pending(launch)
-        if normalized_launch is None:
-            self.notify(
-                "Console action is unavailable for this live-work item.",
-                severity="warning",
-            )
-            return False
-
-        action = resolve_console_live_work_primary_action(normalized_launch)
-        if action is None:
-            self.notify(
-                "Console action is unavailable for this live-work item.",
-                severity="warning",
-            )
-            return False
-
-        if action.target_route == TAB_WATCHLISTS_COLLECTIONS:
-            self.post_message(
-                NavigateToScreen(
-                    TAB_WATCHLISTS_COLLECTIONS,
-                    self._watchlists_run_navigation_context(action.target_id),
-                )
-            )
-            return True
-
-        if action.target_route == TAB_ARTIFACTS:
-            if not self._stage_handoff(
-                HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
-                action.target_id,
-                recovery="Console action target could not be opened. Try again.",
-            ):
-                return False
-            self.post_message(NavigateToScreen(TAB_ARTIFACTS))
-            return True
-
-        if action.target_route == TAB_ACP:
-            if not self._stage_handoff(
-                HandoffChannel.ACP_SESSION_TARGET,
-                action.target_id,
-                recovery="Console action target could not be opened. Try again.",
-            ):
-                return False
-            self.post_message(NavigateToScreen(TAB_ACP))
-            return True
-
-        self.notify("Console action route is not available yet.", severity="warning")
-        return False
+        return _destinations().open_console_live_work_primary_action(self, launch)
 
     def _handle_home_control_action(
         self,
@@ -9248,153 +8995,40 @@ class TldwCli(
         target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
-        adapter = getattr(
-            self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter()
+        return _destinations()._handle_home_control_action(
+            self,
+            action,
+            target_id=target_id,
+            target_route=target_route,
         )
-        if target_id is None and target_route is None:
-            result = adapter.handle_control(action)
-        else:
-            result = adapter.handle_control(
-                action,
-                target_id=target_id,
-                target_route=target_route,
-            )
-        # B3 (task-282): approve/reject/pause/resume/retry can change the
-        # watchlist-run/notification state the adapter's short-TTL cache
-        # holds -- invalidate so the next Home read is not stale for up to
-        # the TTL window. Defensive getattr: the honest-unavailable adapter
-        # and test doubles don't implement this hook.
-        invalidate_cache = getattr(adapter, "invalidate_active_work_cache", None)
-        if callable(invalidate_cache):
-            invalidate_cache()
-        self.notify(result.message, severity=result.severity)
-        return result
 
     def approve_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Approve the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.APPROVE, target_id=target_id
-        )
+        return _destinations().approve_active_home_item(self, target_id=target_id)
 
     def reject_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Reject the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.REJECT, target_id=target_id
-        )
+        return _destinations().reject_active_home_item(self, target_id=target_id)
 
     def pause_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Pause the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.PAUSE, target_id=target_id
-        )
+        return _destinations().pause_active_home_item(self, target_id=target_id)
 
     def resume_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Resume the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.RESUME, target_id=target_id
-        )
+        return _destinations().resume_active_home_item(self, target_id=target_id)
 
     def retry_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Retry the active Home item through the configured adapter.
-
-        Library ingest targets (``local:ingest:<job_id>``) use the ingest
-        retry seam instead of the generic Home adapter. Ordinary jobs retain
-        synchronous registry requeueing; Research-owned jobs schedule their
-        durable catalog-stage retry and report Research Workspace recovery.
-        Non-ingest targets are unaffected and still route through the adapter.
-        """
-        if target_id is not None and str(target_id).startswith("local:ingest:"):
-            job_id = str(target_id)[len("local:ingest:") :]
-            source = self.library_ingest_jobs.get_job(job_id)
-            operation_id = str(
-                getattr(source, "research_source_operation_id", "") or ""
-            ).strip()
-            research_retry_requested = bool(
-                source is not None
-                and operation_id
-                and self._schedule_research_source_catalog_retry(
-                    source,
-                    operation_id=operation_id,
-                    notify_unavailable=False,
-                )
-            )
-            requeued = None if operation_id else self.retry_library_ingest_job(job_id)
-            if research_retry_requested:
-                basename = escape_markup(
-                    Path(str(source.source_path)).name or str(source.source_path)
-                )
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.HANDLED,
-                    message=f"Research source retry requested for {basename}.",
-                    recovery_route=TAB_RESEARCH_WORKSPACE,
-                    target_id=target_id,
-                    target_route=TAB_RESEARCH_WORKSPACE,
-                )
-            elif operation_id:
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.UNAVAILABLE,
-                    message=self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
-                    severity="warning",
-                    recovery_route=TAB_RESEARCH_WORKSPACE,
-                    target_id=target_id,
-                    target_route=TAB_RESEARCH_WORKSPACE,
-                )
-            elif requeued is None:
-                # Unknown job id, or the job is no longer FAILED (e.g. it
-                # was already retried/finished by the time the button was
-                # pressed) -- ``requeue`` is a documented no-op in that case.
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.UNAVAILABLE,
-                    message="This import job can no longer be retried.",
-                    severity="warning",
-                    recovery_route="library",
-                    target_id=target_id,
-                )
-            else:
-                # The basename is a user-controlled filename (arbitrary
-                # source path picked in the Library ingest form) that flows
-                # straight into a Home toast, which parses Rich markup --
-                # same hazard class as the open-details title fix. Escape
-                # defensively.
-                basename = escape_markup(
-                    Path(str(requeued.source_path)).name or str(requeued.source_path)
-                )
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.HANDLED,
-                    message=f"Retry queued for {basename}.",
-                    recovery_route="library",
-                    target_id=f"local:ingest:{requeued.job_id}",
-                    target_route="library",
-                )
-            self.notify(result.message, severity=result.severity)
-            return result
-        return self._handle_home_control_action(
-            HomeControlAction.RETRY, target_id=target_id
-        )
+        return _destinations().retry_active_home_item(self, target_id=target_id)
 
     def open_home_flashcards_review(self) -> None:
-        """Open the Study screen directly on the flashcards review surface.
-
-        task-4011: this is the one entry into Study that does NOT come from
-        Library's staging canvas, so it declares its origin -- StudyScreen's
-        breadcrumb reads "Home ▸ Study" and Escape returns to Home instead
-        of a Library canvas the user never visited.
-        """
-        self.open_study_screen(initial_section="flashcards", origin="home")
+        return _destinations().open_home_flashcards_review(self)
 
     def _local_flashcards_due_count(self) -> int | None:
         """Count due flashcards for the Home mirror; None when the DB is absent."""
@@ -9475,56 +9109,17 @@ class TldwCli(
         target_id: str | None = None,
         target_route: str = TAB_CHAT,
     ) -> HomeControlResult:
-        """Open active Home item details through the configured adapter."""
-        result = self._handle_home_control_action(
-            HomeControlAction.OPEN_DETAILS,
+        return _destinations().open_active_home_item_details(
+            self,
             target_id=target_id,
             target_route=target_route,
         )
-        if result.status is HomeControlResultStatus.HANDLED and result.target_route:
-            if result.target_route in {
-                "subscriptions",
-                TAB_WATCHLISTS_COLLECTIONS,
-            }:
-                self.post_message(
-                    NavigateToScreen(
-                        TAB_WATCHLISTS_COLLECTIONS,
-                        self._watchlists_run_navigation_context(
-                            result.target_id or target_id
-                        ),
-                    )
-                )
-            elif result.target_route == "library" and str(
-                result.target_id or target_id or ""
-            ).startswith("local:ingest:"):
-                # Home's ingest-jobs Running/Needs Attention rows one-hop
-                # back to the Library ingest canvas via the nav-context
-                # contract instead of a bare route (mirrors the
-                # subscriptions staging special-case above). Navigation
-                # always composes a fresh Library screen, so the deep link
-                # lands on a cleanly mounted, repainted ingest canvas.
-                self.post_message(
-                    NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
-                )
-            else:
-                self.post_message(NavigateToScreen(result.target_route))
-        return result
 
     @staticmethod
     def _watchlists_run_navigation_context(
         target_id: str | None,
     ) -> dict[str, object]:
-        """Build the destination-owned context for a Watchlists run deep link."""
-        context: dict[str, object] = {
-            WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_RUNS
-        }
-        if target_id:
-            target_id_text = str(target_id)
-            context[WATCHLISTS_NAV_CONTEXT_RUN_ID] = target_id_text
-            backend = target_id_text.partition(":watchlist_run:")[0]
-            if backend in {"local", "server"}:
-                context[WATCHLISTS_NAV_CONTEXT_BACKEND] = backend
-        return context
+        return _destinations()._watchlists_run_navigation_context(target_id)
 
     def open_active_home_item_in_console(
         self,
@@ -9532,29 +9127,11 @@ class TldwCli(
         target_id: str | None = None,
         target_route: str = TAB_CHAT,
     ) -> HomeControlResult:
-        """Open active Home item in Console only when the adapter supplies launch context."""
-        result = self._handle_home_control_action(
-            HomeControlAction.OPEN_IN_CONSOLE,
+        return _destinations().open_active_home_item_in_console(
+            self,
             target_id=target_id,
             target_route=target_route,
         )
-        if (
-            result.status is HomeControlResultStatus.HANDLED
-            and result.console_launch is not None
-        ):
-            launch_kwargs = {
-                "source": result.console_launch.source,
-                "title": result.console_launch.title,
-                "payload": dict(result.console_launch.payload or {}),
-            }
-            if result.console_launch.status is not None:
-                launch_kwargs["status"] = result.console_launch.status
-            if result.console_launch.recovery is not None:
-                launch_kwargs["recovery"] = result.console_launch.recovery
-            if result.console_launch.action_label is not None:
-                launch_kwargs["action_label"] = result.console_launch.action_label
-            self.open_console_for_live_work(**launch_kwargs)
-        return result
 
     def _wire_character_persona_services(self) -> None:
         from .Backup_Recovery.chat_source_participants import (
@@ -11287,6 +10864,8 @@ class TldwCli(
         # Every consumer reads these through `getattr(app_instance, ...)` at
         # UI time, so a property is a drop-in.
         self._local_skill_trust_service: Any | None = None
+        # task-33081: serializes the off-loop first build above.
+        self._local_skill_trust_service_build_lock = asyncio.Lock()
         self._local_skills_service: Any | None = None
         self._skills_scope_service: Any | None = None
         # Captured NOW, at the timing the eager build had: `_build_local_
@@ -12359,6 +11938,8 @@ class TldwCli(
             self.ui_responsiveness_monitor.record_timer_created("ui-heartbeat")
             if getattr(self, "_ui_responsiveness_heartbeat_timer", None) is None:
                 self.ui_responsiveness_monitor.reset_heartbeat_baseline()
+                # Attribute stalls from the timer's install, not its first beat.
+                self.ui_responsiveness_monitor.arm()
                 self._ui_responsiveness_heartbeat_timer = self.set_interval(
                     interval_seconds,
                     self._record_ui_heartbeat,
@@ -12583,6 +12164,31 @@ class TldwCli(
         if self.screen_stack and message.screen is self.screen:
             self._schedule_persona_buddy_overlay()
 
+    def on_character_card_changed(self, message: Any) -> None:
+        """Forward a Console character-card save to the active Personas screen.
+
+        Textual delivers an App-posted message to App handlers only (it
+        never bubbles down into a Screen's own handler -- see
+        ``forward_model_catalog_refreshed`` for the identical constraint),
+        so the screen's handler is called directly instead. Walks the full
+        screen stack, not just ``self.screen``, so a modal sitting on top of
+        Personas (e.g. an unsaved-changes confirm dialog) does not silently
+        drop the notification (fix round 1, review point 4).
+        ``exit_on_error=False``: a background notification must never crash
+        the app (review point 1).
+        """
+        from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+
+        for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+            if isinstance(screen, PersonasScreen):
+                screen.run_worker(
+                    screen._on_character_card_changed(message),
+                    group="personas-character-changed",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
+
     def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
         """Skip disabled work and coalesce presentation updates on the app."""
         if not self.screen_stack:
@@ -12787,161 +12393,28 @@ class TldwCli(
             self._reusable_screen_instances = cache
         cache[current_tab_value] = (runtime_identity, screen)
 
+    # Cluster K2 (TASK-33011): Roleplay-to-Console character-conversation
+    # activation, delegated to ``app_destinations``.
     async def activate_character_conversation_from_roleplay(
         self,
         request: object,
         cancellation: asyncio.Event,
         phase_changed: Callable[[str], None],
     ) -> object:
-        """Own an exact Roleplay-to-Console activation without losing its caller.
-
-        The reusable Console workspace performs cancellable preflight while
-        Roleplay remains the current screen. Once that check settles, the
-        operation enters its non-cancellable finishing phase and mounts Console
-        for the final atomic revalidation/hydration.  Failure restores the exact
-        mounted Roleplay caller; only ``OPENED`` replaces it.
-        """
-
-        from tldw_chatbook.Chat.console_conversation_activation import (
-            CharacterConversationActivationRequest,
-            ConsoleActivationResultKind,
-            ConsoleConversationActivationResult,
+        return await _destinations().activate_character_conversation_from_roleplay(
+            self,
+            request,
+            cancellation,
+            phase_changed,
         )
-
-        if not isinstance(request, CharacterConversationActivationRequest):
-            raise TypeError("request must be a character activation request")
-        cancelled_result = ConsoleConversationActivationResult(
-            ConsoleActivationResultKind.CANCELLED_PRECOMMIT,
-            request.target,
-            False,
-        )
-        if cancellation.is_set():
-            return cancelled_result
-        runtime = getattr(self, "console_runtime", None)
-        lane = getattr(runtime, "character_conversation_activation_lock", None)
-        if not isinstance(lane, asyncio.Lock):
-            raise RuntimeError("Console activation lane is unavailable")  # noqa: TRY004 - unavailable runtime ownership, not a public input type check
-        admission: asyncio.Task[bool] | None = None
-        cancelled: asyncio.Task[bool] | None = None
-        preflight: asyncio.Task[Any] | None = None
-        lane_acquired = False
-        commit_started = False
-        candidate = None
-        try:
-            # These children are owned from creation: cancellation of this
-            # outer worker must never leave an orphan that later acquires the
-            # app-lifetime lane.
-            admission = asyncio.create_task(lane.acquire())
-            cancelled = asyncio.create_task(cancellation.wait())
-            done, _pending = await asyncio.wait(
-                {admission, cancelled}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if cancelled in done and cancellation.is_set():
-                return cancelled_result
-            lane_acquired = bool(await admission)
-            if cancellation.is_set():
-                return cancelled_result
-
-            _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
-            if screen_class is None:
-                return ConsoleConversationActivationResult(
-                    ConsoleActivationResultKind.FAILED, request.target, False
-                )
-            runtime_identity = self._current_runtime_identity()
-            candidate = self._reusable_navigation_screen(TAB_CHAT, runtime_identity)
-            if candidate is None:
-                candidate = self._create_navigation_screen(TAB_CHAT, screen_class)
-            preflight = asyncio.create_task(
-                candidate._workspace.preflight_character_conversation_activation(
-                    request
-                )
-            )
-            if cancelled is not None and not cancelled.done():
-                cancelled.cancel()
-                await asyncio.gather(cancelled, return_exceptions=True)
-            cancelled = asyncio.create_task(cancellation.wait())
-            done, _pending = await asyncio.wait(
-                {preflight, cancelled}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if cancelled in done and cancellation.is_set():
-                preflight.cancel()
-                await asyncio.gather(preflight, return_exceptions=True)
-                return cancelled_result
-            cancelled.cancel()
-            await asyncio.gather(cancelled, return_exceptions=True)
-            preflight_result = await preflight
-            if preflight_result is not None:
-                return ConsoleConversationActivationResult(
-                    preflight_result, request.target, False
-                )
-            if cancellation.is_set():
-                return cancelled_result
-
-            # The app-wide lane and final revalidation are both owned here.
-            # Publishing Finishing is the atomic commit acknowledgement; only
-            # after it is visible does the surviving Console touch the stack.
-            phase_changed("finishing")
-            commit_started = True
-            caller = self.screen
-            post_commit = asyncio.create_task(
-                TldwCli._complete_character_conversation_post_commit(
-                    self, candidate, caller, request, runtime_identity
-                ),
-                name="character_conversation_post_commit",
-            )
-            return await TldwCli._await_character_conversation_post_commit(
-                post_commit
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - admission failures return typed outcomes and drain owned tasks
-            logger.opt(exception=True).warning(
-                "Roleplay character-conversation activation failed"
-            )
-            return ConsoleConversationActivationResult(
-                ConsoleActivationResultKind.FAILED,
-                request.target,
-                commit_started,
-            )
-        finally:
-            children = tuple(
-                task
-                for task in (admission, cancelled, preflight)
-                if task is not None
-            )
-            for child in children:
-                if not child.done():
-                    child.cancel()
-            child_results = (
-                await asyncio.gather(*children, return_exceptions=True)
-                if children
-                else ()
-            )
-            if not lane_acquired and admission is not None:
-                admission_index = children.index(admission)
-                lane_acquired = child_results[admission_index] is True
-            if lane_acquired:
-                lane.release()
 
     @staticmethod
     async def _await_character_conversation_post_commit(
         operation: asyncio.Task[Any],
     ) -> Any:
-        """Delay caller cancellation until app-owned commit work settles."""
-
-        cancellation: asyncio.CancelledError | None = None
-        while True:
-            try:
-                result = await asyncio.shield(operation)
-            except asyncio.CancelledError as error:
-                if operation.cancelled():
-                    raise
-                cancellation = cancellation or error
-                continue
-            break
-        if cancellation is not None:
-            raise cancellation
-        return result
+        return await _destinations()._await_character_conversation_post_commit(
+            operation,
+        )
 
     async def _complete_character_conversation_post_commit(
         self,
@@ -12950,151 +12423,31 @@ class TldwCli(
         request: Any,
         runtime_identity: Any,
     ) -> Any:
-        """Mount, hydrate, transfer, or roll back one committed activation."""
-
-        from tldw_chatbook.Chat.console_conversation_activation import (
-            ConsoleActivationResultKind,
-            ConsoleConversationActivationResult,
+        return await _destinations()._complete_character_conversation_post_commit(
+            self,
+            candidate,
+            caller,
+            request,
+            runtime_identity,
         )
-
-        transferred = False
-
-        async def finalize_visible() -> None:
-            nonlocal transferred
-            await TldwCli._transfer_pushed_console_to_content(
-                self, candidate, caller
-            )
-            transferred = True
-
-        # A cached Console resumes instead of mounting. Its ordinary registry
-        # reconciliation must not compete with this exact target's transaction.
-        prior_resume_gate = getattr(
-            candidate, "_resume_navigation_startup_in_progress", False
-        )
-        candidate._resume_navigation_startup_in_progress = True
-        try:
-            await self.push_screen(candidate)
-            result = (
-                await candidate._workspace.activate_character_conversation_after_commit(
-                    request,
-                    finalize_visible=finalize_visible,
-                )
-            )
-            if result.kind is ConsoleActivationResultKind.OPENED and transferred:
-                if not self.is_screen_installed(candidate):
-                    self._retain_reusable_navigation_screen(
-                        TAB_CHAT, runtime_identity, candidate
-                    )
-                self.current_tab = TAB_CHAT
-                return result
-            if getattr(self, "screen", None) is candidate:
-                await self.pop_screen()
-            if result.kind is ConsoleActivationResultKind.OPENED:
-                return ConsoleConversationActivationResult(
-                    ConsoleActivationResultKind.FAILED, request.target, True
-                )
-            return result
-        except Exception:  # noqa: BLE001 - restore caller after any committed mount or transfer failure
-            logger.bind(
-                operation_id=id(request), candidate_token=id(candidate),
-                caller_token=id(caller), stage="commit_screen",
-            ).opt(exception=True).warning(
-                "Committed Roleplay character-conversation activation failed"
-            )
-            if getattr(self, "screen", None) is candidate:
-                try:
-                    await self.pop_screen()
-                except Exception:  # noqa: BLE001 - report caller restoration without losing typed outcome
-                    logger.bind(
-                        operation_id=id(request), candidate_token=id(candidate),
-                        caller_token=id(caller), stage="restore_caller",
-                    ).opt(exception=True).error(
-                        "Could not restore Roleplay after Console mount failure"
-                    )
-            return ConsoleConversationActivationResult(
-                ConsoleActivationResultKind.FAILED, request.target, True
-            )
-        finally:
-            candidate._resume_navigation_startup_in_progress = prior_resume_gate
 
     async def _transfer_pushed_console_to_content(
         self,
         candidate: Any,
         caller: Any,
     ) -> None:
-        """Promote the proved pushed Console while replacing its Roleplay caller."""
-
-        stack = self._screen_stack
-        if (
-            len(stack) < 2
-            or stack[-1] is not candidate
-            or stack[-2] is not caller
-        ):
-            raise RuntimeError("Console activation stack ownership changed")
-
-        original_stack = tuple(stack)
-        candidate_callbacks = tuple(candidate._result_callbacks)
-        caller_callbacks = tuple(caller._result_callbacks)
-
-        # The proved candidate is already current, mounted, and owns its push
-        # callback. Remove only the caller beneath it; unlike switch_screen,
-        # this never exposes a state where Textual has popped both screens.
-        try:
-            stack.pop(-2)
-            caller._pop_result_callback()
-            await self._remove_promoted_screen_caller(caller)
-        except BaseException:
-            # Restore exact membership/callback ownership even if the removal
-            # seam failed after changing the current stack. A normal pop then
-            # resumes Roleplay and unmounts the attempt-owned candidate.
-            stack[:] = original_stack
-            candidate._result_callbacks[:] = candidate_callbacks
-            caller._result_callbacks[:] = caller_callbacks
-            try:
-                if not caller.is_running:
-                    restored_caller, await_mount = self._get_screen(caller)
-                    if restored_caller is not caller:
-                        raise RuntimeError("Roleplay screen identity changed during restore")
-                    await await_mount
-                await self.pop_screen()
-            except BaseException:  # noqa: BLE001 - fallback restores ownership even when cleanup is cancelled
-                logger.bind(
-                    candidate_token=id(candidate), caller_token=id(caller),
-                    stage="restore_caller",
-                ).opt(exception=True).error(
-                    "Could not atomically restore Roleplay after Console promotion"
-                )
-                stack[:] = original_stack[:-1]
-                caller._result_callbacks[:] = caller_callbacks
-                candidate._result_callbacks[:] = candidate_callbacks[:-1]
-                try:
-                    if not caller.is_running:
-                        restored_caller, await_mount = self._get_screen(caller)
-                        if restored_caller is not caller:
-                            raise RuntimeError(
-                                "Roleplay screen identity changed during fallback restore"
-                            )
-                        await await_mount
-                    if (
-                        candidate.is_running
-                        and candidate.parent is self
-                        and not self.is_screen_installed(candidate)
-                    ):
-                        await candidate.remove()
-                except BaseException:  # noqa: BLE001 - final attempt-owned cleanup must not replace original failure
-                    logger.bind(
-                        candidate_token=id(candidate), caller_token=id(caller),
-                        stage="cleanup_candidate",
-                    ).opt(exception=True).error(
-                        "Could not clean failed Console promotion candidate"
-                    )
-            raise
+        return await _destinations()._transfer_pushed_console_to_content(
+            self,
+            candidate,
+            caller,
+        )
 
     async def _remove_promoted_screen_caller(self, caller: Any) -> None:
-        """Unmount the former content screen after its stack slot is removed."""
+        return await _destinations()._remove_promoted_screen_caller(self, caller)
 
-        await caller.remove()
-
+    # Cluster K3 (TASK-33011): Personal Context launchers, delegated to
+    # ``app_destinations``. ``_load_personal_context_sync_runtime`` and
+    # ``get_personal_context_service`` stay here: startup wiring reaches them.
     def prepare_personal_context_interview_request(
         self,
         *,
@@ -13105,70 +12458,18 @@ class TldwCli(
         workspace_label: str = "",
         source: str | None = None,
     ):
-        """Resolve one canonical scope without touching workspace ownership."""
-
-        from tldw_profile_core import ScopeKind
-
-        from .Personal_Context.interview_launch import ProfileInterviewLaunchRequest
-
-        if kind not in {"personal", "workspace"}:
-            raise ValueError("Unknown Personal Context interview kind.")
-        if mode not in {"fixed", "adaptive"}:
-            raise ValueError("Unknown Personal Context interview mode.")
-        if source not in {None, "setup", "workspace", "settings"}:
-            raise ValueError("Unknown Personal Context interview source.")
-        service = self.get_personal_context_service(retry_locked=True)
-        status = service.status()
-        if status.state.value == "absent":
-            service.create_profile()
-        elif status.state.value in {"locked", "removed"}:
-            raise ValueError("Personal Context is unavailable.")
-        scopes = service.list_scopes()
-        if scope_id is not None:
-            scope = next((item for item in scopes if item.scope_id == scope_id), None)
-            expected = ScopeKind.GLOBAL if kind == "personal" else ScopeKind.WORKSPACE
-            if scope is None or scope.kind is not expected:
-                raise ValueError("Personal Context scope does not match interview.")
-        elif kind == "personal":
-            scope = next(
-                (item for item in scopes if item.kind is ScopeKind.GLOBAL), None
-            )
-            if scope is None:
-                raise ValueError("Global Personal Context scope is unavailable.")
-        else:
-            local_workspace_id = str(local_workspace_id or "").strip()
-            if not local_workspace_id:
-                raise ValueError("Workspace interview requires a local workspace.")
-            bindings = service.list_workspace_bindings()
-            scope = next(
-                (
-                    item
-                    for item in scopes
-                    if item.kind is ScopeKind.WORKSPACE
-                    and bindings.get(item.scope_id, {}).get("local_workspace_id")
-                    == local_workspace_id
-                ),
-                None,
-            )
-            if scope is None:
-                scope = service.create_workspace_scope(
-                    local_workspace_id,
-                    workspace_label or "Workspace",
-                )
-        return ProfileInterviewLaunchRequest(
+        return _destinations().prepare_personal_context_interview_request(
+            self,
             kind=kind,
-            scope_id=scope.scope_id,
-            local_workspace_id=local_workspace_id,
             mode=mode,
+            scope_id=scope_id,
+            local_workspace_id=local_workspace_id,
+            workspace_label=workspace_label,
             source=source,
         )
 
     def build_personal_context_interview_screen(self, request):
-        """Build a fresh profile interview screen for one resolved request."""
-
-        from .Personal_Context.interview_launch import build_profile_interview_screen
-
-        return build_profile_interview_screen(self, request)
+        return _destinations().build_personal_context_interview_screen(self, request)
 
     def launch_personal_context_interview(
         self,
@@ -13176,48 +12477,18 @@ class TldwCli(
         scope_id: str,
         mode: str = "fixed",
     ) -> None:
-        """Settings re-interview seam over the shared post-commit launcher."""
-
-        from .Personal_Context.interview_launch import (
-            launch_profile_interview_after_commit,
-        )
-
-        request = self.prepare_personal_context_interview_request(
-            kind=kind,
-            scope_id=scope_id,
-            mode=mode,
-            source="settings",
-        )
-        launch_profile_interview_after_commit(
+        return _destinations().launch_personal_context_interview(
             self,
-            request,
-            lambda: TldwCli._reload_personal_context_settings_panel(self),
+            kind,
+            scope_id,
+            mode,
         )
 
     def _reload_personal_context_settings_panel(self) -> None:
-        """Reload the mounted My Profile panel after a re-interview returns."""
-
-        from .Widgets.Settings_Widgets.personal_context_panel import (
-            PersonalContextSettingsPanel,
-        )
-
-        try:
-            panel = self.query_one(
-                "#personal-context-settings-panel", PersonalContextSettingsPanel
-            )
-        except QueryError:
-            return
-        panel.load_records(retry_locked=True)
+        return _destinations()._reload_personal_context_settings_panel(self)
 
     def launch_personal_context_link(self) -> None:
-        """Open the reviewed home-server link flow from canonical Settings."""
-
-        self.run_worker(
-            self._run_personal_context_link(),
-            group="personal-context-first-link",
-            exclusive=True,
-            exit_on_error=False,
-        )
+        return _destinations().launch_personal_context_link(self)
 
     def _load_personal_context_sync_runtime(
         self,
@@ -13259,168 +12530,7 @@ class TldwCli(
         self.local_first_sync_service.personal_context_service = service
 
     async def _run_personal_context_link(self) -> None:
-        """Plan, review, and apply one content-safe first-link attempt."""
-
-        import platform
-
-        from .Personal_Context.link_key_custody import (
-            KeyringPersonalContextLinkKeyCustodian,
-            KeyringPersonalContextWrappingKeyProvider,
-        )
-        from .Personal_Context.link_service import (
-            PersonalContextLinkAttentionRequired,
-            PersonalContextLinkService,
-        )
-        from .Personal_Context.key_protector import ProfileLockedError
-        from .Personal_Context.paths import get_personal_context_db_path
-        from .Personal_Context.repository import (
-            release_first_link_freeze_for_recovery,
-        )
-        from .Widgets.Settings_Widgets.personal_context_link_modal import (
-            PersonalContextLinkModal,
-        )
-
-        scope = self._server_notification_event_scope()
-        server_profile_id = scope.get("server_profile_id")
-        if not server_profile_id:
-            self.notify(
-                "Choose and authenticate a home server before linking your profile.",
-                severity="warning",
-            )
-            return
-        try:
-            wrapping_provider = KeyringPersonalContextWrappingKeyProvider()
-            key_custodian = KeyringPersonalContextLinkKeyCustodian()
-            existing = self.sync_state_repository.get_personal_context_link_state(
-                server_profile_id=str(server_profile_id),
-                authenticated_principal_id=scope.get("authenticated_principal_id"),
-            )
-            recovered_apply = False
-            if existing is not None and existing["state"] == "applying":
-                binding = PersonalContextLinkService._key_binding(existing)
-                try:
-                    staged_integrity_key = key_custodian.load(**binding)
-                    from .Personal_Context.bootstrap import (
-                        bootstrap_personal_context_service,
-                    )
-
-                    recovered_service = bootstrap_personal_context_service(
-                        recovery_integrity_key=staged_integrity_key,
-                        expected_recovery_profile_id=str(existing["profile_id"]),
-                    )
-                except (ProfileLockedError, ValueError):
-                    recovered_service = None
-                if (
-                    recovered_service is not None
-                    and recovered_service.status().state.value == "ready"
-                ):
-                    self._personal_context_service = recovered_service
-                    recovered_apply = True
-            coordinator = PersonalContextLinkService(
-                personal_context_service=self.get_personal_context_service(
-                    retry_locked=True
-                ),
-                server_sync_service=self.server_sync_service,
-                state_repository=self.sync_state_repository,
-                wrapping_key_provider=wrapping_provider,
-                key_custodian=key_custodian,
-                freeze_release_fallback=lambda plan_id: (
-                    release_first_link_freeze_for_recovery(
-                        get_personal_context_db_path(), plan_id=plan_id
-                    )
-                ),
-                local_first_sync_service=self.local_first_sync_service,
-                server_profile_id=str(server_profile_id),
-                authenticated_principal_id=scope.get("authenticated_principal_id"),
-                display_name=platform.node() or "Chatbook",
-            )
-            if existing is not None and existing["state"] == "complete":
-                await coordinator.resume()
-                self._load_personal_context_sync_runtime(
-                    server_profile_id=str(server_profile_id),
-                    authenticated_principal_id=scope.get(
-                        "authenticated_principal_id"
-                    ),
-                )
-                self.notify("Profile is already linked. Sync is ready.")
-                self._reload_personal_context_settings_panel()
-                return
-            if recovered_apply:
-                await coordinator.resume_after_local_activation(
-                    rebaseline_version=(
-                        self.get_personal_context_service()
-                        .first_link_rebaseline_version()
-                    )
-                )
-                self.notify("Profile link completed.")
-                self._reload_personal_context_settings_panel()
-                return
-            if existing is not None and existing["state"] == "applying":
-                active_reader = getattr(
-                    coordinator,
-                    "authenticated_committed_rebaseline_version",
-                    None,
-                )
-                active_version = active_reader() if callable(active_reader) else None
-                if active_version is not None:
-                    await coordinator.resume_after_local_activation(
-                        rebaseline_version=active_version
-                    )
-                    self.notify("Profile link completed.")
-                    self._reload_personal_context_settings_panel()
-                    return
-                if not coordinator.abandon_uncommitted_apply():
-                    mark_attention = getattr(
-                        coordinator, "mark_ambiguous_apply_attention", None
-                    )
-                    if callable(mark_attention):
-                        mark_attention()
-                    raise ProfileLockedError(
-                        "Interrupted Personal Context link recovery is pending."
-                    )
-            if existing is not None and existing["state"] in {
-                "local_rebaseline_complete",
-                "reconciling",
-            }:
-                await coordinator.resume()
-                self.notify("Profile link completed.")
-                self._reload_personal_context_settings_panel()
-                return
-            while True:
-                manifest = self.get_personal_context_service().get_manifest()
-                try:
-                    plan = await coordinator.plan(
-                        expected_purge_generation=manifest.purge_generation
-                    )
-                except PersonalContextLinkAttentionRequired as exc:
-                    attention_result = await self.push_screen_wait(
-                        PersonalContextLinkModal.for_bootstrap_attention(
-                            exc.attention,
-                            retry_callback=True,
-                        )
-                    )
-                    if attention_result is not None and attention_result.retry:
-                        continue
-                    return
-                result = await self.push_screen_wait(
-                    PersonalContextLinkModal(plan, retry_callback=True)
-                )
-                if result is None:
-                    coordinator.cancel(plan.plan_id)
-                    return
-                if result.retry:
-                    coordinator.cancel(plan.plan_id)
-                    continue
-                await coordinator.apply(result.plan_id, result.decisions)
-                break
-        except Exception:
-            self.notify(
-                "Profile linking needs attention. No profile content was shown; retry from Settings.",
-                severity="error",
-            )
-            return
-        self.notify("Profile linked to the home server.")
-        self._reload_personal_context_settings_panel()
+        return await _destinations()._run_personal_context_link(self)
 
     def get_personal_context_service(self, *, retry_locked: bool = False):
         """Return the app-owned service, explicitly retrying a locked facade."""
@@ -19521,6 +18631,25 @@ class TldwCli(
             # Cancel any pending workers and wait for them, bounded.
             await self._cancel_and_settle_workers("unmount")
 
+            # SSH ControlMaster cleanup (Phase 2a): `ssh -O exit` for every
+            # master this process started, only after in-flight calls have
+            # settled above so closing a master cannot cut a live call.
+            # Best-effort and bounded (5s per host, off the loop);
+            # ControlPersist remains the crash backstop, so a failure here
+            # degrades to an eventually-expiring master and must never
+            # block the quit.
+            try:
+                from tldw_chatbook.Tools.remote_workspace_transport import (
+                    get_master_manager,
+                )
+
+                await asyncio.to_thread(get_master_manager().close_all)
+            except Exception as error:
+                self.loguru_logger.warning(
+                    "Closing SSH control masters on shutdown failed type={}",
+                    type(error).__name__,
+                )
+
             # Stop media cleanup timer
             if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
                 self._media_cleanup_timer.stop()
@@ -20501,787 +19630,51 @@ class TldwCli(
     # ######################################################
 
 
-# Initialize logging at the earliest possible point
-def initialize_early_logging():
-    """Initialize logging as early as possible to capture all logs from startup."""
-
-    # Create a temporary app-like object with just enough attributes for configure_application_logging
-    class EarlyLoggingApp:
-        def __init__(self):
-            self.app_config = load_settings()
-            self._rich_log_handler = None
-
-        def query_one(self, *args, **kwargs):
-            # This will fail in configure_application_logging, but that's expected
-            # for early logging - we just want to set up file and console logging
-            raise QueryError("Early logging setup - UI not available yet")
-
-    # Configure logging with our minimal app-like object
-    early_app = EarlyLoggingApp()
-    configure_application_logging(early_app)
-    logging.info("Early logging initialization complete")
-    loguru_logger.info("Early logging initialization complete (loguru)")
-    return early_app
-
-
-def _is_source_tree(package_root: Path) -> bool:
-    """Return whether package files are inside a build-capable source tree."""
-
-    return (package_root.parent / "pyproject.toml").is_file()
+# TASK-33011: the process entry points (early logging, the CSS build
+# manifest, the argument parser, ``get_app``, ``main_cli_runner`` and the
+# ``python -m`` body) live in ``tldw_chatbook.app_entry``. They run only from
+# ``cli.py``'s lazy import or ``python -m``, never on the in-process boot path,
+# so app.py must not import that module at module scope. ``__getattr__`` keeps
+# ``from tldw_chatbook.app import <name>`` working for every moved name. Patch
+# those names -- and anything their bodies call -- on ``app_entry``: a patch on
+# this module no longer reaches them.
+_APP_ENTRY_EXPORTS = frozenset(
+    {
+        "_BUNDLED_CSS_DECLARATION_RE",
+        "_build_arg_parser",
+        "_generated_css_is_stale",
+        "_is_source_tree",
+        "_load_css_build_manifest",
+        "_save_css_build_manifest",
+        "get_app",
+        "initialize_early_logging",
+        "main_cli_runner",
+    }
+)
 
 
-#: A class-level ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` *assignment*, which is
-#: what makes a module an input to the generated stylesheets. Anchored on the
-#: assignment rather than matching the bare name anywhere in the file: four
-#: package modules -- including this one, via ``_generated_css_is_stale``'s own
-#: docstring -- discuss the marker while declaring nothing, and a plain substring
-#: test made every edit to any of them rebuild the CSS on the next boot, quietly
-#: rewriting the committed bundle's ``Generated:`` timestamp. A module that has
-#: just *gained* a declaration is still caught: a declaration is an assignment.
-_BUNDLED_CSS_DECLARATION_RE = re.compile(r"^\s*BUNDLED_(?:SCREEN_)?CSS\s*[:=]", re.M)
+def __getattr__(name: str) -> Any:
+    """Resolve a moved entry-point name from ``app_entry`` on first use (PEP 562)."""
+    if name in _APP_ENTRY_EXPORTS:
+        from tldw_chatbook import app_entry
 
-
-def _load_css_build_manifest(css_dir: Path) -> dict[str, list] | None:
-    """Load the builder's content manifest, or ``None`` when absent/invalid.
-
-    The manifest is written by ``build_css.write_build_manifest`` beside the
-    generated sheets; see TASK-18910. Each entry is ``[sha256, mtime_at_build]``.
-    Any read/parse/shape problem returns ``None`` so the caller falls back to
-    the legacy mtime rule -- a broken manifest costs one spurious rebuild,
-    never a missed one.
-    """
-    try:
-        import json
-
-        with open(css_dir / build_css.BUILD_MANIFEST_FILENAME, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict) or not data:
-        # An empty manifest is treated as absent: the max() over its entries
-        # would raise, and an empty build is not a state the builder can
-        # produce (it always records at least the CSS_MODULES that exist).
-        return None
-    manifest: dict[str, list] = {}
-    for key, value in data.items():
-        if (
-            not isinstance(key, str)
-            or not isinstance(value, list)
-            or len(value) != 2
-            or not isinstance(value[0], str)
-            or not isinstance(value[1], (int, float))
-        ):
-            return None  # unknown shape: treat as absent
-        manifest[key] = value
-    return manifest
-
-
-def _save_css_build_manifest(css_dir: Path, manifest: dict[str, list]) -> None:
-    """Persist an updated manifest (mtime refreshes after hash confirmation).
-
-    Best-effort: a write failure costs one re-hash on the next boot, never a
-    missed or spurious rebuild -- the in-memory decision has already been
-    made with the correct data.
-    """
-    try:
-        import json
-
-        (css_dir / build_css.BUILD_MANIFEST_FILENAME).write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
-
-
-def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
-    """Return whether the generated stylesheets need rebuilding, and why.
-
-    Source-tree boots rebuild the CSS when its inputs have moved on. Before
-    TASK-15450 every input was a ``.tcss`` module, so checking those mtimes was
-    exhaustive. Four of the five generated sheets are now built from class-level
-    ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` literals in Python modules, so a
-    widget-CSS edit would otherwise have *no effect* until someone remembered to
-    run ``build_css.py`` by hand -- where editing ``DEFAULT_CSS`` used to take
-    effect on the very next run, because Textual read it straight off the class.
-
-    A Python module counts as an input only if it is *newer than the build* and
-    actually mentions the marker. Both halves matter. Treating every ``.py`` as
-    an input was tried first and is wrong: editing ``app.py`` -- or any of the
-    ~1,640 files in this package -- would then re-run the build subprocess on
-    every single developer boot. Reading files to find the marker is likewise
-    only affordable because the mtime test has already narrowed the set, which is
-    normally empty. Checking the marker rather than the list of modules the
-    sheets currently name is what catches a module that has just *gained* a
-    ``BUNDLED_CSS`` declaration -- exactly the file a "nothing happened" bug
-    report starts from.
-
-    Cost: one ``os.walk`` of the package, ~0.3 ms warm for ~1,640 files, plus a
-    read of each file changed since the last build (normally none). It runs only
-    under ``_is_source_tree`` -- for developers, never for a wheel install -- and
-    never on the per-frame or per-keystroke paths.
-
-    Known gap: *deleting* a module that carried ``BUNDLED_CSS`` leaves no newer
-    file behind, so it is not detected here. The CSS bundle guard in CI covers
-    that; this check is a dev-loop convenience, not the authority.
-
-    Args:
-        package_root: The installed ``tldw_chatbook`` package directory.
-
-    Returns:
-        ``(stale, reason)``; ``reason`` is a log-ready phrase, empty when fresh.
-    """
-    css_dir = package_root / "css"
-    generated = [
-        css_dir / "tldw_cli_modular.tcss",
-        css_dir / build_css.WIDGET_DEFAULTS_SELF_FILENAME,
-        css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
-        css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
-        css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
-        # TASK-25812 (Qodo #2281) / TASK-24459: the per-screen sheets split
-        # from the screen-owned modules are generated outputs too -- a
-        # missing or stale one must trigger the same rebuild, or visiting
-        # that screen loads nothing (the bundle no longer carries its
-        # rules). Required only when ALL source modules are part of this
-        # tree, mirroring the builders' own skip for partial/scratch
-        # checkouts.
-        *(
-            css_dir / name
-            for split in build_css.SCREEN_OWNED_SPLITS
-            if all((css_dir / module).is_file() for module in split.modules)
-            for name in split.sheets.values()
-        ),
-    ]
-    missing = [path.name for path in generated if not path.is_file()]
-    if missing:
-        return True, f"generated stylesheet(s) not found: {', '.join(missing)}"
-
-    # Compare against the OLDEST generated sheet: any one of them being behind
-    # its sources is enough to require a rebuild.
-    oldest = min(path.stat().st_mtime for path in generated)
-
-    # TASK-18910: when the builder's content manifest is present it is
-    # AUTHORITATIVE. Each recorded input is mtime-compared first and hashed
-    # when its mtime differs from the recorded build time IN EITHER
-    # DIRECTION -- which removes the false positives (branch switch /
-    # ``git checkout`` / stash pop rewrite mtimes without changing content;
-    # each cost a ~0.7 s synchronous rebuild) while still catching content
-    # restored with a preserved or backdated timestamp (``cp -p``,
-    # rsync -a), which a "newer than the build" test alone would treat as
-    # unchanged. It also closes a masking gap the pure-mtime rule had: a
-    # pull that brings regenerated sheets (new sheet mtimes) together with
-    # a source edit made without a local rebuild never fired, because the
-    # edited source was no longer "newer than the build". Inputs whose
-    # hash confirms unchanged content have their recorded mtime refreshed
-    # so a one-time mtime move does not re-hash on every later boot. No
-    # manifest (first boot after the change, or a wheel install) keeps the
-    # legacy mtime rule; the manifest self-heals on the next rebuild.
-    manifest = _load_css_build_manifest(css_dir)
-    if manifest is not None:
-
-        from .Utils.path_validation import validate_path
-
-        def _sha256(path: Path) -> str | None:
-            digest = hashlib.sha256()
-            try:
-                with open(path, "rb") as handle:
-                    for chunk in iter(
-                        lambda: handle.read(build_css.HASH_CHUNK_SIZE_BYTES), b""
-                    ):
-                        digest.update(chunk)
-            except OSError:
-                return None
-            return digest.hexdigest()
-
-        # A "newer than the build" reference for the declaration scan below:
-        # the newest mtime recorded in the manifest (any input mtime past it
-        # is one the build never saw, whether or not it is in the manifest).
-        newest_recorded = max(entry[1] for entry in manifest.values())
-
-        manifest_dirty = False
-        seen = set()
-        for key, entry in sorted(manifest.items()):
-            recorded_hash, recorded_mtime = entry[0], entry[1]
-            # Manifest keys are joined into filesystem paths; a hand-edited
-            # manifest must not be able to point the stat/hash reads outside
-            # the package (Qodo security finding on PR #1831).
-            try:
-                source = validate_path(key, package_root, allow_hidden=True)
-            except ValueError:
-                return True, f"{key} in the build manifest escapes the package"
-            try:
-                source_mtime = source.stat().st_mtime
-            except OSError:
-                # Deleted input: the sheets still carry its rules, so a
-                # rebuild is required (the pre-manifest code could not see
-                # deletions at all -- see its "Known gap" note).
-                return True, f"{key} (recorded in the build manifest) was deleted"
-            seen.add(key)
-            if source_mtime == recorded_mtime:
-                continue  # unchanged since the build; skip hashing
-            if _sha256(source) != recorded_hash:
-                return True, f"{key} changed since the build"
-            # Hash-confirmed unchanged: refresh the recorded mtime so this
-            # mtime move is not re-hashed on every subsequent boot.
-            manifest[key] = [recorded_hash, source_mtime]
-            manifest_dirty = True
-
-        if manifest_dirty:
-            _save_css_build_manifest(css_dir, manifest)
-
-        # A module that has GAINED a BUNDLED_CSS declaration since the build
-        # is not in the manifest; catch it by scanning declarations in any
-        # .py newer than the newest recorded build input. A backdated NEW
-        # carrier cannot be distinguished from pre-build files by mtime, so
-        # the scan also admits files older than the build when they were
-        # not part of the recorded set and sit in a CSS-declaring
-        # neighbourhood -- bounded by the manifest's own key set: any .py
-        # NOT in the manifest is either new or predates the manifest, and
-        # reading it once is cheap relative to a rebuild.
-        skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
-        for dirpath, dirnames, filenames in os.walk(package_root):
-            dirnames[:] = [name for name in dirnames if name not in skip]
-            for filename in filenames:
-                if not filename.endswith(".py"):
-                    continue
-                source = os.path.join(dirpath, filename)
-                key = Path(source).relative_to(package_root).as_posix()
-                if key in seen:
-                    continue  # already verified above
-                try:
-                    if os.stat(source).st_mtime <= newest_recorded:
-                        continue
-                    with open(source, "r", encoding="utf-8", errors="ignore") as handle:
-                        text = handle.read()
-                except OSError:
-                    continue
-                if _BUNDLED_CSS_DECLARATION_RE.search(text):
-                    return (
-                        True,
-                        f"{filename} gained a BUNDLED_CSS declaration since the build",
-                    )
-        return False, ""
-
-    # Legacy path (no manifest): the pre-TASK-18910 mtime rule, unchanged.
-    for subdir in ("core", "layout", "components", "features", "utilities"):
-        subdir_path = css_dir / subdir
-        if not subdir_path.is_dir():
-            continue
-        for module in subdir_path.glob("*.tcss"):
-            if module.stat().st_mtime > oldest:
-                return True, f"CSS module {module.name} is newer than the build"
-
-    skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
-    for dirpath, dirnames, filenames in os.walk(package_root):
-        # Match the builder's own view of what an input is: `iter_blocks` skips
-        # these directories, so a vendored file mentioning the marker must not
-        # trigger a rebuild that would then ignore it.
-        dirnames[:] = [name for name in dirnames if name not in skip]
-        for filename in filenames:
-            if not filename.endswith(".py"):
-                continue
-            source = os.path.join(dirpath, filename)
-            try:
-                if os.stat(source).st_mtime <= oldest:
-                    continue
-                with open(source, "r", encoding="utf-8", errors="ignore") as handle:
-                    text = handle.read()
-            except OSError:
-                continue  # vanished mid-walk; not our problem to report
-            if _BUNDLED_CSS_DECLARATION_RE.search(text):
-                return True, f"{filename} carries widget CSS newer than the build"
-
-    return False, ""
-
-
-def _build_arg_parser() -> argparse.ArgumentParser:
-    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability)."""
-    parser = argparse.ArgumentParser(
-        description="tldw chatbook - A Textual TUI for chatting with LLMs",
-        prog="tldw-cli",
-    )
-    parser.add_argument(
-        "--serve", action="store_true", help="Run the application as a web server"
-    )
-    parser.add_argument(
-        "--host", type=str, help="Host address for web server (default: localhost)"
-    )
-    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
-    parser.add_argument("--web-title", type=str, help="Title for the web page")
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode for web server"
-    )
-    parser.add_argument(
-        "--focus",
-        action="store_true",
-        help="Start chrome-free in the Console (hides nav bar and workbench header)",
-    )
-    return parser
+        return getattr(app_entry, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # --- Main execution block ---
 if __name__ == "__main__":
-    # Record the launch directory first, before anything can chdir -- the
-    # `python -m tldw_chatbook.app` path does not route through
-    # main_cli_runner, so it needs its own capture (set-once; harmless if
-    # already recorded). See workspace_context_note for why this matters.
-    from tldw_chatbook.Tools.workspace_file_roots import (
-        set_launch_cwd as _set_launch_cwd,
-    )
-
-    _set_launch_cwd()
-
-    # Initialize logging first
-    early_logging_app = initialize_early_logging()
-
-    try:
-        load_cli_config_and_ensure_existence()
-    except Exception as e_cfg_main:
-        logging.error(
-            f"Could not ensure creation of effective config file: {e_cfg_main}",
-            exc_info=True,
-        )
-
-    # TASK-26040: persist any pending forward config migration once at boot.
-    # A no-op (no lock, no file read) until a real migration is registered.
-    try:
-        from tldw_chatbook.config import migrate_config_file_if_needed
-        migrate_config_file_if_needed()
-    except Exception as e_cfg_migrate:
-        logging.error(
-            f"Config schema migration failed; the original file was left "
-            f"untouched: {e_cfg_migrate}",
-            exc_info=True,
-        )
-
-    # --- Initialize Metrics Systems ---
-    # Initialize Prometheus metrics server
-    try:
-        # Opt-in only: init_metrics_server checks [metrics] enabled before it
-        # binds anything, and resolves port/bind address itself (TASK-25914).
-        # It previously read METRICS_PORT here with a "8000" fallback, which
-        # meant the env default silently overrode a configured port.
-        init_metrics_server()
-    except Exception as exc:
-        loguru_logger.warning(
-            "Prometheus metrics initialization failed (exception_type={}).",
-            type(exc).__name__,
-        )
-        # Continue without metrics server - metrics are still collected
-
-    # Initialize OpenTelemetry metrics
-    try:
-        # Initialize OpenTelemetry for advanced metrics collection
-        # This complements the existing Prometheus metrics
-        init_otel_metrics()
-    except Exception as exc:
-        loguru_logger.warning(
-            "OpenTelemetry metrics initialization failed (exception_type={}).",
-            type(exc).__name__,
-        )
-        # Continue without OpenTelemetry - the app still has Prometheus metrics
-
-    # --- Emoji Check ---
-    emoji_is_supported = supports_emoji()  # Call it once
-    loguru_logger.info(f"Terminal emoji support detected: {emoji_is_supported}")
-    loguru_logger.info(
-        f"Using brain: {get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}"
-    )
-    loguru_logger.info("-" * 30)
-
-    # --- CSS File Handling ---
-    package_root = Path(__file__).parent
-    if _is_source_tree(package_root):
-        try:
-            css_dir = package_root / "css"
-            css_dir.mkdir(exist_ok=True)
-
-            # Check if modular CSS needs to be built
-            build_script_path = css_dir / "build_css.py"
-
-            # Check whether any input -- a .tcss module or a Python module
-            # carrying BUNDLED_CSS -- has moved on since the last build.
-            should_rebuild, reason = _generated_css_is_stale(package_root)
-            if should_rebuild:
-                logging.info("Generated CSS is stale during module entry; rebuilding")
-
-            if should_rebuild and build_script_path.exists():
-                logging.info("Building modular CSS...")
-                import subprocess
-
-                # Build CSS synchronously before starting the app
-                result = subprocess.run(
-                    [sys.executable, str(build_script_path)],
-                    cwd=str(css_dir),
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode == 0:
-                    logging.info("Successfully built modular CSS")
-                else:
-                    logging.error(f"Failed to build modular CSS: {result.stderr}")
-
-        except Exception as e_css_main:
-            logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
-
-    # --- Check for encrypted config (config will be created if it doesn't exist) ---
-    try:
-        config_data = load_cli_config_and_ensure_existence()
-        encryption_config = config_data.get("encryption", {})
-
-        if encryption_config.get("enabled", False):
-            loguru_logger.info("Config file encryption is enabled. Password required.")
-
-            # Import password dialog dependencies here to avoid circular imports
-            import asyncio
-            from textual.app import App
-            from tldw_chatbook.Widgets.password_dialog import PasswordDialog
-
-            class PasswordPromptApp(App):
-                """Minimal app to prompt for password."""
-
-                def __init__(self):
-                    super().__init__()
-                    self.password = None
-
-                async def on_mount(self) -> None:
-                    """Show password dialog immediately on mount."""
-                    password = await self.push_screen(
-                        PasswordDialog(
-                            mode="unlock",
-                            title="Unlock Configuration",
-                            message="Enter your master password to decrypt the configuration file.",
-                            on_submit=lambda p: None,
-                            on_cancel=lambda: None,
-                        ),
-                        wait_for_dismiss=True,
-                    )
-
-                    if password:
-                        # Verify password
-                        from tldw_chatbook.Utils.config_encryption import (
-                            config_encryption,
-                        )
-
-                        password_verifier = encryption_config.get(
-                            "password_verifier", ""
-                        )
-                        if password_verifier and config_encryption.verify_password(
-                            password, password_verifier
-                        ):
-                            self.password = password
-                            self.exit()
-                        else:
-                            self.notify(
-                                "Invalid password. Please try again.", severity="error"
-                            )
-                            # Re-show the dialog
-                            await self.on_mount()
-                    else:
-                        # User cancelled
-                        loguru_logger.error(
-                            "Password required but not provided. Exiting."
-                        )
-                        self.exit()
-
-            # Run the password prompt app
-            password_app = PasswordPromptApp()
-            password_app.run()
-
-            if password_app.password:
-                # Set the password for the session
-                set_encryption_password(password_app.password)
-                loguru_logger.info("Configuration decrypted successfully.")
-            else:
-                # Exit if no password provided
-                loguru_logger.error("Cannot proceed without decryption password.")
-                sys.exit(1)
-
-    except Exception as e:
-        loguru_logger.error(f"Error checking config encryption: {e}")
-        # Continue without encryption if there's an error
-
-    # task-1650: resolve textual_image's rendering protocol NOW, while the
-    # terminal still answers escape queries. Textual takes raw mode in
-    # run() below, after which the query silently fails and every image
-    # surface degrades to half-cell rendering.
-    from .Utils.terminal_utils import warm_up_image_protocol
-
-    warm_up_image_protocol()
-
-    # argparse terminates here on --help (exit 0) and invalid arguments
-    # (exit 2), same as the console-script path -- no guard: swallowing
-    # SystemExit would print usage and then launch the TUI anyway.
-    _main_args = _build_arg_parser().parse_args()
-
-    # task-18908: --serve historically only worked via the console-script
-    # entry; this __main__ path parsed the flags and then ignored them,
-    # silently binding the config default port. Route them exactly like
-    # main_cli_runner does.
-    if _main_args.serve:
-        from .Web_Server.serve import check_web_server_available, run_web_server
-
-        if not check_web_server_available():
-            loguru_logger.error("Web server feature is not available!")
-            loguru_logger.error("Install with: pip install tldw_chatbook[web]")
-            raise SystemExit(1)
-
-        loguru_logger.info("Starting tldw_chatbook in web server mode")
-        run_web_server(
-            host=_main_args.host,
-            port=_main_args.port,
-            title=_main_args.web_title,
-            debug=_main_args.debug,
-        )
-        raise SystemExit(0)
-
-    # task-19561: `python -m tldw_chatbook.app` installed no signal handlers
-    # at all, so SIGTERM took the process out with the kernel default -- even
-    # more abrupt than the console script's `os._exit(0)`. Both entry points
-    # now share one bounded, graceful mechanism.
-    install_termination_handlers()
-
-    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
-    # constructor, before anything can paint -- the terminal is the only
-    # surface that exists at this phase, so say what the pause is there.
-    from tldw_chatbook.Utils.db_upgrade_notice import (
-        print_db_upgrade_notice_if_pending,
-    )
-
-    print_db_upgrade_notice_if_pending()
-
-    # Create instance with early logging flag
-    app_instance = TldwCli()
-    app_instance._cli_focus_override = bool(_main_args.focus)
-    # Set the early logging flag so _setup_logging knows logging was already initialized
-    app_instance._early_logging_initialized = True
-    try:
-        app_instance.run()
-    except KeyboardInterrupt:
-        loguru_logger.info("--- KeyboardInterrupt received ---")
-    except Exception:
-        loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
-        traceback.print_exc()  # Make sure traceback prints
-    finally:
-        # This might run even if app exits early internally in run()
-        loguru_logger.info("--- FINALLY block after app.run() ---")
-        # Everything from here is interpreter teardown -- `asyncio.run`'s
-        # executor join, `threading._shutdown()`, `atexit`. None of it is
-        # interruptible from Python, so this is the last point a bound can
-        # be placed on it. Idempotent: a SIGTERM-armed watchdog already
-        # holds a tighter deadline and this call leaves it alone.
-        arm_exit_watchdog(reason="interpreter exit")
-
-    loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
-
-
-# Entry point for the tldw-chatbook command
-def get_app():
-    """Entry point for textual serve.
-
-    Returns the TldwCli app instance without running it.
-    """
-    # Configure logging to suppress verbose debug messages early
-
-    # Suppress various verbose loggers
-    logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
-    logging.getLogger("torio").setLevel(logging.WARNING)
-    logging.getLogger("torch").setLevel(logging.WARNING)
-    logging.getLogger("PIL").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-    logging.getLogger("fsevents").setLevel(logging.WARNING)
-
-    # Ensure CSS is built
-
-    package_root = Path(__file__).parent
-    if _is_source_tree(package_root):
-        css_dir = package_root / "css"
-        build_script_path = css_dir / "build_css.py"
-
-        # Same staleness rule as the main entry points: a missing generated
-        # sheet, or any input newer than the build (TASK-15450).
-        stale, reason = _generated_css_is_stale(package_root)
-        if stale and build_script_path.exists():
-            print(f"Building modular CSS: {reason}")
-
-            subprocess.run([sys.executable, str(build_script_path)], check=True)
-
-    return TldwCli()
-
-
-def main_cli_runner():
-    """Entry point for the tldw-chatbook command.
-
-    This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
-    It initializes logging early and then runs the TldwCli app.
-    """
-    # Record the launch directory at the earliest point in the process, before
-    # anything can chdir. The workspace-context note appended to agent prompts
-    # expresses workspace roots relative to this (never as absolute host
-    # paths). Set-once: harmless if another entry path already recorded it.
-    from tldw_chatbook.Tools.workspace_file_roots import set_launch_cwd
-
-    set_launch_cwd()
-
-    # Configure logging to suppress verbose debug messages early
-    import warnings
-
-    # Suppress various verbose loggers
-    logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
-    logging.getLogger("torio").setLevel(logging.WARNING)
-    logging.getLogger("torch").setLevel(logging.WARNING)
-    logging.getLogger("transformers").setLevel(logging.WARNING)
-    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
-    logging.getLogger("chromadb").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.INFO)
-    logging.getLogger("httpcore").setLevel(logging.INFO)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("filelock").setLevel(logging.WARNING)
-
-    # Suppress torchaudio and FFmpeg warnings
-    warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
-    warnings.filterwarnings("ignore", message=".*FFmpeg.*")
-
-    # Set environment variable to suppress FFmpeg output
-    os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
-
-    # task-19561: SIGTERM used to be answered here by `os._exit(0)` from
-    # inside the handler, after an `atexit`-registered `force_cleanup` that
-    # tried to daemonize already-started threads (a `RuntimeError` every
-    # time) and cleared `concurrent.futures.thread._threads_queues` (which
-    # only ever robs `_python_exit` of the sentinels that let idle executor
-    # threads finish). `os._exit` skipped Textual's `on_unmount` entirely --
-    # no database closed, no transaction rolled back, and any row already
-    # flipped to `running` stranded there permanently. The handlers below
-    # run the ordinary shutdown path and keep a hard exit only as the
-    # bounded, last-resort escape. See `Utils/app_shutdown.py`.
-    install_termination_handlers()
-
-    # Initialize logging first
-    initialize_early_logging()
-
-    try:
-        load_cli_config_and_ensure_existence()
-    except Exception as e_cfg_main:
-        logging.error(
-            f"Could not ensure creation of effective config file: {e_cfg_main}",
-            exc_info=True,
-        )
-
-    # --- Emoji Check ---
-    emoji_is_supported = supports_emoji()  # Call it once
-    loguru_logger.info(f"Terminal emoji support detected: {emoji_is_supported}")
-    loguru_logger.info(
-        f"Using brain: {get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}"
-    )
-    loguru_logger.info("-" * 30)
-
-    # --- CSS File Handling ---
-    package_root = Path(__file__).parent
-    if _is_source_tree(package_root):
-        try:
-            css_dir = package_root / "css"
-            css_dir.mkdir(exist_ok=True)
-
-            # Check if modular CSS needs to be built
-            build_script_path = css_dir / "build_css.py"
-
-            # Check whether any input -- a .tcss module or a Python module
-            # carrying BUNDLED_CSS -- has moved on since the last build.
-            should_rebuild, reason = _generated_css_is_stale(package_root)
-            if should_rebuild:
-                logging.info("Generated CSS is stale during CLI entry; rebuilding")
-
-            if should_rebuild and build_script_path.exists():
-                logging.info("Building modular CSS...")
-
-                # Build CSS synchronously before starting the app
-                result = subprocess.run(
-                    [sys.executable, str(build_script_path)],
-                    cwd=str(css_dir),
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode == 0:
-                    logging.info("Successfully built modular CSS")
-                else:
-                    logging.error(f"Failed to build modular CSS: {result.stderr}")
-
-        except Exception as e_css_main:
-            logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
-
-    # Parse command line arguments
-    args = _build_arg_parser().parse_args()
-
-    # If --serve flag is provided, run as web server
-    if args.serve:
-        # Check if web server dependencies are available
-        from .Web_Server.serve import check_web_server_available, run_web_server
-
-        if not check_web_server_available():
-            loguru_logger.error("\n" + "=" * 60)
-            loguru_logger.error("Web server feature is not available!")
-            loguru_logger.error("=" * 60)
-            loguru_logger.error(
-                "\nThe required dependency 'textual-serve' is not installed."
-            )
-            loguru_logger.error("\nTo install it, run:")
-            loguru_logger.error("  pip install tldw_chatbook[web]")
-            loguru_logger.error("\nFor development installations:")
-            loguru_logger.error('  pip install -e ".[web]"')
-            loguru_logger.error("\n" + "=" * 60 + "\n")
-            return
-
-        loguru_logger.info("Starting tldw_chatbook in web server mode")
-        run_web_server(
-            host=args.host, port=args.port, title=args.web_title, debug=args.debug
-        )
-        return  # Exit after web server stops
-
-    # Otherwise, run as normal TUI app
-    # task-1650: resolve textual_image's rendering protocol NOW, while the
-    # terminal still answers escape queries. Textual takes raw mode in
-    # run() below, after which the query silently fails and every image
-    # surface degrades to half-cell rendering.
-    from .Utils.terminal_utils import warm_up_image_protocol
-
-    warm_up_image_protocol()
-
-    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
-    # constructor, before anything can paint -- the terminal is the only
-    # surface that exists at this phase, so say what the pause is there.
-    from .Utils.db_upgrade_notice import print_db_upgrade_notice_if_pending
-
-    print_db_upgrade_notice_if_pending()
-
-    # Create instance with early logging flag
-    app_instance = TldwCli()
-    app_instance._cli_focus_override = bool(args.focus)
-    app_instance._recovery_restart_available = True
-    # Set the early logging flag so _setup_logging knows logging was already initialized
-    app_instance._early_logging_initialized = True
-    recovery_restart_request = None
-    try:
-        app_instance.run()
-        recovery_restart_request = getattr(app_instance, "_recovery_restart_request", None)
-    except KeyboardInterrupt:
-        loguru_logger.info("--- KeyboardInterrupt received ---")
-    except Exception:
-        loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
-        traceback.print_exc()  # Make sure traceback prints
-    finally:
-        # This might run even if app exits early internally in run()
-        loguru_logger.info("--- FINALLY block after app.run() ---")
-        # Bound interpreter teardown (see the identical call in the
-        # `__main__` block for why this is the last placeable bound).
-        arm_exit_watchdog(reason="interpreter exit")
-
-    loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
-    return recovery_restart_request
+    # ``python -m tldw_chatbook.app``. app_entry imports ``TldwCli`` from
+    # ``tldw_chatbook.app``; register this already-executed module under that
+    # name first, so the import binds THIS module instead of executing app.py a
+    # second time. Skipped when this namespace is not a registered module
+    # (``runpy.run_module(..., alter_sys=False)``).
+    _this_module = sys.modules.get(__name__)
+    if _this_module is not None and vars(_this_module) is globals():
+        sys.modules.setdefault("tldw_chatbook.app", _this_module)
+    from tldw_chatbook.app_entry import _run_module_main
+
+    _run_module_main()
 
 
 #

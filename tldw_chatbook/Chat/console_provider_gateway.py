@@ -6,6 +6,7 @@ from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import math
@@ -131,6 +132,8 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    CUSTOM_OPENAI_EXECUTION_KEYS,
+    ConsoleProviderIdentity,
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
@@ -169,6 +172,7 @@ from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
 )
+from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -176,6 +180,11 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 if TYPE_CHECKING:
+    # Imported lazily in resolve_finish_policy: keeping the engine off the
+    # module scope keeps it out of the UI-ready census (ADR-097 ratchet).
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+        HostedPresetFinishPolicy,
+    )
     from tldw_chatbook.Chat.console_context_window import (
         ContextWindowCache,
         ContextWindowResolution,
@@ -224,9 +233,18 @@ def _max_trace_accumulated_bytes() -> int:
 
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
-_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
-    {"custom-openai-api", "custom-openai-api-2"}
-)
+# ADR-179 Phase 2 Task 6: the whole custom execution family (including the
+# swapped engine key) decides credentials at the gateway and passes
+# ``api_key_resolved`` -- without membership here the swapped key's
+# ``api_key_resolved`` is never sent.
+_CUSTOM_CREDENTIAL_DECISION_PROVIDERS = CUSTOM_OPENAI_EXECUTION_KEYS
+# ADR-179 (Qodo finding 2): every engine-driven execution key (derived from
+# the registry, never a literal list) gets the resolution's effective base
+# URL forwarded as ``api_base_url`` -- the engine resolves the endpoint from
+# its record/settings only when the gateway resolved nothing, so without
+# this forwarding a session-selected or alias-configured URL silently lost
+# to the preset's shipped default.
+_ENGINE_EXECUTION_KEYS = frozenset(record.key for record in ENGINE_RECORDS)
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
@@ -241,6 +259,93 @@ _HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
         "zai": ZAIFinishPolicy,
     }
 )
+_FinishPolicy = (
+    "type[MoonshotFinishPolicy] | type[ZAIFinishPolicy] | HostedPresetFinishPolicy"
+)
+_RESOLVED_FINISH_POLICIES: dict[str, _FinishPolicy] = {}
+
+
+def resolve_finish_policy(key: str) -> _FinishPolicy | None:
+    """Resolve one provider key's hosted thinking finish policy.
+
+    Generic gateway entry (ADR-179): hand-written provider policies win via
+    the static map; engine-driven registry presets resolve to a stateless
+    ``HostedPresetFinishPolicy`` built from their record; every other key
+    resolves to ``None`` (thinking disposition stays ``"ignored"``).
+    Resolved policies are cached per key because they are stateless.
+
+    Args:
+        key: Normalized (stripped, lowercased) provider execution key.
+
+    Returns:
+        The finish policy for hosted thinking round-trips, or ``None`` when
+        the key has no hosted thinking policy.
+    """
+    cached = _RESOLVED_FINISH_POLICIES.get(key)
+    if cached is not None:
+        return cached
+    policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
+    if policy is None:
+        record = RECORDS_BY_KEY.get(key)
+        if record is None or not record.engine_driven:
+            return None
+        from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+            HostedPresetFinishPolicy,
+        )
+
+        policy = HostedPresetFinishPolicy(record)
+    _RESOLVED_FINISH_POLICIES[key] = policy
+    return policy
+
+
+def _custom_endpoints_use_engine(app_config: Mapping[str, Any]) -> bool:
+    """Read the custom-endpoint engine kill switch (ADR-179 Phase 2 Task 6).
+
+    ``[console] custom_endpoints_use_engine`` (default ``True``) decides
+    whether ``openai_compatible`` custom-ep entries execute through the
+    strict hosted engine (``custom-hosted``). A missing value resolves to
+    the documented default. A present-but-malformed value (e.g. the string
+    ``"false"``) resolves to the legacy path with a warning: the switch is
+    a rollback control, so an operator's evident attempt to set it must
+    never leave the engine on. Both paths are known-good, so neither
+    direction bricks custom-endpoint sends.
+    """
+    console = app_config.get("console", {})
+    if not isinstance(console, Mapping):
+        return True
+    value = console.get("custom_endpoints_use_engine", True)
+    if type(value) is bool:
+        return value
+    logger.warning(
+        "[console] custom_endpoints_use_engine must be true or false; "
+        "using the legacy custom-endpoint path."
+    )
+    return False
+
+
+def _apply_custom_endpoint_engine_swap(
+    identity: ConsoleProviderIdentity,
+    entry: CustomEndpointEntry,
+    app_config: Mapping[str, Any],
+) -> ConsoleProviderIdentity:
+    """Swap an openai_compatible custom-ep identity onto the engine key.
+
+    The swap is the single gateway seam of ADR-179 Phase 2 Task 6: with
+    the kill switch on, an ``openai_compatible`` entry's execution key
+    becomes ``custom-hosted`` (the strict engine preset) while
+    ``readiness_key``/``display_key`` keep the legacy ``custom``
+    spellings -- identity, readiness, saved sessions, and the persisted
+    endpoint contract are byte-identical on both paths. Other families
+    (llama_cpp/ollama/...) and a switched-off config keep
+    ``family_execution_key``'s untouched result.
+    """
+    if entry.family == "openai_compatible" and _custom_endpoints_use_engine(
+        app_config
+    ):
+        return replace(identity, execution_key="custom-hosted")
+    return identity
+
+
 _AdapterResult = TypeVar("_AdapterResult")
 
 
@@ -432,7 +537,7 @@ def _thinking_stream_capability(
                 THINKING_ENVELOPE_VERSION if disposition == "displayable" else None
             ),
         }
-    policy = _HOSTED_THINKING_FINISH_POLICIES.get(key)
+    policy = resolve_finish_policy(key)
     disposition: ReasoningDisposition = (
         policy.reasoning_disposition if policy is not None else "ignored"
     )
@@ -2613,6 +2718,10 @@ class ConsoleProviderGateway:
 
     deferred_dispatch_boundary = True
 
+    #: How long a projected ``ContextWindowTarget`` stays memoized for the
+    #: hot ``cached_context_window`` path (task-33081).
+    CONTEXT_WINDOW_TARGET_MEMO_TTL = 10.0
+
     def __init__(
         self,
         *,
@@ -2688,6 +2797,16 @@ class ConsoleProviderGateway:
         self._config_provider = config_provider or (lambda: {})
         self._context_windows: ContextWindowCache | None = None
         self._context_windows_lock = threading.Lock()
+        # task-33081: keeps background metadata refreshes referenced so
+        # asyncio cannot garbage-collect an in-flight task. The reasoning
+        # map is keyed by metadata key so overlapping sends reuse one
+        # refresh instead of racing an older probe against a newer one
+        # (Qodo round).
+        self._context_window_refreshes: set[asyncio.Task[None]] = set()
+        self._reasoning_metadata_refreshes: dict[str, asyncio.Task[None]] = {}
+        self._context_window_target_memo: dict[
+            tuple[str, str, str], tuple[float, "ContextWindowTarget"]
+        ] = {}
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
@@ -3206,13 +3325,29 @@ class ConsoleProviderGateway:
         if thinking_sidecars and not thinking_owner_key:
             raise ValueError("thinking owner key is required for thinking history")
         if continuation_target is not None and (
-            continuation_target.provider,
-            continuation_target.model,
-            normalize_generic_endpoint_for_compare(continuation_target.api_base_url),
-        ) != (
-            provider_config_key(resolution.provider),
-            resolution.model or "",
-            normalize_generic_endpoint_for_compare(resolution.base_url),
+            # Provider spellings must compare under ONE normalization: the
+            # target pins whatever the bridge recorded (for engine-driven
+            # keys like the custom-hosted swap, the hyphenated execution
+            # key), so both sides go through provider_config_key instead of
+            # normalizing only the resolution side. The resolution accepts
+            # EITHER its execution key or its identity spelling: a swapped
+            # custom-ep selection carries the raw ``custom-ep:<slug>``
+            # identity on ``provider`` while checkpoints and targets are
+            # pinned under the execution key, so an identity-only
+            # comparison matched nothing (ADR-179, Qodo follow-up), and an
+            # execution-only comparison would refuse the deliberately
+            # split doubles that exercise displayable thinking replay
+            # alongside continuation history (the two provider families
+            # are disjoint; production resolutions keep the spellings
+            # equal everywhere else).
+            provider_config_key(continuation_target.provider)
+            not in {
+                provider_config_key(resolution.execution_key or resolution.provider),
+                provider_config_key(resolution.provider),
+            }
+            or continuation_target.model != (resolution.model or "")
+            or normalize_generic_endpoint_for_compare(continuation_target.api_base_url)
+            != normalize_generic_endpoint_for_compare(resolution.base_url)
         ):
             raise ContinuationConflictError(
                 "Continuation restore target mismatch."
@@ -3687,7 +3822,54 @@ class ConsoleProviderGateway:
         )
 
     def _context_window_target(self, settings: Any) -> ContextWindowTarget:
-        """Project only the selected metadata endpoint and its own credential."""
+        """Project only the selected metadata endpoint and its own credential.
+
+        task-33081: ``cached_context_window`` runs on hot UI paths (debounced
+        keystrokes, the 0.2s Console tick) and this projection resolves
+        provider identity, endpoints and -- for URL-based families --
+        credentials via ``get_provider_readiness``. Memoize it briefly instead
+        of re-resolving readiness per call; the key covers every settings
+        field that feeds the projection, and config-level edits go stale for
+        at most the TTL below.
+        """
+        from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
+
+        # Qodo round: registry edits can change the projected endpoint and
+        # credential WITHOUT touching the selected settings, so fold the
+        # custom-endpoint identity (family, base URL, credential digest)
+        # into the memo key. Keyless families resolve from env/config
+        # tables whose edits are bounded by the TTL below.
+        config = self._config_provider() or {}
+        entry = entry_for(config, str(getattr(settings, "provider", "")))
+        if entry is not None:
+            entry_api_key, _ = _custom_entry_credential(entry, self._environ)
+            entry_identity = (
+                entry.family,
+                entry.base_url,
+                hashlib.sha256((entry_api_key or "").encode()).hexdigest(),
+            )
+        else:
+            entry_identity = None
+        memo_key = (
+            str(getattr(settings, "provider", "")),
+            str(getattr(settings, "model", "")),
+            str(getattr(settings, "base_url", "") or ""),
+            entry_identity,
+        )
+        now = monotonic()
+        memoized = self._context_window_target_memo.get(memo_key)
+        if memoized and memoized[0] > now:
+            return memoized[1]
+        target = self._project_context_window_target(settings)
+        if len(self._context_window_target_memo) > 32:
+            self._context_window_target_memo.clear()
+        self._context_window_target_memo[memo_key] = (
+            now + self.CONTEXT_WINDOW_TARGET_MEMO_TTL,
+            target,
+        )
+        return target
+
+    def _project_context_window_target(self, settings: Any) -> ContextWindowTarget:
         from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
 
         config = self._config_provider() or {}
@@ -3776,60 +3958,12 @@ class ConsoleProviderGateway:
         now = monotonic()
         template, native_tools = cached[1:] if cached else (None, False)
         if resolution.ready and (cached is None or now >= cached[0]):
-            from .local_reasoning import _LOCAL_FAMILIES
-
-            family = _LOCAL_FAMILIES.get(resolution.provider.lower())
-            # Ollama exposes Go templates; until reviewed, use its server default.
-            route = {"llama_cpp": "/props", "vllm": "/tokenizer_info"}.get(family)
-            if route:
-                base = resolution.base_url.rstrip("/").removesuffix("/chat/completions")
-                base = base.removesuffix("/v1")
-
-                async def read_template():
-                    async with self._active_http_client().stream(
-                        "GET",
-                        base + route,
-                        headers=self._authorization_headers(resolution.api_key),
-                        timeout=1.0,
-                    ) as response:
-                        response.raise_for_status()
-                        data = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            data.extend(chunk)
-                            if len(data) > 262144:
-                                raise ValueError(
-                                    "Template metadata exceeds size limit."
-                                )
-                        payload = json.loads(data)
-                        return payload if isinstance(payload, dict) else {}
-
-                try:
-                    metadata = await asyncio.wait_for(read_template(), timeout=1.0)
-                    raw_template = metadata.get("chat_template")
-                    template = raw_template if isinstance(raw_template, str) else None
-                    caps = metadata.get("chat_template_caps", {})
-                    native_tools = (
-                        family == "llama_cpp"
-                        and isinstance(caps, Mapping)
-                        and caps.get("supports_tool_calls") is True
-                        and caps.get("supports_tools") is True
-                    )
-                    ttl = REASONING_METADATA_TTL_SECONDS
-                except (httpx.HTTPError, ValueError, TimeoutError):
-                    # Back off missing routes and keep the last successful facts.
-                    # Preferences are reapplied below, never cached with metadata.
-                    ttl = REASONING_METADATA_RETRY_SECONDS
-                self._reasoning_metadata_cache[key] = (
-                    monotonic() + ttl,
-                    template,
-                    native_tools,
-                )
-                while (
-                    len(self._reasoning_metadata_cache) > REASONING_METADATA_CACHE_SIZE
-                ):
-                    self._reasoning_metadata_cache.pop(
-                        next(iter(self._reasoning_metadata_cache))
-                    )
+            # task-33081: template metadata is best-effort input to the
+            # reasoning policy -- a slow /props or /tokenizer_info must never
+            # block the send. Serve the last known facts (defaults on a cold
+            # cache, exactly what a failed fetch already produced) and
+            # refresh in the background; the next send picks up the facts.
+            self._schedule_reasoning_metadata_refresh(resolution, key)
         overrides = console.get("reasoning_native_tool_overrides", {})
         if isinstance(overrides, Mapping) and overrides.get(key) is True:
             native_tools = True
@@ -3855,6 +3989,86 @@ class ConsoleProviderGateway:
             ),
         )
 
+    def _schedule_reasoning_metadata_refresh(
+        self, resolution: ConsoleProviderResolution, key: str
+    ) -> None:
+        """Refresh /props or /tokenizer_info template facts off the send path."""
+        in_flight = self._reasoning_metadata_refreshes.get(key)
+        if in_flight is not None and not in_flight.done():
+            # An unfinished refresh for this exact target already holds the
+            # facts; a second concurrent probe could only finish out of
+            # order and clobber the newer result (Qodo round).
+            return
+        try:
+            task = asyncio.create_task(
+                self._refresh_reasoning_metadata(resolution, key)
+            )
+        except RuntimeError:  # no running loop -- the next call reschedules
+            return
+        self._reasoning_metadata_refreshes[key] = task
+
+        def _release(finished: asyncio.Task[None]) -> None:
+            if self._reasoning_metadata_refreshes.get(key) is finished:
+                self._reasoning_metadata_refreshes.pop(key, None)
+
+        task.add_done_callback(_release)
+
+    async def _refresh_reasoning_metadata(
+        self, resolution: ConsoleProviderResolution, key: str
+    ) -> None:
+        from .local_reasoning import _LOCAL_FAMILIES
+
+        family = _LOCAL_FAMILIES.get(resolution.provider.lower())
+        # Ollama exposes Go templates; until reviewed, use its server default.
+        route = {"llama_cpp": "/props", "vllm": "/tokenizer_info"}.get(family)
+        if not route:
+            return
+        base = resolution.base_url.rstrip("/").removesuffix("/chat/completions")
+        base = base.removesuffix("/v1")
+        cached = self._reasoning_metadata_cache.get(key)
+        template, native_tools = cached[1:] if cached else (None, False)
+        try:
+            async with asyncio.timeout(1.0):
+                async with self._active_http_client().stream(
+                    "GET",
+                    base + route,
+                    headers=self._authorization_headers(resolution.api_key),
+                    timeout=1.0,
+                ) as response:
+                    response.raise_for_status()
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > 262144:
+                            raise ValueError(
+                                "Template metadata exceeds size limit."
+                            )
+                    payload = json.loads(data)
+                    metadata = payload if isinstance(payload, dict) else {}
+            raw_template = metadata.get("chat_template")
+            template = raw_template if isinstance(raw_template, str) else None
+            caps = metadata.get("chat_template_caps", {})
+            native_tools = (
+                family == "llama_cpp"
+                and isinstance(caps, Mapping)
+                and caps.get("supports_tool_calls") is True
+                and caps.get("supports_tools") is True
+            )
+            ttl = REASONING_METADATA_TTL_SECONDS
+        except Exception:  # noqa: BLE001 -- background metadata must never raise
+            # Back off missing routes and keep the last successful facts.
+            # Preferences are reapplied per send, never cached with metadata.
+            ttl = REASONING_METADATA_RETRY_SECONDS
+        self._reasoning_metadata_cache[key] = (
+            monotonic() + ttl,
+            template,
+            native_tools,
+        )
+        while len(self._reasoning_metadata_cache) > REASONING_METADATA_CACHE_SIZE:
+            self._reasoning_metadata_cache.pop(
+                next(iter(self._reasoning_metadata_cache))
+            )
+
     async def resolve_for_send(
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
@@ -3863,16 +4077,20 @@ class ConsoleProviderGateway:
 
         resolution = await self._resolve_for_send_unclassified(selection)
         if resolution.ready:
-            window = await self._get_context_windows().resolve(
-                ContextWindowTarget(
-                    selection.provider,
-                    resolution.readiness_key or resolution.provider,
-                    resolution.base_url,
-                    resolution.model or "",
-                    resolution.api_key,
-                ),
-                self._active_http_client(),
+            target = ContextWindowTarget(
+                selection.provider,
+                resolution.readiness_key or resolution.provider,
+                resolution.base_url,
+                resolution.model or "",
+                resolution.api_key,
             )
+            # task-33081: sends must never wait on optional serving metadata
+            # -- a slow or unreachable metadata endpoint could add the full
+            # probe timeout to EVERY send. Attach the best cached window and
+            # refresh the cache in the background so the NEXT send picks up
+            # the verified value.
+            window = self._get_context_windows().cached(target)
+            self._schedule_context_window_refresh(target)
             resolution = replace(resolution, context_window=window)
         resolution = replace(
             resolution,
@@ -3882,6 +4100,26 @@ class ConsoleProviderGateway:
             resolution,
             resolved_destination=resolve_console_destination(resolution),
         )
+
+    def _schedule_context_window_refresh(self, target: "ContextWindowTarget") -> None:
+        """Warm serving metadata off the send path; never blocks the caller."""
+        cache = self._get_context_windows()
+        if not cache.needs_refresh(target):
+            return
+        try:
+            task = asyncio.create_task(self._refresh_context_window(target))
+        except RuntimeError:  # no running loop -- the next call reschedules
+            return
+        self._context_window_refreshes.add(task)
+        task.add_done_callback(self._context_window_refreshes.discard)
+
+    async def _refresh_context_window(self, target: "ContextWindowTarget") -> None:
+        try:
+            await self._get_context_windows().resolve(
+                target, self._active_http_client()
+            )
+        except Exception:  # noqa: BLE001 -- background metadata must never raise
+            logger.debug("Context-window metadata refresh failed", exc_info=True)
 
     async def _resolve_for_send_unclassified(
         self, selection: ConsoleProviderSelection
@@ -3925,8 +4163,12 @@ class ConsoleProviderGateway:
         # ``resolve_console_provider_identity``.
         custom_entry = entry_for(app_config, selection.provider)
         if custom_entry is not None:
-            identity = resolve_console_provider_identity(
-                family_execution_key(custom_entry.family)
+            identity = _apply_custom_endpoint_engine_swap(
+                resolve_console_provider_identity(
+                    family_execution_key(custom_entry.family)
+                ),
+                custom_entry,
+                app_config,
             )
         else:
             identity = resolve_console_provider_identity(selection.provider)
@@ -4246,11 +4488,19 @@ class ConsoleProviderGateway:
             prompt_caching = bool(
                 _caching_config_value(app_config).get("anthropic_enabled", True)
             )
+        engine_record = RECORDS_BY_KEY.get(identity.execution_key)
+        # Engine-driven presets derive the protocol from their record
+        # (Qodo finding 3, ADR-179): without it the prepare-time restore
+        # check was skipped and checkpoints never round-tripped.
         continuation_protocol = (
             "chat_completions"
             if identity.execution_key in {"moonshot", "zai"}
             else api_mode
             if identity.execution_key == "deepseek"
+            else engine_record.continuation_protocol
+            if engine_record is not None
+            and engine_record.engine_driven
+            and engine_record.continuation_protocol is not None
             else None
         )
         request_timeout: float | None = None
@@ -6757,6 +7007,15 @@ class ConsoleProviderGateway:
         elif resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in (
+            _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
+            # Engine-driven presets outside the custom family (ADR-179, Qodo
+            # finding 2): pin the resolved endpoint so the engine's
+            # record/settings defaults never shadow a session-selected or
+            # alias-configured URL. The custom family keeps its own branch
+            # below (it also pins the gateway credential decision).
+            kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {"moonshot", "zai"}:
             kwargs["api_base_url"] = resolution.base_url or None
             kwargs["request_timeout"] = resolution.request_timeout
@@ -6768,13 +7027,11 @@ class ConsoleProviderGateway:
                 ]
         elif resolution.execution_key in {
             "anthropic",
-            "custom-openai-api",
-            "custom-openai-api-2",
             "mistral",
             "mistralai",
             "vllm",
             "local_vllm",
-        }:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS:
             kwargs["api_base_url"] = resolution.base_url or None
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
@@ -6785,6 +7042,17 @@ class ConsoleProviderGateway:
             # was resolved and capability-checked. Ordinary Console sends have
             # no response_format and retain their existing adapter behavior.
             kwargs["api_base_url"] = resolution.base_url or None
+        if (
+            resolution.execution_key in _ENGINE_EXECUTION_KEYS
+            and request.continuation_groups
+        ):
+            # Engine-driven presets (ADR-179, Qodo finding 3): continuation
+            # checkpoints ride to the handler for every engine key (the
+            # custom-hosted branch above cannot carry them on its own), so a
+            # restored round-trip reaches the engine's continuation seam.
+            kwargs["provider_continuations"] = [
+                group.checkpoint for group in request.continuation_groups
+            ]
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod
@@ -6848,13 +7116,18 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
+        elif resolution.execution_key in (
+            _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
+            # Engine-driven presets outside the custom family (ADR-179,
+            # Qodo finding 2): pin the resolved endpoint on the plain-message
+            # path too; the custom family keeps its branch below.
+            kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {
             "anthropic",
-            "custom-openai-api",
-            "custom-openai-api-2",
             "mistral",
             "mistralai",
-        }:
+        } | CUSTOM_OPENAI_EXECUTION_KEYS:
             # These adapters otherwise consult process-global config after
             # Console has resolved a provider-scoped endpoint and credential.
             # Pinning the resolved base keeps that pair intact, including the

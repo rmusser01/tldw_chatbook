@@ -5,6 +5,7 @@
 import re
 import threading
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from typing import List, Dict, Any, Union, Optional, Tuple
 
 #
@@ -31,13 +32,23 @@ except ImportError:
 #
 # Functions:
 
-# Try to import tiktoken for OpenAI models
+# TASK-24305: detect tiktoken WITHOUT importing it. This module is in the
+# app-import closure, so the old `try: import tiktoken` here made every cold
+# start pay ~20-29 ms for a library most sessions never tokenise with.
+# Distribution metadata detects installation without executing the package or
+# consuming its one-shot tiktoken import finder. The real import happens in
+# `get_tiktoken_encoding`, where that finder arms the bundle. Import failure
+# still selects character estimation because installed metadata does not prove
+# that an optional native dependency can load.
+#
+# `TIKTOKEN_AVAILABLE` keeps its public name as an installation probe; tests
+# monkeypatch it to force the character-estimate tier.
 try:
-    import tiktoken
-
+    version("tiktoken")
     TIKTOKEN_AVAILABLE = True
-except ImportError:
+except PackageNotFoundError:
     TIKTOKEN_AVAILABLE = False
+if not TIKTOKEN_AVAILABLE:
     logger.warning(
         "tiktoken not available. Token counting will use character-based estimation."
     )
@@ -370,6 +381,8 @@ def get_tiktoken_encoding(model: str) -> Optional[Any]:
         return None
 
     try:
+        import tiktoken  # deferred: see TIKTOKEN_AVAILABLE above
+
         # Try to get specific encoding for model
         if model in TIKTOKEN_MODEL_ENCODINGS:
             encoding_name = TIKTOKEN_MODEL_ENCODINGS[model]

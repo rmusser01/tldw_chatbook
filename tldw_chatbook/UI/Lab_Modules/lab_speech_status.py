@@ -31,6 +31,7 @@ _LOCAL_CAPABILITIES = (
     ("Local Kokoro", "kokoro", "local_tts"),
     ("Local Chatterbox", "chatterbox", "chatterbox"),
     ("Local Higgs", "higgs", "higgs_tts"),
+    ("Local OmniVoice", "omnivoice", "omnivoice_tts"),
 )
 
 
@@ -77,12 +78,15 @@ def speech_local_dependency_availability(
             kokoro=_speech_dependency_installed("kokoro_onnx"),
             chatterbox=_speech_dependency_installed("chatterbox"),
             higgs=_speech_dependency_installed("boson_multimodal"),
+            omnivoice=_speech_dependency_installed("onnxruntime")
+            and _speech_dependency_installed("tokenizers"),
         )
     return SpeechLocalDependencyAvailability(
         stt=bool(DEPENDENCIES_AVAILABLE.get("stt_processing", False)),
         kokoro=bool(DEPENDENCIES_AVAILABLE.get("kokoro_onnx", False)),
         chatterbox=bool(DEPENDENCIES_AVAILABLE.get("chatterbox", False)),
         higgs=bool(DEPENDENCIES_AVAILABLE.get("higgs_tts", False)),
+        omnivoice=bool(DEPENDENCIES_AVAILABLE.get("omnivoice_tts", False)),
     )
 
 

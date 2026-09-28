@@ -22,6 +22,7 @@ A host must provide, beyond the controls themselves:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any, cast
 from uuid import uuid4
@@ -53,6 +54,44 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SelectValue,
     voice_id_for_request,
 )
+
+
+#: Speech Lab OmniVoice knobs: (input id, request key, parser, lower bound).
+OMNIVOICE_REQUEST_KNOBS: tuple[tuple[str, str, type, float], ...] = (
+    ("#tts-omnivoice-num-steps-input", "num_steps", int, 1),
+    ("#tts-omnivoice-guidance-scale-input", "guidance_scale", float, 0),
+    ("#tts-omnivoice-max-ref-duration-input", "max_reference_duration", float, 1),
+)
+
+
+def omnivoice_request_knobs(
+    raw_values: Mapping[str, str],
+) -> tuple[dict[str, int | float], str | None]:
+    """Parse the Speech Lab OmniVoice knobs into request ``extra_params``.
+
+    A blank field defers to the configured default. Text that is not a
+    number at or above the knob's bound is refused with a message instead of
+    raising out of the Generate button handler.
+
+    Returns:
+        ``(params, None)`` on success, or ``({}, message)`` for the first
+        invalid knob.
+    """
+    params: dict[str, int | float] = {}
+    for input_id, key, parse, minimum in OMNIVOICE_REQUEST_KNOBS:
+        raw_value = str(raw_values.get(input_id, "")).strip()
+        if not raw_value:
+            continue
+        try:
+            number = float(raw_value)
+        except ValueError:
+            number = float("nan")
+        if not (math.isfinite(number) and number >= minimum):
+            return {}, (
+                f"OmniVoice {key.replace('_', ' ')} must be a number >= {minimum:g}"
+            )
+        params[key] = parse(number)
+    return params, None
 
 
 class SpeechSynthesisMixin:
@@ -578,6 +617,33 @@ class SpeechSynthesisMixin:
                 "_separator2",
             ] and not voice.startswith(("custom:", "profile:")):
                 # This is a saved profile - format it as profile:name
+                voice = f"profile:{voice}"
+        elif provider == "omnivoice":
+            # Collect OmniVoice-specific parameters
+            knob_params, knob_error = omnivoice_request_knobs(
+                {
+                    input_id: self.query_one(input_id, Input).value
+                    for input_id, *_ in OMNIVOICE_REQUEST_KNOBS
+                }
+            )
+            if knob_error is not None:
+                self.app.notify(knob_error, severity="warning")
+                self.query_one("#tts-generate-btn", Button).disabled = False
+                return
+            extra_params.update(knob_params)
+            # Cloning voices are managed profiles (they carry the transcript);
+            # a bare "custom" upload has no transcript to clone from.
+            if voice == "custom":
+                self.app.notify(
+                    "OmniVoice cloning needs a voice profile (created in the "
+                    "Voice Cloning window) — reference uploads carry no transcript",
+                    severity="warning",
+                )
+                self.query_one("#tts-generate-btn", Button).disabled = False
+                return
+            if voice not in ("default", "_separator", "_separator2") and (
+                not voice.startswith(("custom:", "profile:"))
+            ):
                 voice = f"profile:{voice}"
 
         # Log the request

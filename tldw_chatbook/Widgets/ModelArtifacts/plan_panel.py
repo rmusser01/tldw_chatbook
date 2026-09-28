@@ -51,6 +51,7 @@ class ModelPlanPanel(Static):
                     f"Source: {row.repository}{installed}",
                     f"Revision: {row.revision}",
                     f"License: {license_label}",
+                    *((f"Terms: {row.usage_notice}",) if row.usage_notice else ()),
                     f"Source review page: {row.license_url}",
                     f"Precision: {row.precision}",
                     f"Contents: {row.file_count} files, {format_mib(row.total_bytes)}",

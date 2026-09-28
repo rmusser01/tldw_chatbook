@@ -5,16 +5,19 @@ from __future__ import annotations
 from collections.abc import Iterable
 from time import monotonic
 
+from rich.console import Console
+from rich.text import Text
 from textual import events
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.message import Message
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_ACTIVITY_STATUSES,
+    ConsoleActivityPresentation,
     ConsoleActivityStatus,
     RawCliPresentation,
     console_activity_status_word,
@@ -65,6 +68,67 @@ def raw_cli_status_copy(
     return copy
 
 
+def tool_activity_status_copy(presentation: ConsoleActivityPresentation) -> str:
+    """Describe actual lifecycle state with execution-only elapsed time.
+
+    Args:
+        presentation: Current tool state and execution timing, when available.
+
+    Returns:
+        Status text with an elapsed duration only after execution starts.
+    """
+    label = {"success": "Succeeded", "stopped": "Stopped"}.get(
+        presentation.status,
+        console_activity_status_word(presentation.status).capitalize(),
+    )
+    elapsed = presentation.elapsed_seconds
+    if (
+        presentation.status == "running"
+        and presentation.started_at_monotonic is not None
+    ):
+        elapsed = max(0.0, monotonic() - presentation.started_at_monotonic)
+    return f"{label} · {elapsed:.1f}s" if elapsed is not None else label
+
+
+class ConsoleToolPreview(Static):
+    """Literal output preview bounded by painted rows, including its omission hint."""
+
+    def __init__(self, activity_id: str) -> None:
+        self._output = ""
+        super().__init__(
+            "",
+            id=f"console-tool-preview-{activity_id}",
+            classes="console-tool-preview",
+            markup=False,
+        )
+
+    def set_output(self, output: str) -> None:
+        """Rewrap retained output on lifecycle changes without replacing the widget.
+
+        Args:
+            output: Literal result text retained for width-dependent wrapping.
+        """
+        self._output = output
+        self._rewrap()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Rewrap the preview using the widget's current content width.
+
+        Args:
+            event: Textual's notification that the widget dimensions changed.
+        """
+        self._rewrap()
+
+    def _rewrap(self) -> None:
+        width = max(1, self.content_size.width)
+        lines = Text(self._output).wrap(Console(width=width), width, overflow="fold")
+        if len(lines) > 3:
+            hint = Text(f"… {len(lines) - 2} more lines — expand")
+            hint.truncate(width, overflow="ellipsis")
+            lines = list(lines[:2]) + [hint]
+        self.update(Content("\n".join(line.plain for line in lines)))
+
+
 class ConsoleActivityActivated(Message):
     """Request selection and, when available, disclosure-state toggling."""
 
@@ -94,6 +158,7 @@ class ConsoleActivityHeader(Horizontal):
         expandable: bool = False,
         selected: bool = False,
         raw_cli_presentation: RawCliPresentation | None = None,
+        tool_presentation: ConsoleActivityPresentation | None = None,
     ) -> None:
         self.activity_message_id = activity_message_id
         self.label = label
@@ -102,6 +167,7 @@ class ConsoleActivityHeader(Horizontal):
         self.expandable = expandable
         self.selected = selected
         self.raw_cli_presentation = raw_cli_presentation
+        self.tool_presentation = tool_presentation
         self._raw_cli_elapsed_timer: Timer | None = None
         self.label_widget = Static(
             self._label_content(),
@@ -134,6 +200,8 @@ class ConsoleActivityHeader(Horizontal):
         """Build the fixed terminal-status copy kept separate from the label."""
         if self.raw_cli_presentation is not None:
             return Content(f"· {raw_cli_status_copy(self.raw_cli_presentation)}")
+        if self.tool_presentation is not None:
+            return Content(f"· {tool_activity_status_copy(self.tool_presentation)}")
         return Content(f"· {console_activity_status_word(self.status)}")
 
     @property
@@ -148,7 +216,7 @@ class ConsoleActivityHeader(Horizontal):
         self._sync_raw_cli_timer()
 
     def _tick_raw_cli_elapsed(self) -> None:
-        if self.raw_cli_presentation is not None:
+        if self.raw_cli_presentation is not None or self.tool_presentation is not None:
             # Once-per-second elapsed repaint of a `height: 1` CSS-pinned row --
             # content cannot change the box size, so skip the screen reflow
             # (the 21692/21595 Static.update layout=True default).
@@ -160,6 +228,10 @@ class ConsoleActivityHeader(Horizontal):
             self.raw_cli_presentation is not None
             and self.raw_cli_presentation.lifecycle_state in _RAW_CLI_ELAPSED_STATES
             and self.raw_cli_presentation.started_at_monotonic is not None
+        )
+        active = active or (
+            self.tool_presentation is not None
+            and self.tool_presentation.status == "running"
         )
         if active and timer is None:
             self._raw_cli_elapsed_timer = self.set_interval(
@@ -173,6 +245,9 @@ class ConsoleActivityHeader(Horizontal):
             self._raw_cli_elapsed_timer = None
 
     def _sync_classes(self) -> None:
+        self.status_widget.set_class(
+            self.tool_presentation is not None, "console-activity-status-tool"
+        )
         self.set_class(self.selected, "console-activity-header-selected")
         self.set_class(self.expanded, "console-activity-header-expanded")
         self.set_class(self.expandable, "console-activity-header-expandable")
@@ -191,6 +266,7 @@ class ConsoleActivityHeader(Horizontal):
         expandable: bool,
         selected: bool,
         raw_cli_presentation: RawCliPresentation | None = None,
+        tool_presentation: ConsoleActivityPresentation | None = None,
     ) -> None:
         """Project transcript-owned disclosure state onto this header."""
         self.label = label
@@ -199,6 +275,7 @@ class ConsoleActivityHeader(Horizontal):
         self.expandable = expandable
         self.selected = selected
         self.raw_cli_presentation = raw_cli_presentation
+        self.tool_presentation = tool_presentation
         self._sync_classes()
         self.label_widget.update(self._label_content())
         self.status_widget.update(self._status_content())
@@ -240,6 +317,7 @@ class ConsoleActivityDisclosure(Vertical):
         detail_widgets: Iterable[Widget] = (),
         detail_available: bool | None = None,
         raw_cli_presentation: RawCliPresentation | None = None,
+        tool_presentation: ConsoleActivityPresentation | None = None,
     ) -> None:
         self.activity_message_id = activity_message_id
         self.label = label
@@ -247,6 +325,7 @@ class ConsoleActivityDisclosure(Vertical):
         self.expanded = expanded
         self.selected = selected
         self.raw_cli_presentation = raw_cli_presentation
+        self.tool_presentation = tool_presentation
         action_children = tuple(action_widgets)
         detail_children = tuple(detail_widgets)
         self._has_actions = bool(action_children)
@@ -262,6 +341,13 @@ class ConsoleActivityDisclosure(Vertical):
             expandable=self.detail_available,
             selected=selected,
             raw_cli_presentation=raw_cli_presentation,
+            tool_presentation=tool_presentation,
+        )
+        self.preview = ConsoleToolPreview(activity_message_id)
+        self.approval_button = Button(
+            "Review approval",
+            id=f"console-tool-approval-{activity_message_id}",
+            classes="console-tool-approval",
         )
         self.action_stack = Vertical(
             *action_children,
@@ -275,6 +361,7 @@ class ConsoleActivityDisclosure(Vertical):
         )
         super().__init__(
             self.header,
+            *((self.preview, self.approval_button) if tool_presentation else ()),
             self.action_stack,
             self.detail_stack,
             id=f"console-activity-disclosure-{activity_message_id}",
@@ -285,8 +372,23 @@ class ConsoleActivityDisclosure(Vertical):
     def _sync_visibility(self) -> None:
         self.set_class(self.selected, "console-activity-disclosure-selected")
         self.set_class(self.expanded, "console-activity-disclosure-expanded")
+        tool = self.tool_presentation
+        self.preview.display = bool(
+            tool is not None and tool.result_preview is not None and not self.expanded
+        )
+        if tool is not None and tool.result_preview is not None:
+            self.preview.set_output(tool.result_preview or "Completed — no output")
+        self.approval_button.display = bool(
+            tool is not None and tool.status == "awaiting_approval"
+        )
         self.action_stack.display = self.selected and self._has_actions
         self.detail_stack.display = self.expanded and self._has_detail
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Reach the existing approval card without adding a second decision surface."""
+        if event.button is self.approval_button:
+            event.stop()
+            await self.app.run_action("screen.review_pending_approval")
 
     async def replace_detail_widgets(self, detail_widgets: Iterable[Widget]) -> None:
         """Replace lazy detail children without replacing the disclosure."""
@@ -316,6 +418,7 @@ class ConsoleActivityDisclosure(Vertical):
             expandable=self.detail_available,
             selected=selected,
             raw_cli_presentation=self.raw_cli_presentation,
+            tool_presentation=self.tool_presentation,
         )
         self._sync_visibility()
 
@@ -327,6 +430,7 @@ class ConsoleActivityDisclosure(Vertical):
         expanded: bool,
         selected: bool,
         raw_cli_presentation: RawCliPresentation | None = None,
+        tool_presentation: ConsoleActivityPresentation | None = None,
     ) -> None:
         """Apply new structured copy and transcript-owned state in place."""
         self.label = label
@@ -334,6 +438,7 @@ class ConsoleActivityDisclosure(Vertical):
         self.expanded = expanded
         self.selected = selected
         self.raw_cli_presentation = raw_cli_presentation
+        self.tool_presentation = tool_presentation
         self.header.sync_header(
             label,
             status,
@@ -341,6 +446,7 @@ class ConsoleActivityDisclosure(Vertical):
             expandable=self.detail_available,
             selected=selected,
             raw_cli_presentation=raw_cli_presentation,
+            tool_presentation=tool_presentation,
         )
         self._sync_visibility()
 

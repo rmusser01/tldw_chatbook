@@ -44,8 +44,6 @@ EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
 EXPECTED_PULL_REQUEST_PATHS = (
     ".github/workflows/task-2062-2-gguf-source-evidence.yml",
     "pyproject.toml",
-    "tldw_chatbook/app.py",
-    "tldw_chatbook/config.py",
     "tldw_chatbook/Event_Handlers/LLM_Management_Events/**",
     "tldw_chatbook/Model_Artifacts/**",
     "tldw_chatbook/UI/LLM_Management_Window.py",

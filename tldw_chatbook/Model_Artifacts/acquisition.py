@@ -348,6 +348,9 @@ class ArtifactPreflightEntry:
     file_count: int
     already_installed: bool
     provenance: tuple[ProvenanceClass, ...]
+    # The descriptor's usage terms, shown at the consent step (a bare
+    # license_id such as "other" tells the user nothing).
+    usage_notice: str = ""
 
 
 @dataclass(frozen=True)
@@ -967,6 +970,7 @@ class ArtifactAcquisitionService:
                 file_count=len(descriptor.files),
                 already_installed=already_installed,
                 provenance=descriptor.provenance,
+                usage_notice=descriptor.usage_notice,
             )
             entries.append(entry)
             if not already_installed:

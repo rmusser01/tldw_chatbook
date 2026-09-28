@@ -60,13 +60,31 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: path -> max line count. LOWER these when a module shrinks. Never raise
 #: them to silence a failure — see the module docstring.
 _BUDGETS: dict[str, int] = {
-    "tldw_chatbook/app.py": 21415,
+    # TASK-33011 decomposition: lowered as each extraction PR lands
+    # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
+    # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658).
+    "tldw_chatbook/app.py": 19682,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7807,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
+    # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
+    # though both are larger in CLASS terms than every row above them
+    # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)
+    # and profile_repository.py is within 456 file lines of the smallest
+    # governed row. Pinned at their exact measurement, like every row here.
+    "tldw_chatbook/TTS/profile_repository.py": 6304,
+    "tldw_chatbook/TTS/TTS_Generation.py": 4046,
+    # Added by the tier-2 review (S06 P2 [D3]): the largest module in the
+    # repo with no row -- 1,217 methods on one class, rank 8 repo-wide,
+    # while rank 9 (`personas_screen.py`) was already pinned. The
+    # hand-picked list above missed it. 1,086 of those methods are a single
+    # `_request(...)` -> `Model.model_validate` shape, so the honest
+    # decomposition is per-API-namespace delegates -- `MCPUnifiedClient` is
+    # the precedent already in the package.
+    "tldw_chatbook/tldw_api/client.py": 16687,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,

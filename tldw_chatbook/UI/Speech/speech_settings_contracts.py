@@ -540,6 +540,15 @@ SPEECH_TTS_OWNERSHIP_INVENTORY: tuple[SpeechTTSOwnershipRecord, ...] = (
         "alltalk-format-select",
         "alltalk-voice-input",
     ),
+    *_owned(
+        "omnivoice",
+        SpeechTTSOwnershipScope.GLOBAL_CONFIGURATION,
+        "omnivoice-guidance-scale-input",
+        "omnivoice-max-ref-duration-input",
+        "omnivoice-model-root-input",
+        "omnivoice-voices-browse-btn",
+        "omnivoice-voices-dir-input",
+    ),
     SpeechTTSOwnershipRecord(
         control_id="audio-cpp-settings",
         owner_id="audio_cpp",

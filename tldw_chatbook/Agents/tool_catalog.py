@@ -38,6 +38,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+from tldw_chatbook.Tools.remote_root_types import RemoteRoot, display_uri
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
@@ -1206,13 +1207,20 @@ _FILE_AUTHORITY_BUILTIN_NAMES = frozenset(
 )
 
 
-def redact_root_locator(value: Any, root: Path | None) -> Any:
+def redact_root_locator(value: Any, root: "Path | RemoteRoot | None") -> Any:
     """Replace an opaque private-root locator with model-safe relative text.
 
     Tool-provider results are copied into both model history and run logs.
     Console scratch roots are process-local capabilities, so their absolute
     locator must be removed at that shared boundary. Containers are rebuilt
     recursively because built-in tools return nested JSON-shaped values.
+
+    Task 17 (Phase 3c): ``root`` may be a :class:`RemoteRoot` — redaction
+    is then pure LEXICAL replacement of the descriptor's locator
+    spellings (canonical locator, remote root path, display URI), never
+    laptop-disk work (a RemoteRoot has no local presence to resolve
+    against; the macOS ``/var`` -> ``/private/var`` resolve-drop hazard
+    is void by construction).
 
     Args:
         value: Tool result value or error text to sanitize.
@@ -1224,6 +1232,28 @@ def redact_root_locator(value: Any, root: Path | None) -> Any:
         callers pass ``None`` and retain their existing output byte-for-byte.
     """
     if root is None:
+        return value
+    if isinstance(root, RemoteRoot):
+        if isinstance(value, str):
+            locators = {
+                str(root.canonical_locator),
+                str(root.root),
+                display_uri(root),
+            }
+            for locator in sorted(locators, key=len, reverse=True):
+                if locator:
+                    value = value.replace(f"{locator}/", "")
+                    value = value.replace(locator, ".")
+            return value
+        if isinstance(value, dict):
+            return {
+                key: redact_root_locator(item, root)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [redact_root_locator(item, root) for item in value]
+        if isinstance(value, tuple):
+            return tuple(redact_root_locator(item, root) for item in value)
         return value
     if isinstance(value, str):
         locators = {str(root), root.as_posix()}

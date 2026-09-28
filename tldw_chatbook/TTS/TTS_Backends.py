@@ -27,6 +27,7 @@ except ImportError:
 
 # Import new base classes
 from tldw_chatbook.TTS.base_backends import TTSBackendBase
+from tldw_chatbook.TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
 
 
 # --- Backend Registry ---
@@ -44,6 +45,7 @@ class BackendRegistry:
             "local_chatterbox_*",
             "alltalk_*",
             "local_higgs_*",
+            "local_omnivoice_*",
         }
     )
 
@@ -106,6 +108,11 @@ class BackendRegistry:
                 "local_higgs_*",
                 "tldw_chatbook.TTS.backends.higgs",
                 "HiggsAudioTTSBackend",
+            ),
+            (
+                "local_omnivoice_*",
+                "tldw_chatbook.TTS.backends.omnivoice",
+                "OmniVoiceOnnxTTSBackend",
             ),
         )
         for backend_id, module_name, class_name in builtin_imports:
@@ -191,17 +198,30 @@ class TTSBackendManager:
             config.update(self.app_config["app_tts"])
 
         # Special handling for specific backends - set defaults first
+        #
+        # TASK-32894 (Qodo review of #2800): these blocks resolve the
+        # credential from the CONFIG this manager was handed, and
+        # deliberately no longer consult `os.getenv`.
+        #
+        # Each backend's `__init__` treats `config["<PROVIDER>_API_KEY"]` as
+        # the caller's EXPLICIT per-instance override, ranked above
+        # `config.get_api_key`. Reading the environment here therefore put
+        # the env var above the shared accessor -- inverting ADR-012's
+        # 2026-09-19 rule that a stored `api_settings.<provider>.api_key`
+        # outranks the env var it names, for every manager-created backend,
+        # i.e. every real one. The rule held only for hand-constructed
+        # backends, which is the path the fix was tested on.
+        #
+        # The config lookups stay: they carry the projected/unsaved settings
+        # the legacy bridge supplies, which `load_settings()` alone does not
+        # see. They are config-sourced, same trust level as the accessor's
+        # own sources, so they cannot invert the rule. The env var is not
+        # lost -- `get_api_key` still reads it, as the fallback.
         if backend_id.startswith("openai_official"):
-            # Add OpenAI API key from various sources
-            import os
-
             openai_key = None
 
-            # Check environment variable
-            openai_key = os.getenv("OPENAI_API_KEY")
-
             # Check api_settings.openai section
-            if not openai_key and "api_settings.openai" in self.app_config:
+            if "api_settings.openai" in self.app_config:
                 openai_key = self.app_config["api_settings.openai"].get("api_key")
 
             # Check openai_api section (legacy)
@@ -216,13 +236,10 @@ class TTSBackendManager:
                 config["OPENAI_API_KEY"] = openai_key
 
         elif backend_id.startswith("elevenlabs"):
-            import os
-
-            elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
-            if not elevenlabs_key:
-                api_settings = self.app_config.get("API", {})
-                if isinstance(api_settings, dict):
-                    elevenlabs_key = api_settings.get("elevenlabs_api_key")
+            elevenlabs_key = None
+            api_settings = self.app_config.get("API", {})
+            if isinstance(api_settings, dict):
+                elevenlabs_key = api_settings.get("elevenlabs_api_key")
             if not elevenlabs_key:
                 normalized_settings = self.app_config.get("elevenlabs_api", {})
                 if isinstance(normalized_settings, dict):
@@ -327,6 +344,65 @@ class TTSBackendManager:
                 ),
             }
             config.update(higgs_defaults)
+
+        elif backend_id.startswith("local_omnivoice"):
+            # Get OmniVoice-specific configuration
+            import os
+
+            omnivoice_settings = self.app_config.get("OmniVoiceSettings", {})
+            if not isinstance(omnivoice_settings, dict):
+                omnivoice_settings = {}
+
+            def omnivoice_setting(key: str, default: Any) -> Any:
+                section_key = key.removeprefix("OMNIVOICE_").lower()
+                return self.app_config.get(
+                    key,
+                    omnivoice_settings.get(section_key, default),
+                )
+
+            omnivoice_defaults = {
+                "OMNIVOICE_MODEL_ROOT": os.getenv(
+                    "OMNIVOICE_MODEL_ROOT",
+                    omnivoice_setting("OMNIVOICE_MODEL_ROOT", ""),
+                ),
+                "OMNIVOICE_NUM_STEPS": omnivoice_setting(
+                    "OMNIVOICE_NUM_STEPS", 32
+                ),
+                "OMNIVOICE_GUIDANCE_SCALE": omnivoice_setting(
+                    "OMNIVOICE_GUIDANCE_SCALE", 2.0
+                ),
+                "OMNIVOICE_T_SHIFT": omnivoice_setting("OMNIVOICE_T_SHIFT", 0.1),
+                "OMNIVOICE_LAYER_PENALTY_FACTOR": omnivoice_setting(
+                    "OMNIVOICE_LAYER_PENALTY_FACTOR", 5.0
+                ),
+                "OMNIVOICE_POSITION_TEMPERATURE": omnivoice_setting(
+                    "OMNIVOICE_POSITION_TEMPERATURE", 5.0
+                ),
+                "OMNIVOICE_CLASS_TEMPERATURE": omnivoice_setting(
+                    "OMNIVOICE_CLASS_TEMPERATURE", 0.0
+                ),
+                "OMNIVOICE_CLASS_TOP_RATIO": omnivoice_setting(
+                    "OMNIVOICE_CLASS_TOP_RATIO", 0.1
+                ),
+                "OMNIVOICE_INTRA_OP_THREADS": omnivoice_setting(
+                    "OMNIVOICE_INTRA_OP_THREADS", 0
+                ),
+                "OMNIVOICE_MAX_REFERENCE_DURATION": omnivoice_setting(
+                    "OMNIVOICE_MAX_REFERENCE_DURATION", 30
+                ),
+                "OMNIVOICE_TIMEOUT_FACTOR": omnivoice_setting(
+                    "OMNIVOICE_TIMEOUT_FACTOR", 1.0
+                ),
+                "OMNIVOICE_SEED": omnivoice_setting("OMNIVOICE_SEED", None),
+                "OMNIVOICE_LANGUAGE": omnivoice_setting(
+                    "OMNIVOICE_LANGUAGE", "auto"
+                ),
+                "OMNIVOICE_VOICE_SAMPLES_DIR": omnivoice_setting(
+                    "OMNIVOICE_VOICE_SAMPLES_DIR",
+                    OMNIVOICE_DEFAULT_VOICES_DIR,
+                ),
+            }
+            config.update(omnivoice_defaults)
 
         # Finally, apply backend-specific config overrides (highest priority)
         backend_specific = self.app_config.get(backend_id, {})

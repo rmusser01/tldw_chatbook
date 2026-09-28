@@ -29,7 +29,9 @@ from .provider_endpoint_contract import resolve_provider_endpoint
 METADATA_MAX_BYTES = 256 * 1024
 METADATA_CHUNK_BYTES = 64 * 1024
 METADATA_SUCCESS_TTL = 60
-METADATA_FAILURE_TTL = 5
+# TASK-32923: a 5 s failure TTL re-probed an unreachable or slow endpoint on
+# nearly every send, each costing up to the 1 s timeout before the message left.
+METADATA_FAILURE_TTL = METADATA_SUCCESS_TTL
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,14 +62,41 @@ class ContextWindowTarget:
 class ContextWindowCache:
     """Bounded cross-loop cache; callers own all in-flight async work."""
 
-    def __init__(self, *, timeout: float = 1.0, max_entries: int = 64) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float = 1.0,
+        max_entries: int = 64,
+        success_ttl: float = METADATA_SUCCESS_TTL,
+        failure_ttl: float = METADATA_FAILURE_TTL,
+    ) -> None:
         self.timeout = timeout
         self.max_entries = max_entries
+        self.success_ttl = success_ttl
+        self.failure_ttl = failure_ttl
         self._lock = threading.Lock()
         self._cache: OrderedDict[tuple[str, ...], tuple[float, int | None]] = (
             OrderedDict()
         )
         self._pending: dict[tuple[str, ...], Future] = {}
+
+    def needs_refresh(self, target: ContextWindowTarget) -> bool:
+        """Report whether this target has no unexpired cached record.
+
+        task-33081: the send path checks this before scheduling a background
+        refresh so steady-state sends spawn no probe work at all.
+
+        Args:
+            target: Exact provider, endpoint, model, and credential identity.
+
+        Returns:
+            True when no unexpired record exists for ``target`` and a
+            background refresh would perform real work; False when the
+            cached record is still fresh.
+        """
+        with self._lock:
+            record = self._cache.get(target.key)
+            return not (record and record[0] > monotonic())
 
     def cached(self, target: ContextWindowTarget) -> ContextWindowResolution:
         """Read current cached capacity without starting network work.
@@ -122,14 +151,29 @@ class ContextWindowCache:
                 target.family, target.model, server_tokens=value
             )
         value = None
+        # task-33081: a probe that ran to completion -- whatever it answered
+        # -- takes the success TTL: re-asking soon cannot change the answer.
+        # Only transport-level failures (exception paths below) deserve the
+        # shorter failure TTL. The shipped TTLs are currently equal
+        # (TASK-32923); the distinction still governs injected test TTLs and
+        # any future divergence.
+        stable = True
         try:
             async with asyncio.timeout(self.timeout):
                 value = await self._probe(target, client)
+        except asyncio.CancelledError:
+            # Qodo round: cancellation is not a completed answer. Settle
+            # shared waiters with the fallback (the finally block below)
+            # but under the SHORT failure TTL -- a cancelled leader must
+            # not pin an unverified fallback for a full success TTL --
+            # then propagate the cancellation.
+            stable = False
+            raise
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError):
-            pass
+            stable = False
         finally:
             with self._lock:
-                ttl = METADATA_SUCCESS_TTL if value else METADATA_FAILURE_TTL
+                ttl = self.success_ttl if stable else self.failure_ttl
                 self._cache[key] = (monotonic() + ttl, value)
                 self._cache.move_to_end(key)
                 while len(self._cache) > self.max_entries:
@@ -159,7 +203,9 @@ class ContextWindowCache:
             "aphrodite",
             "koboldcpp",
             "oobabooga",
-            "openrouter",
+            # Not "openrouter": its model list (~750 KB) always exceeds
+            # METADATA_MAX_BYTES, so the probe could only fail; the model
+            # catalog resolves OpenRouter windows instead (TASK-32923).
         }
         if family not in supported:
             return None
@@ -201,12 +247,23 @@ class ContextWindowCache:
         ) as response:
             if response.status_code != 200:
                 return None
+            content_length = response.headers.get("Content-Length", "")
+            if content_length.isdigit() and int(content_length) > METADATA_MAX_BYTES:
+                # task-33081: declared-oversized payload -- abort before
+                # downloading a body that can only be discarded.
+                return None
             body = bytearray()
             async for chunk in response.aiter_bytes(chunk_size=METADATA_CHUNK_BYTES):
                 if len(body) + len(chunk) > METADATA_MAX_BYTES:
                     return None
                 body.extend(chunk)
-        payload = json.loads(body)
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            # task-33081: a completed response with an unparseable body is an
+            # answer, not a transport failure -- retrying it on the failure
+            # TTL would re-download the same garbage.
+            return None
         if not isinstance(payload, dict):
             return None
         if url.endswith("/props"):

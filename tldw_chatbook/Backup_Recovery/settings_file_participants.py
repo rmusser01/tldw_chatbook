@@ -1,5 +1,6 @@
 """Exact settings/definition source selectors; no caller-supplied owner authority."""
 
+import errno
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,9 @@ from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
 from .profile_paths import lexical_path
+
+#: The listing's reason for a theme file the directory scan refuses to observe.
+NOT_REGULAR = "not a regular file"
 
 ROUTES = {
     "eval_config",
@@ -162,7 +166,14 @@ def preflight(state, route, attempt):
             import stat
 
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise bootstrap.RecoveryRequired("raw_not_regular")
+                if route != "theme_directory":
+                    raise bootstrap.RecoveryRequired("raw_not_regular")
+                # A symlinked/hard-linked theme is still never observed,
+                # leased or opened (raw._file refuses it too); it is recorded
+                # so the listing shows it as one unreadable entry instead of
+                # the whole folder reading as unavailable.
+                state.rejected_files[path] = NOT_REGULAR
+                continue
             state.observed_files[path] = (info.st_dev, info.st_ino)
     members = tuple(state.observed_files)
     if route == "pet" and state.writing:
@@ -178,6 +189,40 @@ def preflight(state, route, attempt):
         state.holds.append(storage._holds.get(state.leases[-1]._key))
         attempt.check()
     state.paths += members
+
+
+def check_export_parent(state):
+    """Refuse a theme export whose actual parent is the themes folder.
+
+    The editor refuses that folder when the path is typed, but the folder the
+    write lands in is the one this scope pinned, which a swapped link or
+    rename can make a different one (Qodo 4118068772). The pin (or, unpinned,
+    the admitted identity) is what ``_replace`` publishes into, so this is
+    checked against it, not a path spelling.
+
+    Args:
+        state: The ``theme_export`` scope's state, after its parent is pinned.
+
+    Raises:
+        PermissionError: The pinned parent is the themes folder.
+    """
+    parent = state.selected.parent
+    fd = state.pins.get(parent)
+    if fd is not None:
+        info = os.fstat(fd)
+        pinned = (info.st_dev, info.st_ino)
+    else:
+        pinned = state.identities.get(parent)
+    if pinned is None:
+        return  # parent not created yet: a new folder is never the themes folder
+    try:
+        themes = os.stat(binding(state.source)[1])
+    except FileNotFoundError:
+        return
+    if (themes.st_dev, themes.st_ino) == pinned:
+        raise PermissionError(
+            errno.EACCES, "Export to a folder other than the themes folder (Save as adds a theme)"
+        )
 
 
 def check_members(state):

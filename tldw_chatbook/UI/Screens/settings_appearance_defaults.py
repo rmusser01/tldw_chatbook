@@ -288,14 +288,8 @@ def validate_appearance_defaults(
     Returns:
         Validation state and user-facing recovery copy.
     """
-    theme = str(values.default_theme or "").strip()
-    if not theme:
-        return SettingsValidationResult(False, "Theme is required.")
-    if len(theme) > MAX_THEME_NAME_LENGTH:
-        return SettingsValidationResult(
-            False,
-            f"Theme must be {MAX_THEME_NAME_LENGTH} characters or fewer.",
-        )
+    # The theme is chosen in Settings > Theme (TASK-32948); Appearance
+    # neither edits nor validates general.default_theme.
     palette_theme_limit = _strict_int(values.palette_theme_limit)
     if (
         palette_theme_limit is None
@@ -428,6 +422,9 @@ def build_appearance_save_sections(
         A mapping of config section names to deep-merged section values.
     """
     general = dict(deepcopy(_mapping_child(app_config, "general")))
+    # Spec §8: Appearance never writes the launch default, not even the value
+    # it read (the writer sets keys one by one, so the file's value survives).
+    general.pop("default_theme", None)
     web_server = dict(deepcopy(_mapping_child(app_config, "web_server")))
     appearance = dict(deepcopy(_mapping_child(app_config, "appearance")))
     library = dict(deepcopy(_mapping_child(app_config, "library")))
@@ -435,7 +432,6 @@ def build_appearance_save_sections(
 
     general.update(
         {
-            "default_theme": str(values.default_theme).strip(),
             "palette_theme_limit": int(values.palette_theme_limit),
         }
     )

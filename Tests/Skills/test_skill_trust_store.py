@@ -403,3 +403,134 @@ def test_keyring_key_cache_rejects_stale_salt_binding():
     cache.save_keys(keys, salt=b"b" * 32)
 
     assert cache.load_keys(expected_salt=b"c" * 32) is None
+
+
+class CountingSecureKeyring(FakeSecureKeyring):
+    """Counts reads; ``fail`` makes reads raise like a locked keyring."""
+
+    __module__ = "keyring.backends.macOS"
+
+    def __init__(self):
+        super().__init__()
+        self.reads = 0
+        self.fail = False
+
+    def get_password(self, service_name, username):
+        self.reads += 1
+        if self.fail:
+            raise RuntimeError("keyring locked")
+        return super().get_password(service_name, username)
+
+
+def test_marker_reads_share_one_keyring_round_trip_until_written():
+    """TASK-32921: every installed skill's trust status re-read the marker.
+
+    On Linux each read is a SecretService D-Bus round trip on the UI loop,
+    once per skill, on every send and Chat visit.
+    """
+    fake = CountingSecureKeyring()
+    marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=fake)
+    for _ in range(20):
+        assert marker.load_marker() is None
+    assert fake.reads == 1
+
+    marker.save_marker(generation=3, manifest_digest="digest")
+    assert marker.load_marker() == {"generation": 3, "manifest_digest": "digest"}
+    assert fake.reads == 2
+
+
+def test_marker_read_failures_are_shared_briefly_then_retried(monkeypatch):
+    """A locked keyring raises once per pass, and a later Retry reads again."""
+    from tldw_chatbook.Skills_Interop import skill_trust_store
+
+    clock = [100.0]
+    monkeypatch.setattr(skill_trust_store.time, "monotonic", lambda: clock[0])
+    fake = CountingSecureKeyring()
+    marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=fake)
+    fake.fail = True
+    for _ in range(5):
+        with pytest.raises(RuntimeError):
+            marker.load_marker()
+    assert fake.reads == 1
+
+    fake.fail = False
+    clock[0] += 3  # past the failure window, well inside the success window
+    assert marker.load_marker() is None
+    assert fake.reads == 2
+
+
+def test_key_cache_misses_share_one_keyring_round_trip():
+    fake = CountingSecureKeyring()
+    cache = KeyringSkillTrustKeyCache(keyring_backend=fake)
+    for _ in range(10):
+        assert cache.load_keys(expected_salt=b"a" * 32) is None
+    assert fake.reads == 1
+
+    keys = derive_skill_trust_keys("passphrase", salt=b"a" * 32)
+    cache.save_keys(keys, salt=b"a" * 32)
+    assert cache.load_keys(expected_salt=b"a" * 32) == keys
+    assert fake.reads == 2
+
+
+def test_read_racing_a_write_does_not_recache_the_replaced_marker():
+    """Trust setup writes on a worker while the send path reads on the loop."""
+    fake = CountingSecureKeyring()
+    marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=fake)
+    marker.save_marker(generation=1, manifest_digest="old")
+    real_get = fake.get_password
+
+    def get_then_write_lands(service_name, username):
+        value = real_get(service_name, username)  # reads the OLD marker...
+        fake.get_password = real_get
+        marker.save_marker(generation=2, manifest_digest="new")  # ...write lands
+        return value
+
+    fake.get_password = get_then_write_lands
+    assert marker.load_marker()["generation"] == 1  # the racing read itself
+    assert marker.load_marker() == {"generation": 2, "manifest_digest": "new"}
+
+
+def test_slow_failed_read_is_cached_from_when_it_returned(monkeypatch):
+    """Qodo review on #2820: expiry was computed before the (possibly
+    blocking) read, so a locked keyring slower than the failure window
+    stored an already-expired entry and every skill re-read it."""
+    from tldw_chatbook.Skills_Interop import skill_trust_store
+
+    clock = [100.0]
+    monkeypatch.setattr(skill_trust_store.time, "monotonic", lambda: clock[0])
+    fake = CountingSecureKeyring()
+    real_get = fake.get_password
+
+    def slow_locked(service_name, username):
+        clock[0] += 5  # longer than the 2 s failure window
+        fake.fail = True
+        return real_get(service_name, username)
+
+    fake.get_password = slow_locked
+    marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=fake)
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            marker.load_marker()
+    assert fake.reads == 1
+
+
+def test_trust_status_for_many_skills_reads_the_keyring_once(tmp_path):
+    """Qodo review on #2820 (integration): the real per-skill status loop that
+    runs on every send and Chat visit, with no trust manifest (the common
+    case), must cost one keyring read, not one per installed skill."""
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+
+    fake = CountingSecureKeyring()
+    (tmp_path / "trust").mkdir()
+    (tmp_path / "skills").mkdir()
+    service = SkillTrustService(
+        skills_dir=tmp_path / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=KeyringSkillTrustGenerationMarkerStore(keyring_backend=fake),
+        ),
+        key_cache=None,
+    )
+    statuses = [service.status_for_skill(f"skill-{i}") for i in range(10)]
+    assert len(statuses) == 10
+    assert fake.reads == 1

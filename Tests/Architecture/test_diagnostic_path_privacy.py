@@ -992,16 +992,13 @@ def test_path_like_substrings_without_bounded_path_identifiers_are_ignored() -> 
     assert scan_path_diagnostic_candidates(source, filename="negative_names.py") == []
 
 
-def _inventory_with_path_candidates(
-    rows: list[dict[str, object]], *, candidate_count: int
-) -> dict[str, object]:
+def _inventory_with_path_candidates(rows: list[dict[str, object]]) -> dict[str, object]:
     return {
         "schema_version": 3,
         "scope": "tldw_chatbook/**/*.py",
         "classification_rules": {},
         "path_privacy_rules": {},
         "reviewed_exclusions": [],
-        "summary": {"path_privacy_candidate_calls": candidate_count},
         "owners": [],
         "persistent_sink_topology": [],
         "path_privacy_candidates": rows,
@@ -1462,13 +1459,12 @@ def test_path_candidate_report_preserves_all_files_and_duplicate_findings() -> N
     assert duplicate_candidates[1]["call_digest"] == duplicate_digest
     other_digest = other_candidates[0]["call_digest"]
 
-    committed = _inventory_with_path_candidates([], candidate_count=0)
+    committed = _inventory_with_path_candidates([])
     rebuilt = _inventory_with_path_candidates(
         [
             {"path": "alpha.py", "candidates": duplicate_candidates},
             {"path": "beta.py", "candidates": other_candidates},
-        ],
-        candidate_count=3,
+        ]
     )
     report = render_diff(json.dumps(committed), rebuilt)
 
@@ -1503,16 +1499,14 @@ def test_path_candidate_report_counts_additions_removals_and_changes() -> None:
             {"path": "removed.py", "candidates": [removed, removed]},
             {"path": "changed.py", "candidates": [changed_old]},
             {"path": "multiplicity.py", "candidates": [multiplicity, multiplicity]},
-        ],
-        candidate_count=5,
+        ]
     )
     rebuilt = _inventory_with_path_candidates(
         [
             {"path": "added.py", "candidates": [added, added]},
             {"path": "changed.py", "candidates": [changed_new]},
             {"path": "multiplicity.py", "candidates": [multiplicity]},
-        ],
-        candidate_count=4,
+        ]
     )
 
     report = render_diff(json.dumps(committed), rebuilt)
@@ -1531,8 +1525,8 @@ def test_path_candidate_report_counts_additions_removals_and_changes() -> None:
 
 
 def test_path_privacy_rules_are_inventory_metadata() -> None:
-    committed = _inventory_with_path_candidates([], candidate_count=0)
-    rebuilt = _inventory_with_path_candidates([], candidate_count=0)
+    committed = _inventory_with_path_candidates([])
+    rebuilt = _inventory_with_path_candidates([])
     committed["path_privacy_rules"] = {"candidate_status": "old"}
     rebuilt["path_privacy_rules"] = {"candidate_status": "legacy_unreviewed"}
 

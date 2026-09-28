@@ -80,6 +80,24 @@ PARAM_DEFAULTS: dict[str, dict[str, object]] = {
     "tts-higgs-voice-cloning-switch": {"value": True},
     "tts-higgs-multi-speaker-switch": {"value": True},
     "tts-higgs-delimiter-input": {"value": "|||", "placeholder": "Default: |||"},
+    # OmniVoice: blank = use the Settings value ([OmniVoiceSettings]); a
+    # typed value overrides it for this request only. A pre-filled literal
+    # here would silently override the saved Settings default every time.
+    "tts-omnivoice-num-steps-input": {
+        "value": "",
+        "placeholder": "Settings default (32 if unset)",
+        "type": "number",
+    },
+    "tts-omnivoice-guidance-scale-input": {
+        "value": "",
+        "placeholder": "Settings default (2.0 if unset)",
+        "type": "number",
+    },
+    "tts-omnivoice-max-ref-duration-input": {
+        "value": "",
+        "placeholder": "Settings default (30 if unset)",
+        "type": "number",
+    },
     "tts-preprocess-text-switch": {"value": True},
     "tts-normalize-audio-switch": {"value": True},
     "tts-target-db-input": {
@@ -109,6 +127,10 @@ PARAM_LABELS: dict[str, str] = {
     "tts-higgs-voice-cloning-switch": "Voice cloning",
     "tts-higgs-multi-speaker-switch": "Multi-speaker",
     "tts-higgs-delimiter-input": "Delimiter",
+    # OmniVoice
+    "tts-omnivoice-num-steps-input": "Diffusion steps",
+    "tts-omnivoice-guidance-scale-input": "Guidance (CFG)",
+    "tts-omnivoice-max-ref-duration-input": "Max reference (s)",
     # Kokoro
     "tts-kokoro-use-onnx": "Use ONNX",
     # Shared audio post-processing

@@ -468,13 +468,13 @@ class WorkflowEditor(Vertical):
                 )
                 or "unset"
             )
-            timeout = (
-                self.documents.projected_field_text(
-                    self.document, f"/steps/{index}/timeout_seconds"
-                )
-                or "unset"
+            # The "s" unit belongs to a value, not to the placeholder: this
+            # used to render "timeout unsets" (tier-2 review, slice S10).
+            timeout_value = self.documents.projected_field_text(
+                self.document, f"/steps/{index}/timeout_seconds"
             )
-            return f" · retry {retry} / timeout {timeout}s"
+            timeout = f"{timeout_value}s" if timeout_value else "unset"
+            return f" · retry {retry} / timeout {timeout}"
         missing = any(
             self.documents.projected_field_text(
                 self.document, f"/steps/{index}/" + field.path

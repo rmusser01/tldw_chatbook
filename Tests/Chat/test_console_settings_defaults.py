@@ -1826,3 +1826,91 @@ def test_registry_entry_save_model_default_fails_closed(tmp_path, monkeypatch) -
     assert outcome.runtime_published is False
     assert outcome.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
     assert tomllib.loads(config_path.read_text(encoding="utf-8")) == before
+
+
+_ANTHROPIC_MODEL = "claude-sonnet-4-5"
+
+
+@pytest.mark.asyncio
+async def test_saved_value_for_a_field_the_request_drops_stays_and_is_never_sent() -> (
+    None
+):
+    """TASK-33001.2 AC#9: Anthropic's request never carries Min P or Seed.
+
+    A model default saved for them earlier stays in config untouched by a full
+    save through the real writer (the locked mutation builder plus the literal
+    merge ``apply_console_default_intent`` runs under its lock), and the real
+    send path (session defaults -> selection -> ``resolve_for_send`` ->
+    ``_chat_api_kwargs_from_prepared`` -> ``chat_api_call`` projection) never
+    delivers it to the provider.
+    """
+    import copy
+
+    from Tests.Chat.test_console_provider_support import production_send_kwargs
+    from tldw_chatbook.Chat.Chat_Functions import project_chat_handler_kwargs
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_default_console_session_settings,
+    )
+
+    config = {
+        "api_settings": {
+            "anthropic": {
+                "api_key": "test-key",
+                "model": _ANTHROPIC_MODEL,
+                "model_defaults": {
+                    _ANTHROPIC_MODEL: {"temperature": 0.8, "min_p": 0.05, "seed": 7}
+                },
+            }
+        },
+        "chat_defaults": {"provider": "anthropic", "model": _ANTHROPIC_MODEL},
+    }
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        provider_config_key="anthropic",
+        literal_model_id=_ANTHROPIC_MODEL,
+        field_mask=FULL_MODEL_DEFAULT_FIELDS,
+        values={"temperature": 0.3, "top_k": 20, "min_p": 0.2, "seed": None},
+        endpoint_patch=None,
+    )
+
+    mutation = defaults_module._build_locked_default_mutation(
+        intent,
+        "anthropic",
+        _ANTHROPIC_MODEL,
+        config_module.AtomicLiteralMutationSnapshot(
+            generation=1, raw_values=config, effective_values=config
+        ),
+    )
+    saved = copy.deepcopy(config)
+    config_module._apply_literal_mutation_unlocked(saved, mutation)
+
+    assert saved["api_settings"]["anthropic"]["model_defaults"][_ANTHROPIC_MODEL] == {
+        "temperature": 0.3,
+        "top_k": 20,
+        "min_p": 0.05,
+        "seed": 7,
+    }
+
+    settings = build_default_console_session_settings(
+        saved, "anthropic", _ANTHROPIC_MODEL
+    )
+    assert (settings.min_p, settings.seed) == (0.05, 7)
+    gateway = ConsoleProviderGateway(config_provider=lambda: saved, environ={})
+    resolution = await gateway.resolve_for_send(
+        build_console_provider_selection_from_settings(
+            settings, app_config=saved, workspace_context=None
+        )
+    )
+    assert resolution.ready is True
+    assert (resolution.min_p, resolution.seed) == (0.05, 7)
+    kwargs = production_send_kwargs(resolution)
+    projected = project_chat_handler_kwargs(kwargs.pop("api_endpoint"), kwargs)
+
+    assert (projected["temp"], projected["topk"]) == (0.3, 20)
+    assert 0.05 not in projected.values()
+    assert 7 not in projected.values()

@@ -60,6 +60,8 @@ BUILTIN_TOOL_NAMES = [
     "create_note",
     "search_notes",
     "list_characters",
+    "create_character",
+    "update_character",
     "get_conversation_history",
     "export_conversation",
 ]
@@ -199,6 +201,9 @@ def _compose_server(
         "local_tools_exposure_enabled",
         lambda: local_registration is not None,
     )
+    monkeypatch.setattr(
+        local_server_tools, "character_tools_exposure_enabled", lambda: False
+    )
     if local_registration is not None:
         monkeypatch.setattr(
             local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
@@ -206,7 +211,7 @@ def _compose_server(
         monkeypatch.setattr(
             local_server_tools,
             "build_server_local_provider",
-            lambda _root, _store: object(),
+            lambda _root, _store, **_options: object(),
         )
         monkeypatch.setattr(
             local_server_tools,
@@ -325,6 +330,7 @@ def _one_response(messages: list[Any]) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_constructor_finalizes_the_exact_default_standalone_surface(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -459,6 +465,7 @@ def test_module_entrypoint_emits_fixed_failure_diagnostics(
 
 @pytest.mark.parametrize("version", PROTOCOL_VERSIONS)
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_protocol_core_flow_and_revision_projection(
     version: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

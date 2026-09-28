@@ -82,10 +82,75 @@ the current `2026-07-28` profile. Batch requests are accepted only with
 The retired `ingest_media` placeholder is absent. Use Library Import for
 persistent URL or file ingestion.
 
-- **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
+- **Built-in tools (11):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `create_character`, `update_character`, `get_conversation_history`, `export_conversation`
+
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
-- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+- **Library tools excluded from standalone (21):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`
+
+### Character card authoring
+
+Character authoring uses the same local card service as Personas. For example:
+
+```json
+{"name":"Ada","fields":{"description":"A patient tutor","tags":["math"]}}
+```
+
+Pass that object to `create_character`. The result contains `id`, `name`, and
+`version`. To edit it, call `update_character` with:
+
+```json
+{"character_id":42,"expected_version":1,"fields":{"description":"A curious tutor"}}
+```
+
+Use the actual id/version returned by your create call or `list_characters`.
+A stale version or duplicate name returns `error_code: "conflict"`; reread the
+roster and review the change before retrying. Omitted fields stay unchanged;
+empty text or an empty list clears that field. Null values and empty patches
+are rejected.
+
+Supported fields are `name` (update only), `description`, `personality`,
+`scenario`, `system_prompt`, `post_history_instructions`, `first_message`,
+`message_example`, `creator_notes`, `alternate_greetings`, `tags`, `creator`,
+`character_version`, and `extensions`. Existing card validation and length
+limits apply. Image fields, unknown fields, and delete/restore are unsupported.
+
+Both tools are persistent writes and require approval when Allow is inherited.
+An explicit per-tool Allow in MCP Permissions grants access. External stdio
+clients cannot display an approval card: they receive `permission_required`
+until an operator grants the tool under the built-in `tldw_chatbook` server.
+Revocation and the MCP kill switch apply on the next call. Restored MCP settings
+must also complete the normal recovery review before writes can run.
+
+Cancellation or timeout can return before an already-started database write
+finishes. Check the character roster before retrying.
+
+### Character reads and the long-field guard
+
+`character_search` and `character_get` — the same read tools the Console uses —
+are off for external clients by default: `[mcp] expose_character_tools = false`.
+Set it to `true` and restart the client to publish them. The switch is
+independent of `[mcp] expose_local_tools` (no workspace, web, or Watchlists
+tool comes with it) and of the Console's `[tools] character_tools_enabled`.
+The reads use the local source's permission rows (the ones Tools mode lists),
+so an explicit Allow on each read is needed; Ask is refused as for every
+external local tool. `character_save` is never published externally: external
+writes are `create_character` and `update_character` above.
+
+While these reads are exposed, `update_character` will not replace a field
+that `character_get`'s whole-card view cuts short (about 1,000 characters)
+until that field has been read in full. Page it with `character_get` using `field` and `offset` from 0 until no
+`next_offset` comes back; otherwise the call returns
+`error_code: "read_full_field_first"` and the card is untouched. The record of
+what was read lasts for one server process (one client session) and one card
+version, so read again after each saved edit. With `expose_character_tools`
+off there is no external read tool to satisfy the guard, so it does not apply
+and `update_character` works as described above for every field.
+
+While Chatbook's runtime source is `server`, the standalone server's
+`create_character` and `update_character` return `error_code: "unsupported"` and the reads return
+`status: "unsupported"`, with the Console's message: character editing is
+local-only.
 
 ### Standalone behavior and controls
 
@@ -93,7 +158,7 @@ persistent URL or file ingestion.
 keyword search; `true` or omission follows the active RAG profile's `plain`,
 `semantic`, or `hybrid` search mode.
 
-All 24 Library tools are excluded from the standalone stdio catalog. They
+All 21 Library tools are excluded from the standalone stdio catalog. They
 remain behind the in-app gated and logged direct Library action; raw in-app
 `tools/call` is refused.
 
@@ -127,7 +192,11 @@ enabled by default and includes workspace file, read-only Git, web, and
 Watchlists tools
 (`web_search`, `web_fetch`, `web_crawl`, plus Watchlists metadata and receipt
 reads). The task tools `todo_create`, `todo_update`, `todo_get`,
-and `todo_list` require Console session state and are not Hub tools. Turning
+and `todo_list` require Console session state and are not Hub tools. The
+character tools `character_search`, `character_get`, and `character_save` also
+run only in Console, but they are listed (not runnable here) whenever `[tools]
+character_tools_enabled` is on, so you can give them per-tool permissions —
+for example, Allow on the two reads. Turning
 this control off remains a supported opt-out. The same panel lets you set
 **Workspace root**, the directory that confines every `fs_*` path. A blank
 root uses the folder from which the app was launched; a non-blank root must be
@@ -443,6 +512,13 @@ which a blanket "allow everything" default is not. That is the whole
 distinction: the floor exists to stop a broad default from silently covering a
 dangerous tool, not to override a decision you made about one tool.
 
+One exception: `character_save` asks on **every** call, even when its own row
+is set to Allow — the row then shows **Ask ⚑** and the inspector says "Asks on
+every call, even when set to Allow." Its Console approval card offers only
+**Approve once** and **Deny**, and a session grant is never honoured for it,
+so every character save stays an approval card; the two character read tools
+take an explicit Allow normally.
+
 The separate rug-pull guard still applies on top: an explicit tool-level Allow
 is downgraded to Ask (marked **⚠**) when the tool's current definition no
 longer matches the one stored with the allow. Only setting the state again
@@ -753,3 +829,17 @@ save; and "Permission continuity for built-in tools" now distinguishes a
 Stop-cancelled round (`Denied (no decision)`, same as any other unresolved
 round) from a headless round with no app wired, which writes no audit row
 at all.*
+
+*Docs pass 2026-09-27 (task-32956, against code and tests, not a live
+screen): the Console character tools now appear as local permission rows
+(listed, not runnable from Tools mode, gone when `[tools]
+character_tools_enabled` is off), and `character_save` is the one tool an
+explicit Allow does not un-floor (`permission_store.ALWAYS_ASK_TOOLS`); its
+card offers only Approve once / Deny, and Tool Pack exports now carry the
+character tools' rules instead of listing them as omitted.*
+
+*Docs pass 2026-09-27 (task-32955, against code and tests, not a live
+screen): "Character reads and the long-field guard" documents `[mcp]
+expose_character_tools`, the external character reads, and the
+`update_character` long-field guard (only while the reads are exposed) and
+server-mode refusal.*

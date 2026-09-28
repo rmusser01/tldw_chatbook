@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -41,6 +41,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 # I3: Import always writes to the LOCAL profile store (`_apply_import()` in
@@ -466,6 +467,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # `on_button_pressed` translate a callout click back to the
         # server_key to select.
         self._callout_keys: list[str] = []
+        self._callout_refresh_lock = asyncio.Lock()
         # F-057: the table width the current column set was fitted to
         # (0 = never fitted) -- `on_resize` refits only on real changes.
         self._table_width: int = 0
@@ -724,15 +726,11 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
     ) -> None:
         """Rebuild the overview table, summary, and recovery callouts.
 
-        The callouts container is refreshed the same awaited way
-        `MCPInspector.update_readiness()` rebuilds its action buttons (see
-        the P0 fix in mcp_inspector.py): `remove_children()` is awaited
-        before mounting, and the new callouts are mounted in a single
-        batched `mount_all()` call rather than one `mount()` call per
-        callout in a loop, so a second `update_overview()` call queued
-        right behind this one cannot interleave its own removal/mount with
-        this call's -- and the canvas takes one layout pass instead of one
-        per callout.
+        Callout removal and batch mounting share a per-widget async lock.
+        Resize workers and workbench refreshes can overlap while awaiting
+        removal; the lock keeps their replacements from mounting duplicate
+        buttons. It releases on cancellation, and each replacement reads
+        the latest overview snapshots before building its callouts.
 
         Args:
             snapshots: Readiness snapshots for every server currently
@@ -849,68 +847,71 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 table.add_row(
                     *(row_cells_by_name[column] for column in columns), key=row_key
                 )
-        callouts = self.query_one("#mcp-overview-callouts", Vertical)
-        await callouts.remove_children()
-        callout_widgets: list[Widget] = []
-        # F-051: the disabled built-in is an OFF/opt-in state, not a
-        # problem -- it never files a recovery callout. Instead it gets a
-        # calm Enable affordance whose click performs the fix directly
-        # (BuiltinFlagChanged("enabled", True), the same message the detail
-        # view's Enabled checkbox posts), rendered in the same one-line
-        # callout row style.
-        for snap in self._snapshots:
-            if not is_off_opt_in(snap):
-                continue
-            technical = str((snap.detail or {}).get("technical_detail") or "").strip()
-            enable_tooltip = (
-                f"{technical} Enable the built-in MCP server so an MCP client "
-                "can launch it."
-            ).strip()
-            callout_widgets.append(
+        async with self._callout_refresh_lock:
+            callouts = self.query_one("#mcp-overview-callouts", Vertical)
+            await callouts.remove_children()
+            callout_widgets: list[Widget] = []
+            # F-051: the disabled built-in is an OFF/opt-in state, not a
+            # problem -- it never files a recovery callout. Instead it gets a
+            # calm Enable affordance whose click performs the fix directly
+            # (BuiltinFlagChanged("enabled", True), the same message the detail
+            # view's Enabled checkbox posts), rendered in the same one-line
+            # callout row style.
+            for snap in self._snapshots:
+                if not is_off_opt_in(snap):
+                    continue
+                technical = str(
+                    (snap.detail or {}).get("technical_detail") or ""
+                ).strip()
+                enable_tooltip = (
+                    f"{technical} Enable the built-in MCP server so an MCP client "
+                    "can launch it."
+                ).strip()
+                callout_widgets.append(
+                    Button(
+                        escape_markup(f"{snap.label} is turned off — Enable"),
+                        id="mcp-builtin-enable",
+                        classes="mcp-callout mcp-optin console-action-subdued",
+                        compact=True,
+                        tooltip=escape_markup(enable_tooltip),
+                    )
+                )
+            # Task 11: callouts are now actionable one-line Buttons (posting
+            # ServerRowSelected straight to the problem row) instead of inert
+            # Statics -- capped at _CALLOUT_CAP with a final "+N more" Static
+            # pointing back at the table so a source with many problem servers
+            # doesn't grow the callout list without bound.
+            problem_snapshots = [
+                snap
+                for snap in self._snapshots
+                if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
+                and not is_off_opt_in(snap)
+            ]
+            visible = problem_snapshots[:_CALLOUT_CAP]
+            overflow = len(problem_snapshots) - len(visible)
+            self._callout_keys = [snap.server_key for snap in visible]
+            callout_widgets.extend(
                 Button(
-                    escape_markup(f"{snap.label} is turned off — Enable"),
-                    id="mcp-builtin-enable",
-                    classes="mcp-callout mcp-optin console-action-subdued",
+                    escape_markup(
+                        f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"
+                    ),
+                    id=f"mcp-callout-{index}",
+                    classes="mcp-callout console-action-subdued",
                     compact=True,
-                    tooltip=escape_markup(enable_tooltip),
+                    tooltip=_callout_tooltip(snap),
                 )
+                for index, snap in enumerate(visible)
             )
-        # Task 11: callouts are now actionable one-line Buttons (posting
-        # ServerRowSelected straight to the problem row) instead of inert
-        # Statics -- capped at _CALLOUT_CAP with a final "+N more" Static
-        # pointing back at the table so a source with many problem servers
-        # doesn't grow the callout list without bound.
-        problem_snapshots = [
-            snap
-            for snap in self._snapshots
-            if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
-            and not is_off_opt_in(snap)
-        ]
-        visible = problem_snapshots[:_CALLOUT_CAP]
-        overflow = len(problem_snapshots) - len(visible)
-        self._callout_keys = [snap.server_key for snap in visible]
-        callout_widgets.extend(
-            Button(
-                escape_markup(
-                    f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"
-                ),
-                id=f"mcp-callout-{index}",
-                classes="mcp-callout console-action-subdued",
-                compact=True,
-                tooltip=_callout_tooltip(snap),
-            )
-            for index, snap in enumerate(visible)
-        )
-        if overflow > 0:
-            callout_widgets.append(
-                Static(
-                    f"+{overflow} more — see the table above.",
-                    classes="ds-recovery-callout",
-                    markup=False,
+            if overflow > 0:
+                callout_widgets.append(
+                    Static(
+                        f"+{overflow} more — see the table above.",
+                        classes="ds-recovery-callout",
+                        markup=False,
+                    )
                 )
-            )
-        if callout_widgets:
-            await callouts.mount_all(callout_widgets)
+            if callout_widgets:
+                await callouts.mount_all(callout_widgets)
         # I1: data (table/summary/callouts, all above) always refreshes: only
         # the container-visibility flip is skipped while the form is open,
         # so a background resync can never re-show the overview underneath

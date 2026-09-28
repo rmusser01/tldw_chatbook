@@ -22,6 +22,19 @@ from typing import Protocol, cast, runtime_checkable
 # should use FileAudioSource or be split by the app-owned executor.
 MAX_BUFFER_AUDIO_BYTES = 64 * 1024 * 1024
 
+#: Ceiling on one ffmpeg decode of a user-supplied media container. An hour is
+#: generous for a long recording on slow hardware and still finite, so a
+#: malformed or adversarial container parks the worker for an hour rather than
+#: forever.
+#:
+#: One definition for every STT decode call site: ``parakeet_onnx`` and
+#: ``transcribe_cpp`` bound the SAME operation and previously each carried
+#: their own ``3600``, which is exactly the drift a review flagged (PR #2802).
+#: It is deliberately NOT shared with ``TTS/audio_service``'s mux timeout --
+#: that one bounds a stream copy over an already-encoded file and has no
+#: reason to move when this number does.
+FFMPEG_DECODE_TIMEOUT_SECONDS = 3600
+
 _VALID_SAMPLE_WIDTHS = frozenset({1, 2, 3, 4})
 _LANGUAGE_PATTERN = re.compile(r"(?:auto|[a-z]{2,3}(?:-[a-z0-9]{1,8})*)")
 _DETAIL_CODE_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*")

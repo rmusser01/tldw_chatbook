@@ -30,6 +30,8 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import persist_seeded_config
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -3872,6 +3874,13 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
         lambda: snapshot,
         raising=False,
     )
+    # TASK-33001.5: the handoff's config is the saved config, as in the app;
+    # an untouched chat follows the saved defaults on every later render.
+    app.app_config["chat_defaults"] = dict(snapshot.values["chat_defaults"])
+    app.app_config["api_settings"]["llama_cpp"] = dict(
+        snapshot.values["api_settings"]["llama_cpp"]
+    )
+    persist_seeded_config(app, "chat_defaults", "api_settings.llama_cpp")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:
@@ -5296,6 +5305,87 @@ async def test_console_settings_delayed_initial_focus_is_safe_after_unmount() ->
         await pilot.pause()
 
         modal._focus_highest_priority_connection()
+
+
+def _unmounted_settings_modal(
+    app_config: dict,
+    *,
+    provider: str = "llama_cpp",
+) -> ConsoleSettingsModal:
+    return ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider=provider, model="model-a"),
+        app_config=app_config,
+        providers_models={provider: ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+
+
+_ENGINE_CLOUD_PROVIDER_TABLES = {
+    "databricks": {"api_key_env_var": "DATABRICKS_TOKEN"},
+    "together": {
+        "api_key_env_var": "TOGETHER_API_KEY",
+        "api_base_url": "https://api.together.xyz/v1",
+    },
+    "fireworks": {
+        "api_key_env_var": "FIREWORKS_API_KEY",
+        "api_base_url": "https://api.fireworks.ai/inference/v1",
+    },
+    "cerebras": {
+        "api_key_env_var": "CEREBRAS_API_KEY",
+        "api_base_url": "https://api.cerebras.ai/v1",
+    },
+}
+
+
+def test_console_modal_offers_engine_cloud_providers_with_display_labels() -> None:
+    """TASK-32919: the four ADR-179 engine presets render as first-class
+    picker options labeled with the shared catalog display names, not raw
+    config keys or "(WIP)" markers."""
+    modal = _unmounted_settings_modal({"api_settings": dict(_ENGINE_CLOUD_PROVIDER_TABLES)})
+
+    options = {value: label for label, value in modal._provider_select_options()}
+
+    assert options["databricks"] == "Databricks"
+    assert options["together"] == "Together"
+    assert options["fireworks"] == "Fireworks"
+    assert options["cerebras"] == "Cerebras"
+
+
+def test_console_modal_collects_databricks_workspace_url() -> None:
+    """Databricks has no shipped base URL (per-account workspace host), so
+    the modal must show the Base URL input even with nothing configured --
+    readiness blocks with workspace-URL copy until one is saved -- and must
+    not prefill a placeholder value."""
+    modal = _unmounted_settings_modal({"api_settings": {}})
+
+    assert modal._provider_uses_base_url("databricks") is True
+    assert modal._default_base_url_for_provider("databricks") is None
+
+
+@pytest.mark.parametrize(
+    "provider_key,expected_default_base",
+    [
+        ("together", "https://api.together.xyz/v1"),
+        ("fireworks", "https://api.fireworks.ai/inference/v1"),
+        ("cerebras", "https://api.cerebras.ai/v1"),
+    ],
+)
+def test_console_modal_shows_inference_cloud_default_base_urls(
+    provider_key: str, expected_default_base: str
+) -> None:
+    """The inference clouds ship api_base_url in [api_settings], so their
+    Base URL input is visible and prefilled with the shipped default."""
+    assert (
+        DEFAULT_CONFIG_FROM_TOML["api_settings"][provider_key]["api_base_url"]
+        == expected_default_base
+    )
+    modal = _unmounted_settings_modal(
+        {"api_settings": dict(_ENGINE_CLOUD_PROVIDER_TABLES)}
+    )
+
+    assert modal._provider_uses_base_url(provider_key) is True
+    assert modal._default_base_url_for_provider(provider_key) == expected_default_base
 
 
 @pytest.mark.asyncio
@@ -8963,6 +9053,8 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
             ),
         )
     )
+    # TASK-33001.5: an untouched chat follows the saved defaults.
+    persist_seeded_config(app, "chat_defaults")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 60)) as pilot:
@@ -10774,6 +10866,12 @@ async def test_console_native_tab_click_switches_without_programmatic_fallback()
         "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
     }
     app.providers_models = {"llama_cpp": ["model-a"]}
+    # TASK-33001.5: an untouched chat follows the saved defaults.
+    persist_seeded_config(
+        app,
+        "chat_defaults",
+        "api_settings.llama_cpp",
+    )
     host = StyledConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -11061,11 +11159,19 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
-    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    # An empty model, not an absent one: once saved, an absent key falls back
+    # to the template's chat_defaults.model (TASK-33001.5).
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
     app.app_config["api_settings"] = {
         "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
     }
     app.providers_models = {"llama_cpp": ["model-a"]}
+    # TASK-33001.5: an untouched chat follows the saved defaults.
+    persist_seeded_config(
+        app,
+        "chat_defaults",
+        "api_settings.llama_cpp",
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -11593,13 +11699,21 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
-    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    # An empty model, not an absent one: once saved, an absent key falls back
+    # to the template's chat_defaults.model (TASK-33001.5).
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
     app.app_config["api_settings"] = {
         "llama_cpp": {
             "api_url": "http://127.0.0.1:9099/v1",
             "model": "configured-model",
         },
     }
+    # TASK-33001.5: an untouched chat follows the saved defaults.
+    persist_seeded_config(
+        app,
+        "chat_defaults",
+        "api_settings.llama_cpp",
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -11635,6 +11749,13 @@ async def test_console_new_native_tab_uses_saved_global_default() -> None:
         "openai": ["gpt-4.1"],
         "local_llamacpp": ["local-model"],
     }
+    # TASK-33001.5: an untouched chat follows the saved defaults.
+    persist_seeded_config(
+        app,
+        "chat_defaults",
+        "api_settings.openai",
+        "api_settings.local_llamacpp",
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -11679,6 +11800,12 @@ async def test_console_model_switch_inherits_selected_model_default_profile() ->
         },
     }
     app.providers_models = {"openai": ["gpt-4.1", "gpt-4.1-mini"]}
+    # TASK-33001.5: an untouched chat follows the saved defaults.
+    persist_seeded_config(
+        app,
+        "chat_defaults",
+        "api_settings.openai",
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -12617,7 +12744,9 @@ async def _wait_for_screen(app, pilot, screen_type_name: str, *, attempts: int =
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_journey_settings_save_unblocks_console_without_restart(
+    request,
     monkeypatch,
 ) -> None:
     """Live-UAT regression: boot -> blocked Console -> Settings save -> Console.
@@ -12626,8 +12755,19 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
     chat_defaults.provider/model + the llama.cpp endpoint (config caches reload),
     the user clicks the Console nav tab (fresh ChatScreen composes, prior screen
     state restores), and the setup card must NOT still be blocking.
+
+    TASK-33001.5 (D1) continues the journey: with that untouched chat now on
+    keyless llama.cpp, which reads Ready although no server listens, a second
+    save through the same real writer (a fresh private profile's
+    TLDW_CONFIG_PATH, no mocked config writer) must move it to the new
+    default -- exactly what a new Ctrl+T chat holds -- while a chat holding
+    one message keeps its own settings.
     """
+    import os
+    import tomllib
+
     from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
     from tldw_chatbook.Widgets.Console import ConsoleSetupModal
@@ -12692,6 +12832,62 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
         assert not console.query_one(
             "#console-setup-modal", ConsoleSetupModal
         ).is_blocking
+
+        # 5) D1: an untouched chat that reads Ready, plus a chat with work.
+        assert readiness.label == "Ready"
+        store = console._ensure_console_chat_store()
+        untouched_id = store.active_session_id
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        worked_id = store.active_session_id
+        assert worked_id != untouched_id
+        store.append_message(
+            worked_id, role=ConsoleMessageRole.USER, content="Keep my settings."
+        )
+        worked_settings = console._session._ensure_active_console_session_settings()
+        await console._session._activate_native_console_session(untouched_id)
+        await pilot.pause()
+
+        # 6) A second save of saved defaults through the real Settings path.
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen(app, pilot, "HomeScreen")
+        assert adapter.save_values(
+            "chat_defaults",
+            {"model": "Next-Default-Test.gguf", "temperature": 0.21},
+        )
+        config_path = config_module.get_cli_config_path()
+        assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+        on_disk = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        assert on_disk["chat_defaults"]["model"] == "Next-Default-Test.gguf"
+
+        # 7) Back to Console: the untouched Ready chat follows the new default.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        store = console._ensure_console_chat_store()
+        assert store.active_session_id == untouched_id
+        settings, readiness = console._active_console_settings_readiness()
+        assert (settings.provider, settings.model) == (
+            "llama_cpp",
+            "Next-Default-Test.gguf",
+        )
+        assert settings.temperature == pytest.approx(0.21)
+        converged = store.session_settings(untouched_id)
+
+        # AC#2: exactly what a blank chat created now (Ctrl+T) holds.
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        blank_id = store.active_session_id
+        assert blank_id not in {untouched_id, worked_id}
+        assert console._session._ensure_active_console_session_settings() == converged
+
+        # The chat with one message keeps its own settings.
+        await console._session._activate_native_console_session(worked_id)
+        await pilot.pause()
+        assert console._session._ensure_active_console_session_settings() == (
+            worked_settings
+        )
+        assert worked_settings.model == "Qwen3-Coder-Test.gguf"
 
 
 def test_console_stale_default_refresh_respects_user_marked_settings() -> None:

@@ -206,7 +206,6 @@ from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     blank_console_session_settings,
     build_default_console_session_settings,
-    build_console_settings_readiness,
     default_console_session_settings,
 )
 from ...Chat.console_switcher_state import (
@@ -746,14 +745,6 @@ class ConsoleSessionController:
     module docstring.
     """
 
-    # Readiness labels that stale-default session refresh may recover from:
-    # credential/endpoint gaps a Settings save can fix. Provider-identity
-    # blockers (Unknown/Pending WIP providers) are deliberate choices and are
-    # never auto-replaced.
-    _CONSOLE_REFRESHABLE_BLOCKED_LABELS = frozenset(
-        {"Missing key", "Not ready", "Invalid URL", "Endpoint not saved"}
-    )
-
     def __init__(
         self,
         screen: "ChatScreen",
@@ -1020,6 +1011,9 @@ class ConsoleSessionController:
         self._first_chat_handoff_notified_revision: int | None = None
         self._fork_validation_generation = 0
         self._active_fork_request: _ConsoleForkRequest | None = None
+        # (session id, config mapping) the pristine-chat refresh last derived
+        # saved defaults for; see `_maybe_refresh_stale_default_console_settings`.
+        self._pristine_defaults_checked: tuple[str, object] | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -1533,6 +1527,13 @@ class ConsoleSessionController:
                 "The first chat target no longer matches provider setup. It was left unchanged.",
             )
 
+        # The handoff just applied the saved defaults for this config, so the
+        # pristine-chat refresh the syncs below run must not re-derive them:
+        # that would move the target under the rollback fences (TASK-33001.5).
+        self._pristine_defaults_checked = (
+            intent.session_id,
+            self._provider_readiness_app_config(),
+        )
         if not defer_presentation:
             self._apply_first_chat_control_selection_fn(
                 target.settings.provider,
@@ -3667,14 +3668,62 @@ class ConsoleSessionController:
             },
         )
 
+    #: Cross-pass memo for `_default_console_session_settings`, as
+    #: (app_config, provider, model, settings) or None. A CLASS attribute
+    #: default, then shadowed per instance: controllers built through
+    #: `__new__()` in tests never run `__init__`, and this programme has
+    #: shipped one fixture AttributeError per wave.
+    _console_default_settings_memo: (
+        tuple[Any, str | None, str | None, ConsoleSessionSettings] | None
+    ) = None
+
     def _default_console_session_settings(self) -> ConsoleSessionSettings:
-        """Build the default settings snapshot for a new native Console session."""
+        """Build the default settings snapshot for a new native Console session.
+
+        `default_console_session_settings` is a pure function of
+        (app_config, provider, model) -- it reads no environment and mutates
+        nothing -- so the result is memoised ACROSS passes (TASK-24301), not
+        merely within one. The composer keystroke path reached it 3.25 times
+        per printable key and the answer is identical between two characters
+        of a word.
+
+        The config leg of the key is compared by IDENTITY against a retained
+        reference, not by `id()` and not by value: `load_settings()` hands
+        back the same mapping until the cache is invalidated and a fresh
+        object after, so `is` detects a reload exactly, while a retained
+        reference makes id-reuse-after-GC impossible.
+
+        Deliberately NOT extended to `build_console_settings_readiness`,
+        which reads `os.environ` for credentials. Caching readiness against
+        a stale snapshot is the task-177 regression -- a provider configured
+        in Settings stayed blocked until restart -- and it is not worth
+        re-introducing for the remaining milliseconds.
+        """
         provider, model = self._effective_console_provider_model()
-        return default_console_session_settings(
-            self._provider_readiness_app_config(),
-            str(provider).strip() if _has_selected_text(provider) else None,
-            str(model).strip() if _has_selected_text(model) else None,
+        provider_key = str(provider).strip() if _has_selected_text(provider) else None
+        model_key = str(model).strip() if _has_selected_text(model) else None
+        app_config = self._provider_readiness_app_config()
+
+        memo = self._console_default_settings_memo
+        if memo is not None:
+            memo_config, memo_provider, memo_model, memo_settings = memo
+            if (
+                memo_config is app_config
+                and memo_provider == provider_key
+                and memo_model == model_key
+            ):
+                return memo_settings
+
+        settings = default_console_session_settings(
+            app_config, provider_key, model_key
         )
+        self._console_default_settings_memo = (
+            app_config,
+            provider_key,
+            model_key,
+            settings,
+        )
+        return settings
 
     def _blank_console_session_settings(self) -> ConsoleSessionSettings:
         """Build config-owned defaults for an eligible blank Console chat."""
@@ -3693,23 +3742,56 @@ class ConsoleSessionController:
         return generation if type(generation) is int and generation >= 0 else 0
 
     def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
-        """Ensure the active native Console session owns a settings snapshot."""
+        """Ensure the active native Console session owns a settings snapshot.
+
+        Served from the screen's per-pass memo inside a
+        `_console_derivation_scope` (TASK-24301). Every leg of a control-state
+        or Workbench derivation calls this, so one draft-edit sync entered it
+        3.25 times -- and each entry re-derives the template defaults and can
+        run up to two full `build_console_settings_readiness` passes. The
+        pass is synchronous and nothing else mutates the store inside it, so
+        one memo for its duration is exact rather than merely close; this is
+        the same argument the scope itself was introduced on (task-15452).
+
+        The convergence write this can perform (a blocked, never-used session
+        adopting freshly-configured defaults) happens on the pass's FIRST
+        entry, exactly as before -- later entries in the same pass would have
+        found the state already converged and returned the same object.
+        """
+        memo = getattr(self._screen, "_console_derivation_memo", None)
+        if memo is not None and "active_session_settings" in memo:
+            return memo["active_session_settings"]
+        settings = self._ensure_active_console_session_settings_uncached()
+        if memo is not None:
+            memo["active_session_settings"] = settings
+        return settings
+
+    def _ensure_active_console_session_settings_uncached(
+        self,
+    ) -> ConsoleSessionSettings:
+        """Ensure the active session owns a settings snapshot, with no memo."""
         store = self._ensure_console_chat_store()
         creating_blank_session = store.active_session_id is None
-        defaults = self._blank_console_session_settings()
-        # An ID-only saved-conversation resume is the authoritative startup
-        # intent. Compose still needs settings to paint before its ordered
-        # async opener runs, but creating a tab here would both leave an
-        # orphan bootstrap session and let a global conversation inherit the
-        # registry-active workspace through hydration's context fallback.
-        if store.active_session_id is None and bool(
-            getattr(
-                self._screen,
-                "_console_ordered_resume_pending",
-                lambda: False,
-            )()
-        ):
-            return defaults
+        # `ensure_session` reads `settings`, like `title` below, only when it
+        # CREATES a session; this runs on every display rebuild, so derive
+        # the defaults only for creation (TASK-33001.5).
+        defaults: ConsoleSessionSettings | None = None
+        if creating_blank_session:
+            defaults = self._blank_console_session_settings()
+            # An ID-only saved-conversation resume is the authoritative
+            # startup intent. Compose still needs settings to paint before
+            # its ordered async opener runs, but creating a tab here would
+            # both leave an orphan bootstrap session and let a global
+            # conversation inherit the registry-active workspace through
+            # hydration's context fallback.
+            if bool(
+                getattr(
+                    self._screen,
+                    "_console_ordered_resume_pending",
+                    lambda: False,
+                )()
+            ):
+                return defaults
         workspace_id = store.workspace_context.active_workspace_id
         # TASK-26839: `ensure_session` uses `title` only when it CREATES a
         # session; with one active the argument is discarded. Deriving the
@@ -3745,17 +3827,18 @@ class ConsoleSessionController:
         store: ConsoleChatStore,
         session: ConsoleChatSession,
     ) -> ConsoleSessionSettings | None:
-        """Re-derive default-sourced settings for blocked, never-used sessions.
+        """Converge a pristine session on the currently saved defaults.
 
-        First-run sessions snapshot template defaults (e.g. OpenAI without a
-        key) and that snapshot survives navigation via screen-state restore.
-        When the user then configures a working provider in Settings, an empty
-        session the user never explicitly configured must converge on the new
-        defaults instead of keeping the setup card blocked until restart
-        (task-177 live regression). Sessions with user work, settings that no
-        longer equal their explicit canonical baseline, any messages, or
-        already-sendable settings are never touched; stale defaults are only
-        replaced when the re-derived defaults are actually send-capable.
+        A session with no messages, no user work and settings still equal to
+        the canonical baseline it was created with is, from the user's seat,
+        a blank chat, so it holds exactly what a blank chat created now would
+        -- whatever its readiness (ADR-095 amendment 2026-09-26, D1). This
+        began as the task-177 recovery for blocked first-run sessions; its
+        readiness gates are gone because a keyless provider reads Ready
+        without being reachable, which left such a chat on stale defaults
+        after a Settings save or first-run setup (TASK-33001.5). Sessions
+        with work, source-owned sessions (no baseline) and sessions created
+        before a Console "Make default for new chats" are never touched.
         """
         settings = session.settings
         if (
@@ -3775,30 +3858,35 @@ class ConsoleSessionController:
         if session.has_user_work or session.canonical_settings_baseline != settings:
             return settings
         try:
-            if store.messages_for_session(session.id):
+            # TASK-24300: emptiness only. `messages_for_session` materialises
+            # every stream buffer and deep-snapshots every message; this runs
+            # 3.27x per printable keystroke, so at 400 messages it allocated
+            # 1,310 snapshots per key before the caller looked at the length.
+            if store.has_messages(session.id):
                 return settings
         except KeyError:
             return settings
-        app_config = self._provider_readiness_app_config()
-        current_readiness = build_console_settings_readiness(
-            settings, app_config=app_config
-        )
-        if current_readiness.native_send_supported:
-            return settings
-        if current_readiness.label not in self._CONSOLE_REFRESHABLE_BLOCKED_LABELS:
-            # Unknown/WIP providers are a provider *choice* problem, not a
-            # config-fixable credential/endpoint gap; never override choice.
-            return settings
         # Creation reads the app-owned published snapshot so an in-flight
         # Make Default cannot leak into a new chat before runtime publication.
-        # This recovery path is different: full Settings may have updated the
-        # config cache without replacing ``app.app_config``. Reuse the fresh
-        # readiness mapping already resolved above so an eligible, unused,
-        # blocked chat still converges without an app restart (task-177).
+        # This path is different: full Settings may have updated the config
+        # cache without replacing ``app.app_config``, so read the fresh
+        # mapping and converge without an app restart (task-177).
+        app_config = self._provider_readiness_app_config()
+        # This runs on every provider/model display rebuild and composer
+        # keystroke. A published config write replaces the mapping, so one
+        # derivation per (session, mapping) is exact between two saves.
+        checked = self._pristine_defaults_checked
+        if (
+            checked is not None
+            and checked[0] == session.id
+            and checked[1] is app_config
+        ):
+            return settings
+        self._pristine_defaults_checked = (session.id, app_config)
         fresh_defaults = blank_console_session_settings(app_config)
         if session.assistant_kind == "persona":
-            # Provider setup recovery changes provider defaults, never the
-            # Persona already assigned at this conversation's creation.
+            # Convergence changes provider defaults, never the Persona
+            # already assigned at this conversation's creation.
             fresh_defaults = replace(
                 fresh_defaults,
                 system_prompt=settings.system_prompt,
@@ -3806,12 +3894,6 @@ class ConsoleSessionController:
                 persona_memory_mode=session.persona_memory_mode,
             )
         if fresh_defaults == settings:
-            return settings
-        fresh_readiness = build_console_settings_readiness(
-            fresh_defaults,
-            app_config=app_config,
-        )
-        if not fresh_readiness.native_send_supported:
             return settings
         previous_provider_key = provider_config_key(settings.provider)
         next_provider_key = provider_config_key(fresh_defaults.provider)
@@ -3822,7 +3904,7 @@ class ConsoleSessionController:
             canonical_settings_baseline=fresh_defaults,
         )
         if previous_provider_key and next_provider_key != previous_provider_key:
-            # task-16475: the convergence itself is task-177 behavior, but a
+            # task-16475: the convergence itself is D1 behavior, but a
             # session whose provider identity changes under it must not do so
             # silently -- from the user's seat the Provider chip just flipped
             # to a provider they never chose.
@@ -4058,9 +4140,7 @@ class ConsoleSessionController:
                 return False
         try:
             greeting_template = (
-                seed.greeting_template
-                if not store.messages_for_session(session_id)
-                else ""
+                seed.greeting_template if not store.has_messages(session_id) else ""
             )
             _updated, _greeting, persisted = store.swap_session_character_roleplay(
                 session_id,
@@ -5241,6 +5321,33 @@ class ConsoleSessionController:
         if session is not None:
             self._request_console_project_instruction_display_refresh(session.id)
 
+    @staticmethod
+    def _project_instruction_binding_label(
+        selection: Any, index: int, *, ssh_missing: bool = False
+    ) -> str:
+        """One picker label: the binding's own name plus, for SSH roots,
+        a live cache-status chip (Task 20 — listing/labeling only; the
+        selection flow itself is untouched). With ``ssh_missing`` the chip
+        is suppressed: the status cache cannot be truthful without an
+        ``ssh`` client, so the option's recovery row carries the refusal
+        instead (Task 21)."""
+        from ...Tools.remote_binding_status import cached_status_display
+
+        binding = getattr(selection, "binding", None)
+        label = str(
+            getattr(binding, "display_name", "")
+            or getattr(binding, "label", "")
+            or f"Folder {index + 1}"
+        )
+        kind = (
+            getattr(getattr(binding, "binding_kind", None), "value", None)
+            or str(getattr(binding, "binding_kind", ""))
+        )
+        if kind == "ssh-filesystem" and not ssh_missing:
+            binding_id = str(getattr(binding, "binding_id", "") or "")
+            label = f"{label} · ssh: {cached_status_display(binding_id)}"
+        return label
+
     async def _select_project_instruction_binding(
         self,
         session_id: str,
@@ -5257,15 +5364,39 @@ class ConsoleSessionController:
 
         if not owning_session_exists():
             return "cancel", None
+        # Task 21 availability floor: without an ssh client the feature is
+        # DISABLED, not broken — ssh-filesystem options refuse with the
+        # one feature-off message (ineligible + recovery row); local
+        # folder options are untouched.
+        from ...Tools.remote_workspace_transport import (
+            SSH_UNAVAILABLE_MESSAGE,
+            ssh_available,
+        )
+
+        ssh_missing = not ssh_available()
+
+        def _binding_kind(binding: Any) -> str:
+            return (
+                getattr(getattr(binding, "binding_kind", None), "value", None)
+                or str(getattr(binding, "binding_kind", ""))
+            )
+
         options = tuple(
             ProjectInstructionBindingOption(
                 binding_id=str(selection.binding.binding_id),
-                label=str(
-                    getattr(selection.binding, "display_name", "")
-                    or getattr(selection.binding, "label", "")
-                    or f"Folder {index + 1}"
+                label=self._project_instruction_binding_label(
+                    selection, index, ssh_missing=ssh_missing
                 ),
-                eligible=True,
+                eligible=not (
+                    ssh_missing
+                    and _binding_kind(selection.binding) == "ssh-filesystem"
+                ),
+                recovery=(
+                    SSH_UNAVAILABLE_MESSAGE
+                    if ssh_missing
+                    and _binding_kind(selection.binding) == "ssh-filesystem"
+                    else ""
+                ),
             )
             for index, selection in enumerate(selections)
         )

@@ -8,7 +8,7 @@ import ipaddress
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 import unicodedata
 from urllib.parse import quote, urlsplit
 
@@ -363,9 +363,19 @@ def load_audio_cpp_artifact_source_manifest(
             result[key] = value
         return result
 
+    def reject_json_constant(name: str) -> NoReturn:
+        # NaN/Infinity/-Infinity are Python extensions, not JSON. The three
+        # sibling strict decoders in this package already refuse them;
+        # this one did not (tier-2 S03/S04 P3).
+        raise ValueError(f"manifest contains the non-JSON constant {name}")
+
     try:
         manifest_text = content.decode("utf-8")
-        raw = json.loads(manifest_text, object_pairs_hook=reject_duplicate_keys)
+        raw = json.loads(
+            manifest_text,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_json_constant,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("manifest is not valid UTF-8 JSON") from exc
     return parse_audio_cpp_artifact_source_manifest(

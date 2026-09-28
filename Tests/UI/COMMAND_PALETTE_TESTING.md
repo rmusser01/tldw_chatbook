@@ -8,12 +8,15 @@ This document describes the comprehensive command palette implementation and tes
 
 1. **ThemeProvider** - Theme switching functionality
 2. **TabNavigationProvider** - Tab navigation commands  
-3. **LLMProviderProvider** - LLM provider management
-4. **QuickActionsProvider** - Quick action shortcuts
-5. **SettingsProvider** - Settings and preferences
-6. **CharacterProvider** - Character/persona management
-7. **MediaProvider** - Media and content management
-8. **DeveloperProvider** - Developer and debug commands
+3. **QuickActionsProvider** - Quick action shortcuts
+4. **SettingsProvider** - Settings and preferences
+5. **CharacterProvider** - Character/persona management
+6. **MediaProvider** - Media and content management
+7. **DeveloperProvider** - Developer and debug commands
+
+Provider and model changes go through the model picker: in Console, the
+palette's "Console: Change model…" opens it (Alt+M). The old "LLM Provider
+Management" commands were removed by TASK-33001.6.
 
 ### ✅ Configuration Integration
 
@@ -129,7 +132,7 @@ python -m tldw_chatbook.app
 - Search is responsive with fuzzy matching
 - Commands execute successfully
 - Error handling works (no crashes)
-- All 8 provider categories functional
+- All 7 provider categories functional
 
 ## Automated Test Coverage
 
@@ -261,7 +264,7 @@ For developers making changes to command palette providers:
 
 ## Success Criteria
 
-✅ All 8 provider categories implemented  
+✅ All 7 provider categories implemented\
 ✅ Theme persistence working  
 ✅ Clean command palette interface  
 ✅ Fuzzy search functionality  

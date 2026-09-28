@@ -151,6 +151,7 @@ async def test_panel_compose_covers_all_sections():
     from textual.screen import Screen
     from textual.widgets import Checkbox, Collapsible, Select, Static
 
+    from tldw_chatbook.Video_Generation.config import get_video_generation_config
     from tldw_chatbook.Widgets.settings_video_gen_panel import VideoGenSettingsPanel
 
     from Tests.UI.app_factory import _build_test_app
@@ -159,7 +160,11 @@ async def test_panel_compose_covers_all_sections():
     async with app.run_test() as pilot:
         screen = Screen()
         await app.push_screen(screen)
-        panel = VideoGenSettingsPanel(id="settings-videogen-panel")
+        # TASK-32926: the panel composes from config the screen loads off
+        # the UI thread; standalone, hand it in directly.
+        panel = VideoGenSettingsPanel(
+            id="settings-videogen-panel", config=get_video_generation_config()
+        )
         await screen.mount(panel)
         await pilot.pause()
         assert panel.query(Select)  # default backend + retention
@@ -222,7 +227,8 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.VIDEO_GENERATION.value)
-        await _wait_for_selector(screen, pilot, "#settings-videogen-panel")
+        # TASK-32926: wait for the off-thread config load, not just the panel.
+        await _wait_for_selector(screen, pilot, "#settings-videogen-default_backend")
         await pilot.pause()
 
         assert not screen._video_gen_raw_section(), "premise: no persisted table"
@@ -254,6 +260,7 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
 
         # ...and Revert clears it without the recomposed Selects re-dirtying.
         await screen._handle_video_gen_revert()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert not screen._category_has_unsaved_changes(
             SettingsCategoryId.VIDEO_GENERATION

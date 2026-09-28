@@ -352,7 +352,8 @@ class ArtifactShareServer:
                 f"<article><h3>{name}</h3>"
                 f"<p class=\"desc\">{description}</p>"
                 f"<p class=\"meta\">{_escape_fragment(item.kind)} &middot; {size}</p>"
-                f"<a class=\"btn\" href=\"/artifact/{item.key}\" download>Download</a></article>"
+                f"<a class=\"btn\" href=\"/artifact/{_escape_fragment(item.key)}\" "
+                f"download>Download</a></article>"
             )
         auth_note = (
             "<p>Protected sharing is active.</p>" if self.manifest.auth is not None else ""

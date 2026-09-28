@@ -203,6 +203,19 @@ AppFooterStatus {
     padding: $ds-space-0 $ds-space-1; /* Add padding to the right of DB sizes as well */
     margin-left: $ds-space-2; /* Add buffer before DB status */
 }
+
+/* TASK-32905: the opt-in footer pet. BaseTamagotchi's own DEFAULT_CSS paints
+   a $panel block for the standalone widget; inside the footer bar that reads
+   as a mismatched patch, so the footer row's own background shows through and
+   the pet sits on the same baseline as the other chips. Scoped to the footer's
+   instance -- a pet mounted anywhere else keeps its panel. */
+AppFooterStatus #footer-tamagotchi {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    background: transparent;
+    border: none;
+}
 /* --- End of Window Footer Widget --- */
 
 /* --- Loading States --- */

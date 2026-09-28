@@ -1363,11 +1363,18 @@ InstalledView .model-disabled-reason {
     color: $warning;
 }
 
+/* These controls are one row tall. An outline is drawn OVER the widget's own
+ * cells, so `outline: heavy` painted its top edge across the whole label and
+ * a focused button read as an empty bar (PR #2825 UAT). Mark focus with a
+ * fill + underline instead, as the Console rail's one-row buttons do. */
 CuratedView Button:focus,
 CuratedView CollapsibleTitle:focus,
 InstalledView Button:focus,
 InstalledView CollapsibleTitle:focus {
-    outline: heavy $accent;
+    outline: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* App-tier disabled ink overrides Textual's generic dimming. The neutral

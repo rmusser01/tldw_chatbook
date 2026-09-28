@@ -3288,9 +3288,9 @@ async def test_library_onboarding_positive_wins_while_another_owner_hangs(
             applied_evidence: list[tuple[LibraryContentEvidence, ...]] = []
             original_apply = screen._apply_library_onboarding_evidence
 
-            def capture_apply(generation, admission_key, evidence):
+            def capture_apply(generation, admission_key, evidence, *rest):
                 applied_evidence.append(tuple(evidence))
-                return original_apply(generation, admission_key, evidence)
+                return original_apply(generation, admission_key, evidence, *rest)
 
             monkeypatch.setattr(
                 screen,

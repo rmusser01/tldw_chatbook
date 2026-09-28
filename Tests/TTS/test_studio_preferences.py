@@ -76,6 +76,7 @@ def test_provider_ids_are_one_shared_canonical_contract() -> None:
         "chatterbox",
         "higgs",
         "alltalk",
+        "omnivoice",
     )
     assert set(STUDIO_TTS_PROVIDER_OPTION_KEYS) == set(BUILT_IN_TTS_PROVIDER_IDS)
     assert STUDIO_TTS_PROVIDER_OPTION_KEYS == {
@@ -86,6 +87,7 @@ def test_provider_ids_are_one_shared_canonical_contract() -> None:
         "chatterbox": frozenset({"exaggeration", "cfg_weight"}),
         "higgs": frozenset(),
         "alltalk": frozenset(),
+        "omnivoice": frozenset(),
     }
 
 

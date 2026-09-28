@@ -20,8 +20,17 @@ from pathlib import Path
 
 import pytest
 
-PIL = pytest.importorskip("PIL")
-from PIL import Image  # noqa: E402
+from tldw_chatbook.Utils.optional_deps import get_safe_import
+
+# Pillow is obtained through the project's central optional-dependency
+# registry rather than a direct import, so test collection and the
+# application share one availability state: ``get_safe_import`` records the
+# result under the same ``image_processing`` feature key the app's own
+# ``check_image_processing_deps`` uses.
+_pil = get_safe_import("PIL.Image", "image_processing")
+if _pil is None:  # pragma: no cover - depends on the installed extras
+    pytest.skip("Pillow is not installed", allow_module_level=True)
+Image = _pil.Image
 
 
 # --------------------------------------------------------------------------

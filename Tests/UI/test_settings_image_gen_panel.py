@@ -65,6 +65,19 @@ def _reset_image_gen_cache():
 
 async def _open_image_gen(pilot) -> None:
     await _open_settings_category(pilot, "#settings-category-image_generation")
+    await _wait_for_image_gen_loaded(pilot)
+
+
+async def _wait_for_image_gen_loaded(pilot, *, timeout: float = 5.0) -> None:
+    """TASK-32926: the panel composes pending until its config loads off-thread."""
+    await pilot.app.workers.wait_for_complete()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pilot.app.screen.query("#settings-imagegen-default_backend"):
+            await pilot.pause()
+            return
+        await pilot.pause(0.02)
+    raise AssertionError("Image Gen panel never finished loading its config")
 
 
 async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
@@ -112,7 +125,7 @@ async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
         if (
             type(screen).__name__ == "SettingsScreen"
             and screen.active_category == SettingsCategoryId.IMAGE_GENERATION.value
-            and list(screen.query("#settings-imagegen-panel"))
+            and list(screen.query("#settings-imagegen-default_backend"))
         ):
             return screen
         await pilot.pause(0.02)
@@ -446,7 +459,7 @@ default_model = "original-model"
 
         await pilot.click("#settings-imagegen-revert")
         await pilot.pause()
-        await pilot.pause()
+        await _wait_for_image_gen_loaded(pilot)
 
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" not in str(rail_button.label)
@@ -704,7 +717,7 @@ default_model = "original-model"
         # panel's own Revert button.
         screen.action_settings_revert_category()
         await pilot.pause()
-        await pilot.pause()
+        await _wait_for_image_gen_loaded(pilot)
 
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" not in str(rail_button.label)
@@ -1456,7 +1469,7 @@ enabled_backends = ["openrouter"]
         screen._image_gen_raw_section_cache = sentinel
         await pilot.click("#settings-imagegen-revert")
         await pilot.pause()
-        await pilot.pause()
+        await _wait_for_image_gen_loaded(pilot)
         assert screen._image_gen_raw_section_cache != sentinel, (
             "Revert must invalidate the cache"
         )

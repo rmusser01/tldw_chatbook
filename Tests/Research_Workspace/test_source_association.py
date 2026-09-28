@@ -1215,3 +1215,52 @@ async def test_startup_resume_isolates_one_operation_failure() -> None:
 
     assert set(resumed) == {first.operation_id, second.operation_id}
     assert scheduler.active_fence_count == 0
+
+
+@pytest.mark.asyncio
+async def test_startup_resume_reports_each_isolated_failure() -> None:
+    """A swallowed startup resume must still leave a diagnostic behind.
+
+    `resume_incomplete` fans out with `return_exceptions=True` and used to
+    drop the returned list on the floor, in a module with zero logger calls
+    (tier-2 S13 P3): every operation could fail and the app said nothing.
+    """
+
+    from loguru import logger
+
+    first = _operation(
+        operation_id="op-corrupt",
+        data_source=WorkspaceDataSource.LOCAL,
+        workspace_id="ws-a",
+    )
+    second = _operation(
+        operation_id="op-actionable",
+        data_source=WorkspaceDataSource.LOCAL,
+        workspace_id="ws-a",
+    )
+
+    class Coordinator:
+        async def resume(self, operation_id: str) -> None:
+            if operation_id == first.operation_id:
+                raise RuntimeError("one bad receipt")
+
+    scheduler = ResearchSourceAssociationScheduler(
+        coordinator=Coordinator(),
+        operation_store=SimpleNamespace(
+            list_association_actionable=lambda **kwargs: (first, second)
+        ),
+    )
+
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        await scheduler.resume_incomplete()
+    finally:
+        logger.remove(sink)
+
+    reported = [message for message in messages if first.operation_id in message]
+    assert reported, messages
+    # The exception class, never its text: a receipt error can carry a path.
+    assert "RuntimeError" in reported[0]
+    assert "one bad receipt" not in reported[0]
+    assert not [message for message in messages if second.operation_id in message]

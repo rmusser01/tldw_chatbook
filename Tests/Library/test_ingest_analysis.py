@@ -148,15 +148,27 @@ def test_every_readiness_ready_provider_dispatches_or_is_rejected() -> None:
     ready by a configured credential) either resolves to a name in
     ``API_CALL_HANDLERS`` or is rejected by the seam with a reason."""
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
-    from tldw_chatbook.Chat.provider_readiness import KNOWN_PROVIDER_KEYS
+    from tldw_chatbook.Chat.provider_readiness import (
+        KNOWN_PROVIDER_KEYS,
+        PROVIDERS_REQUIRING_BASE_URL_KEYS,
+    )
 
     candidates = set(KNOWN_PROVIDER_KEYS) | {"a-made-up-provider"}
     for provider in sorted(candidates):
+        # ADR-179: per-account-host providers (databricks) stay blocked on a
+        # resolved key alone; the sweep's point is that a fully configured
+        # provider either dispatches or is rejected, so give them their
+        # workspace URL too.
+        provider_settings: dict[str, str] = {"api_key": "sk-test-universe"}
+        if provider in PROVIDERS_REQUIRING_BASE_URL_KEYS:
+            provider_settings["api_base_url"] = (
+                f"https://{provider}-workspace.example.test"
+            )
         config = {
             "analysis_defaults": {"provider": provider},
             # A configured credential makes ANY provider readiness-ready,
             # so this exercises the seam's own dispatchability constraint.
-            "api_settings": {provider: {"api_key": "sk-test-universe"}},
+            "api_settings": {provider: provider_settings},
         }
         resolution = resolve_ingest_analysis_provider(config, environ={})
         if resolution.ready:

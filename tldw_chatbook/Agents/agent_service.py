@@ -2149,6 +2149,7 @@ class AgentService:
         work_chain_id: str | None = None,
         worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
         app_config: Mapping[str, Any] | None = None,
+        on_tool_activity: Callable[[AgentStep, str, str], None] | None = None,
     ) -> None:
         from .execution_capacity import RuntimeCapacity
         from .automatic_work_runtime import current_automatic_work
@@ -2178,6 +2179,7 @@ class AgentService:
         )
         self._primary_trace_call_persistence_error: Exception | None = None
         self._on_step = on_step
+        self._on_tool_activity = on_tool_activity
         self.skill_runner = skill_runner
         # task-3 (skills-foundation): per-run authorization + reader for the
         # skill_file runtime tool. `None` (the default, and every caller
@@ -2760,6 +2762,10 @@ class AgentService:
                 else None
             ),
             excluded_dirs=getattr(candidate, "excluded_dirs", frozenset()),
+            # Task 19: a remote candidate's executor-backed IO rides into
+            # the snapshot so the run-local activation ledger resolves
+            # nested scopes through the same reader.
+            remote_io=getattr(candidate, "remote_io", None),
         )
 
     def build_project_instruction_request(
@@ -8020,6 +8026,11 @@ class AgentService:
             # run. Otherwise control steps can retain links to model events
             # that disappear after restart.
             on_trace_step=observe_trace_step,
+            on_tool_activity=(
+                (lambda step: self._on_tool_activity(step, agent_kind, run_id))
+                if self._on_tool_activity is not None
+                else None
+            ),
             reserve_context_trace=reserve_context_trace,
             # PR2a Task 5: bind THIS run's id into the hook. `LoopDeps`
             # keeps its `(calls) -> verdicts` shape (the pure runtime stays
@@ -8486,7 +8497,14 @@ class AgentService:
             sidecar
             and continuation_target is not None
             and (
-                continuation_target.provider,
+                # The target pins the EXECUTION key verbatim (the spelling
+                # the bridge records and checkpoints carry -- hyphenated for
+                # engine-driven keys like "custom-hosted"), while
+                # ``api_endpoint`` arrives normalized through
+                # ``provider_config_key``; normalize the target side too or
+                # every hyphenated execution key mismatches itself
+                # (ADR-179, Qodo follow-up).
+                provider_config_key(continuation_target.provider),
                 continuation_target.model,
             )
             != (provider_config_key(api_endpoint), config.model)

@@ -133,5 +133,61 @@ async def test_test_generate_voice_sends_the_profile_name_not_the_display_name(
         assert request.voice_id == "profile:villain_2"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["omnivoice", "higgs", "chatterbox"])
+async def test_test_generate_routes_to_the_selected_cloning_backend(
+    monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    """Qodo (PR #2825): every non-Higgs backend -- OmniVoice included --
+    was sent to Chatterbox, so OmniVoice profiles could not be test-played."""
+    app = _Harness()
+    async with app.run_test(size=(160, 48)) as pilot:
+        widget = app.query_one(VoiceCloningWindow)
+        await pilot.pause(0.2)
+        await app.workers.wait_for_complete()
+        widget.current_backend = backend
+        widget._update_profile_display(_PROFILES)
+        await pilot.pause()
+        widget.query_one("#test-profile-select", Select).value = "villain_2"
+
+        sent_events: list[Any] = []
+        monkeypatch.setattr(app, "post_message", lambda event: sent_events.append(event))
+        await widget._test_generate_voice()
+
+        assert sent_events[0].request.provider_id == backend
+
+
+@pytest.mark.asyncio
+async def test_profile_creation_runs_off_the_ui_thread() -> None:
+    """Qodo (PR #2825): create_profile probes and copies audio; it must not
+    run on the event-loop thread."""
+    import threading
+
+    app = _Harness()
+    async with app.run_test(size=(160, 48)) as pilot:
+        widget = app.query_one(VoiceCloningWindow)
+        await pilot.pause(0.2)
+        await app.workers.wait_for_complete()
+        ui_thread = threading.get_ident()
+        seen: list[int] = []
+
+        class _Manager:
+            def create_profile(self, **_kwargs: Any) -> tuple[bool, str]:
+                seen.append(threading.get_ident())
+                return True, "created"
+
+            def list_profiles(self) -> list:
+                return []
+
+        widget._spawn_action(
+            widget._create_profile_off_thread(_Manager(), {"profile_name": "x"}),
+            "voice_cloning_create_profile",
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert seen and seen[0] != ui_thread
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

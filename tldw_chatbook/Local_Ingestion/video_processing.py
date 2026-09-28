@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import tempfile
-import logging
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Callable
@@ -30,7 +29,7 @@ try:
     YT_DLP_AVAILABLE = True
 except ImportError:
     YT_DLP_AVAILABLE = False
-    logging.warning("yt-dlp not available. Video downloading will be disabled.")
+    logger.warning("yt-dlp not available. Video downloading will be disabled.")
 
 # Using loguru logger imported above
 

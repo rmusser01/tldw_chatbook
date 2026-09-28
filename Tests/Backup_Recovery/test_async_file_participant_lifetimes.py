@@ -760,3 +760,61 @@ def test_bound_history_rechecks_actual_mapping_during_io(
             bootstrap.RecoveryRequired, match="raw_source_selection_changed"
         ):
             raw._check(operation)
+
+
+@pytest.mark.asyncio
+async def test_raw_publication_flushes_the_file_and_the_parent_directory(
+    installed_history, local_root, monkeypatch
+):
+    """Atomic is not durable, and `raw_participants` had NEITHER barrier.
+
+    Tier-2 review S25: `grep -n "fsync\\|flush_file\\|flush_directory"
+    raw_participants.py` returned zero matches, in the module that publishes
+    the user's live `config.toml`, settings TOML, MCP `targets.json` and
+    chat-dictionary files. Every other publication path in the package pairs
+    `flush_file` with `flush_directory` around its rename
+    (`config_binding.py:115,124,125`, `admission.py`, `control_records.py`,
+    `storage_admission.py`, `native_files.py`), and no comment recorded the
+    omission as deliberate. Without them, a crash right after the rename can
+    publish a NAME pointing at an uncommitted inode -- an empty or truncated
+    live config -- and the operation's journal holds no evidence of the loss.
+
+    Not `Utils/atomic_file_ops.py`: that helper fsyncs the file and never the
+    parent, and has no Darwin `F_FULLFSYNC`. `Backup_Recovery`'s own
+    primitives are the stronger tier; this adopts them.
+    """
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    order: list[str] = []
+    original_file = raw.flush_file
+    original_directory = raw.flush_directory
+
+    def recording_file(fd):
+        order.append("file")
+        return original_file(fd)
+
+    def recording_directory(fd):
+        order.append("directory")
+        return original_directory(fd)
+
+    monkeypatch.setattr(raw, "flush_file", recording_file)
+    monkeypatch.setattr(raw, "flush_directory", recording_directory)
+
+    history = installed_history  # max_entries=2
+
+    # An ordinary append opens the store "a": contents must still be committed.
+    assert await history.append("one") is True
+    assert order == ["file"], order
+
+    # Exceeding max_entries takes the rewrite path -- a temporary written "w"
+    # and then published with os.replace, which is the case that also needs the
+    # DIRECTORY entry committed.
+    assert await history.append("two") is True
+    assert await history.append("three") is True
+
+    # Contents committed before a rename publishes the name; directory entry
+    # committed after it.
+    assert order.count("file") >= 2, order
+    assert order.count("directory") >= 1, order
+    assert order.index("file") < order.index("directory"), order
+    assert [entry["input"] for entry in history._entries] == ["two", "three"]

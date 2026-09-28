@@ -35,6 +35,7 @@ from tldw_chatbook.TTS.audio_cpp_managed_config import (
     validate_audio_cpp_managed_launch,
 )
 from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+from tldw_chatbook.TTS.legacy_catalogs import OMNIVOICE_DEFAULT_VOICES_DIR
 from tldw_chatbook.TTS.openai_compatible_config import (
     OpenAIAuthenticationMode,
     OpenAICompatibleEndpoint,
@@ -70,6 +71,7 @@ BUILT_IN_TTS_PROVIDER_ORDER = (
     "chatterbox",
     "higgs",
     "alltalk",
+    "omnivoice",
 )
 
 TTS_PROVIDER_LABELS = MappingProxyType(
@@ -81,6 +83,7 @@ TTS_PROVIDER_LABELS = MappingProxyType(
         "chatterbox": "Chatterbox",
         "higgs": "Higgs",
         "alltalk": "AllTalk",
+        "omnivoice": "OmniVoice",
     }
 )
 
@@ -211,6 +214,14 @@ GLOBAL_TTS_PROVIDER_FIELD_IDS = MappingProxyType(
             "repetition_penalty",
         ),
         "alltalk": ("server_url", "language"),
+        "omnivoice": (
+            "model_root",
+            "voice_resource_directory",
+            "num_steps",
+            "guidance_scale",
+            "max_reference_duration",
+            "language",
+        ),
     }
 )
 
@@ -276,6 +287,14 @@ _PROVIDER_NON_SECRET_DEFAULTS: dict[str, dict[str, object]] = {
         "server_url": "http://127.0.0.1:7851",
         "language": "en",
     },
+    "omnivoice": {
+        "model_root": "",
+        "voice_resource_directory": OMNIVOICE_DEFAULT_VOICES_DIR,
+        "num_steps": 32,
+        "guidance_scale": 2.0,
+        "max_reference_duration": 30,
+        "language": "auto",
+    },
 }
 
 _CREDENTIAL_ENVIRONMENT_VARIABLES = MappingProxyType(
@@ -337,6 +356,13 @@ GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS = MappingProxyType(
             }
         ),
         "higgs": MappingProxyType({"model_path": "HIGGS_MODEL_PATH"}),
+        "omnivoice": MappingProxyType(
+            {
+                "model_root": "OMNIVOICE_MODEL_ROOT",
+                "num_steps": "OMNIVOICE_NUM_STEPS",
+                "guidance_scale": "OMNIVOICE_GUIDANCE_SCALE",
+            }
+        ),
     }
 )
 """Legacy initialization fields whose process environment wins at runtime."""
@@ -945,6 +971,7 @@ def load_global_speech_tts_state(
     preferences = TTSPreferencesSnapshot.from_settings(settings)
     app_tts = _section(settings, "app_tts")
     higgs = _section(settings, "HiggsSettings")
+    omnivoice = _section(settings, "OmniVoiceSettings")
 
     raw_audio_cpp = app_tts.get("audio_cpp", {})
     try:
@@ -1083,6 +1110,24 @@ def load_global_speech_tts_state(
                 providers["alltalk"]["server_url"],
             ),
             "language": _value(app_tts, "ALLTALK_TTS_LANGUAGE_DEFAULT", "en"),
+        }
+    )
+    providers["omnivoice"].update(
+        {
+            "model_root": _value(
+                omnivoice, "model_root", providers["omnivoice"]["model_root"]
+            ),
+            "voice_resource_directory": _value(
+                omnivoice,
+                "voice_samples_dir",
+                providers["omnivoice"]["voice_resource_directory"],
+            ),
+            "num_steps": _value(omnivoice, "num_steps", 32),
+            "guidance_scale": _value(omnivoice, "guidance_scale", 2.0),
+            "max_reference_duration": _value(
+                omnivoice, "max_reference_duration", 30
+            ),
+            "language": _value(omnivoice, "language", "auto"),
         }
     )
     credentials = _credential_states(settings, environment)
@@ -2052,6 +2097,36 @@ def _validated_provider_values(
             ),
         }
 
+    if provider_id == "omnivoice":
+        return {
+            # Blank is meaningful: use the managed artifact from the model
+            # browser (resolve_model_root's fallback), so it is not required.
+            "model_root": _path_syntax(
+                provider_id, "model_root", values.get("model_root"), allow_empty=True
+            ),
+            "voice_resource_directory": _path_syntax(
+                provider_id,
+                "voice_resource_directory",
+                values.get("voice_resource_directory"),
+            ),
+            "num_steps": _integer(
+                provider_id, "num_steps", values.get("num_steps"), 1, 128
+            ),
+            "guidance_scale": _number(
+                provider_id, "guidance_scale", values.get("guidance_scale"), 0.0, 10.0
+            ),
+            "max_reference_duration": _integer(
+                provider_id,
+                "max_reference_duration",
+                values.get("max_reference_duration"),
+                1,
+                600,
+            ),
+            "language": _string(
+                provider_id, "language", values.get("language")
+            ),
+        }
+
     raise ValueError("Unknown built-in TTS provider")
 
 
@@ -2127,6 +2202,15 @@ def _provider_event_settings(
         return {
             "ALLTALK_TTS_URL_DEFAULT": values["server_url"],
             "ALLTALK_TTS_LANGUAGE_DEFAULT": values["language"],
+        }
+    if provider_id == "omnivoice":
+        return {
+            "OMNIVOICE_MODEL_ROOT": values["model_root"],
+            "OMNIVOICE_VOICE_SAMPLES_DIR": values["voice_resource_directory"],
+            "OMNIVOICE_NUM_STEPS": values["num_steps"],
+            "OMNIVOICE_GUIDANCE_SCALE": values["guidance_scale"],
+            "OMNIVOICE_MAX_REFERENCE_DURATION": values["max_reference_duration"],
+            "OMNIVOICE_LANGUAGE": values["language"],
         }
     raise ValueError("Unknown built-in TTS provider")
 

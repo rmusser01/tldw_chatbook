@@ -54,6 +54,7 @@ from textual.widgets import (
     OptionList,
     SelectionList,
     Static,
+    Switch,
     TextArea,
 )
 
@@ -851,6 +852,7 @@ from ..Library_Modules.screen_helpers import (
     _transcribe_cpp_gguf_filters,
     _library_carries_forward_line,
     _unbreakable_size_text,
+    _active_library_principal_id,
     _active_library_sync_scope,
     _record_value,
     _library_collection_record_data,
@@ -21219,17 +21221,34 @@ class LibraryScreen(BaseAppScreen):
             return cli_rail_state["lifecycle"], True
         return None, False
 
-    def _library_onboarding_admission_key(self) -> tuple[Any, ...]:
-        """Return the profile and active-source authority for one evidence read."""
-        scope = _active_library_sync_scope(self.app_instance)
+    def _library_onboarding_admission_key(
+        self, authenticated_principal_id: str | None = None
+    ) -> tuple[Any, ...]:
+        """Return the profile and active-source authority for one evidence read.
+
+        Never reads the principal itself: that is an auth-token (keyring)
+        read, resolved off the event loop by
+        ``_resolve_library_onboarding_admission_key`` (TASK-32926).
+        """
+        scope = _active_library_sync_scope(self.app_instance, resolve_principal=False)
         return (
             id(self.app_instance.app_config),
             getattr(self.app_instance, "notes_user_id", None) or "default_user",
             scope["source_authority"],
             scope["server_profile_id"],
-            scope["authenticated_principal_id"],
+            authenticated_principal_id,
             scope["workspace_scope"],
         )
+
+    async def _resolve_library_onboarding_admission_key(self) -> tuple[Any, ...]:
+        """The full admission key, principal included, read off the loop."""
+        key = self._library_onboarding_admission_key()
+        if key[2] != "server":
+            return key
+        principal = await asyncio.to_thread(
+            _active_library_principal_id, self.app_instance
+        )
+        return self._library_onboarding_admission_key(principal)
 
     def _sync_library_onboarding_status_copy(self) -> None:
         """Keep the Task 4/5 presentation seam in sync with evidence status."""
@@ -21260,10 +21279,7 @@ class LibraryScreen(BaseAppScreen):
         elif self.is_mounted:
             self._sync_library_landing_lifecycle_presentation()
         return self.run_worker(
-            self._gather_library_onboarding_evidence(
-                generation,
-                self._library_onboarding_admission_key(),
-            ),
+            self._gather_library_onboarding_evidence(generation),
             group="library_onboarding_evidence",
             exclusive=True,
         )
@@ -21402,12 +21418,9 @@ class LibraryScreen(BaseAppScreen):
             else LibraryContentEvidence.UNKNOWN
         )
 
-    async def _gather_library_onboarding_evidence(
-        self,
-        generation: int,
-        admission_key: tuple[Any, ...],
-    ) -> None:
+    async def _gather_library_onboarding_evidence(self, generation: int) -> None:
         """Progressively settle evidence under one overall bounded deadline."""
+        admission_key = await self._resolve_library_onboarding_admission_key()
         source_authority = str(admission_key[2])
 
         tasks = {
@@ -21449,6 +21462,7 @@ class LibraryScreen(BaseAppScreen):
                             generation,
                             admission_key,
                             evidence,
+                            await self._resolve_library_onboarding_admission_key(),
                         )
                         return
             evidence.extend(LibraryContentEvidence.UNKNOWN for _task in pending)
@@ -21456,6 +21470,7 @@ class LibraryScreen(BaseAppScreen):
                 generation,
                 admission_key,
                 evidence,
+                await self._resolve_library_onboarding_admission_key(),
             )
         finally:
             for task in tasks:
@@ -21468,12 +21483,17 @@ class LibraryScreen(BaseAppScreen):
         generation: int,
         admission_key: tuple[Any, ...],
         evidence: Sequence[LibraryContentEvidence],
+        current_admission_key: tuple[Any, ...],
     ) -> None:
-        """Apply accepted evidence against the lifecycle current at settlement."""
+        """Apply accepted evidence against the lifecycle current at settlement.
+
+        ``current_admission_key`` is resolved off the loop by the caller
+        (TASK-32926) so this fence never reads the keyring.
+        """
         if (
             generation != self._library_onboarding_generation
             or not self.is_attached
-            or admission_key != self._library_onboarding_admission_key()
+            or admission_key != current_admission_key
         ):
             return
         previous_lifecycle = self._library_lifecycle
@@ -25008,6 +25028,9 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
             return
         skill_name = getattr(event.button, "skill_name", None)
+        if getattr(event.button, "skill_builtin", False) and isinstance(skill_name, str):
+            # TASK-32954: built-ins open a read-only preview, never the editor.
+            return self._skills_controller.builtin._open_library_skill_builtin_preview(skill_name)
         self._reset_library_skill_editor_state()
         if isinstance(skill_name, str):
             self._skills_state.selected_skill_name = skill_name
@@ -25069,6 +25092,15 @@ class LibraryScreen(BaseAppScreen):
         self._skills_state.trust_confirming_reset = False
         self._skills_state.scroll_pending = False
         self._skills_state.editor_armed = False
+        self._skills_state.builtin_preview = None
+
+    @on(Button.Pressed, "#library-skill-builtin-customize")
+    def handle_library_skill_builtin_customize(self, event: Button.Pressed) -> None:
+        return self._skills_controller.builtin.handle_library_skill_builtin_customize(event)
+
+    @on(Switch.Changed, "#library-skill-builtin-enabled")
+    def handle_library_skill_builtin_enabled(self, event: Switch.Changed) -> None:
+        return self._skills_controller.builtin.handle_library_skill_builtin_enabled(event)
 
     def _consume_library_skill_scroll_pending(self) -> bool:
         return self._skills_controller._consume_library_skill_scroll_pending()

@@ -90,6 +90,7 @@ class VoiceProfileDialog(ModalScreen):
         reference_audio_path: str,
         profile_data: Optional[Dict[str, Any]] = None,
         on_submit: Optional[Callable[[Dict[str, Any]], None]] = None,
+        request_reference_text: bool = False,
     ):
         """
         Initialize the voice profile dialog.
@@ -98,12 +99,16 @@ class VoiceProfileDialog(ModalScreen):
             reference_audio_path: Path to the reference audio file
             profile_data: Existing profile data for editing (optional)
             on_submit: Callback function when profile is submitted
+            request_reference_text: Show a required transcript field for
+                backends whose cloning consumes the reference audio's exact
+                transcript (OmniVoice)
         """
         super().__init__()
         self.reference_audio_path = Path(reference_audio_path)
         self.profile_data = profile_data or {}
         self.on_submit = on_submit
         self.is_edit_mode = bool(profile_data)
+        self.request_reference_text = request_reference_text
 
     def compose(self) -> ComposeResult:
         """Compose the dialog UI"""
@@ -172,6 +177,20 @@ class VoiceProfileDialog(ModalScreen):
                     self.profile_data.get("description", ""), id="description-input"
                 )
 
+            # Reference transcript (backends that clone from audio + transcript)
+            if self.request_reference_text:
+                with Vertical(classes="form-group"):
+                    yield Label("Reference transcript *", classes="form-label")
+                    yield TextArea(
+                        self.profile_data.get("reference_text", ""),
+                        id="reference-text-input",
+                    )
+                    yield Static(
+                        "Exact transcript of the reference audio — OmniVoice "
+                        "cloning needs it verbatim",
+                        classes="help-text",
+                    )
+
             # Tags
             with Vertical(classes="form-group"):
                 yield Label("Tags", classes="form-label")
@@ -223,6 +242,18 @@ class VoiceProfileDialog(ModalScreen):
             description = self.query_one("#description-input", TextArea).text.strip()
             tags_text = self.query_one("#tags-input", Input).value.strip()
 
+            reference_text = ""
+            if self.request_reference_text:
+                reference_text = self.query_one(
+                    "#reference-text-input", TextArea
+                ).text.strip()
+                if not reference_text:
+                    self.notify(
+                        "Reference transcript is required for OmniVoice cloning",
+                        severity="error",
+                    )
+                    return
+
             # Parse tags
             tags = []
             if tags_text:
@@ -235,6 +266,7 @@ class VoiceProfileDialog(ModalScreen):
                 "language": language,
                 "description": description,
                 "tags": tags,
+                "reference_text": reference_text,
             }
 
             # Call the callback if provided

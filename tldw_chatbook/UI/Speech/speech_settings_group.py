@@ -70,6 +70,7 @@ PROVIDER_ACTION_LABELS: dict[str, str] = {
     "kokoro-browse-voices-btn": "📁 Select voices.json",
     "chatterbox-browse-voice-dir-btn": "📁 Select voice directory",
     "higgs-voices-browse-btn": "📁",
+    "omnivoice-voices-browse-btn": "📁",
 }
 
 #: Provider key -> the legacy container id the group inherits.
@@ -87,6 +88,7 @@ PROVIDER_TITLES: dict[str, str] = {
     "chatterbox": "Chatterbox",
     "higgs": "Higgs",
     "alltalk": "AllTalk",
+    "omnivoice": "OmniVoice",
 }
 
 #: What a required setting is called when the header has to name it.
@@ -139,6 +141,7 @@ SELECT_OPTIONS: dict[str, list[tuple[str, str]]] = {
         ("Chatterbox (Local)", "chatterbox"),
         ("Higgs Audio (Local)", "higgs"),
         ("AllTalk (Local Server)", "alltalk"),
+        ("OmniVoice (Local)", "omnivoice"),
     ],
     "default-voice-select": [("Alloy", "alloy")],
     "elevenlabs-format-select": [
@@ -247,6 +250,15 @@ SETTING_DEFAULTS: dict[str, dict[str, object]] = {
     "higgs-temperature-input": {"placeholder": "0.0-2.0", "type": "number"},
     "higgs-top-p-input": {"placeholder": "0.0-1.0", "type": "number"},
     "higgs-voices-dir-input": {"placeholder": "Path to voice samples"},
+    "omnivoice-guidance-scale-input": {"placeholder": "Default: 2.0", "type": "number"},
+    "omnivoice-max-ref-duration-input": {
+        "placeholder": "Seconds (e.g., 30)",
+        "type": "number",
+    },
+    "omnivoice-model-root-input": {
+        "placeholder": "Empty = managed artifact (model browser)"
+    },
+    "omnivoice-voices-dir-input": {"placeholder": "Path to voice profiles"},
     "kokoro-max-tokens-input": {
         "placeholder": "Max tokens per chunk",
         "type": "number",
@@ -328,6 +340,10 @@ SETTING_LABELS: dict[str, str] = {
     "higgs-track-performance-switch": "Performance Tracking",
     "higgs-voice-cloning-switch": "Enable Voice Cloning",
     "higgs-voices-dir-input": "Voice Samples Dir",
+    "omnivoice-guidance-scale-input": "Guidance (CFG)",
+    "omnivoice-max-ref-duration-input": "Max Reference Duration",
+    "omnivoice-model-root-input": "Model Root",
+    "omnivoice-voices-dir-input": "Voice Profiles Dir",
     "kokoro-device-select": "Device",
     "kokoro-max-tokens-input": "Max Tokens",
     "kokoro-performance-switch": "Performance Tracking",

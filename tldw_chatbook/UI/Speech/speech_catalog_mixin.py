@@ -48,6 +48,7 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_MODELS,
     LEGACY_DEFAULT_VOICES,
     LEGACY_VOICE_OPTIONS,
+    OMNIVOICE_DEFAULT_VOICES_DIR,
 )
 from tldw_chatbook.TTS.voice_blend_paths import kokoro_ui_blend_file
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
@@ -1418,6 +1419,8 @@ class SpeechCatalogMixin:
             choices.extend(self._chatterbox_profile_choices())
         elif provider_id == "higgs":
             choices.extend(self._higgs_profile_choices())
+        elif provider_id == "omnivoice":
+            choices.extend(self._omnivoice_profile_choices())
         elif provider_id == "kokoro":
             choices.extend(self._kokoro_blend_choices())
         return tuple(choices)
@@ -1485,6 +1488,41 @@ class SpeechCatalogMixin:
             ]
         except Exception:
             logger.warning("Saved Higgs voice profiles could not be loaded")
+            return []
+
+    def _omnivoice_profile_choices(self) -> list[tuple[str, str]]:
+        try:
+            from tldw_chatbook.TTS.omnivoice_voice_manager import (
+                OmniVoiceVoiceManager,
+            )
+
+            # The configured dir — the one the engine and the Voice Cloning
+            # window use — not a hardcoded default.
+            voice_dir = Path(
+                str(
+                    self._cli_setting(
+                        "OmniVoiceSettings",
+                        "voice_samples_dir",
+                        OMNIVOICE_DEFAULT_VOICES_DIR,
+                    )
+                    or OMNIVOICE_DEFAULT_VOICES_DIR
+                )
+            ).expanduser()
+            if not voice_dir.is_dir():
+                return []
+            profiles = OmniVoiceVoiceManager(voice_dir).list_profiles()
+            return [
+                (
+                    str(profile.get("display_name") or profile["name"]),
+                    f"profile:{profile['name']}",
+                )
+                for profile in profiles
+                if isinstance(profile, Mapping)
+                and isinstance(profile.get("name"), str)
+                and profile["name"]
+            ]
+        except Exception:
+            logger.warning("Saved OmniVoice voice profiles could not be loaded")
             return []
 
     def _catalog_health_copy(self, catalog: TTSProviderCatalog) -> str:
