@@ -350,3 +350,55 @@ def test_textual_js_response_uses_public_cache_policy(tmp_path):
     response = asyncio.run(server.handle_textual_js(request=None))
 
     assert response.headers["Cache-Control"] == "public, max-age=3600"
+
+
+def test_served_shell_versions_the_cached_textual_bundle():
+    """task-33130 (Qodo #6): the bundle URL is fingerprinted so the one-hour
+    cache cannot pin clients to a superseded patch after an upgrade."""
+    shell = _served_shell_html()
+
+    assert 'src="/static/js/textual.js?v=__TEXTUAL_JS_VERSION__"' in shell
+
+
+def test_handle_index_substitutes_bundle_fingerprint(tmp_path):
+
+    js_dir = tmp_path / "js"
+    js_dir.mkdir()
+    source = (
+        "before this.webglAddon=new p.WebglAddon,this.terminal.loadAddon(this.webglAddon),"
+        "this.canvasAddon=new m.CanvasAddon,this.terminal.loadAddon(this.canvasAddon),"
+        "window.onresize=()=>{this.fit()} after"
+    )
+    (js_dir / "textual.js").write_text(source, encoding="utf-8")
+    server = serve.ChatbookWebServerMixin.__new__(serve.ChatbookWebServerMixin)
+    server.statics_path = str(tmp_path)
+    server.title = "test"
+    server.public_url = "http://127.0.0.1"
+    # handle_index reads the font-size setting from the shared config cache;
+    # under pytest the ADR-126 admission fence makes that read raise, so
+    # serve the default (same mitigation as the browser integration suite).
+    original_get_cli_setting = serve.get_cli_setting
+    serve.get_cli_setting = lambda *_, default=None: default
+
+    class _Request:
+        def __init__(self):
+            self.query = {}
+
+        def __getitem__(self, key):
+            return {"chatbook_csrf": "token"}[key]
+
+    request = _Request()
+
+    import asyncio as _asyncio
+
+    response = _asyncio.run(server.handle_index(request))
+    import re as _re
+
+    match = _re.search(r'textual\.js\?v=([0-9a-f]{16})"', response.text)
+    assert match, response.text[:200]
+    # The fingerprint follows content: same bundle, same version.
+    try:
+        again = _asyncio.run(server.handle_index(request))
+    finally:
+        serve.get_cli_setting = original_get_cli_setting
+    assert _re.search(r"textual\.js\?v=" + match.group(1) + '"', again.text)

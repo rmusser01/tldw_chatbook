@@ -1269,6 +1269,7 @@ class ChatbookWebServerMixin:
                 html.escape(self._app_websocket_url, quote=True),
             )
             .replace("__FONT_SIZE__", str(font_size))
+            .replace("__TEXTUAL_JS_VERSION__", self._textual_js_version())
         )
         return web.Response(
             text=body,
@@ -1317,6 +1318,26 @@ class ChatbookWebServerMixin:
         self._cached_textual_js = patched
         self._cached_textual_js_mtime_ns = source_stat.st_mtime_ns
         return patched
+
+    def _textual_js_version(self) -> str:
+        """Fingerprint the patched bundle so its cache key follows content.
+
+        The bundle URL is unversioned and served with a one-hour public
+        cache policy (task-33130, Qodo #6 on PR #2856): without a
+        fingerprint, a browser holding a fresh cached copy would keep
+        running the PREVIOUS patch -- including a bundle whose upstream
+        hook shape no longer matches, which fails closed unpatched and
+        resurrects the resize feedback loop -- until the hour expires.
+        Content-addressing the URL makes the long cache safe: a changed
+        bundle is a different URL.
+        """
+        import hashlib
+
+        try:
+            source = self._patched_textual_js()
+        except OSError:
+            return "unavailable"
+        return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
 
     async def handle_textual_js(self, request):
         """Serve textual-serve JS with a full repaint after browser viewport resize.
