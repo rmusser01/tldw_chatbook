@@ -13,6 +13,7 @@ from loguru import logger
 _CLOSED_KEYS_MAX = 1024
 
 from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
+from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
 
 
 class RemoteSessionRegistry:
@@ -28,6 +29,9 @@ class RemoteSessionRegistry:
         #: time it happened: callers that queued behind that start share it
         #: instead of each paying another connect timeout (TASK-33400).
         self._start_failures: dict[tuple[str, str], tuple[float, SessionStartError]] = {}
+        #: Keys whose session start already hit a mux failure this run: the
+        #: first costs one one-shot call, a second disables the key (TASK-33402).
+        self._mux_failed: set[tuple[str, str]] = set()
         # R12: insertion-ordered tombstones of closed run keys (bounded).
         self._closed_keys: dict[str, None] = {}
         #: Set once by close_all (app shutdown): every later acquire is one-shot.
@@ -86,6 +90,21 @@ class RemoteSessionRegistry:
             try:
                 worker.start()
             except SessionStartError as error:
+                if error.failure is not None and error.failure.kind is TransportFailureKind.MUX_ERROR:
+                    # A stale control socket: classifying it already restarted
+                    # the master, and nothing was sent, so this call runs
+                    # one-shot and the next call tries a session again. A
+                    # second mux start failure in the run disables the key.
+                    with self._lock:
+                        repeat = key in self._mux_failed
+                        self._mux_failed.add(key)
+                        if repeat:
+                            self._disabled.add(key)
+                    logger.info(
+                        "ssh session start hit a stale control socket; using one-shot calls "
+                        + ("for this run" if repeat else "for this call")
+                    )
+                    return None
                 if not error.transport:
                     with self._lock:
                         self._disabled.add(key)
@@ -126,6 +145,7 @@ class RemoteSessionRegistry:
             self._start_failures = {
                 k: v for k, v in self._start_failures.items() if k[0] != session_key
             }
+            self._mux_failed = {k for k in self._mux_failed if k[0] != session_key}
             self._key_locks = {k: v for k, v in self._key_locks.items() if k[0] != session_key}
         for worker in workers:
             worker.close()
@@ -137,6 +157,7 @@ class RemoteSessionRegistry:
             workers = list(self._sessions.values()); self._sessions.clear()
             self._disabled.clear(); self._restarted.clear(); self._key_locks.clear()
             self._start_failures.clear()
+            self._mux_failed.clear()
         for worker in workers:
             worker.close()
 

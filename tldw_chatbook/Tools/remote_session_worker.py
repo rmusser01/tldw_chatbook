@@ -47,7 +47,6 @@ from tldw_chatbook.Tools.remote_workspace_transport import (
     RemoteWorkspaceTransport,
     TransportFailure,
     TransportFailureKind,
-    _BoundedCapture,
     _frame_is_admitted_marker,
     _remote_command,
 )
@@ -139,6 +138,31 @@ def _wait_fd(fd: int, events: int, timeout: float) -> bool:
         return bool(selector.select(timeout))
 
 
+class _TailCapture:
+    """Byte sink keeping the LAST ``cap`` bytes (TASK-33403).
+
+    A long-lived session's death reason (a mux marker, ssh's final error)
+    is at the end of its stderr; a head capture drops it once earlier
+    output fills the cap, turning a status-preserving MUX_ERROR into
+    UNREACHABLE (BLOCKED).
+    """
+
+    def __init__(self, cap: int) -> None:
+        self._cap = cap
+        self._buf = bytearray()
+        self._lock = threading.Lock()
+
+    def append(self, chunk: bytes) -> None:
+        with self._lock:
+            self._buf += chunk
+            if len(self._buf) > self._cap:
+                del self._buf[: len(self._buf) - self._cap]
+
+    def value(self) -> bytes:
+        with self._lock:
+            return bytes(self._buf)
+
+
 @dataclass
 class _Pending:
     done: threading.Event = field(default_factory=threading.Event)
@@ -194,7 +218,7 @@ class RemoteSessionWorker:
             )
         )
         self._proc: subprocess.Popen[bytes] | None = None
-        self._stderr = _BoundedCapture(_STDERR_CAP)
+        self._stderr = _TailCapture(_STDERR_CAP)
         self._stderr_thread: threading.Thread | None = None
         self._reader_thread: threading.Thread | None = None
         self._write_lock = threading.Lock()

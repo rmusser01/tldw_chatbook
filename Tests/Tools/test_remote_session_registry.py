@@ -9,6 +9,7 @@ import pytest
 
 from tldw_chatbook.Tools.remote_session_registry import RemoteSessionRegistry
 from tldw_chatbook.Tools.remote_session_worker import SessionStartError
+from tldw_chatbook.Tools.remote_workspace_transport import TransportFailure, TransportFailureKind
 
 
 class FakeWorker:
@@ -320,3 +321,22 @@ def test_waiters_share_one_transport_start_failure():
         thread.join(10)
     assert len(creates) == 1
     assert len(errors) == 4 and all(error.transport for error in errors)
+
+
+def _mux_error():
+    failure = TransportFailure(TransportFailureKind.MUX_ERROR, 255, "mux_client_hello_exchange")
+    return SessionStartError(False, failure, "session start failed: mux")
+
+
+def test_mux_start_failure_goes_one_shot_for_that_call_only():
+    """TASK-33402: a stale control socket costs one one-shot call, not the run's warm path."""
+    reg = RemoteSessionRegistry()
+    assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
+    assert reg.acquire(("run-1", "b1"), FakeWorker) is not None
+
+
+def test_repeated_mux_start_failure_disables_the_key_for_the_run():
+    reg = RemoteSessionRegistry()
+    assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
+    assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
+    assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("mux-disabled key restarted")) is None

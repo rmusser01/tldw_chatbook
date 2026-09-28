@@ -973,3 +973,35 @@ def test_session_start_against_a_silent_host_is_bounded_by_the_call_budget(
         env.read(executor)
     assert time.monotonic() - started < 8
     assert raised.value.code == TransportFailureKind.UNREACHABLE.value
+
+
+def test_stale_control_socket_at_start_runs_one_shot_then_session(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    """TASK-33402: no tool error, and the warm path is back on the next call."""
+    import subprocess
+
+    real_spawn = sessions.spawn
+    stale = {"left": 1}
+
+    def spawn(ssh_argv: list[str]) -> subprocess.Popen[bytes]:
+        if stale["left"]:
+            stale["left"] -= 1
+            proc = subprocess.Popen(
+                ["sh", "-c", "echo 'mux_client_hello_exchange: write packet: Broken pipe' >&2; exit 255"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            sessions.spawns.append(proc)
+            return proc
+        return real_spawn(ssh_argv)
+
+    sessions.spawn = spawn
+    executor = _session_executor(env, sessions)
+    one_shot_before = len(env.fake.call_invocations())
+    assert env.read(executor)["outcome"] == "success"  # one-shot, no error
+    assert len(env.fake.call_invocations()) == one_shot_before + 1
+    assert env.read(executor)["outcome"] == "success"  # a session again
+    assert len(sessions.spawns) == 2
+    assert len(env.fake.call_invocations()) == one_shot_before + 1

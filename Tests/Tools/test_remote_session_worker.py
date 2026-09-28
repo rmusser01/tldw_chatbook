@@ -641,3 +641,35 @@ def test_unexpected_pipe_error_during_start_is_a_protocol_start_error(worker_fac
     assert err.value.transport is False
     proc = spawns[0]
     assert proc.returncode is not None and proc.stdout.closed
+
+
+def test_tail_capture_keeps_the_last_bytes():
+    capture = worker_module._TailCapture(8)
+    capture.append(b"0123456789")
+    capture.append(b"ab")
+    assert capture.value() == b"456789ab"
+
+
+def test_mux_marker_after_64k_of_stderr_still_classifies_mux(worker_factory, workspace):
+    """TASK-33403: a long session's death reason is at the END of its stderr."""
+    worker, _ = worker_factory()
+    worker.start()
+    worker.close()
+    worker._stderr.append(b"x" * (70 * 1024) + b"\n")
+    worker._stderr.append(b"mux_client_request_session: read from master failed: Broken pipe\n")
+    worker._death_natural, worker._death_code = True, 255  # as if ssh died on its own
+    worker._retired = False  # Task 3 adds this flag; harmless before it exists
+    result = worker._dead_session_result()
+    assert result.failure.kind is TransportFailureKind.MUX_ERROR
+
+
+def test_mux_error_at_start_is_classified_mux(worker_factory):
+    worker, _ = worker_factory(
+        spawn_argv=[
+            "sh", "-c",
+            "echo 'mux_client_hello_exchange: write packet: Broken pipe' >&2; exit 255",
+        ]
+    )
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert err.value.failure.kind is TransportFailureKind.MUX_ERROR
