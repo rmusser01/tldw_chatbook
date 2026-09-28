@@ -34,6 +34,13 @@ Scheduling needs no registration here: ``WatchlistProjection`` fabricates
 ``watchlist:<subscription_id>`` tasks straight from subscription rows, so
 creating the subscription IS the registration; ``DreamsProjection``
 fabricates ``dream_track:<item_id>`` tasks straight from tracked-item rows.
+
+Phase 2 Task 5 adds event reminders: both track paths promote an
+event-dated wrapper into one ``one_time`` scheduled task firing a week
+ahead (``promote_to_reminder``), through the app's ``ScheduledTasksDB``
+``create_reminder_task`` seam -- degrading silently whenever that DB is
+missing, unwired, or unwritable, because the tracked item already exists
+by then and is the real deliverable.
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -105,6 +113,10 @@ _NON_BASELINE_RUN_STATUSES = frozenset({"error", "skipped", "withheld"})
 #: (``DreamsDB.MAX_LIST_LIMIT`` -- the full bounded read).
 _BASELINE_SCAN_LIMIT = 200
 
+#: Days before a tracked ``event_date`` that the promoted reminder fires
+#: (Phase 2 Task 5): one nudge with a week of runway, not a day-of alarm.
+_REMINDER_LEAD_DAYS = 7
+
 
 class TrackCapReached(RuntimeError):
     """The active tracked-item budget is exhausted; nothing was created.
@@ -161,6 +173,7 @@ async def track_page(
     event_date: str | None = None,
     origin_story_id: int | None = None,
     cadence_seconds: int | None = None,
+    scheduling_db_getter: Any = None,
 ) -> dict:
     """Attach or create the watch for one page, wrapping it as a tracked item.
 
@@ -175,6 +188,11 @@ async def track_page(
         origin_story_id: Dream story that prompted tracking, if any.
         cadence_seconds: Desired check cadence; clamped up to the
             configured minimum interval.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None (Phase 2 Task 5); when the item
+            carries an ``event_date`` a one-time reminder is promoted a
+            week ahead. Degrades, never raises: a missing or failing
+            getter leaves the tracking result unchanged.
 
     Returns:
         ``{"tracked_item_id": int, "subscription_id": int,
@@ -292,6 +310,15 @@ async def track_page(
         cadence_seconds=cadence,
         created_by_dreams=created_by_dreams,
     )
+    # Phase 2 Task 5: an event-dated watch gets one scheduled reminder a
+    # week ahead. The wrapper row above already exists, so a reminder
+    # failure (or a runtime without the scheduled-tasks DB) only logs --
+    # the tracking result is returned unchanged either way.
+    await promote_to_reminder(
+        scheduling_db_getter,
+        {"id": tracked_item_id, "query_template": None,
+         "event_date": event_date},
+    )
     logger.debug(
         "Dreams tracked page: outcome={} subscription={} item={}",
         outcome, subscription_id, tracked_item_id,
@@ -358,6 +385,85 @@ async def untrack(subs_service: Any, dreams_db: Any, tracked_item_id: int) -> di
     }
 
 
+# --- Event reminders (Phase 2 Task 5) -------------------------------------------
+
+
+async def promote_to_reminder(
+    scheduling_db_getter: Any,
+    tracked_item: Any,
+    *,
+    lead_days: int = _REMINDER_LEAD_DAYS,
+    owner_id: str = "local",
+) -> str | None:
+    """Promote one event-dated tracked item into a scheduled reminder.
+
+    Only a tracked item with an ``event_date`` promotes (a dateless watch
+    has nothing on the calendar). The reminder is one ``one_time`` task
+    firing ``lead_days`` before the event, linked back to the tracked item
+    (``link_type="dream_tracked_item"``, ``link_id=str(id)``) so the
+    scheduling UI can trace it.
+
+    Degrade, never raise -- the wrapper row already exists when this is
+    called, so every failure mode (no getter, getter returning None --
+    a runtime whose scheduled-tasks DB is not wired yet -- a raising
+    getter, an unwritable scheduling DB) logs and returns ``None``;
+    tracking itself is unaffected.
+
+    Args:
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` (``create_reminder_task`` seam) or None.
+        tracked_item: Mapping with at least ``id``, ``query_template`` and
+            ``event_date`` -- the tracked row (or its just-created view).
+        lead_days: Days before ``event_date`` the reminder fires.
+        owner_id: Reminder owner (the local scheduling owner id).
+
+    Returns:
+        The new reminder task id, or ``None`` when nothing was promoted.
+    """
+    event_date = tracked_item.get("event_date")
+    if not event_date:
+        return None
+
+    scheduling_db = None
+    if scheduling_db_getter is not None:
+        try:
+            scheduling_db = scheduling_db_getter()
+        except Exception as exc:  # noqa: BLE001 - reminder degrades
+            logger.warning(
+                "Dreams reminder getter failed: {}", type(exc).__name__)
+            return None
+    if scheduling_db is None:
+        # Wiring order: a runtime without the scheduled-tasks DB still
+        # tracks; the reminder is a bonus, not a precondition.
+        return None
+
+    try:
+        run_at = (
+            date.fromisoformat(str(event_date)) - timedelta(days=int(lead_days))
+        ).isoformat()
+    except ValueError:
+        logger.warning(
+            "Dreams reminder: unparsable event_date {!r}", event_date)
+        return None
+
+    try:
+        return await asyncio.to_thread(
+            scheduling_db.create_reminder_task,
+            owner_id,
+            f"Dreams: {tracked_item.get('query_template') or 'tracked event'}",
+            body=f"Tracked Dreams event on {event_date}",
+            schedule_kind="one_time",
+            run_at=run_at,
+            next_run_at=run_at,
+            link_type="dream_tracked_item",
+            link_id=str(tracked_item.get("id")),
+        )
+    except Exception as exc:  # noqa: BLE001 - reminder degrades
+        logger.warning(
+            "Dreams reminder creation failed: {}", type(exc).__name__)
+        return None
+
+
 # --- Question mechanism + judged change checks (Phase 2 Task 4) ----------------
 
 
@@ -379,6 +485,7 @@ async def track_question(
     event_date: str | None = None,
     origin_story_id: int | None = None,
     cadence_seconds: int | None = None,
+    scheduling_db_getter: Any = None,
 ) -> int:
     """Wrap one search question as a watched tracked item.
 
@@ -398,6 +505,10 @@ async def track_question(
         origin_story_id: Dream story that prompted tracking, if any.
         cadence_seconds: Desired check cadence; clamped up to the
             configured minimum interval.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None (Phase 2 Task 5); when the item
+            carries an ``event_date`` a one-time reminder is promoted a
+            week ahead. Degrades, never raises.
 
     Returns:
         The new tracked item id.
@@ -434,6 +545,12 @@ async def track_question(
         # adopt); with ``subscription_id`` NULL the flag's only effect --
         # untrack disabling a subscription -- is inert by construction.
         created_by_dreams=1,
+    )
+    # Phase 2 Task 5: same event reminder as the page path, same degrade.
+    await promote_to_reminder(
+        scheduling_db_getter,
+        {"id": tracked_item_id, "query_template": template,
+         "event_date": event_date},
     )
     logger.debug("Dreams tracked question: item={} template={}",
                  tracked_item_id, template[:50])
