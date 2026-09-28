@@ -103,3 +103,5 @@ These findings are outside this bounded repair; its new declarations use tokens,
 and no budget or governance assertion was relaxed. The required CI job does not
 include this global dimension test. Owner appearance approval, current-head CI,
 and actual merge verification remain pending.
+
+Owner appearance approval was received on 2026-09-27 for the presented sixteen-capture gallery. The visual gate is satisfied; current-head CI/review and actual merge verification remain pending.

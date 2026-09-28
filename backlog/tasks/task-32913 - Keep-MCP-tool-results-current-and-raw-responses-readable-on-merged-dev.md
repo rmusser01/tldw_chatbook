@@ -58,4 +58,6 @@ captures are presented in a review gallery; no new native capture claim is made.
 The unrelated global dimension guard retains inherited literals and has an
 additional Windows path-spelling false positive, detailed in the evidence README.
 Owner visual approval, remote CI/review and actual merge remain pending.
+
+Owner approved the captured appearance on 2026-09-27. The visual gate is satisfied; task remains In Progress until current-head CI/review and actual merge verification.
 <!-- SECTION:NOTES:END -->
