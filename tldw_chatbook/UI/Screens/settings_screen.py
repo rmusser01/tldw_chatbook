@@ -2586,17 +2586,27 @@ class RagProfileNameModal(ModalScreen[str | None]):
     brief) -- this follows the same dismiss-with-a-value + push_screen(modal,
     callback) shape as ``ConsoleSystemPromptModal``. Dismisses with the
     trimmed name, or ``None`` on Cancel/Escape/a blank submission.
+
+    TASK-33070: ``validate`` (optional) is called with the trimmed value on
+    submit; a returned reason is shown inside the dialog and the typed value
+    kept, ``None`` dismisses as before.
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
     def __init__(
-        self, *, title: str, initial: str = "", confirm_label: str = "Save"
+        self,
+        *,
+        title: str,
+        initial: str = "",
+        confirm_label: str = "Save",
+        validate: Callable[[str], str | None] | None = None,
     ) -> None:
         super().__init__()
         self._modal_title = title
         self._initial = initial
         self._confirm_label = confirm_label
+        self._validate = validate
 
     def compose(self) -> ComposeResult:
         with Vertical(
@@ -2604,6 +2614,12 @@ class RagProfileNameModal(ModalScreen[str | None]):
         ):
             yield Static(self._modal_title, classes="destination-section")
             yield Input(value=self._initial, id="settings-rag-profile-name-input")
+            # Untrusted text (a file's reason, a typed path): never markup.
+            error = Static(
+                "", id="settings-rag-profile-name-error", classes="settings-rag-profile-name-error", markup=False
+            )
+            error.display = False
+            yield error
             with Horizontal(classes="settings-action-row"):
                 yield Button("Cancel", id="settings-rag-profile-name-cancel")
                 yield Button(
@@ -2641,7 +2657,17 @@ class RagProfileNameModal(ModalScreen[str | None]):
             value = self.query_one("#settings-rag-profile-name-input", Input).value
         except QueryError:
             value = ""
-        self.dismiss(value.strip() or None)
+        value = value.strip()
+        reason = self._validate(value) if value and self._validate is not None else None
+        if reason:
+            from ...css.Themes.themes import printable
+
+            error = self.query_one("#settings-rag-profile-name-error", Static)
+            error.update(printable(reason))
+            error.display = True
+            self.query_one("#settings-rag-profile-name-input", Input).focus()
+            return
+        self.dismiss(value or None)
 
 
 class RagProfileSwitchConfirmModal(ModalScreen[str]):
@@ -24898,15 +24924,32 @@ class SettingsScreen(BaseAppScreen):
         """Prompt for the new name, then rename through the editor's file API."""
         event.stop()
         old = event.theme_id
+        # TASK-33073: the list's name with its file ("'Mine' (mine.toml)").
+        label = self._with_theme_editor(lambda editor: editor.dialog_label(old)) or f"'{old}'"
         self.app.push_screen(
             RagProfileNameModal(
                 # R27 (7): [theme].name is hand-editable; x[/] must not crash.
-                title=f"Rename theme '{escape_markup(old)}'",
+                title=f"Rename theme {escape_markup(label)}",
                 initial=old,
                 confirm_label="Rename",
+                # TASK-33070: a taken/invalid name is shown in the dialog.
+                validate=lambda new: self._with_theme_editor(
+                    lambda editor: editor.rename_refusal(old, new)
+                ),
             ),
             lambda new: self._handle_theme_rename_result(old, new),
         )
+
+    def _with_theme_editor(
+        self, call: Callable[[SettingsThemeEditor], str | None]
+    ) -> str | None:
+        """Run a theme prompt's check or label on the editor (file checks
+        stay in that one instance); None once the pane is gone (R38)."""
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return None
+        return call(editor)
 
     def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
         if not new or new == old:
@@ -24923,7 +24966,14 @@ class SettingsScreen(BaseAppScreen):
         """Prompt for a theme file path, then import it through the editor."""
         event.stop()
         self.app.push_screen(
-            RagProfileNameModal(title="Import theme — full path to a .toml file", initial="", confirm_label="Import"),
+            RagProfileNameModal(
+                title="Import theme — full path to a .toml file",
+                initial="",
+                confirm_label="Import",
+                validate=lambda source: self._with_theme_editor(
+                    lambda editor: editor.import_refusal(source)
+                ),
+            ),
             self._handle_theme_import_result,
         )
 

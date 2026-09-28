@@ -572,6 +572,24 @@ async def test_empty_your_themes_says_none_yet(request, config_writes):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_builtin_group_has_a_user_facing_title(request, config_writes):
+    """TASK-33073: Textual's own themes are grouped as BUILT-IN, not by the
+    framework's name."""
+    app, picker = await _picker_app(list_user_names=set)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        headers = [
+            str(lst.get_option_at_index(i).prompt)
+            for i in range(lst.option_count)
+            if lst.get_option_at_index(i).id is None
+        ]
+        assert any(h.startswith("BUILT-IN") for h in headers), headers
+        assert not any("TEXTUAL" in h for h in headers), headers
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_pause_keeps_last_known_your_themes(request, config_writes):
     """R27 (5): a pause after a good listing must not relabel your themes
     as shipped -- the last successfully listed names keep their origin."""

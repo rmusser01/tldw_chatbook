@@ -775,6 +775,13 @@ Button.settings-category-group-toggle:focus {
     background: $ds-surface-panel;
 }
 
+/* TASK-33070: a name/path prompt's validation reason, shown in the dialog
+   (hidden via Static.display until a submit is refused). */
+.settings-rag-profile-name-error {
+    height: auto;
+    color: $ds-status-error-readable;
+}
+
 #global-speech-tts-leave-modal .settings-action-row {
     layout: vertical;
     height: auto;

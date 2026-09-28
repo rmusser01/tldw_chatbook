@@ -964,7 +964,7 @@ async def test_rename_prompt_escapes_markup_in_theme_name(request):
         await pilot.pause(0.2)
         assert isinstance(host.screen, RagProfileNameModal)
         title = host.screen.query_one(".destination-section", Static)
-        assert "x[/]" in str(title.render())
+        assert "Rename theme 'X[/]' (odd.toml)" in str(title.render())  # TASK-33073 label
 
 
 @pytest.mark.asyncio
@@ -983,7 +983,7 @@ async def test_delete_of_an_unreadable_file_removes_it(request):
         await _highlight(host, pilot, "unreadable:nord")
         picker = host.screen.query_one("#settings-theme-picker")
         entry = next(e for e in picker.entries if e.id == "unreadable:nord")
-        assert entry.origin == "yours" and entry.error == "not valid TOML"
+        assert entry.origin == "yours" and entry.error == "not valid TOML (line 1, column 9)"
         assert entry.display_name == "Nord (unreadable)"
         # R40(b): the pane lists through ONE scan per refresh.
         editor = host.screen.query_one("#settings-theme-editor")
@@ -1095,6 +1095,13 @@ async def test_export_shows_full_path_and_copy_path_copies_it(request, monkeypat
         await _highlight(host, pilot, "mine")
         assert not host.screen.query_one("#settings-theme-export-result").display
         await pilot.click("#settings-theme-picker-export")
+        await pilot.pause(0.2)
+        # TASK-33076: the destination prompt, prefilled with Downloads.
+        from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+        assert isinstance(host.screen, RagProfileNameModal)
+        assert "'Mine' (mine.toml)" in host.screen._modal_title
+        await pilot.click("#settings-rag-profile-name-confirm")
         await pilot.pause(0.3)
         export_path = downloads_home / "Downloads" / "mine_theme.toml"
         assert export_path.exists()
@@ -1180,7 +1187,7 @@ async def test_theme_names_with_markup_render_literally_everywhere(request, monk
         assert isinstance(host.screen, ConfirmationDialog)
         # The dialog renders with markup off: no escape backslash shows.
         message = str(host.screen.query_one(".dialog-message", Label).render())
-        assert message.startswith("Delete the saved theme 'z[/]'?")
+        assert message.startswith("Delete the saved theme 'Z[/]' (odd2.toml)?")  # TASK-33073
         await pilot.click("#confirm-button")
         await pilot.pause(0.3)
         assert "Deleted theme 'z[/]'" in toasts
@@ -2116,6 +2123,16 @@ async def _await_focus(host, pilot, widget_id):
     raise AssertionError(f"focus is {getattr(host.focused, 'id', None)!r}, not {widget_id!r}")
 
 
+# -- TASK-33070: Rename/Import refusals stay inside the dialog ---------------
+
+
+def _prompt_error(host):
+    from textual.widgets import Static
+
+    error = host.screen.query_one("#settings-rag-profile-name-error", Static)
+    return str(error.render()) if error.display else ""
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_rail_entry_focuses_the_theme_list_and_c_acts(request):
@@ -2176,3 +2193,73 @@ async def test_long_theme_names_stay_on_one_row_at_80x24(request, theme):
         prompt = lst.get_option_at_index(lst.get_option_index(long_name)).prompt
         assert prompt.plain.split("  ")[0].endswith("…")
         assert "▮" in prompt.plain and "active" not in prompt.plain.split("  ")[0]
+
+
+async def test_rename_to_taken_name_shows_error_in_dialog_and_keeps_input(request):
+    from textual.widgets import Input
+
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    host = _host()
+    path = _saved_theme(host)
+    _saved_theme(host, "ours")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        name_input = host.screen.query_one("#settings-rag-profile-name-input", Input)
+        name_input.value = "ours"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        assert "Name taken: 'ours'" in _prompt_error(host)
+        assert name_input.value == "ours"
+        # Invalid names are refused in place too.
+        name_input.value = "../evil"
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        assert "Invalid theme name" in _prompt_error(host)
+        # A free name then goes through.
+        name_input.value = "fresh"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.3)
+        assert not isinstance(host.screen, RagProfileNameModal)
+        assert not path.exists() and (path.parent / "fresh.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_refusal_shows_error_in_dialog_and_keeps_path(request, tmp_path_factory):
+    from textual.widgets import Input
+
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    src = tmp_path_factory.mktemp("import-bad")
+    source = src / "bad.toml"
+    source.write_text('[colors]\nprimary = "blue"\n', encoding="utf-8")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("i")
+        await pilot.pause(0.2)
+        path_input = host.screen.query_one("#settings-rag-profile-name-input", Input)
+        path_input.value = str(source)
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        error = _prompt_error(host)
+        assert "primary: 'blue' is not #RGB, #RRGGBB or #RRGGBBAA" in error
+        assert str(src) not in error  # R16: never the path
+        assert path_input.value == str(source)
+        themes = config._get_effective_config_path().parent / "themes"
+        assert not (themes / "bad.toml").exists()
+        # Fixed on disk, the same typed path now imports.
+        source.write_text('[colors]\nprimary = "#0000FF"\n', encoding="utf-8")
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        await host.workers.wait_for_complete()
+        assert not isinstance(host.screen, RagProfileNameModal)
+        assert (themes / "bad.toml").exists()
