@@ -1,7 +1,7 @@
 # ADR-184: Server-executed `agent_task` automations — message references and approval escalation
 
-- **Status:** Proposed (awaiting owner ruling on decisions 1 and 2)
-- **Date:** 2026-09-12
+- **Status:** Accepted (owner ruled 2026-09-27: decision 1 = A side-store; decision 2 = A read-only envelope first)
+- **Date:** 2026-09-12 (drafted); 2026-09-27 (accepted)
 - **Amends:** [ADR-077 — Server-offloaded scheduled agent tasks](077-server-offloaded-scheduled-agent-tasks.md) (phase-2 scope); relates to tldw_server issue #2805
 - **Task:** TASK-18940 AC#2 (rest)
 
@@ -111,10 +111,11 @@ applied to the scheduler feed and run-now.
   timed-out, notification pass-back, no-double-count) carries over
   unchanged.
 
-## Owner rulings requested
+## Owner rulings (2026-09-27)
 
-1. **Decision 1:** side-store message references (recommended) vs.
-   redaction-at-API-boundaries-only.
-2. **Decision 2:** ship step 1's read-only envelope with
-   `approval_required` as a terminal outcome (recommended) vs. keep
-   `agent_task` fully refused until the complete escalation loop exists.
+1. **Decision 1 — ruled A:** side-store message references. The
+   scheduled-tasks DB's at-rest `metadata_only` posture stands; raw prompts
+   live only in the encrypted, owner-scoped, TTL-bounded store.
+2. **Decision 2 — ruled A:** ship step 1's read-only envelope now, with
+   `approval_required` as a terminal outcome for side-effecting calls; the
+   full queued-escalation loop remains step 2 with its own task.
