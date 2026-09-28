@@ -56,8 +56,12 @@ class RemoteSessionRegistry:
                     self._sessions.pop(key, None)
                     if key in self._restarted:
                         self._disabled.add(key)
+                        logger.debug(
+                            "ssh session worker died again; using one-shot calls for this run"
+                        )
                         return None
                     self._restarted.add(key)
+                logger.debug("ssh session worker died; restarting it once for this run")
             worker = create()
             try:
                 worker.start()
@@ -72,6 +76,8 @@ class RemoteSessionRegistry:
                         f"ssh session worker disabled for this run; using one-shot calls: {cause}"
                     )
                     return None
+                kind = error.failure.kind.value if error.failure else "unknown"
+                logger.debug(f"ssh session worker start failed (transport): {kind}")
                 raise
             with self._lock:
                 closed_meanwhile = key[0] in self._closed_keys

@@ -2549,10 +2549,17 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "f822d7a16509d22f910a",
+      "call_count": 4,
+      "diagnostic_digest": "8ad34c1968f03db885c8",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/remote_session_registry.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "adb8552185aa74541fc4",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_session_worker.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {

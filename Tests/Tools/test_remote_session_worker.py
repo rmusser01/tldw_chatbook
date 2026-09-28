@@ -462,8 +462,18 @@ def test_close_is_idempotent_and_never_raises(worker_factory):
     assert not worker.alive and spawns[0].poll() is not None
 
 
-def test_malformed_status_is_session_death(worker_factory, workspace):
-    """A STATUS body that fails to decode must kill the session, not the reader."""
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"nope!",
+        b'{"exit": "0", "signal": null}',  # well-formed JSON, wrong types
+        b'{"exit": null, "signal": 9.5}',
+        b'{"exit": true, "signal": null}',
+    ],
+)
+def test_malformed_status_is_session_death(worker_factory, workspace, body):
+    """A STATUS body that fails to decode OR carries non-int exit/signal must
+    kill the session, never raise TypeError on the caller's thread."""
     fake = textwrap.dedent(
         """
         import os, sys
@@ -472,17 +482,73 @@ def test_malformed_status_is_session_death(worker_factory, workspace):
         os.write(1, magic + b"READY " + sys.argv[1].encode() + b"\\n")
         import struct, time
         time.sleep(0.5)
-        os.write(1, struct.pack(">IIB", 5, 1, 17) + b"nope!")
+        body = sys.argv[2].encode()
+        os.write(1, struct.pack(">IIB", len(body), 1, 17) + body)
         time.sleep(30)
         """
     )
     artifact, _, _ = _bundle_payload()
     worker, _ = worker_factory(
-        spawn_argv=[sys.executable, "-c", fake, expected_bundle_stamp(artifact)]
+        spawn_argv=[sys.executable, "-c", fake, expected_bundle_stamp(artifact), body.decode()]
     )
     worker.start()
     result = worker.call(read_request(workspace, "a.txt"), budget=10)
     assert result.failure is not None and not worker.alive
+
+
+def test_close_never_closes_stdin_under_a_writer_mid_frame(worker_factory, workspace):
+    """close() must not close the stdin fd while a writer is inside its write
+    loop: the freed fd number could be reused by another thread's open and
+    receive the rest of the REQUEST frame. It kills the stalled host first,
+    the writer's pipe breaks, and only then is stdin closed."""
+    worker, spawns = worker_factory()
+    worker.start()
+    proc = spawns[0]
+    events: list[str] = []
+    real_write = worker._write
+
+    def spy_write(data, deadline):
+        events.append("write-enter")
+        try:
+            real_write(data, deadline)
+        finally:
+            events.append("write-exit")
+
+    class StdinSpy:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def close(self):
+            events.append("stdin-close")
+            self._inner.close()
+
+    worker._write = spy_write
+    proc.stdin = StdinSpy(proc.stdin)
+    os.kill(proc.pid, signal.SIGSTOP)
+    with ThreadPoolExecutor(1) as pool:
+        # Budget far past the test bound: only close() can end this write.
+        stuck = pool.submit(worker.call, b"x" * (8 << 20), budget=60)
+        time.sleep(0.3)
+        assert events == ["write-enter"]  # the writer is mid-frame
+        started = time.monotonic()
+        worker.close()
+        closed_in = time.monotonic() - started
+        result = stuck.result(15)
+    assert closed_in < 6
+    assert events.index("write-exit") < events.index("stdin-close")
+    assert not worker.alive and proc.poll() is not None
+    assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
+
+
+def test_write_after_close_refuses_a_closed_stdin(worker_factory):
+    worker, _ = worker_factory()
+    worker.start()
+    worker.close()
+    with pytest.raises(BrokenPipeError):
+        worker._write(encode_frame(CANCEL, 1, b""), time.monotonic() + 1)
 
 
 #: Host that asks for the bundle, then never reads it (73 KB > pipe buffer).

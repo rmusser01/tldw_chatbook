@@ -134,7 +134,11 @@ def test_clean_end_is_recreated_without_spending_the_restart():
         w.alive, w.clean_end = False, True
     died = reg.acquire(("run-1", "b1"), FakeWorker)
     died.alive = False  # a genuine death (e.g. 255) still gets its one restart
-    assert reg.acquire(("run-1", "b1"), FakeWorker) is not None
+    restarted = reg.acquire(("run-1", "b1"), FakeWorker)
+    assert restarted is not None
+    restarted.alive = False  # a SECOND genuine death spends the key for the run
+    assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("restarted twice")) is None
+    assert ("run-1", "b1") in reg._disabled
 
 
 def test_closed_key_is_tombstoned_and_never_reopens():
@@ -182,3 +186,46 @@ def test_start_in_flight_when_run_closes_is_closed_not_kept():
     assert reg.acquire(("run-1", "b1"), create) is None
     assert made[0].closed
     assert reg._sessions == {}
+
+
+def test_app_exit_closes_sessions_before_masters_in_one_best_effort_try():
+    """Pin the on_unmount shutdown order (AST, not a live app: driving
+    ``TldwCli.on_unmount`` needs a fully mounted app and ~20 unrelated
+    teardown steps). Sessions close first so their remote parents see stdin
+    EOF over a still-open master; both sit in the SAME try so a failure in
+    either never blocks the quit."""
+    import ast
+    from pathlib import Path
+
+    import tldw_chatbook
+
+    tree = ast.parse((Path(tldw_chatbook.__file__).parent / "app.py").read_text("utf-8"))
+    unmount = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_unmount"
+    )
+
+    def calls_in(stmts):
+        found = []
+        for stmt in stmts:
+            for node in ast.walk(stmt):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "to_thread"):
+                    continue
+                target = ast.unparse(node.args[0])
+                if target in ("close_all_remote_sessions", "get_master_manager().close_all"):
+                    found.append((node.lineno, target))
+        return sorted(found)
+
+    tries = [
+        node
+        for node in ast.walk(unmount)
+        if isinstance(node, ast.Try) and calls_in(node.body)
+    ]
+    innermost = min(tries, key=lambda node: node.end_lineno - node.lineno)
+    order = [target for _, target in calls_in(innermost.body)]
+    assert order == ["close_all_remote_sessions", "get_master_manager().close_all"]
+    assert any(
+        handler.type is not None and ast.unparse(handler.type) == "Exception"
+        for handler in innermost.handlers
+    )

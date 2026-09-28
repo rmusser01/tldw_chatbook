@@ -23,6 +23,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from loguru import logger
+
 from tldw_chatbook.Tools.build_remote_worker_bundle import (
     expected_bundle_stamp,
     loader_payload,
@@ -103,6 +105,15 @@ class _WriteStalled(Exception):
 class _NotSent(Exception):
     """Internal: the write lock stayed busy until the deadline; nothing was
     written and the stream is intact."""
+
+
+def _checked_status(body: bytes) -> tuple[int | None, int | None]:
+    """``decode_status`` plus type checks: a malformed STATUS is a frame
+    error (the reader kills the session), never a TypeError on a caller."""
+    status = decode_status(body)
+    if not all(v is None or (type(v) is int) for v in status):
+        raise ValueError("malformed STATUS frame")
+    return status
 
 
 def _wait_fd(fd: int, events: int, timeout: float) -> bool:
@@ -241,7 +252,8 @@ class RemoteSessionWorker:
             # LOCKSTEP: after each write, send nothing until the loader answers.
             self._handshake_write(loader + header, deadline)
             line = self._read_handshake_line(deadline)
-            if line == b"NEED " + bundle_hash.encode():
+            cache_hit = line != b"NEED " + bundle_hash.encode()
+            if not cache_hit:
                 self._handshake_write(len(compressed).to_bytes(4, "big") + compressed, deadline)
                 line = self._read_handshake_line(deadline)
         except _HandshakeFailed as ended:
@@ -262,6 +274,9 @@ class RemoteSessionWorker:
             self._alive = True
             self._idle_since = time.monotonic()
         threading.Thread(target=self._reader, name="ssh-session-reader", daemon=True).start()
+        logger.debug(
+            "ssh session worker started; bundle cache {}", "hit" if cache_hit else "miss"
+        )
 
     def _drain_stderr(self) -> None:
         stream = self._proc.stderr if self._proc else None
@@ -359,10 +374,16 @@ class RemoteSessionWorker:
                 the session must die.
             OSError: The pipe broke (the process is gone).
         """
-        fd = self._proc.stdin.fileno()  # type: ignore[union-attr]
         if not self._write_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
             raise _NotSent()
         try:
+            # Read the fd UNDER the lock: close() closes stdin only while
+            # holding it, so the number cannot be closed (and reused by
+            # another thread's open) while this loop writes to it.
+            stdin = self._proc.stdin  # type: ignore[union-attr]
+            if stdin is None or stdin.closed:
+                raise BrokenPipeError("session stdin closed")
+            fd = stdin.fileno()
             view = memoryview(data)
             write_deadline = max(deadline, time.monotonic() + self._transport.grace_seconds)
             while view:
@@ -390,7 +411,7 @@ class RemoteSessionWorker:
         try:
             while data := os.read(fd, 65536):
                 for kind, request_id, body in reader.feed(data):
-                    status = decode_status(body) if kind == STATUS else None
+                    status = _checked_status(body) if kind == STATUS else None
                     with self._lock:
                         pending = self._pending.get(request_id)
                     if pending is None:
@@ -423,7 +444,7 @@ class RemoteSessionWorker:
             if self._death_natural is None:
                 self._death_natural = natural
             natural = self._death_natural
-            self._alive = False
+            was_alive, self._alive = self._alive, False
         proc = self._proc
         code = 255
         if proc is not None:
@@ -449,6 +470,12 @@ class RemoteSessionWorker:
         self._settled.set()
         for pending in waiters:
             pending.done.set()
+        if was_alive:
+            logger.debug(
+                "ssh session worker ended ({}); exit code {}",
+                "natural" if natural else "ended by the laptop",
+                code,
+            )
 
     def call(self, request_bytes: bytes, *, budget: float) -> RemoteCallResult:
         """Run one request over the session; same result shape as the one-shot call.
@@ -607,19 +634,35 @@ class RemoteSessionWorker:
                 pass
 
     def close(self) -> None:
-        """Close stdin (host exits on EOF), wait briefly, then kill. Never raises."""
+        """Close stdin (host exits on EOF), wait briefly, then kill. Never raises.
+
+        stdin is closed only under the write lock, so a writer mid-frame
+        never sees its fd number closed (and reused) under it. A writer that
+        holds the lock past the grace is stuck on a stalled host: the kill
+        breaks its pipe (EPIPE) and it releases the lock.
+        """
         with self._lock:
             if self._death_natural is None:
                 self._death_natural = False
-            self._alive = False
+            was_alive, self._alive = self._alive, False
         proc = self._proc
         if proc is None:
             return
+        if was_alive:
+            logger.debug("ssh session worker closing")
+        locked = self._write_lock.acquire(timeout=self._transport.grace_seconds)
+        if not locked:
+            self._kill()
+            locked = self._write_lock.acquire(timeout=_CLOSE_WAIT_S)
         try:
-            if proc.stdin is not None:
+            # Still locked out: leave the fd to the (killed) process's reap.
+            if locked and proc.stdin is not None:
                 proc.stdin.close()
         except OSError:
             pass
+        finally:
+            if locked:
+                self._write_lock.release()
         try:
             proc.wait(timeout=_CLOSE_WAIT_S)
         except subprocess.TimeoutExpired:
