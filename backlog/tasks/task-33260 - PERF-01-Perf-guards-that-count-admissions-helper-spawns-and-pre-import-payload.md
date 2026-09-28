@@ -1,7 +1,7 @@
 ---
 id: TASK-33260
 title: 'PERF-01: Perf guards that count admissions, helper spawns and pre-import payload'
-status: In Progress
+status: Done
 created_date: 2026-09-28 18:01
 labels:
 - performance
@@ -14,7 +14,7 @@ references:
 - qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
 assignee:
 - '@claude'
-updated_date: 2026-09-28 19:27
+updated_date: 2026-09-28 19:37
 ---
 
 ## Description
