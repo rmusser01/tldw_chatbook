@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from Tests.Performance.run_console_mount_profile import (
@@ -26,7 +28,7 @@ def test_outgoing_detached_elapsed_rejects_a_missing_unmount_observation() -> No
 
 @pytest.mark.integration
 def test_profiler_measures_a_warm_visit_on_the_reusable_console_route(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """The runner completes against today's reusable route (TASK-33260).
 
@@ -34,6 +36,9 @@ def test_profiler_measures_a_warm_visit_on_the_reusable_console_route(
     longer fired per visit and every run died "profile condition did not
     settle". One real warm iteration, in a fresh interpreter because the
     runner points ``os.environ`` at its own scratch profile.
+
+    Args:
+        tmp_path: pytest fixture; holds the runner's JSON report.
     """
     import json
     import os

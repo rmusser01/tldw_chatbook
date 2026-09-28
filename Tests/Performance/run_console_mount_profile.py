@@ -395,6 +395,12 @@ async def _run(iterations: int, *, phase: str) -> dict[str, Any]:
         async with app.run_test(size=(170, 48)) as pilot:
             for _ in range(20):
                 await pilot.pause(0.05)
+            # Visit Console once before measuring so every sample is a warm
+            # resume of the reused route, whatever the configured default
+            # tab: a first visit would construct and mount it (cold).
+            await _navigate(app, "chat")
+            for _ in range(5):
+                await pilot.pause(0.05)
             await _navigate(app, "library")
             for iteration in range(iterations):
                 offset = iteration % len(variants)
