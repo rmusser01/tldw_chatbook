@@ -14022,6 +14022,9 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         edit.display = self._provider_registry_entry(provider) is not None
+        # Revert restores a registry id without the provider-change reset;
+        # without this, llama_cpp's live Discover survived it (TASK-33002.12).
+        self._refresh_model_discovery_widgets()
 
     def _provider_display_name(self, provider: str) -> str:
         """Markup display name (see :meth:`_provider_display_label`).
@@ -15026,27 +15029,27 @@ class SettingsScreen(BaseAppScreen):
             ).display = not self._model_discovery_models
         except QueryError:
             pass
+        available = self._model_discovery_available(self._provider_widget_value())
         try:
             discover_button = self.query_one(
                 "#settings-discover-provider-models", Button
             )
-            discover_button.disabled = not self._model_discovery_available(
-                self._provider_widget_value()
-            )
+            discover_button.disabled = not available
         except QueryError:
             pass
+        # Another provider's list must not save under a registry id.
         try:
             save_button = self.query_one(
                 "#settings-save-discovered-provider-models", Button
             )
-            save_button.disabled = not self._model_discovery_models
+            save_button.disabled = not (available and self._model_discovery_models)
         except QueryError:
             pass
         try:
             clear_button = self.query_one(
                 "#settings-clear-discovered-provider-models", Button
             )
-            clear_button.disabled = not self._model_discovery_models
+            clear_button.disabled = not (available and self._model_discovery_models)
         except QueryError:
             pass
         try:

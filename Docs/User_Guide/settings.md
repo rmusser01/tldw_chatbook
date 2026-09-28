@@ -605,6 +605,11 @@ from `config.toml` by hand), Overview reads **Not ready: Endpoint not found**
 and Providers & Models reads **Not ready · endpoint not found; choose another
 provider**. Pick another provider, or recreate the endpoint.
 
+A hand-edited default that is not a provider id at all — `custom-ep:` with
+no slug, `foo:bar`, or an uppercase `CUSTOM-EP:<slug>` (endpoint ids are
+lowercase) — reads **Not ready: Unknown provider**. Pick a provider in
+Providers & Models.
+
 The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are
 listed below the entries once they have a configured endpoint, each with a
 one-way **Convert to named endpoint** action: it creates a registry entry

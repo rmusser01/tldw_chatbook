@@ -325,7 +325,7 @@ def load_custom_endpoints(
             _WARNED_INVALID_API_KEY_ENV.add(warn_key)
             logger.warning(
                 "custom endpoint '%s': api_key_env is not a valid environment "
-                "variable name; it resolves no credential",
+                "variable name",
                 slug,
             )
         entries[slug] = CustomEndpointEntry(

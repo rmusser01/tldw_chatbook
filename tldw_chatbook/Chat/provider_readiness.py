@@ -715,6 +715,25 @@ def get_provider_readiness(
             recovery="Choose a provider and model before sending.",
         )
 
+    try:
+        _validate_provider_key(provider_key)
+    except ValueError:
+        # A hand-edited id no record can carry ("foo:bar", "custom-ep:" with
+        # no slug, "CUSTOM-EP:<slug>" -- registry ids are case-sensitive)
+        # raised here and killed Settings on open (TASK-33002.12). Report
+        # only: the record keeps rejecting the key everywhere else.
+        return ProviderReadiness(
+            provider=safe_provider_label(provider_name, "Provider"),
+            provider_key="unknown",
+            requires_api_key=True,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Unknown provider",
+            recovery="That is not a valid provider id. Choose a supported provider.",
+        )
+
     api_settings = app_config.get("api_settings", {})
     try:
         provider_settings = provider_settings_for_key(api_settings, provider_key)

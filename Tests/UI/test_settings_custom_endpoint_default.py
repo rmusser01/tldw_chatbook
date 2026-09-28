@@ -312,6 +312,8 @@ def test_registry_load_flags_an_invalid_api_key_env_without_logging_it(caplog):
     assert entry is not None  # kept, so its readiness can name the problem
     assert "gpu-box" in caplog.text and "api_key_env" in caplog.text
     assert secret_like not in caplog.text
+    # The env may hold a variable by that name; the loader cannot tell.
+    assert "resolves no credential" not in caplog.text
     # Every readiness read reloads the registry: warn once, not per read.
     caplog.clear()
     with caplog.at_level(
@@ -509,3 +511,116 @@ def test_provider_widget_value_reads_the_saved_provider_before_the_select_mounts
         lambda: {"provider": "custom-ep:gpu-box"},
     )
     assert screen._provider_widget_value() == "custom-ep:gpu-box"
+
+
+# --- Review follow-ups: malformed hand-edited defaults; Revert re-locks ------
+#
+# A provider id that is neither a registry id nor a valid config key
+# (``provider_config_key`` keeps its ``:``) failed ``ProviderReadiness``'s key
+# check and killed Settings on open. Registry ids are case-sensitive (every
+# send-path lookup matches the lowercase ``custom-ep:`` prefix exactly), so
+# ``CUSTOM-EP:<slug>`` is not a registry id either: all three read "Unknown
+# provider".
+
+_MALFORMED_DEFAULTS = ["custom-ep:", "CUSTOM-EP:gpu-box", "foo:bar"]
+
+
+@pytest.mark.parametrize("provider", [*_MALFORMED_DEFAULTS, "x" * 200])
+def test_malformed_provider_id_reads_unknown_provider(provider):
+    readiness = get_provider_readiness(provider, _config(), environ={})
+    assert (readiness.ready, readiness.reason) == (False, "Unknown provider")
+    assert "api_settings" not in readiness.user_message
+
+
+@pytest.mark.parametrize("provider", _MALFORMED_DEFAULTS)
+def test_console_readiness_seam_survives_a_malformed_default(provider):
+    config = {**_config(), "chat_defaults": {"provider": provider, "model": "model-a"}}
+    settings = build_default_console_session_settings(config)
+    readiness = build_console_settings_readiness(
+        settings, app_config=config, environ={}, background_credentials=False
+    )
+    assert readiness.native_send_supported is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("provider", _MALFORMED_DEFAULTS)
+async def test_settings_opens_on_a_malformed_hand_edited_default(request, provider):
+    host = DestinationHarness(_registry_default_app(provider), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        overview = _text(screen, "#settings-overview-configuration")
+        assert "Not ready: Unknown provider" in overview, overview
+
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle_settings_mount_storm(pilot)
+        assert host._exception is None, host._exception
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("provider", _MALFORMED_DEFAULTS)
+async def test_home_readiness_computes_a_malformed_default(request, provider):
+    """Home swallowed the ValueError and read "Blocked" by accident."""
+    from loguru import logger
+
+    from Tests.UI.test_home_screen import (
+        HOME_MOUNT_PAUSE,
+        HOME_TEST_SIZE,
+        HomeHarness,
+        _active_home_screen,
+    )
+
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        host = HomeHarness(_registry_default_app(provider))
+        async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+            await pilot.pause(HOME_MOUNT_PAUSE)
+            home = _active_home_screen(host)
+            # The badge's own seam; ``#home-details-body`` mounts on a timer
+            # (test_home_model_badge_reports_blocked_without_credential flakes
+            # on NoMatches at HEAD).
+            ready = home._home_console_provider_ready(
+                background_credentials=False, allow_fresh_load=False
+            )
+            assert ready is False
+    finally:
+        logger.remove(sink_id)
+    failures = [m for m in messages if "readiness check failed" in m]
+    assert not failures, failures
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_to_a_registry_default_relocks_model_discovery(request):
+    """Revert restored the registry id but left llama_cpp's Discover live."""
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    host = DestinationHarness(_registry_default_app("custom-ep:gpu-box"), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle_settings_mount_storm(pilot)
+        buttons = [
+            screen.query_one(selector, Button)
+            for selector in (
+                "#settings-discover-provider-models",
+                "#settings-save-discovered-provider-models",
+                "#settings-clear-discovered-provider-models",
+            )
+        ]
+
+        screen._apply_provider_value_change("llama_cpp")
+        await pilot.pause()
+        # A discovery ran for llama_cpp: every discovery action is live.
+        screen._model_discovery_models = (SimpleNamespace(model_id="m.gguf"),)
+        screen._refresh_model_discovery_widgets()
+        assert not any(button.disabled for button in buttons)
+
+        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        await _settle_settings_mount_storm(pilot)
+        assert screen._provider_widget_value() == "custom-ep:gpu-box"
+        assert [button.id for button in buttons if not button.disabled] == []
