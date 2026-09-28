@@ -21140,6 +21140,7 @@ class ConsoleChatStore:
                 message.provider_continuation_actions_enabled = True
                 message.assistant_generation_state = "continuation_active"
                 message.content = content
+                self._bump_display_projection_revision(session_id)
                 with self._preparation_lock:
                     self._dispatch_recoveries_by_session.pop(session_id, None)
                     self._dispatch_recovery_message_baselines.pop(session_id, None)
@@ -21230,6 +21231,9 @@ class ConsoleChatStore:
             "continuation_active" if checkpoint.state == "active" else "complete"
         )
         message.content = content
+        # Continuation eligibility can change without another stream chunk or
+        # payload revision; invalidate detached history at live publication.
+        self._bump_display_projection_revision(session_id)
         payload = {
             "assistant_generation_state": message.assistant_generation_state,
             "content": content,

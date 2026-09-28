@@ -16753,3 +16753,19 @@ built-ins and inherited defaults, not an explicit override.
 ### A bundled tokenizer probe needs a child without inherited overrides (PR #2196 / TASK-24305)
 
 The post-rebase focused run passed 32 cases and failed the lazy-tokenizer bundled-hook probe: preceding context-parity tests had set `TIKTOKEN_CACHE_DIR`, which the probe child inherited. An explicit cache override correctly makes the runtime skip bundled-cache reader installation. The child failed only with that inherited override; clearing `TIKTOKEN_CACHE_DIR` and `DATA_GYM_CACHE_DIR` inside the bundled-hook probe passed the same combined run (36 cases, including deferred-persistence regressions). Give a bundled-runtime child its intended environment before package import, and keep production override behavior intact.
+
+
+### Materialize streams before probing cached event invalidation (PR #2196 / TASK-24300)
+
+The independent review's first continuation probe built a cache key before the
+snapshot folded buffered text. That fold advanced the speech/display revision,
+so the next lookup rebuilt history even though ToolBatchReady published no
+revision. It appeared fresh at 6 -> 7. Materializing the prefix synchronously
+before warming held the revision at 8 -> 8: cached history still admitted the
+assistant while a fresh projection excluded its active continuation. Separate
+warm ToolBatchReady and FinalContinuation regressions now pin the actual event
+publication; the ordinary and dispatch publication routes advance the revision.
+
+Give a warm-cache invalidation probe a stable, materialized source baseline.
+A read that mutates the fixture's revision can conceal the missing event fence
+that the test is meant to detect.

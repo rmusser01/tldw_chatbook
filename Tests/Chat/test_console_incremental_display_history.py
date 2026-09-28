@@ -1,11 +1,28 @@
 """The screen's settled history is reused until its store owner changes."""
 
+from dataclasses import replace
 from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.Agents.agent_models import (
+    ContinuationEventContext,
+    FinalContinuation,
+    ToolBatchReady,
+)
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationResult,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens import chat_screen as screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Utils.token_counter import ContextWindowResolution
@@ -173,3 +190,111 @@ def test_stream_estimate_ttl_precedes_snapshots_and_draft_edits_still_invalidate
     composer.draft = "bbbb"
     assert estimate() is not draft_first
     assert len(reads) == 3
+
+
+@pytest.mark.parametrize("publication", ["tool_batch", "final"])
+def test_continuation_publication_refreshes_warm_history(publication):
+    """Missing publication invalidation retains obsolete assistant eligibility."""
+    database = CharactersRAGDB(":memory:", "display-continuation-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="continuation projection")
+        user = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Use the calculator",
+            persist=True,
+        )
+        owner = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        prefix = "I will calculate it."
+        store.append_stream_chunk(owner.id, prefix)
+        # Fold before warming: the fold's own revision must not mask a missing
+        # continuation-publication revision or schedule an in-memory DB write.
+        store.get_message(owner.id)
+        context = ContinuationEventContext(
+            owner.id, "run-primary", "primary", "persistent"
+        )
+        active = ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=1,
+            provider="moonshot",
+            protocol="chat_completions",
+            model="kimi-k3",
+            api_base_url="https://api.moonshot.ai/v1",
+            state="active",
+            rounds=(
+                ContinuationRound(
+                    assistant_content=prefix,
+                    reasoning_blocks=("private reasoning",),
+                    calls=(
+                        ContinuationCall(
+                            call_id="call-1",
+                            name="calculator",
+                            arguments='{"expression":"2+2"}',
+                            state="pending",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        event = ToolBatchReady(context, active, None)
+        expected_content = prefix
+        expected_request_ids = {user.id}
+        if publication == "final":
+            store.persist_provider_continuation_event(event)
+            expected_content = "The answer is 4."
+            completed_round = replace(
+                active.rounds[0],
+                calls=(
+                    replace(
+                        active.rounds[0].calls[0],
+                        state="completed",
+                        result=ContinuationResult("4"),
+                    ),
+                ),
+            )
+            complete = replace(
+                active,
+                checkpoint_revision=2,
+                state="complete",
+                rounds=(
+                    completed_round,
+                    ContinuationRound(
+                        expected_content, ("final private reasoning",), ()
+                    ),
+                ),
+            )
+            event = FinalContinuation(context, complete, 1, expected_content)
+            expected_request_ids = {user.id, owner.id}
+
+        screen = SimpleNamespace()
+        controller = SimpleNamespace(
+            run_state_for=lambda _sid: SimpleNamespace(
+                status=ConsoleRunStatus.STREAMING
+            ),
+            _submit_tasks_for_session=lambda _sid: (),
+        )
+        before = ChatScreen._console_display_history(
+            screen, store, session.id, controller
+        )
+        revision = store.display_projection_revision(session.id)
+        assert before[2].request_ids == (
+            {user.id, owner.id} if publication == "tool_batch" else {user.id}
+        )
+
+        store.persist_provider_continuation_event(event)
+        after = ChatScreen._console_display_history(
+            screen, store, session.id, controller
+        )
+
+        assert store.display_projection_revision(session.id) > revision
+        assert after[0] != before[0]
+        assert after[2].request_ids == expected_request_ids
+        assert after[1][-1].content == expected_content
+        assert after[1][-1].assistant_generation_state == (
+            "continuation_active" if publication == "tool_batch" else "complete"
+        )
+    finally:
+        database.close_connection()

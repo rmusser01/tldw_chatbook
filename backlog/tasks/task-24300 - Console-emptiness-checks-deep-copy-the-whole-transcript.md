@@ -1,16 +1,18 @@
 ---
 id: TASK-24300
 title: >-
-  Console emptiness checks deep-copy the whole transcript, making typing O(N) in messages
+  Console emptiness checks deep-copy the whole transcript, making typing O(N) in
+  messages
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:30'
+updated_date: '2026-09-28 03:24'
 labels:
   - performance
   - console
   - chat
-priority: high
 dependencies: []
+priority: high
 ---
 
 ## Description
@@ -37,7 +39,6 @@ snapshot N messages in order to walk backwards and usually stop at the first mat
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [x] #1 A session-emptiness question is answerable without allocating a snapshot of the transcript
 - [x] #2 The four predicate call sites no longer materialise message snapshots
@@ -46,6 +47,7 @@ snapshot N messages in order to walk backwards and usually stop at the first mat
 - [x] #5 A guard fails if a predicate-shaped use of the snapshot API returns to the keystroke path
 - [x] #6 Mounted typing with a settled 400-message transcript performs constant transcript/context/cost projection work per key, with an unchanged-tick census that fails on any full-history walk
 - [x] #7 Context and spend displays remain exact after append, edit, branch switch, streaming, and usage attached after a terminal answer
+- [x] #8 Context and spend projections refresh when provider continuation publication changes assistant history eligibility or final content
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,6 +60,7 @@ snapshot N messages in order to walk backwards and usually stop at the first mat
 5. Add a store-owned projection revision that advances on transcript/payload, streaming, and late usage mutations. Keep screen-owned settled context and cost aggregates keyed to that revision and session/settings identity; count draft text as a separate incremental contribution.
 6. Test invalidation and display parity for late terminal usage, edits, and branch changes. Run focused mounted/projection/store tests and lint only.
 7. Rebase integration: preserve dev's one-second active-stream context estimate bound with a constant-time key checked before transcript materialization; retain immediate draft/payload/settings/run-owner invalidation and test the combined cache behavior.
+8. Independent review fixes: prove warm history invalidates on ordinary and dispatch provider-continuation publication, then advance the display revision at those publication points. Preserve lazy tokenizer import and character-estimate fallback when an installed tokenizer cannot import. Run failing regressions before source fixes and scoped verification afterward; retain the recorded mounted census because unchanged typing behavior is unaffected.
 
 ADR required: yes
 ADR path: backlog/decisions/190-console-incremental-display-projections.md
@@ -129,4 +132,11 @@ The final strengthened post-rebase two-app gate passed (384.60 s; 382.96 s call)
 
 Post-rebase static evidence: modified test files passed Ruff, eight full files plus the added gateway-method range passed formatting, source undefined-name checks and the edited context-method range passed, and `git diff --check` passed. The cost-chip helper file retains three pre-existing assertion formatting differences outside the edits. No full test sweep was run. ADR-190 was rechecked against the actual decisions trees on all 24 live PR heads and live dev `3af9f9121d27d3dd637ebdd345afae7b9d67ef11`: no collision. This branch remains based on the requested `7cda012822` for independent review and has not been pushed.
 
+Independent review corrections (2026-09-27): a materialized assistant prefix followed by an ordinary ToolBatchReady event kept the display revision at 8, leaving cached request history eligible while the fresh lifecycle projection excluded the active continuation. FinalContinuation also changed eligibility/content without invalidating the cache. Both ordinary publication and committed dispatch handoff now advance the display revision when live fields are published, including before a separate durability barrier can report failure. The screen cache and one-second streaming TTL are unchanged.
+
+Four regressions failed before the source fixes: warm ordinary ToolBatchReady and FinalContinuation (8 > 8), committed dispatch handoff (2 > 2), and installed tokenizer metadata with a deferred ImportError. All four passed after the fixes (7.47 s). The tokenizer import is inside the existing encoding error boundary, preserving character estimation when an optional native dependency cannot load.
+
+Fresh focused verification: 46 tests passed in 21.65 s across the store count, default-settings memo, context parity, display history, config-path memo, lazy tokenizer, selected deferred persistence, continuation ownership/durability and dispatch failure/settlement cases. Full checks passed for the two edited regression files; source undefined-name checks, edited source/handoff format ranges and git diff --check passed. Reports: D:/Codex-UAT/pr2196-review-fixes/{red,green,focused}.xml. No full suite or long mounted cohort was repeated. The recorded mounted exact-census/cost results remain evidence on 6c98a43a8a329ce0b14bfee7ecc3fd8a7abb3f10, distinct from these fresh review-fix runs.
+
+ADR required: no new ADR. Existing ADR-190 governs continuation display invalidation; the tokenizer change restores the existing optional-import fallback without a new runtime boundary. Added the materialized-baseline lesson in backlog/docs/lessons-testing-evidence.md. Task remains In Progress pending final integration review, push and protected CI.
 <!-- SECTION:NOTES:END -->

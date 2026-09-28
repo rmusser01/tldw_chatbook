@@ -1,15 +1,17 @@
 ---
 id: TASK-24305
 title: >-
-  tiktoken is imported on the first line of every cold start, outside every boot budget
+  tiktoken is imported on the first line of every cold start, outside every boot
+  budget
 status: Done
 assignee: []
 created_date: '2026-08-28 23:30'
+updated_date: '2026-09-28 03:24'
 labels:
   - performance
   - boot
-priority: medium
 dependencies: []
+priority: medium
 ---
 
 ## Description
@@ -79,4 +81,6 @@ every guard in the repo. Profiling was the only way this was findable.
 Files: `__init__.py`, `Utils/tiktoken_runtime.py`, `Utils/token_counter.py`,
 `Chunking/engine/strategies/semantic.py`, `Chunking/engine/strategies/tokens.py`,
 `Subscriptions/token_manager.py`, `Tests/Utils/test_tiktoken_runtime_lazy.py` (new).
+
+Integration correction (2026-09-27): the historical find_spec description above no longer describes the integrated probe. Utils/token_counter.py now checks importlib.metadata.version("tiktoken") without importing the package or consuming the bundled-runtime finder inherited from dev. Metadata proves installation, not importability; the deferred import is guarded by the encoding error boundary so a missing native dependency still uses the conservative character estimator. A subprocess regression supplies installed metadata and forces ImportError, then verifies both direct counting and framed message counting. It failed before the guard and passed afterward; the bundled-hook and failed-first-import rearming tests also pass in the fresh 46-case focused run. This routine fallback repair introduces no new dependency/runtime boundary; no new ADR is required. The existing lazy-runtime evidence remains historical and the new evidence is recorded under TASK-24300.
 <!-- SECTION:NOTES:END -->

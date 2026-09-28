@@ -69,3 +69,29 @@ def test_failed_first_import_rearms_bundled_runtime() -> None:
         "assert os.environ['TIKTOKEN_CACHE_DIR'].endswith('tiktoken_cache')\n"
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_installed_tokenizer_import_failure_uses_character_fallback() -> None:
+    """Installed metadata cannot turn a broken optional import into a failed count."""
+    result = _run_child(
+        "import builtins, importlib.metadata\n"
+        "real_version = importlib.metadata.version\n"
+        "importlib.metadata.version = lambda name: '0.9.0' if name == 'tiktoken' "
+        "else real_version(name)\n"
+        "from tldw_chatbook.Utils import token_counter\n"
+        "assert token_counter.TIKTOKEN_AVAILABLE\n"
+        "token_counter.CUSTOM_TOKENIZERS_AVAILABLE = False\n"
+        "real_import = builtins.__import__\n"
+        "def broken_tokenizer(name, *args, **kwargs):\n"
+        "    if name == 'tiktoken':\n"
+        "        raise ImportError('native tokenizer dependency cannot load')\n"
+        "    return real_import(name, *args, **kwargs)\n"
+        "builtins.__import__ = broken_tokenizer\n"
+        "try:\n"
+        "    assert token_counter.count_tokens_tiktoken('hi', 'gpt-4o') == 1\n"
+        "    assert token_counter.count_tokens_messages("
+        "[{'role': 'user', 'content': 'hi'}], 'gpt-4o', 'openai') == 8\n"
+        "finally:\n"
+        "    builtins.__import__ = real_import\n"
+    )
+    assert result.returncode == 0, result.stderr
