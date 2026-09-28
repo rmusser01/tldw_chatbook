@@ -24,8 +24,10 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_artifacts_dreams_rows import _settle_artifacts_refreshes
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Dreams.dreams_view import list_recent_dreams
 from tldw_chatbook.Library.collections_capture_models import CollectionsCaptureError
+from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.UI.Screens.artifacts_dreams_modal import DreamsStoryModal
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 
@@ -128,6 +130,18 @@ def _button_labels(widget) -> str:
         for button in widget.query(Button)
         if button.display and button.label is not None
     )
+
+
+def _subs_stack(tmp_path):
+    """A real SubscriptionsDB + watchlists service for the track action."""
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "track-modal")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    return db, service
+
+
+def _sub_count(subs_db) -> int:
+    with subs_db.connection() as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0])
 
 
 class _ModalApp(App):
@@ -421,6 +435,127 @@ async def test_ingest_without_capture_backend_degrades_to_notice(tmp_path):
         assert app.screen is modal, "a refused action must not dismiss or crash"
 
 
+# --- Track this page (Phase 2 Task 3) ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_track_on_http_story_records_feedback_and_notifies(
+    tmp_path, monkeypatch
+):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    subs_db, service = _subs_stack(tmp_path)
+    # ``create_source`` -> ``add_subscription`` freezes the subscriptions
+    # auto-pause default through the guarded config loader, which fails
+    # closed under the per-test config sandbox (see Tests/conftest.py's
+    # TASK-32873 notes); serve the default directly like the Dreams track
+    # service tests do.
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    # Same for the Dreams settings accessor (cap + min interval reads).
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == ["tracked"]
+        tracked = db.list_tracked_items()
+        assert len(tracked) == 1
+        assert tracked[0]["mechanism"] == "page"
+        assert tracked[0]["origin_story_id"] == story["id"]
+        assert tracked[0]["subscription_id"] is not None
+        assert _sub_count(subs_db) == 1, "the watched page became a subscription"
+        assert changed == [1], "on_changed fires exactly once after success"
+        assert any("created" in n.message for n in app._notifications), (
+            "the notice must carry the created|attached outcome word"
+        )
+        assert app.screen is modal, "track keeps the modal open"
+
+
+@pytest.mark.asyncio
+async def test_track_cap_reached_is_a_notice_and_writes_nothing(
+    tmp_path, monkeypatch
+):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    subs_db, service = _subs_stack(tmp_path)
+    # Deterministic [dreams] settings: a cap of one, already consumed.
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default: (
+            1 if key == "tracked_item_cap" else default
+        ),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    db.create_tracked_item(mechanism="question", intent="topic", cadence_seconds=3600)
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == [], (
+            "a refused track records no tracked feedback"
+        )
+        assert len(db.list_tracked_items()) == 1, "the cap blocked a new item"
+        assert _sub_count(subs_db) == 0, "guard-first: no subscription either"
+        assert changed == [], "on_changed must not fire for a refusal"
+        assert app.screen is modal, "a cap refusal must not dismiss or crash"
+
+
+@pytest.mark.asyncio
+async def test_track_without_subs_service_degrades_to_notice(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == []
+        assert db.list_tracked_items() == []
+        assert app.screen is modal, "a refused action must not dismiss or crash"
+
+
 def _seed_llm_story_db(tmp_path) -> DreamsDB:
     """One llm-source story: its URL is the synthetic dreams:// scheme."""
     db = DreamsDB(tmp_path / "dreams-llm.sqlite", "dreams-modal")
@@ -464,18 +599,22 @@ async def test_llm_story_does_not_offer_ingest_anywhere(tmp_path):
 
         labels = _button_labels(modal)
         assert "Ingest" not in labels, "dreams:// rows must not offer Ingest"
+        assert "Track this" not in labels, "dreams:// rows have no URL to watch"
         for word in ("Keep", "Dive deeper", "Export", "More like this",
                      "Less like this", "Close"):
             assert word in labels, f"http-only gate must not hide {word!r}"
         hints = _renderable_text(
             modal.query_one("#dsm-hints", Static).renderable)
         assert "Ingest" not in hints, "hints must not advertise a gated action"
+        assert "Track this" not in hints, "hints must not advertise a gated action"
 
-        # The keyboard binding is guarded too: pressing i writes nothing.
+        # The keyboard binding is guarded too: pressing i or t writes nothing.
         await pilot.press("i")
+        await pilot.press("t")
         await pilot.pause()
         assert backend.requests == []
         assert _feedback_kinds(db, story["id"]) == []
+        assert db.list_tracked_items() == [], "no tracked item for a URL-less row"
         assert changed == []
         assert app.screen is modal, "a refused ingest must not dismiss"
 
@@ -496,16 +635,18 @@ async def test_http_story_still_offers_ingest(tmp_path):
         await pilot.pause()
 
         assert "Ingest" in _button_labels(modal)
+        assert "Track this" in _button_labels(modal)
         hints = _renderable_text(
             modal.query_one("#dsm-hints", Static).renderable)
         assert "i Ingest" in hints
+        assert "t Track this" in hints
 
 
 # --- Modal surface ----------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_advertise_exactly_the_eight_actions(tmp_path):
+async def test_footer_hints_advertise_exactly_the_nine_actions(tmp_path):
     db = _seed_db(tmp_path)
     story = _story_row(db)
     app = App()
@@ -525,13 +666,14 @@ async def test_footer_hints_advertise_exactly_the_eight_actions(tmp_path):
             "Dive deeper",
             "Export",
             "Ingest",
+            "Track this",
             "More like this",
             "Less like this",
             "Goals & privacy",
             "Close",
         ):
             assert word in hints, f"hint must advertise {word!r}"
-        for word in ("Track", "Delete", "Cast", "Regenerate", "Share"):
+        for word in ("Delete", "Cast", "Regenerate", "Share"):
             assert word not in hints, f"hint must not advertise {word!r}"
 
 
@@ -631,6 +773,7 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
             "Dive deeper",
             "Export",
             "Ingest",
+            "Track this",
             "More like this",
             "Less like this",
         ):
@@ -642,6 +785,7 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
             "Dive deeper",
             "Export",
             "Ingest",
+            "Track this",
             "More like this",
             "Less like this",
         ):
@@ -649,11 +793,13 @@ async def test_synthetic_failed_cycle_row_is_close_only_status_view(tmp_path):
 
         await pilot.press("k")  # inert on a synthetic row
         await pilot.press("i")  # ingest is equally inert
+        await pilot.press("t")  # and track too
         await pilot.pause()
         with db.connection() as conn:
             feedback_rows = conn.execute("SELECT COUNT(*) FROM dream_feedback").fetchone()
         assert int(feedback_rows[0]) == 0, "no action may write for a synthetic row"
         assert backend.requests == [], "no action may capture for a synthetic row"
+        assert db.list_tracked_items() == [], "no tracked item for a synthetic row"
         assert app.screen is modal
 
         await pilot.press("q")

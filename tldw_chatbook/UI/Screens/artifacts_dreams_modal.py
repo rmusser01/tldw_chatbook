@@ -6,8 +6,10 @@ queries, and the action set -- keep/unkeep, dive deeper (stage a
 ``ChatHandoffPayload`` into Chat), export to Markdown, ingest into the
 read-it-later capture queue (Task 8, via
 ``Dreams.ingest_action.ingest_story_url`` bound to the app's capture
-service), more/less feedback, goals & privacy (Phase 2 Task 1: pushes
-``DreamsGoalsModal``), close.
+service), track this page into the watchlists loop (Phase 2 Task 3, via
+``Dreams.track_service.track_page`` bound to the app's
+``LocalWatchlistsService``), more/less feedback, goals & privacy
+(Phase 2 Task 1: pushes ``DreamsGoalsModal``), close.
 
 Modal structure follows this stream's own modal idioms:
 
@@ -36,10 +38,12 @@ stays inspectable -- but offers Close only: every story action is a
 silent no-op, the hint line advertises Close only, and nothing is ever
 written for a row with no ``dream_stories`` id behind it.
 
-**Ingest is http(s)-only.** LLM-knowledge stories (``dreams://llm/…`` URLs)
-have no web destination for the read-it-later queue, so their modal hides
-the Ingest button, drops it from the hint line, and the ``i`` keybinding
-degrades to a gentle notice instead of submitting a doomed capture.
+**Ingest and Track are http(s)-only.** LLM-knowledge stories
+(``dreams://llm/…`` URLs) have no web destination for the read-it-later
+queue and no page for the watchlists loop to watch, so their modal hides
+the Ingest/Track buttons, drops them from the hint line, and the ``i``/
+``t`` keybindings degrade to a gentle notice instead of submitting a
+doomed capture or a URL-less track.
 
 **All writes are single-row instant SQLite calls** made directly in the
 action handlers (controller ruling, mirroring the kept-briefings modal):
@@ -108,6 +112,15 @@ _UNCONFIRMED_INGEST_NOTICE = (
 )
 _NO_HTTP_URL_NOTICE = (
     "This story has no web URL to ingest."
+)
+_NO_HTTP_URL_TRACK_NOTICE = (
+    "This story has no web URL to track."
+)
+_NO_TRACK_BACKEND_NOTICE = (
+    "Page tracking is unavailable in this runtime."
+)
+_TRACK_CAP_NOTICE = (
+    "Tracking budget is full: retire a tracked page before adding more."
 )
 
 
@@ -228,6 +241,12 @@ class DreamsStoryModal(ModalScreen[None]):
             a ``CollectionsCaptureBackend``) or ``None``; called lazily at
             action time so the Ingest action degrades to a notice rather
             than crashing a runtime without the capture service.
+        subs_service_getter: Zero-arg callable returning the app's
+            ``LocalWatchlistsService`` or ``None``; called lazily at action
+            time so the Track action (Phase 2 Task 3, via
+            ``Dreams.track_service.track_page``) degrades to a notice rather
+            than crashing a runtime without the watchlists service. ``None``
+            (the default) keeps older constructors working.
         on_changed: Zero-arg callback fired after every mutating action;
             the Artifacts screen re-reads its Dreams rows.
     """
@@ -237,12 +256,13 @@ class DreamsStoryModal(ModalScreen[None]):
         ("d", "dive", "Dive deeper"),
         ("e", "export", "Export"),
         ("i", "ingest", "Ingest"),
+        ("t", "track", "Track this"),
         ("m", "more", "More like this"),
         ("l", "less", "Less like this"),
         ("g", "goals", "Goals & privacy"),
         ("q", "close", "Close"),
         # Hidden: Escape is the safe-dismissal grammar (task-16211), not a
-        # footer-advertised action -- the hint line stays exactly the eight.
+        # footer-advertised action -- the hint line stays exactly the nine.
         Binding("escape", "close", "Close", show=False),
     )
 
@@ -265,14 +285,17 @@ class DreamsStoryModal(ModalScreen[None]):
         dreams_db_getter: Callable[[], Any],
         capture_backend_getter: Callable[[], Any],
         on_changed: Callable[[], None],
+        subs_service_getter: Callable[[], Any] | None = None,
     ) -> None:
         super().__init__()
         self._story = dict(story)
         self._synthetic = bool(story.get("synthetic"))
         self._dreams_db_getter = dreams_db_getter
         self._capture_backend_getter = capture_backend_getter
+        self._subs_service_getter = subs_service_getter
         self._on_changed = on_changed
         self._ingest_in_flight = False
+        self._track_in_flight = False
 
     # --- Compose ---------------------------------------------------------
 
@@ -300,6 +323,12 @@ class DreamsStoryModal(ModalScreen[None]):
                         yield Button(
                             "Ingest (i)", id="dsm-ingest-button", compact=True
                         )
+                        # Tracking watches the same web destination Ingest
+                        # captures, so it rides the same http(s) gate: a
+                        # dreams://llm row has no URL to watch.
+                        yield Button(
+                            "Track this (t)", id="dsm-track-button", compact=True
+                        )
                     yield Button(
                         "More like this (m)", id="dsm-more-button", compact=True
                     )
@@ -308,9 +337,10 @@ class DreamsStoryModal(ModalScreen[None]):
                     )
                 yield Button("Close (q)", id="dsm-close-button", compact=True)
             # ADR-031 rule 4: the hint line advertises EXACTLY the
-            # implemented actions -- all eight for a story with an http(s)
+            # implemented actions -- all nine for a story with an http(s)
             # URL, Close only for a synthetic failed-cycle row, and no
-            # Ingest for a dreams://llm row whose action is gated off.
+            # Ingest/Track for a dreams://llm row whose actions are gated
+            # off.
             yield Static(self._hints_text(), id="dsm-hints")
 
     def _hints_text(self) -> Text:
@@ -318,7 +348,7 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._synthetic:
             hints.append("k Keep · d Dive deeper · e Export")
             if _ingestable(self._story):
-                hints.append(" · i Ingest")
+                hints.append(" · i Ingest · t Track this")
             hints.append(" · m More like this · l Less like this · "
                          "g Goals & privacy · ")
         hints.append("q Close")
@@ -382,6 +412,15 @@ class DreamsStoryModal(ModalScreen[None]):
         try:
             return self._capture_backend_getter()
         except Exception:  # noqa: BLE001 - a broken getter is a missing backend
+            return None
+
+    def _track_service(self) -> Any:
+        """The app's watchlists service for the track action, or ``None``."""
+        if self._subs_service_getter is None:
+            return None
+        try:
+            return self._subs_service_getter()
+        except Exception:  # noqa: BLE001 - a broken getter is a missing service
             return None
 
     def _story_id(self) -> int | None:
@@ -592,6 +631,76 @@ class DreamsStoryModal(ModalScreen[None]):
         self.notify(f"Ingested to read-it-later ({identifier}).", markup=False)
         self._changed()
 
+    async def action_track(self) -> None:
+        """Attach-or-create the page watch (Phase 2 Task 3), then record.
+
+        Guards mirror ``action_ingest``: synthetic rows and ``dreams://llm``
+        rows (no web URL to watch) are refused notices, a second press while
+        the async track is in flight is ignored, and a missing watchlists
+        service degrades to a notice. ``TrackCapReached`` refuses BEFORE any
+        write (the service's cap guard is first), so no feedback, no
+        refresh; success records ``tracked`` feedback, fires ``on_changed``,
+        and the notice carries the created|attached outcome word.
+        """
+        if self._synthetic:
+            self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
+            return
+        if not _ingestable(self._story):
+            # dreams://llm rows have no page to watch; the button and hint
+            # are already hidden for them, this guard covers the "t" key.
+            self.notify(_NO_HTTP_URL_TRACK_NOTICE, severity="information",
+                        markup=False)
+            return
+        if self._track_in_flight:
+            # The whole track chain is async: a second press while it is
+            # awaited would double-create the wrapper.
+            return
+        subs_service = self._track_service()
+        db = self._db()
+        story_id = self._story_id()
+        if subs_service is None or db is None or story_id is None:
+            self.notify(_NO_TRACK_BACKEND_NOTICE, severity="warning",
+                        markup=False)
+            return
+        # Lazy Dreams import (same pattern as ``action_ingest``).
+        from ...Dreams.track_service import TrackCapReached, track_page
+
+        # The story's kind maps onto the tracked-item intent vocabulary
+        # ('event'/'deal' pass through; everything else is a topic watch).
+        intent = {"event": "event", "deal": "deal"}.get(
+            str(self._story.get("kind") or ""), "topic"
+        )
+        self._track_in_flight = True
+        try:
+            result = await track_page(
+                subs_service,
+                db,
+                url=str(self._story.get("url") or ""),
+                title=str(self._story.get("title") or "Untitled dream story"),
+                intent=intent,
+                event_date=self._story.get("event_date") or None,
+                origin_story_id=story_id,
+            )
+        except TrackCapReached:
+            self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except Exception as exc:  # noqa: BLE001 - a failed track is a notice
+            logger.warning(f"Dreams track failed: {type(exc).__name__}")
+            self.notify(
+                f"Could not track this story: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
+            return
+        finally:
+            self._track_in_flight = False
+        if not self._record_feedback("tracked"):
+            return
+        # "created"/"attached" is the service's fixed outcome word, never
+        # story-derived text, so this notice never parses markup.
+        self.notify(f"Tracking this page ({result['outcome']}).", markup=False)
+        self._changed()
+
     def action_more(self) -> None:
         """Record ``more`` feedback, notify, dismiss."""
         if self._synthetic:
@@ -655,6 +764,7 @@ class DreamsStoryModal(ModalScreen[None]):
             "dsm-dive-button": self.action_dive,
             "dsm-export-button": self.action_export,
             "dsm-ingest-button": self.action_ingest,
+            "dsm-track-button": self.action_track,
             "dsm-more-button": self.action_more,
             "dsm-less-button": self.action_less,
             "dsm-close-button": self.action_close,
@@ -662,7 +772,7 @@ class DreamsStoryModal(ModalScreen[None]):
         handler = dispatch.get(button_id)
         if handler is not None:
             result = handler()
-            # ``action_ingest`` is async (the capture entry is); the rest
-            # return None immediately.
+            # ``action_ingest``/``action_track`` are async (the capture and
+            # track entries are); the rest return None immediately.
             if inspect.isawaitable(result):
                 await result
