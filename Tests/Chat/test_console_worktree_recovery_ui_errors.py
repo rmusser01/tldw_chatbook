@@ -149,3 +149,60 @@ async def test_picker_failure_is_contained(monkeypatch, tmp_path, failure, stale
         await helper.close()
         capacity.close()
         logger.remove(log_sink)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "drift, notified",
+    [(None, True), ("view", False), ("session", False), ("conversation", False)],
+)
+async def test_start_failure_maps_to_bounded_notice(monkeypatch, drift, notified):
+    """A raising ``helper.start`` notifies only the still-owning view (no mounted app).
+
+    Args:
+        monkeypatch: Swaps the picker dialog for a plain callback capture.
+        drift: Which ownership condition changes before the failure lands.
+        notified: Whether the bounded failure copy should reach the screen.
+    """
+    import tldw_chatbook.Widgets.Chat_Widgets.worktree_recovery_dialog as dialog_module
+
+    monkeypatch.setattr(
+        dialog_module, "WorktreeRecoveryDialog", lambda page, busy: object()
+    )
+    intent = SimpleNamespace(persisted_conversation_id="conversation")
+    controller = SimpleNamespace(
+        store=SimpleNamespace(active_session_id="session"),
+        capture_worktree_recovery_intent=lambda session: intent,
+    )
+
+    async def listed(*args):
+        return SimpleNamespace(conversation_id="conversation")
+
+    async def failing_start(*args):
+        raise RuntimeError("injected start failure")
+
+    helper = SimpleNamespace(list_work=listed, start=failing_start, operations={})
+    callbacks, workers, notifications = [], [], []
+    screen = SimpleNamespace(
+        app=SimpleNamespace(push_screen=lambda dialog, cb: callbacks.append(cb)),
+        run_worker=workers.append,
+        notify=notifications.append,
+    )
+    runtime = SimpleNamespace(
+        chat_controller=controller, worktree_recovery=helper, view=screen
+    )
+    screen._console_runtime = lambda: runtime
+
+    await open_recovery(screen)
+    callbacks[0](("run", "restore"))
+    if drift == "view":
+        runtime.view = object()
+    elif drift == "session":
+        controller.store.active_session_id = "other"
+    elif drift == "conversation":
+        intent.persisted_conversation_id = "other"
+    await workers[0]
+
+    assert notifications == (
+        [recovery_module.RECOVERY_FAILED_MESSAGE] if notified else []
+    )
