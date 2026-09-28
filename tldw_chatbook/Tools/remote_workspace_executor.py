@@ -1364,6 +1364,9 @@ class RemoteWorkspaceToolExecutor:
                 idle_s=settings.session_idle_s + cfg.transport.grace_seconds,
                 cache=settings.bundle_cache,
                 spawn=cfg.session_spawn,
+                # The start is part of this call: it may not outlive the
+                # call's own budget (same deadline as a one-shot handshake).
+                handshake_timeout=budget + cfg.transport.grace_seconds,
             )
 
         with _host_semaphore(cfg.resolved_host_key(), cfg.max_concurrent_calls):

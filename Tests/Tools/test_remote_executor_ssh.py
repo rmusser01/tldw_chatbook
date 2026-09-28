@@ -69,7 +69,7 @@ from tldw_chatbook.Tools.remote_workspace_executor import (
     _bundle_payload,
     parse_fs_read_stamps,
 )
-from tldw_chatbook.Tools.remote_workspace_transport import SshMasterManager
+from tldw_chatbook.Tools.remote_workspace_transport import SshMasterManager, TransportFailureKind
 
 #: The fake ssh, generated per test. The per-call path reconstructs
 #: ssh's remote-command flattening from its OWN argv (join the
@@ -948,3 +948,28 @@ def test_transport_start_failure_without_a_typed_failure_is_unreachable(
     assert status.state == BindingState.BLOCKED
     assert env.fake.call_invocations() == []
     assert sessions.spawns == []
+
+
+def test_session_start_against_a_silent_host_is_bounded_by_the_call_budget(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    """TASK-33400: the handshake gives up at budget + grace, not after 30 s."""
+    import subprocess
+
+    def silent(ssh_argv: list[str]) -> subprocess.Popen[bytes]:
+        proc = subprocess.Popen(
+            ["sh", "-c", "exec sleep 30"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        sessions.spawns.append(proc)
+        return proc
+
+    sessions.spawn = silent
+    executor = _session_executor(env, sessions, budget_seconds=1.0, grace=0.5)
+    started = time.monotonic()
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(executor)
+    assert time.monotonic() - started < 8
+    assert raised.value.code == TransportFailureKind.UNREACHABLE.value

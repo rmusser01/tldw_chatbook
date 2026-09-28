@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable
 
 from loguru import logger
@@ -23,6 +24,10 @@ class RemoteSessionRegistry:
         self._sessions: dict[tuple[str, str], RemoteSessionWorker] = {}
         self._disabled: set[tuple[str, str]] = set()
         self._restarted: set[tuple[str, str]] = set()
+        #: Last transport-class start failure per key, with the monotonic
+        #: time it happened: callers that queued behind that start share it
+        #: instead of each paying another connect timeout (TASK-33400).
+        self._start_failures: dict[tuple[str, str], tuple[float, SessionStartError]] = {}
         # R12: insertion-ordered tombstones of closed run keys (bounded).
         self._closed_keys: dict[str, None] = {}
         #: Set once by close_all (app shutdown): every later acquire is one-shot.
@@ -42,6 +47,7 @@ class RemoteSessionRegistry:
         Raises:
             SessionStartError: transport-class start failure (caller records it).
         """
+        entered = time.monotonic()
         with self._lock:
             if self._shutdown:
                 return None
@@ -56,6 +62,12 @@ class RemoteSessionRegistry:
                 worker = self._sessions.get(key)
                 if worker is not None and worker.alive:
                     return worker
+                failed = self._start_failures.get(key)
+            if failed is not None and failed[0] >= entered:
+                # This caller queued behind a start that failed
+                # transport-class: share that failure (a fresh exception per
+                # thread) rather than start again against the same dead host.
+                raise SessionStartError(failed[1].transport, failed[1].failure, str(failed[1]))
             # ended_cleanly() may wait for the reap: outside the global lock.
             if worker is not None and not worker.ended_cleanly():
                 # Died mid-run: one restart, then fall back. A clean end
@@ -86,8 +98,11 @@ class RemoteSessionRegistry:
                     return None
                 kind = error.failure.kind.value if error.failure else "unknown"
                 logger.debug(f"ssh session worker start failed (transport): {kind}")
+                with self._lock:
+                    self._start_failures[key] = (time.monotonic(), error)
                 raise
             with self._lock:
+                self._start_failures.pop(key, None)
                 closed_meanwhile = self._shutdown or key[0] in self._closed_keys
                 if not closed_meanwhile:
                     self._sessions[key] = worker
@@ -108,6 +123,9 @@ class RemoteSessionRegistry:
             workers = [self._sessions.pop(k) for k in keys]
             self._disabled = {k for k in self._disabled if k[0] != session_key}
             self._restarted = {k for k in self._restarted if k[0] != session_key}
+            self._start_failures = {
+                k: v for k, v in self._start_failures.items() if k[0] != session_key
+            }
             self._key_locks = {k: v for k, v in self._key_locks.items() if k[0] != session_key}
         for worker in workers:
             worker.close()
@@ -118,6 +136,7 @@ class RemoteSessionRegistry:
             self._shutdown = True
             workers = list(self._sessions.values()); self._sessions.clear()
             self._disabled.clear(); self._restarted.clear(); self._key_locks.clear()
+            self._start_failures.clear()
         for worker in workers:
             worker.close()
 

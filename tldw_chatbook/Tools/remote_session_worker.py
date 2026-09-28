@@ -159,6 +159,9 @@ class RemoteSessionWorker:
         idle_s: Host-side idle exit sent in HELLO.
         cache: Whether the loader may use its ``$XDG_RUNTIME_DIR`` cache.
         spawn: Test seam replacing the ssh ``Popen``; receives the ssh argv.
+        handshake_timeout: Caps the handshake wall-clock ceiling: ``None``
+            means the module's ``_HANDSHAKE_TIMEOUT_S`` (30 s), a number is
+            capped at it (a call's own budget may never outlive it).
     """
 
     def __init__(
@@ -171,6 +174,7 @@ class RemoteSessionWorker:
         idle_s: float,
         cache: bool,
         spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None,
+        handshake_timeout: float | None = None,
     ) -> None:
         self._loc = loc
         self._transport = transport
@@ -178,6 +182,8 @@ class RemoteSessionWorker:
         self._max_children = max_children
         self._idle_s = idle_s
         self._cache = cache
+        self._handshake_timeout = handshake_timeout
+        self._handshake_limit = _HANDSHAKE_TIMEOUT_S
         self._spawn = spawn or (
             lambda argv: subprocess.Popen(
                 argv,
@@ -252,6 +258,23 @@ class RemoteSessionWorker:
             )
             raise SessionStartError(True, failure, "ssh could not be run") from None
         self._proc = proc
+        try:
+            self._handshake(proc, loader=loader, compressed=compressed, artifact=artifact)
+        except SessionStartError:
+            self._abandon_start()
+            raise
+        except OSError:
+            # A local pipe error outside the classified paths: nothing can
+            # be said about the host, so fall back to one-shot for the run.
+            self._abandon_start()
+            raise SessionStartError(False, None, "session start failed: local pipe error") from None
+        except BaseException:
+            self._abandon_start()
+            raise
+
+    def _handshake(
+        self, proc: subprocess.Popen[bytes], *, loader: bytes, compressed: bytes, artifact
+    ) -> None:
         # Every write is select-bounded (see _write): a stalled remote can
         # never wedge a writer, and so never the write lock.
         os.set_blocking(proc.stdin.fileno(), False)  # type: ignore[union-attr]
@@ -262,7 +285,11 @@ class RemoteSessionWorker:
 
         bundle_hash = hashlib.sha256(compressed).hexdigest()
         header = json.dumps({"hash": bundle_hash, "cache": self._cache}).encode() + b"\n"
-        deadline = time.monotonic() + _HANDSHAKE_TIMEOUT_S
+        limit = _HANDSHAKE_TIMEOUT_S
+        if self._handshake_timeout is not None:
+            limit = min(self._handshake_timeout, limit)
+        deadline = time.monotonic() + limit
+        self._handshake_limit = limit
         try:
             # LOCKSTEP: after each write, send nothing until the loader answers.
             self._handshake_write(loader + header, deadline)
@@ -295,6 +322,24 @@ class RemoteSessionWorker:
         logger.debug(
             "ssh session worker started; bundle cache {}", "hit" if cache_hit else "miss"
         )
+
+    def _abandon_start(self) -> None:
+        """Leave nothing behind after a failed start: reap ssh, close its pipes."""
+        self._kill_and_reap()
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(_CLOSE_WAIT_S)
+        proc = self._proc
+        if proc is None:
+            return
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is None:
+                continue
+            if stream is proc.stderr and self._stderr_thread is not None and self._stderr_thread.is_alive():
+                continue  # still read by the drain thread: left to GC, never closed under it
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def _drain_stderr(self) -> None:
         stream = self._proc.stderr if self._proc else None
@@ -364,7 +409,7 @@ class RemoteSessionWorker:
             exit_code=exit_code,
             admitted=False,
             admitted_at=None,
-            budget=_HANDSHAKE_TIMEOUT_S,
+            budget=self._handshake_limit,
             killed=killed and ended.stalled,
             noise_capped=ended.noise,
             stderr=self._stderr.value(),

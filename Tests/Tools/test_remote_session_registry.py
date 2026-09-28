@@ -285,3 +285,38 @@ def test_shutdown_singleton_part_2_next_test_gets_a_working_registry():
     assert not reg._shutdown
     assert reg.acquire(("run-x", "b1"), FakeWorker) is not None
     reg.close_key("run-x")
+
+
+def test_waiters_share_one_transport_start_failure():
+    """A dead host costs one start, not one per queued caller (TASK-33400)."""
+    reg = RemoteSessionRegistry()
+    creates = []
+    release = threading.Event()
+    entered = threading.Barrier(5)
+
+    def create():
+        creates.append(1)
+        return FakeWorker(
+            start_error=SessionStartError(True, None, "255"),
+            start_hook=lambda: release.wait(5),
+        )
+
+    errors = []
+
+    def caller():
+        entered.wait(5)
+        try:
+            reg.acquire(("run-1", "b1"), create)
+        except SessionStartError as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=caller) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    entered.wait(5)
+    time.sleep(0.3)  # all four are inside acquire: one starting, three queued
+    release.set()
+    for thread in threads:
+        thread.join(10)
+    assert len(creates) == 1
+    assert len(errors) == 4 and all(error.transport for error in errors)

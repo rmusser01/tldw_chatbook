@@ -88,6 +88,7 @@ def worker_factory(monkeypatch):
         cache: bool = False,
         grace: float = 1.0,
         max_children: int = 4,
+        handshake_timeout: float | None = None,
     ):
         if expected_stamp is not None:
             monkeypatch.setattr(worker_module, "expected_bundle_stamp", lambda _data: expected_stamp)
@@ -115,6 +116,7 @@ def worker_factory(monkeypatch):
             idle_s=30,
             cache=cache,
             spawn=spawn,
+            handshake_timeout=handshake_timeout,
         )
         workers.append(worker)
         return worker, spawns
@@ -605,3 +607,37 @@ def test_host_refusal_status_maps_to_op_timeout(worker_factory):
     result = worker._result(pending, 5.0, killed=False)
     assert not result.admitted
     assert result.failure.kind is TransportFailureKind.OP_TIMEOUT
+
+
+def test_handshake_is_bounded_by_the_call_budget(worker_factory):
+    """TASK-33400: a silent host fails at the budget, classified like one-shot."""
+    worker, _ = worker_factory(spawn_argv=["sh", "-c", "exec sleep 30"], handshake_timeout=1.0)
+    started = time.monotonic()
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert time.monotonic() - started < 6
+    assert err.value.transport is True
+    assert err.value.failure.kind is TransportFailureKind.UNREACHABLE
+
+
+def test_failed_start_reaps_ssh_and_closes_its_pipes(worker_factory):
+    worker, spawns = worker_factory(spawn_argv=["sh", "-c", "exit 255"])
+    with pytest.raises(SessionStartError):
+        worker.start()
+    proc = spawns[0]
+    assert proc.returncode is not None
+    assert proc.stdin.closed and proc.stdout.closed and proc.stderr.closed
+
+
+def test_unexpected_pipe_error_during_start_is_a_protocol_start_error(worker_factory, monkeypatch):
+    worker, spawns = worker_factory(spawn_argv=["sh", "-c", "exec sleep 30"])
+
+    def broken_read(self, deadline):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(RemoteSessionWorker, "_read_handshake_line", broken_read)
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert err.value.transport is False
+    proc = spawns[0]
+    assert proc.returncode is not None and proc.stdout.closed
