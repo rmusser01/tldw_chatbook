@@ -68,7 +68,6 @@ from ...Chat.console_exchange_capture import CaptureDetail
 from ...Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextBudgetMode,
-    ContextCarryForwardMode,
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
@@ -116,6 +115,7 @@ from ...Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
 )
 from ...Chat.console_provider_support import (
+    CARRY_FORWARD_OPTIONS,
     GENERATION_FIELD_REQUEST_KEYS,
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
@@ -15464,12 +15464,12 @@ class SettingsScreen(BaseAppScreen):
         shown = safe_endpoint_display(endpoint)
         if issue == "endpoint_missing":
             shown = "not set — enter the workspace URL in the Endpoint field"
+        elif readiness.provider_key in API_URL_PROVIDER_KEYS and not shown:
+            shown = "not set"
         elif not shown:
-            shown = (
-                "not set"
-                if readiness.provider_key in API_URL_PROVIDER_KEYS
-                else "provider default"
-            )
+            # Name the address the empty Endpoint field shows as its hint.
+            default = PROVIDER_ENDPOINT_PLACEHOLDERS.get(readiness.provider_key)
+            shown = f"{default} (provider default)" if default else "provider default"
         elif "endpoint" in dirty:
             shown += " (draft)"
         shown += {
@@ -15528,9 +15528,17 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _provider_test_headline(result: str) -> str:
-        """Return a Test result's leading row as one line (for Overview)."""
-        label, _gap, text = result.partition("\n")[0].partition("  ")
-        return f"{label}: {text.strip()}" if text else label
+        """Return a Test result's leading row, then its Endpoint row, as one
+        line (for Overview), so it says whether the endpoint was reached."""
+        rows = [line.partition("  ") for line in result.split("\n")]
+        label, _gap, text = rows[0]
+        if not text:
+            return label
+        headline = f"{label}: {text.strip()}"
+        for other, _gap, other_text in rows[1:]:
+            if other == "Endpoint" and other_text:
+                headline += f"; Endpoint: {other_text.strip()}"
+        return headline
 
     @staticmethod
     def _provider_listing_failure_copy(category: str | None) -> str:
@@ -15879,10 +15887,13 @@ class SettingsScreen(BaseAppScreen):
         if isinstance(value, str):
             # task-1583: dotted keys/paths fold at separators, never mid-word.
             value = _fold_long_tokens(value)
+        # Plain text: values name config sections like "[console]", which
+        # markup would swallow (captures: "Scope:  response fallbacks").
         row = Static(
             f"{label}: {value}",
             id=identifier,
             classes="settings-detail-row",
+            markup=False,
         )
         if tooltip is not None:
             row.tooltip = tooltip
@@ -15912,9 +15923,9 @@ class SettingsScreen(BaseAppScreen):
         return self._with_save_behavior_row(rows, save_copy)
 
     def _provider_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
-        provider = str(
-            self._provider_setting_values_mapping().get("provider") or ""
-        ).strip()
+        values = self._provider_setting_values_mapping()
+        provider = str(values.get("provider") or "").strip()
+        model = str(values.get("model") or "").strip() or "<model>"
         endpoint_key = self._provider_endpoint_row(provider).removeprefix(
             "Endpoint key: "
         )
@@ -16005,7 +16016,7 @@ class SettingsScreen(BaseAppScreen):
                     "Purpose",
                     "Defines the model's total token capacity for request safety.",
                 ),
-                ("Saved as", "model_capabilities.models.<model>.context_window"),
+                ("Saved as", f"model_capabilities.models.{model}.context_window"),
                 (
                     "Validation",
                     "positive whole tokens from the provider's model documentation",
@@ -16060,9 +16071,7 @@ class SettingsScreen(BaseAppScreen):
             name = PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
             spec = MODEL_CONFIG_FIELDS[name]
             if not self._model_profile_field_supported(
-                provider,
-                draft_key,
-                self._provider_setting_values_mapping().get("model"),
+                provider, draft_key, values.get("model")
             ):
                 return (
                     ("Focused setting", spec.label),
@@ -16079,7 +16088,7 @@ class SettingsScreen(BaseAppScreen):
             return (
                 ("Focused setting", spec.label),
                 ("Purpose", spec.help),
-                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.{name}"),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.{model}.{name}"),
                 ("Validation", f"{spec.valid_range}; blank inherits the default"),
             )
         if field_id == "settings-model-catalog-stale-hours":
@@ -17361,7 +17370,7 @@ class SettingsScreen(BaseAppScreen):
                     _pid = _provider.lower()
                     with Horizontal(classes="settings-input-row"):
                         yield Checkbox(
-                            f"{_provider}: refresh",
+                            f"{provider_display_name(_provider)}: refresh",
                             value=(
                                 _provider_key
                                 not in model_catalog_settings.auto_refresh_disabled
@@ -18732,7 +18741,8 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
-                    "Reduce context to (%)", classes="settings-input-label"
+                    MODEL_FIELD_LABELS["compaction_target_ratio"],
+                    classes="settings-input-label",
                 )
                 yield Input(
                     value=format_ratio_percent(
@@ -18777,18 +18787,12 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Keep after compaction", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["compaction_carry_forward_mode"],
+                    classes="settings-input-label",
+                )
                 yield Select(
-                    [
-                        (
-                            "Memory + recent turns",
-                            ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS.value,
-                        ),
-                        (
-                            "Memory + latest exchange",
-                            ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE.value,
-                        ),
-                    ],
+                    CARRY_FORWARD_OPTIONS,
                     value=str(
                         self._console_behavior_value("compaction_carry_forward_mode")
                     ),
@@ -18915,7 +18919,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-seed",
                     classes="settings-compact-input",
-                    placeholder="optional deterministic seed",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_seed"],
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
@@ -18977,7 +18981,9 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-thinking-budget-tokens",
                     classes="settings-compact-input",
-                    placeholder="optional tokens, min 1024",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[
+                        "model_profile_thinking_budget_tokens"
+                    ],
                     restrict=r"^[0-9]*$",
                 )
             yield Static(
@@ -31768,6 +31774,8 @@ class SettingsScreen(BaseAppScreen):
             self._set_static_text(
                 "#settings-provider-save-result", self._provider_save_result
             )
+            # The Test rows described the draft Revert just discarded.
+            self._mark_provider_test_result_stale()
             self._update_provider_dynamic_widgets()
             self._update_draft_status_widgets(category)
         else:

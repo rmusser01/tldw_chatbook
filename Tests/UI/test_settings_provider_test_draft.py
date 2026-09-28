@@ -875,6 +875,24 @@ def test_exact_evidence_copy_distinguishes_endpoint_failure_categories(
     assert dict(rows)["Config"] == "Custom is configured"
 
 
+def test_cloud_endpoint_row_names_the_default_the_field_shows():
+    """Captures flag 10: the Endpoint row said "provider default" while the
+    empty Endpoint field showed https://api.openai.com/v1."""
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("openai", app_config, environ={})
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness, display_name="OpenAI", model="gpt-4o", endpoint=""
+        )
+    )
+
+    assert rows["Endpoint"] == (
+        f"{screen._provider_endpoint_placeholder('openai')} (provider default)"
+    )
+
+
 def test_provider_edit_stale_copy_requires_a_new_configuration_check():
     copy = SettingsScreen._PROVIDER_TEST_STALE_COPY
 
@@ -1156,15 +1174,26 @@ def test_findings_keep_configuration_only_verdict_when_passing():
     assert "live generation has not been tested" in summary.lower()
 
 
-def test_overview_shows_only_the_leading_test_row():
+def test_overview_shows_the_leading_test_row_and_the_endpoint_row():
     """TASK-33002.2: Settings Overview's one-line "Last connection test" row
-    shows the result's leading row, never the whole multi-line table."""
+    shows the result's leading row, never the whole multi-line table.
+    Captures flag 10: when Config led, the row said only "Config: llama.cpp
+    is configured" and never whether the endpoint was reached, so the
+    Endpoint row follows the lead."""
     headline = SettingsScreen._provider_test_headline
 
     assert headline(
         "Endpoint    http://127.0.0.1:9099 · model listing failed (timeout)\n"
         "Config      llama.cpp is configured\nGeneration  not tested"
     ) == "Endpoint: http://127.0.0.1:9099 · model listing failed (timeout)"
+    assert headline(
+        "Config      llama.cpp is configured\nKey         not required\n"
+        "Endpoint    http://127.0.0.1:9198 · model listing reached\n"
+        "Generation  not tested"
+    ) == (
+        "Config: llama.cpp is configured; "
+        "Endpoint: http://127.0.0.1:9198 · model listing reached"
+    )
     for sentinel in (
         SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY,
         SettingsScreen._PROVIDER_TEST_STALE_COPY,
@@ -1824,3 +1853,43 @@ async def test_custom_named_credential_query_param_never_reaches_rows_or_toast(
         assert toasts, "the Test produced no toast"
         assert all("SEKRET" not in toast and "mycred" not in toast for toast in toasts)
         assert toasts[-1].startswith("Model listing failed (connection refused)")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_marks_the_discarded_drafts_test_rows_stale(request):
+    """Captures flag 1 (settings-pm-test-after-revert): the Test rows kept
+    describing a draft endpoint after Revert put the saved one back, and they
+    survived a later Save."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9"
+        await pilot.pause()
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            _reachable_endpoint_probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "model listing reached")
+        assert "http://localhost:9 (draft)" in _provider_test_result_text(screen)
+
+        screen.action_settings_revert_category()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert endpoint.value == "http://localhost:8080"
+        assert (
+            _provider_test_result_text(screen)
+            == SettingsScreen._PROVIDER_TEST_STALE_COPY
+        )

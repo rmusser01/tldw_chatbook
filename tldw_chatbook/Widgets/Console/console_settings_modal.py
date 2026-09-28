@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    CARRY_FORWARD_OPTIONS,
     MODEL_FIELD_LABELS,
     ConsoleGenerationControl,
     console_generation_control_support,
@@ -852,7 +853,7 @@ CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Use: this conversation only. Defaults: future provider conversations."
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
-    "Use: this conversation only. Defaults: F4 Settings > Console behavior."
+    "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
 )
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 #: Debounce for the custom-model-id `Input` -- mirrors the picker/filter
@@ -2335,7 +2336,9 @@ class ConsoleSettingsModal(
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Reduce conversation to (%)")
+                            yield self._modal_label(
+                                MODEL_FIELD_LABELS["compaction_target_ratio"]
+                            )
                             yield ConsoleSettingsInput(
                                 value=self._format_percent(
                                     self._context_state.resolved_policy.policy.target_ratio
@@ -2375,18 +2378,11 @@ class ConsoleSettingsModal(
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Keep after compaction")
+                            yield self._modal_label(
+                                MODEL_FIELD_LABELS["compaction_carry_forward_mode"]
+                            )
                             yield Select(
-                                [
-                                    (
-                                        "Memory with recent turns",
-                                        ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS.value,
-                                    ),
-                                    (
-                                        "Memory with latest exchange",
-                                        ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE.value,
-                                    ),
-                                ],
+                                CARRY_FORWARD_OPTIONS,
                                 value=self._context_state.resolved_policy.policy.carry_forward_mode.value,
                                 id="console-context-carry-forward",
                                 classes="console-settings-control",

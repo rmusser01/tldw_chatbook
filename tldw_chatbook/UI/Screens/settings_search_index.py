@@ -282,6 +282,7 @@ def build_field_search_index() -> None:
     Clears first (review cleanup): plain ``update()`` could never remove a
     stale category's rows on a rebuild.
     """
+    from ...Chat.provider_catalog import provider_display_name
     from ...LLM_Provider_Catalog.model_catalog_settings import (
         AUTO_REFRESH_PROVIDER_LIST_KEYS,
     )
@@ -371,6 +372,7 @@ def build_field_search_index() -> None:
                     "settings-console-context-target-percent",
                     "Reduce conversation to (%)",
                 ),
+                ("settings-console-context-target-percent", "Reduce context to (%)"),
                 (
                     "settings-console-context-summary-max-tokens",
                     "Summary response max tokens",
@@ -532,11 +534,11 @@ def build_field_search_index() -> None:
                     for entry in (
                         (
                             f"settings-mc-auto-{provider.lower()}",
-                            f"{provider} auto-refresh model list",
+                            f"{provider_display_name(provider)} auto-refresh model list",
                         ),
                         (
                             f"settings-mc-write-{provider.lower()}",
-                            f"{provider} save fetched models to config",
+                            f"{provider_display_name(provider)} save fetched models to config",
                         ),
                     )
                 ),

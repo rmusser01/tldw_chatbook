@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_context_policy import ContextCarryForwardMode
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_API_KEY_KEYS,
@@ -279,9 +280,32 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
             "What happens when the conversation nears its token limit.",
             "Ask, Automatic or Off",
         ),
+        ModelConfigField(
+            "compaction_target_ratio",
+            "Reduce context to (%)",
+            "How full the conversation budget is left after compaction.",
+            "a percentage at least 15 below Compact at",
+        ),
+        ModelConfigField(
+            "compaction_carry_forward_mode",
+            "Keep after compaction",
+            "What stays word for word next to the memory summary.",
+            "Memory with recent turns or Memory with latest exchange",
+        ),
     )
 }
 MODEL_FIELD_LABELS = {name: field.label for name, field in MODEL_CONFIG_FIELDS.items()}
+#: The Keep after compaction choices, shared by both editors of the field.
+CARRY_FORWARD_OPTIONS = (
+    (
+        "Memory with recent turns",
+        ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS.value,
+    ),
+    (
+        "Memory with latest exchange",
+        ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE.value,
+    ),
+)
 _PROVIDER_GATED_GENERATION_FIELDS = frozenset(
     {
         "reasoning_effort",

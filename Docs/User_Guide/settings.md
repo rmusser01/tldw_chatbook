@@ -180,8 +180,9 @@ page links to each backend's setup guide and displays these restrictions.
 
 ### Core — Overview
 
-Overview leads with configuration readiness, the last connection test,
-storage/privacy, and sync status. **Open Providers & Models**, **Open Storage**,
+Overview leads with configuration readiness, the last connection test (its
+leading row, then its Endpoint row, so it says whether the endpoint was
+reached), storage/privacy, and sync status. **Open Providers & Models**, **Open Storage**,
 and **Open Privacy & Security** take you to the corresponding settings. Use
 **Tab** to reach each action; the detail pane scrolls to the focused control,
 and paired actions stack at compact widths.
@@ -254,7 +255,9 @@ unreachable server leads with, for example, "model listing failed
 same in one line. While another setting blocks the provider, the Key row says
 "not checked until the provider is ready" rather than guessing. For cloud providers
 the check stays local: the Key row says the key is present but not verified,
-and Generation says not tested. A successful model listing does not prove that
+and Generation says not tested. With the Endpoint field empty, the Endpoint row
+names the address the field shows, for example "https://api.openai.com/v1
+(provider default)". A successful model listing does not prove that
 generation works. Running it again replaces the previous probe result: while
 the new probe runs the Endpoint row says "checking the model listing", and
 each fact appears once. If the tested values change, run **Test Provider**
@@ -263,7 +266,8 @@ again.
 Model and Endpoint edits stay as a draft when you visit another destination and
 return to Settings. Use **Tab** to move between fields. While typing, press
 **Esc**, then **s** to save or **r** to revert. Revert asks first: **Keep editing**
-retains the draft; **Discard changes** restores the saved values. Saving writes
+retains the draft; **Discard changes** restores the saved values and marks
+the last Test result stale, since it described the discarded draft. Saving writes
 the provider settings locally and clears the unsaved marker; it does not test
 the endpoint. Reopening this page shows the saved model and endpoint. The save
 result and its toast say what the save reaches: "new chats and open chats

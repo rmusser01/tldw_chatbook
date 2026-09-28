@@ -14,7 +14,7 @@
 │     Providers & Models       │  │  │ │  Status                                                                                                                │ │  │  │  Open Theme picker                      │
 │     Web Search               │  │  │ │  Configuration: llama.cpp / qwen3-8b; Status: Ready                                                                    │ │  │  │ Saves apply to your local config file.  │
 │     Speech & TTS             │  │  │ │  Open Providers & Models                                                                                               │ │  │  │ Nothing is sent to a server unless you  │
-│  Interface                   │  │  │ │  Last connection test: Config: llama.cpp is configured                                                                 │ │  │  │ run Manual sync yourself.               │
+│  Interface                   │  │  │ │  Last connection test: Config: llama.cpp is configured; Endpoint: http://127.0.0.1:9198 · model listing reached        │ │  │  │ run Manual sync yourself.               │
 │     Appearance               │  │  │ │  Storage & privacy: Config path: config.toml — override config, writable; Privacy: local config by default;            │ │  │  │ Impact and boundaries                   │
 │     Theme                    │  │  │ │  secret-looking diagnostics are redacted                                                                               │ │  │  │ Readiness, storage, privacy, Console    │
 │     Splash Screen            │  │  │ │   Open Storage    Open Privacy & Security                                                                              │ │  │  │ behavior, diagnostics.                  │

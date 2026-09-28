@@ -535,8 +535,7 @@ class ConsoleModelPopover(
                     markup=False,
                 )
                 yield Static(
-                    "Response max  "
-                    f"{format_context_tokens(settings.max_tokens)} tokens for the next reply",
+                    self._max_tokens_copy(settings),
                     id="console-popover-response-max",
                     classes="console-popover-context-row",
                     markup=False,
@@ -732,6 +731,15 @@ class ConsoleModelPopover(
             group="console-popover-context-window",
             exclusive=True,
             exit_on_error=False,
+        )
+
+    @staticmethod
+    def _max_tokens_copy(settings: ConsoleSessionSettings) -> str:
+        """The Max tokens row, labelled from the field table, in the 14-cell
+        label column the other context rows use."""
+        return (
+            f"{MODEL_FIELD_LABELS['max_tokens']:<14}"
+            f"{format_context_tokens(settings.max_tokens)} tokens for the next reply"
         )
 
     def _model_window_copy(self) -> str:
@@ -1031,8 +1039,7 @@ class ConsoleModelPopover(
             else:
                 picker.set_model_value(settings.model)
             self.query_one("#console-popover-response-max", Static).update(
-                "Response max  "
-                f"{format_context_tokens(settings.max_tokens)} tokens for the next reply"
+                self._max_tokens_copy(settings)
             )
         finally:
             self._updating_controls = False

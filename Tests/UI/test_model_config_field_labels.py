@@ -9,9 +9,12 @@ rendered labels against it, so a new private spelling fails here.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from textual.widget import Widget
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_model_popover_geometry import (
@@ -29,6 +32,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _capture_provider_settings_mutations,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    CARRY_FORWARD_OPTIONS,
     GENERATION_FIELD_REQUEST_KEYS,
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
@@ -39,8 +43,17 @@ from tldw_chatbook.Chat.console_session_settings import (
     validate_console_session_settings,
 )
 from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
+from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+    AUTO_REFRESH_PROVIDER_LIST_KEYS,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_screen import (
+    ADVANCED_CONFIG_GUIDED_PATHS,
+    MODEL_PROFILE_INPUT_PLACEHOLDERS,
+    SettingsScreen,
+)
+from tldw_chatbook.Widgets.Console import console_settings_modal
 from tldw_chatbook.Widgets.Console.console_settings_modal import MODAL_LABEL_WIDTH
 
 _GENERATION_CONTROL_IDS = {
@@ -70,6 +83,14 @@ def _label_before(control: Widget, label_class: str) -> str:
     raise AssertionError(f"no {label_class} label before #{control.id}")
 
 
+def _select_options(screen, select_id: str) -> tuple:
+    """Return a Select's (label, value) options without the blank entry."""
+    select = screen.query_one(f"#{select_id}", Select)
+    return tuple(
+        (str(label), value) for label, value in select._options if value != Select.NULL
+    )
+
+
 def _label_drift(screen, controls: dict[str, str], label_class: str) -> list:
     """Collect (control id, rendered label, table label) for every mismatch."""
     drift = []
@@ -87,6 +108,10 @@ def test_field_table_covers_every_model_configuration_field():
         "endpoint",
         "conversation_budget_mode",
         "compaction_mode",
+        # Captures (TASK-33002 follow-up): the two Context-view rows the modal
+        # and Console Behavior spelled differently.
+        "compaction_target_ratio",
+        "compaction_carry_forward_mode",
     }
     for name, field in MODEL_CONFIG_FIELDS.items():
         assert field.name == name
@@ -118,6 +143,16 @@ def test_labels_fit_the_existing_label_columns():
     """Parent AC#8: no label outgrows the modal's 23-cell label column."""
     for name, label in MODEL_FIELD_LABELS.items():
         assert len(label) <= MODAL_LABEL_WIDTH, name
+
+
+def test_modal_settings_paths_name_real_settings_categories():
+    """Captures flag 6: the Context view sent users to "F4 Settings > Console
+    behavior", a category the Settings rail spells "Console Behavior"."""
+    categories = {label for _category, label in ADVANCED_CONFIG_GUIDED_PATHS}
+    source = Path(console_settings_modal.__file__).read_text(encoding="utf-8")
+    paths = re.findall(r"F4 Settings > ([A-Z][\w &]*[\w])", source)
+    assert paths
+    assert set(paths) <= categories, set(paths) - categories
 
 
 def test_help_lines_use_plain_words_not_config_keys():
@@ -218,6 +253,12 @@ async def test_popover_labels_come_from_the_field_table():
         )
         streaming = screen.query_one("#console-popover-streaming", Button)
         assert str(streaming.label).startswith(f"{MODEL_FIELD_LABELS['streaming']}: ")
+        # Captures flag 5: the row read "Response max" where the modal and
+        # Settings say Max tokens.
+        response_max = screen.query_one("#console-popover-response-max", Static)
+        assert str(response_max.content).startswith(
+            f"{MODEL_FIELD_LABELS['max_tokens']}  "
+        )
 
 
 @pytest.mark.asyncio
@@ -236,11 +277,17 @@ async def test_conversation_settings_modal_labels_come_from_the_field_table():
         "console-settings-base-url": "endpoint",
         "console-context-budget-mode": "conversation_budget_mode",
         "console-context-compaction-mode": "compaction_mode",
+        "console-context-target-percent": "compaction_target_ratio",
+        "console-context-carry-forward": "compaction_carry_forward_mode",
     }
     async with app.run_test(size=(211, 44)) as pilot:
         await app.push_screen(_basic_modal(settings, app))
         await pilot.pause()
         assert _label_drift(app.screen, controls, "console-settings-modal-label") == []
+        assert (
+            _select_options(app.screen, "console-context-carry-forward")
+            == CARRY_FORWARD_OPTIONS
+        )
 
 
 @pytest.mark.asyncio
@@ -275,6 +322,11 @@ async def test_settings_model_default_labels_and_inspector_come_from_the_table(
         assert rows["Focused setting"] == field.label
         assert rows["Purpose"] == field.help
         assert field.valid_range in rows["Validation"]
+        # Captures flag 10: "Saved as" printed "<model>" for the model in
+        # the form.
+        assert rows["Saved as"] == (
+            "api_settings.openai.model_defaults.gpt-4.1.presence_penalty"
+        )
         # No focused field (the live crash found at 211x44): generic rows.
         screen._active_settings_field_id = None
         assert screen._provider_field_guidance_rows()
@@ -284,6 +336,21 @@ async def test_settings_model_default_labels_and_inspector_come_from_the_table(
         assert set(screen._provider_return_dirty_field_names()) == {
             MODEL_FIELD_LABELS["presence_penalty"],
             MODEL_FIELD_LABELS["max_tokens"],
+        }
+
+        # Captures flag 7 (parent AC#5): the Automatic refresh list named
+        # providers by their list keys ("MistralAI", "Moonshot", "ZAI").
+        labels = {
+            provider: str(
+                screen.query_one(
+                    f"#settings-mc-auto-{provider.lower()}", Checkbox
+                ).label
+            )
+            for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+        }
+        assert labels == {
+            provider: f"{provider_display_name(provider)}: refresh"
+            for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
         }
 
 
@@ -303,6 +370,8 @@ async def test_settings_console_behavior_fallback_labels_come_from_the_table(
         "settings-console-default-streaming": "streaming",
         "settings-console-context-budget-mode": "conversation_budget_mode",
         "settings-console-context-compaction-mode": "compaction_mode",
+        "settings-console-context-target-percent": "compaction_target_ratio",
+        "settings-console-context-carry-forward-mode": "compaction_carry_forward_mode",
     }
     async with host.run_test(size=(211, 44)) as pilot:
         screen = _active_destination_screen(host)
@@ -310,6 +379,29 @@ async def test_settings_console_behavior_fallback_labels_come_from_the_table(
         await _wait_for_selector(screen, pilot, "#settings-console-default-temperature")
         await pilot.pause()
         assert _label_drift(screen, controls, "settings-input-label") == []
+        assert (
+            _select_options(screen, "settings-console-context-carry-forward-mode")
+            == CARRY_FORWARD_OPTIONS
+        )
+        # Captures flag 5: a fallback's placeholder matches the same field's
+        # placeholder in Providers & Models ("optional deterministic seed").
+        placeholders = {
+            suffix: screen.query_one(f"#settings-console-default-{suffix}").placeholder
+            for suffix, name in _GENERATION_CONTROL_IDS.items()
+            if f"model_profile_{name}" in MODEL_PROFILE_INPUT_PLACEHOLDERS
+        }
+        assert placeholders == {
+            suffix: MODEL_PROFILE_INPUT_PLACEHOLDERS[f"model_profile_{name}"]
+            for suffix, name in _GENERATION_CONTROL_IDS.items()
+            if f"model_profile_{name}" in MODEL_PROFILE_INPUT_PLACEHOLDERS
+        }
+        # Captures flag 10: the inspector's Scope row lost its bracketed
+        # section names to markup ("Scope:  response fallbacks and  paste").
+        rendered = [
+            str(static.visual) for static in screen.query(".settings-detail-row")
+        ]
+        scope = [text for text in rendered if text.startswith("Scope: ")]
+        assert scope and all("  " not in text for text in scope), scope
 
         # Final review I2: focusing a fallback shows the table's help and
         # range, as the Providers & Models inspector does.

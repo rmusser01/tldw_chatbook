@@ -6,7 +6,7 @@
 ────────────────│                                                                                                                                                                                 │────────────────
                 │   Model and generation  Context and memory · Selected                                                                                                                           │     │
                 │                                                                                                                                                                                 │     │
-   Terminal     │  Use: this conversation only. Defaults: F4 Settings > Console behavior.                                                                                                         │     │
+   Terminal     │  Use: this conversation only. Defaults: F4 Settings > Console Behavior.                                                                                                         │     │
  ───────────────│                                                                                                                                                                                 │     │
  Workspaces     │                                                                                                                                                                                 │     │
  ───────────────│                                                                                                                                                                                 │     │
