@@ -21875,9 +21875,14 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Run one mounted recovery intent against the currently pinned owner."""
 
+        def _release() -> None:
+            # Qodo round: the region's latch releases through this callback on
+            # every exit path -- early return, worker completion, or failure.
+            on_complete()
+
         controller = self._console_chat_controller
         if controller is None or not session_id or not assistant_message_id:
-            on_complete()
+            _release()
             return
         recovery = controller.store.dispatch_recovery_for_session(session_id)
         if (
@@ -21885,7 +21890,7 @@ class ChatScreen(BaseAppScreen):
             or recovery.assistant_message_id != assistant_message_id
             or not recovery.recovery_needed
         ):
-            on_complete()
+            _release()
             return
         revision = controller.prompt_queue_registry.snapshot(session_id).revision
         self.run_worker(
@@ -21893,7 +21898,7 @@ class ChatScreen(BaseAppScreen):
                 session_id,
                 action=action,
                 expected_revision=revision,
-                on_recovery_complete=on_complete,
+                on_recovery_complete=_release,
             ),
             exclusive=True,
             group="console-dispatch-recovery-action",

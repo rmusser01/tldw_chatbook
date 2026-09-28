@@ -48,6 +48,23 @@ _TOKEN_FIELDS = frozenset(
         "exception_type",
         "error_category",
         "surface_refusal_kind",
+        # Qodo round: fields dev producers emit that the ported (older)
+        # sheet dropped -- widget owners and traceback frame identifiers from
+        # stall telemetry and character-write failure reports.
+        "widget_id",
+        "widget_type",
+        "raise_module",
+        "raise_function",
+        "raise_line",
+        "site_module",
+        "site_function",
+        "site_line",
+        "caller_module",
+        "caller_function",
+        "caller_line",
+        "leaf_module",
+        "leaf_function",
+        "leaf_line",
         "server_key",
         "initiator",
         "decision",
