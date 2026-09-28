@@ -1,5 +1,5 @@
 ---
-id: TASK-33126
+id: TASK-33244
 title: Remove the legacy Tools and Settings window
 status: Done
 assignee:
@@ -43,7 +43,7 @@ Reason: deleting a navigation-unreachable deprecated UI surface; the canonical s
 
 ## Implementation Notes
 
-Approach: premise-checked against origin/dev first, then deleted with the three test-facing helper clusters relocated rather than lost. Commit e31d4583a0 on chore/task-33126-remove-legacy-settings-window (branched from docs/cascade-tasks-33081-33094-filings).
+Approach: premise-checked against origin/dev first, then deleted with the three test-facing helper clusters relocated rather than lost. Commit e31d4583a0 on chore/task-33244-remove-legacy-settings-window (branched from docs/cascade-tasks-33081-33094-filings).
 
 - Deleted: UI/Tools_Settings_Window.py (6,928 LOC), UI/Screens/tools_settings_screen.py, UI/tools_settings_messages.py, css/features/_tools-settings.tcss (bundle rebuilt via build_css.py, manifest entry retired with a house-style comment), Tests/UI/test_tools_settings_window.py, Tests/ProductionApp/test_tools_settings_backup.py — ~9.5k LOC removed.
 - Relocated to new tldw_chatbook/Backup_Recovery/settings_backup_helpers.py: SETTINGS_DATABASES, serialize_character_cards_for_backup (was _-prefixed), and the staged-manifest machinery (BackupManifestPublication, build/write/unlink, cancellation + control-flow helpers). These have zero production callers but are the live subjects of the TTS profile-backup integration tests, the character-card backup export tests, and the ChaChaNotes migration test; all three test files repointed and passing.
@@ -59,4 +59,6 @@ Approach: premise-checked against origin/dev first, then deleted with the three 
 
 ## Renumbering provenance
 
-Filed 2026-09-27 as task-33081. origin/dev minted its own task-33081 before this branch merged, so per the landed-keeps-id rule this task moved to task-33126; every inbound reference moved with it.
+Filed 2026-09-27 as task-33081. origin/dev minted its own task-33081 before this branch merged, so per the landed-keeps-id rule this task moved to task-33244; every inbound reference moved with it.
+
+Second renumber: dev minted its own task-33126 (second move: dev minted its own task-33126 before merge); per landed-keeps-id this task moved to task-33244 as the last commit before push.

@@ -494,20 +494,20 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_AND_READ_ONLY,
         "Settings bulk backup reads a checked source into a private target "
         "(domain re-owned by Backup_Recovery when the legacy settings window "
-        "was retired, TASK-33126).",
+        "was retired, TASK-33244).",
         centralized_backup_allowed=True,
     ),
     "settings.integrity": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery",
         _READ_ONLY_URI,
         "Settings integrity checks require validated read-only access "
-        "(domain re-owned by Backup_Recovery, TASK-33126).",
+        "(domain re-owned by Backup_Recovery, TASK-33244).",
     ),
     "settings.vacuum": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery",
         _PRIVATE_FILE,
         "Settings VACUUM requires a checked writable private database "
-        "(domain re-owned by Backup_Recovery, TASK-33126).",
+        "(domain re-owned by Backup_Recovery, TASK-33244).",
     ),
     "sync.notes_mirror": SQLiteOwnerPolicy(
         "tldw_chatbook/Sync_Interop/notes_mirror",
