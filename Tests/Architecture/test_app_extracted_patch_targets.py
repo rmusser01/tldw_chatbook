@@ -193,7 +193,17 @@ def _embedded_code(tree: ast.AST) -> list[tuple[int, ast.Module]]:
 
 
 def app_patch_sites(path: Path, root: Path = _REPO_ROOT) -> list[PatchSite]:
-    """Every patch of a top-level ``tldw_chatbook.app`` name in one file."""
+    """Every patch of a top-level ``tldw_chatbook.app`` name in one file.
+
+    Args:
+        path: The test file to scan.
+        root: Repository root; each site's ``path`` is reported relative to it.
+
+    Returns:
+        The file's patch sites sorted by line: direct patch forms plus those
+        found in Python source embedded in string constants (subprocess
+        scripts). An empty list when the file never mentions the app module.
+    """
     source = path.read_text(encoding="utf-8")
     if _APP_MODULE not in source and "import app" not in source:
         return []
