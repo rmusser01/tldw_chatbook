@@ -34,3 +34,10 @@ class TraceCallPersistenceError(RuntimeError):
         super().__init__("Provider call trace persistence failed.")
         self.boundary = boundary
         self.reservation_status = reservation_status
+
+
+class TraceSurfaceChangeRefused(ValueError):
+    """A surface fence refused construction before any call was reserved."""
+
+    def __init__(self) -> None:
+        super().__init__("unsupported_surface_change")
