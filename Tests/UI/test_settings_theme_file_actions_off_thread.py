@@ -1120,3 +1120,130 @@ async def test_quit_waits_for_a_pending_palette_write(monkeypatch):
     await asyncio.to_thread(app_module.TldwCli._run_blocking_quit_persistence, quitting)
     assert [name for name, _ in written] == ["chosen"]  # written before the quit went on
     assert order == ["config"]
+
+
+# -- Final-wave review I-1 / M-1: the launch marker follows the landed write ---
+
+
+def _slow_real_writes(monkeypatch, delay: float) -> list[str]:
+    """The real config write, ``delay`` late -- so it lands after the
+    theme switch's own picker rebuild (which waits for the app-wide
+    restyle, ~0.2 s here), as a slow real write does."""
+    real_write = tc._write_launch_default
+    written: list[str] = []
+
+    def slow(name):
+        time.sleep(delay)
+        written.append(name)
+        return real_write(name)
+
+    monkeypatch.setattr(tc, "_write_launch_default", slow)
+    return written
+
+
+def _launch_flags(host) -> set[str]:
+    picker = host.screen.query_one("#settings-theme-picker")
+    return {e.id for e in picker.entries if e.is_launch_default}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_palette_switch_moves_the_pickers_launch_marker_once_the_write_lands(request, monkeypatch):
+    """Review I-1: the palette's switch rebuilds the picker at once (the
+    theme changed) but its launch-default write lands later; the picker's
+    launch marker -- and the "Launch default missing" notice -- must follow
+    the write when it lands."""
+    from tldw_chatbook.app import ThemeProvider
+
+    tc._write_launch_default("ghost-theme")  # a launch default that is not registered
+    _slow_real_writes(monkeypatch, delay=1.0)
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        await _settle(host, pilot)
+        notice = host.screen.query_one("#settings-theme-launch-missing")
+        assert notice.display and _launch_flags(host) == set()
+        ThemeProvider(host.screen).switch_theme("nord")
+        await _settle(host, pilot)
+        assert tc.current_launch_default() == "nord"
+        assert _launch_flags(host) == {"nord"}
+        assert not notice.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_picker_revert_moves_the_launch_marker_back_once_the_write_lands(request, monkeypatch):
+    """Review M-1: Revert rebuilds the picker before its launch-default
+    write lands; the marker must move back when it does."""
+    from textual.widgets import Button
+
+    _slow_real_writes(monkeypatch, delay=1.0)
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        launch = tc.current_launch_default()
+        assert launch != "nord"
+        picker = host.screen.query_one("#settings-theme-picker")
+        picker.use_highlighted()
+        await _settle(host, pilot)
+        assert _launch_flags(host) == {"nord"}
+        picker.query_one("#settings-theme-revert", Button).press()
+        await _settle(host, pilot)
+        assert tc.current_launch_default() == launch
+        assert _launch_flags(host) == {launch}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_two_quick_palette_switches_leave_the_marker_on_the_later_one(request, monkeypatch):
+    """Review I-1: only the latest write refreshes the picker, and it does
+    so after it lands -- the superseded one leaves no marker behind."""
+    from tldw_chatbook.app import ThemeProvider
+
+    written = _slow_real_writes(monkeypatch, delay=1.0)
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        provider = ThemeProvider(host.screen)
+        provider.switch_theme("gruvbox_dark")
+        provider.switch_theme("nord")
+        await _settle(host, pilot)
+        assert written == ["gruvbox_dark", "nord"]
+        assert _launch_flags(host) == {"nord"}
+
+
+@pytest.mark.asyncio
+async def test_only_the_latest_landed_write_announces_the_launch_default(monkeypatch):
+    """Review I-1: the launch-default signal fires once the latest queued
+    write has landed -- never for a superseded or a failed one."""
+    _slow_config(monkeypatch, delay=0.05)
+    published: list[str] = []
+    app = SimpleNamespace(app_config={"general": {}}, _theme_launch_default_signal=SimpleNamespace(publish=published.append))
+    first = asyncio.ensure_future(tc.persist_launch_default_async(app, "first"))
+    await asyncio.sleep(0)
+    await tc.persist_launch_default_async(app, "second")
+    await first
+    assert published == ["second"]
+    _slow_config(monkeypatch, fail=True)
+    with pytest.raises(OSError):
+        await tc.persist_launch_default_async(app, "third")
+    assert published == ["second"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_landing_write_refresh_keeps_a_highlight_the_user_just_moved(request):
+    """Review I-1 fix: the launch-default refresh arrives whenever the write
+    lands -- possibly between an arrow key moving the list and the list's
+    highlight message reaching the picker. The rebuild must keep the row the
+    list shows, not snap back to the one the picker last heard about."""
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        picker = host.screen.query_one("#settings-theme-picker")
+        lst = picker.query_one("#settings-theme-list")
+        lst.highlighted = lst.get_option_index("dracula")  # the key press
+        picker.refresh_catalog(rescan=False)  # the write lands before its message
+        await pilot.pause(0.1)
+        assert lst.highlighted_option.id == "dracula"
+        assert picker.highlighted_id == "dracula"

@@ -34,6 +34,7 @@ from ..css.Themes.theme_catalog import (
     current_launch_default,
     display_name,
     launch_default_restorable,
+    launch_default_signal,
     queue_launch_default,
     settle_launch_default,
     start_revert,
@@ -384,6 +385,9 @@ class ThemePicker(Vertical):
         self._sync_revert_chip()
         self.query_one("#settings-theme-empty").display = False
         self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_catalog(rescan=False))
+        # Review I-1: the launch marker moves when the write lands, whoever
+        # asked for it (Use, Revert, the palette) -- after the switch's rebuild.
+        launch_default_signal(self.app).subscribe(self, lambda _name: self.refresh_catalog(rescan=False))
         self.refresh_catalog(highlight=str(self.app.theme))
 
     # -- catalog -------------------------------------------------------
@@ -471,7 +475,11 @@ class ThemePicker(Vertical):
         )
         self._sync_revert_chip()  # a rename/delete may have retargeted it
         self._sync_launch_missing()
-        self._render_list(highlight or self.highlighted_id)
+        # Review I-1 fix: a rebuild (a launch-default write landing) can run
+        # between an arrow key moving the list and its highlight message
+        # reaching us -- keep the row the list shows, not the stale id.
+        shown = self.query_one("#settings-theme-list", ThemeOptionList).highlighted_option
+        self._render_list(highlight or (shown.id if shown is not None and shown.id else self.highlighted_id))
 
     def _sync_launch_missing(self) -> None:
         """Spec §9: the launch default may point at a theme id that is no
@@ -895,8 +903,6 @@ class ThemePicker(Vertical):
         outcome = replace(change, persisted=persisted, caches_reloaded=caches_reloaded)
         message, severity = use_theme_toast(theme_id, outcome)
         self.app.notify(message, severity=severity)
-        if self.is_attached:
-            self.refresh_catalog(rescan=False)  # the launch marker moves now
 
 
 class ThemePane(ContentSwitcher):
