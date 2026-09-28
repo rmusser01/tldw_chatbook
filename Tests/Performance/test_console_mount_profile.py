@@ -22,3 +22,47 @@ def test_outgoing_detached_elapsed_uses_unmount_completion_timestamp() -> None:
 def test_outgoing_detached_elapsed_rejects_a_missing_unmount_observation() -> None:
     with pytest.raises(RuntimeError, match="outgoing unmount was not observed"):
         _outgoing_detached_elapsed_ms({}, started=10.0)
+
+
+@pytest.mark.integration
+def test_profiler_measures_a_warm_visit_on_the_reusable_console_route(
+    tmp_path,
+) -> None:
+    """The runner completes against today's reusable route (TASK-33260).
+
+    It rotted silently once: route reuse (TASK-31520) meant ``on_mount`` no
+    longer fired per visit and every run died "profile condition did not
+    settle". One real warm iteration, in a fresh interpreter because the
+    runner points ``os.environ`` at its own scratch profile.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    output = tmp_path / "profile.json"
+    env = {**os.environ, "PYTHONPATH": str(repo_root), "TLDW_TEST_MODE": "1"}
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "Tests/Performance/run_console_mount_profile.py"),
+            "--iterations",
+            "1",
+            "--output",
+            str(output),
+        ],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=240,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
+    summary = json.loads(output.read_text())["summary"]["warm_resume"]
+    assert summary["iterations"] == 1
+    assert summary["full_ready_ms"]["median"] > 0
+    assert summary["widget_counts"]["composer"]["median"] > 0

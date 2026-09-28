@@ -11460,7 +11460,13 @@ def test_workspace_runtime_close_attempts_and_preserves_all_owned_cleanup() -> N
     ]
 
 
+# bootstrap_profile (TASK-33260): the runtimes built below read config
+# through the ADR-126 config admission, which fails closed with
+# RecoveryRequired("raw_source_selection_changed") under the per-test env
+# redirect -- before any assertion ran. The collection-time profile lets these
+# report real results (the same mark sits on the scripted mounted sample).
 @pytest.mark.parametrize("boundary", ("readiness", "permission_gate", "definition_hash"))
+@pytest.mark.bootstrap_profile
 def test_prepare_workspace_runtime_cleans_resources_on_construction_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -11540,6 +11546,7 @@ def test_prepare_workspace_runtime_cleans_resources_on_construction_failure(
             database_close(databases[0])
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_workspace_runtime_aggregates_primary_and_construction_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -11602,6 +11609,7 @@ def test_prepare_workspace_runtime_aggregates_primary_and_construction_cleanup(
             consent_shutdown(consents[0], timeout=2.0)
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_workspace_runtime_disabled_has_rw_allow_without_shadow(
     tmp_path: Path,
 ) -> None:
@@ -11623,6 +11631,7 @@ def test_prepare_workspace_runtime_disabled_has_rw_allow_without_shadow(
         runtime.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_workspace_runtime_enabled_waits_for_real_ready_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -11643,6 +11652,7 @@ def test_prepare_workspace_runtime_enabled_waits_for_real_ready_snapshot(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
     tmp_path: Path,
 ) -> None:

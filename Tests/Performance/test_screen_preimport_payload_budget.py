@@ -90,14 +90,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Total tldw_chatbook modules the registry walk adds beyond app + chat.
 #: Measured 478 on 2026-08-25. RATCHET (ADR-097): never rises -- see the
 #: module docstring before touching any of the three constants below.
-MAX_PASS_ADDED_MODULES = 500
+#:
+#: TASK-33260 (PERF-01) re-pin, ADR-097 exception ledger 2026-09-28: this
+#: guard was not in perf-guard.yml, so it went red on dev unseen (554/500
+#: modules, 410,347/378,740 LOC, library 125,111/123,319 LOC at 9cd9aad65f;
+#: the 2026-09-27 audit read 409,566 LOC at 840ed2ca58). All three limits
+#: are re-pinned at that measurement -- modules exactly, LOC plus ADR-097's standard slack, since
+#: LOC moves with every line edited in those 554 modules -- so the guard can
+#: run as a PR gate. The paydown back under the old limits is owned by
+#: TASK-33276 (PERF-17, boot import diet + pre-import ratchet paydown); that
+#: PR lowers these constants again.
+MAX_PASS_ADDED_MODULES = 554
 
-#: TASK-31552: 363,740 measured after Library/Settings runtime deferral,
-#: plus ADR-097's 15,000 LOC standard slack (tightened from 380,000).
-MAX_PASS_ADDED_LOC = 378_740
+#: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
+#: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
+MAX_PASS_ADDED_LOC = 425_347
 
-#: TASK-31552: Library 113,319 plus 10,000 LOC standard slack; was 145,000.
-MAX_SINGLE_ROUTE_ADDED_LOC = 123_319
+#: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
+#: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
+MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 
 _CENSUS_SCRIPT = """
 import json

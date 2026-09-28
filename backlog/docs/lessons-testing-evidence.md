@@ -16962,3 +16962,27 @@ than assuming every scheduled background callback is its retry.
 **PR #2910, 2026-09-30.** Qodo found that the Buddy qualification file passed in private pytest children while parent coverage omitted their application execution. The helper disables plugin autoload, so parent --cov flags alone did not measure the child. A real child-only probe produced zero hits in serial and xdist parent XML reports. Conditional child pytest-cov plus unique parallel files consumed by native parent combination repaired it; both complementary child branches now reach the serial/two-worker report and standalone/--no-cov controls remain unchanged. Keep the child's output private and the parent's report threshold authoritative.
 
 Directly updating an active worker CoverageData also failed the xdist probe on coverage 7.16.0: the worker contained the child lines, but its filename hash still described its empty original collection and native combination deduplicated it. Use native parallel-file combination rather than mutating that active worker dataset. Fixed source b007dd43cf70408d88093ec983bf9702a800cb08 passed four coverage probes and all 16 Buddy cases under coverage; each real profile contributed 987 app run-context lines. Raw probes/data/XML remain local; the sanitized receipt is Docs/Reviews/artifacts/buddy-v1-32108/qodo-coverage-20260930/verification.json.
+
+## 2026-09-28 — Counting storage units in a mounted census (TASK-33260)
+
+**Never wrap `os.open` to count it.** The first cut of the Console
+storage-unit census monkeypatched `os.open` with a counting wrapper, and
+`TldwCli()` then raised `RecoveryRequired('raw_source_selection_changed')`
+-- the same signature the per-test env redirect produces, so it read as the
+known harness baseline. The real cause: `raw_participants._pinned_io_available()`
+requires `{os.open, ...} <= os.supports_dir_fd`, and a wrapper is not in that
+set, so every config admission fails closed. Count it with
+`sys.addaudithook` instead: the `open` event carries `mode=None` only for
+`os.open` (`builtins.open`/`io.open_code` pass `'r'`).
+
+**Hold the wall-clock loops before trusting a count.** With the Console's
+timers live, the same 24-key burst measured 27 config admissions on most runs
+and 49 on a loaded one: the 0.2 s trailing draft-spend refresh fires whenever
+two presses are >0.2 s apart. The 0.25 s credential poll and the 1 Hz legacy
+trace-maintenance batch likewise bill however many ticks the machine fires
+into whatever window is open. The census became exact (config admissions
+identical across 11 runs) only after stopping/capturing those loops for the
+burst and driving each one's tick directly in its own phase. Storage
+admissions and helper spawns still jitter *downward* by 1-3 (a worker that
+lands on an executor thread with a live connection skips the connect), so pin
+observed maxima, not a single run.
