@@ -600,7 +600,7 @@ async def test_settings_theme_editor_delete_keeps_app_theme(request, tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.theme = "textual-light"
-        editor.load_user_theme("my_custom_theme")
+        await editor.load_user_theme("my_custom_theme")
         await pilot.pause()
         await editor.request_delete("my_custom_theme")
         await pilot.pause()
@@ -804,7 +804,7 @@ async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.load_user_theme("ocean")
+        await editor.load_user_theme("ocean")
         await pilot.pause()
         editor.color_inputs["primary"].value = "#123456"
         await pilot.pause()
@@ -942,7 +942,7 @@ async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_usin
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.load_user_theme("ocean")
+        await editor.load_user_theme("ocean")
         await pilot.pause()
         editor.query_one("#settings-theme-name", Input).value = "   "
         await pilot.pause()
@@ -1029,7 +1029,7 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
         app.register_theme(create_theme_from_dict("ocean", {"primary": "#9966FF"}))
         app.register_theme(create_theme_from_dict(shipped.name, {"primary": "#123456"}))
 
-        editor.load_user_theme("ocean")
+        await editor.load_user_theme("ocean")
         await pilot.pause()
         await editor.request_delete("ocean")
         await pilot.pause()
@@ -1038,7 +1038,7 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
         assert "ocean" not in app.available_themes
         assert ("general", "default_theme", "textual-dark") in written
 
-        editor.load_user_theme(shipped.name)
+        await editor.load_user_theme(shipped.name)
         await pilot.pause()
         await editor.request_delete(shipped.name)
         await pilot.pause()
@@ -1085,7 +1085,7 @@ async def test_settings_theme_editor_clone_save_reload_keeps_shipped_variables(
         assert {k: app.available_themes["apricot_copy"].variables.get(k) for k in expected} == expected
 
         editor.load_theme("textual-dark")
-        editor.load_user_theme("apricot_copy")
+        await editor.load_user_theme("apricot_copy")
         await pilot.pause()
         editor.on_apply_theme()
         await pilot.pause()
@@ -1213,7 +1213,7 @@ async def test_settings_theme_editor_load_user_theme_drops_malformed_variables(
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.load_user_theme("hostile")
+        await editor.load_user_theme("hostile")
         await pilot.pause()
         assert editor._theme_variables == {"footer-background": "#101010"}
 
@@ -1354,7 +1354,7 @@ async def test_settings_theme_editor_save_as_confirms_overwrite_and_keeps_source
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.load_user_theme("ocean")
+        await editor.load_user_theme("ocean")
         await pilot.pause()
         editor.color_inputs["primary"].value = "#123456"
         await pilot.pause()
@@ -1390,7 +1390,7 @@ async def test_settings_theme_editor_save_as_own_name_still_confirms(request, tm
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.load_user_theme("ocean")
+        await editor.load_user_theme("ocean")
         await pilot.pause()
         editor.color_inputs["primary"].value = "#123456"
         await pilot.pause()

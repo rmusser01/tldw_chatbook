@@ -418,7 +418,7 @@ async def test_rename_of_loaded_theme_moves_the_editor_too(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.load_user_theme("mine")
+        await editor.load_user_theme("mine")
         await pilot.pause()
         assert await editor.rename_user_theme("mine", "ours") is True
         await pilot.pause()
@@ -674,12 +674,12 @@ async def test_non_hex_colour_file_is_unreadable_and_edit_places_no_control_char
         readable, unreadable = editor.user_theme_listing()
         assert readable == {"mine": tmp_path / "mine.toml"}
         assert unreadable == {"osc": "invalid colour 'secondary'"}
-        editor.load_user_theme("osc")
+        await editor.load_user_theme("osc")
         await pilot.pause()
         for input_widget in editor.query(Input):
             assert input_widget.value.isprintable(), repr(input_widget.value)
         # The editor's own saved files still load.
-        editor.load_user_theme("mine")
+        await editor.load_user_theme("mine")
         await pilot.pause()
         assert editor.color_inputs["secondary"].value == "#223344"
 
@@ -767,7 +767,7 @@ async def test_deleting_unreadable_file_keeps_editor_state_of_same_named_theme(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.load_user_theme("b.toml")
+        await editor.load_user_theme("b.toml")
         await pilot.pause()
         editor.color_inputs["primary"].value = "#445566"
         await pilot.pause()
@@ -792,7 +792,7 @@ async def test_load_user_theme_validates_the_data_it_reads(request, tmp_path, co
         editor._user_theme_files()
         monkeypatch.setattr(editor, "_user_theme_files", lambda: {"mine": tmp_path / "mine.toml"})
         monkeypatch.setattr(toml, "load", lambda f: hostile)
-        editor.load_user_theme("mine")
+        await editor.load_user_theme("mine")
         monkeypatch.setattr(toml, "load", real_load)
         await pilot.pause()
         for input_widget in editor.query(Input):
@@ -852,8 +852,8 @@ async def test_load_user_theme_reports_whether_it_loaded(request, tmp_path):
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.load_user_theme("mine") is True
-        assert editor.load_user_theme("gone") is False
+        assert await editor.load_user_theme("mine") is True
+        assert await editor.load_user_theme("gone") is False
         await pilot.pause()
         assert "gone" in app.notify.call_args.args[0]
         assert editor.current_theme_name == "mine"

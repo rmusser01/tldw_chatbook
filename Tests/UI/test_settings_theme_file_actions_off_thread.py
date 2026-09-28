@@ -140,9 +140,10 @@ async def test_file_actions_keep_the_ui_thread_free_with_fifty_themes(request, m
         settings = host.screen
         pane = settings.query_one("#settings-theme-pane")
         editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
-        # The editor opens on a saved theme with a real edit (not measured:
-        # Edit's load is not one of the file actions in scope).
-        pane.open_editor("mine10", "edit")
+        # The editor opens on a saved theme with a real edit (Edit's own
+        # stall is timed by test_edit_and_reset_keep_the_ui_thread_free...).
+        await pane.open_editor("mine10", "edit").wait()
+        await _settle(host, pilot)
         editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
         await _settle(host, pilot)
         calls = _record_io_threads(monkeypatch)
@@ -407,8 +408,10 @@ async def test_a_save_landing_in_a_later_session_changes_only_its_own_file(reque
         pane.show_picker()  # Back: nothing modified, so no prompt
         await pilot.pause(0.05)
         slow["on"] = False
-        pane.open_editor("beta", "edit")
-        await pilot.pause(0.05)
+        pane.open_editor("beta", "edit")  # beta's session starts here
+        # TASK-33240: beta's read waits for alpha's Save (the file lock);
+        # the editor shows beta only once it is read.
+        await _until(pilot, lambda: pane.current == "settings-theme-editor-view", "beta's editor")
         editor.query_one("#settings-theme-color-primary", Input).value = "#BADBAD"
         await pilot.pause(0.1)
         await save.wait()  # alpha's save lands in beta's session
@@ -847,3 +850,187 @@ async def test_an_older_slower_scan_does_not_replace_a_newer_one(request, monkey
     first_go.set()
     slow.join()
     assert "new" in editor._last_scan[0]
+
+
+# -- TASK-33240: Edit and Reset read the theme file off the UI thread ----------
+
+
+def _primary(editor) -> str:
+    from textual.widgets import Input
+
+    return editor.query_one("#settings-theme-color-primary", Input).value.upper()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_edit_and_reset_keep_the_ui_thread_free_with_fifty_themes(request, monkeypatch):
+    """AC#1: with 50 saved themes, Edit (open a saved theme) and Reset
+    resolve and read the file on a worker thread through the editor's own
+    backup scope, and the UI thread is not blocked for 100 ms by the read.
+
+    Edit is timed up to the moment its read lands: the picker -> editor
+    view switch that follows is the same restyle as Back/Save (~170 ms at
+    211x44 with or without files), not file I/O. Reset is timed on its
+    confirmed step; the confirmation modal's push/dismiss repaints the whole
+    Settings screen like every Settings prompt, so the full path through it
+    is run unmeasured.
+    """
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+    from Tests.UI.test_settings_theme_picker_screen import _saved_theme_file
+
+    host = _host()
+    for i in range(50):
+        _saved_theme(host, f"mine{i:02d}")
+    _saved_theme_file(host, "target", "target", primary="#AB0001")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "target")
+        await _settle(host, pilot)
+        settings = host.screen
+        pane = settings.query_one("#settings-theme-pane")
+        editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
+        reads: list[threading.Thread] = []
+        real_read = SettingsThemeEditor._read_saved_theme
+
+        def recorded(self, name):
+            reads.append(threading.current_thread())
+            return real_read(self, name)
+
+        monkeypatch.setattr(SettingsThemeEditor, "_read_saved_theme", recorded)
+        landed = asyncio.Event()
+        real_show = SettingsThemeEditor._show_saved
+
+        def show(self, *args):
+            landed.set()
+            return real_show(self, *args)
+
+        monkeypatch.setattr(SettingsThemeEditor, "_show_saved", show)
+        stalls = {}
+
+        await _quiet(host, pilot)
+        with _StallMeter() as meter:
+            pane.open_editor("target", "edit")
+            await asyncio.wait_for(landed.wait(), 10)
+        stalls["edit"] = meter.worst_ms
+        await _settle(host, pilot)
+        assert pane.current == "settings-theme-editor-view"
+        assert (editor._loaded_user_theme, _primary(editor)) == ("target", "#AB0001")
+
+        from textual.widgets import Input
+
+        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+        await _quiet(host, pilot)
+        assert editor.is_modified
+        with _StallMeter() as meter:
+            editor.run_file_action(editor._reset_theme())
+            await _settle(host, pilot)
+        stalls["reset"] = meter.worst_ms
+        assert _primary(editor) == "#AB0001" and not editor.is_modified
+
+        # And the full Reset path through its confirmation, unmeasured.
+        editor.query_one("#settings-theme-color-primary", Input).value = "#654321"
+        await pilot.pause(0.1)
+        editor.on_reset_theme()
+        await _wait_for_screen(host, pilot, ConfirmationDialog)
+        await pilot.click("#confirm-button")
+        await _settle(host, pilot)
+        assert _primary(editor) == "#AB0001" and not editor.is_modified
+
+        assert len(reads) == 3 and all(t is not threading.main_thread() for t in reads), reads
+        assert all(ms < 100 for ms in stalls.values()), stalls
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_edit_read_superseded_by_another_edit_never_shows(request, monkeypatch):
+    """AC#2: the picker stays up while Edit's read is in flight (no flash of
+    the editor's previous palette), and a read that lands after the user
+    opened another theme does not populate that newer session."""
+    from Tests.UI.test_settings_theme_picker_screen import _saved_theme_file
+
+    host = _host()
+    _saved_theme_file(host, "alpha", "alpha", primary="#AA0000")
+    _saved_theme_file(host, "beta", "beta", primary="#00BB00")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "alpha")
+        await _settle(host, pilot)
+        pane = host.screen.query_one("#settings-theme-pane")
+        editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
+        shown, loaded = [], []
+        real_show_editor = type(pane)._show_editor
+        monkeypatch.setattr(
+            type(pane), "_show_editor", lambda self, *a: (shown.append(a[0]), real_show_editor(self, *a))
+        )
+        monkeypatch.setattr(
+            editor, "watch_current_theme_name", lambda: loaded.append(editor.current_theme_name)
+        )
+        entered, release = _gate(monkeypatch, "_read_saved_theme")
+        first = pane.open_editor("alpha", "edit")
+        await _until(pilot, entered.is_set, "alpha's read")
+        await pilot.pause(0.1)
+        assert pane.current == "settings-theme-picker"  # nothing half-loaded shown
+        pane.open_editor("beta", "edit")
+        release.set()
+        await first.wait()
+        await _settle(host, pilot)
+        assert pane.current == "settings-theme-editor-view"
+        assert (editor.current_theme_name, editor._loaded_user_theme) == ("beta", "beta")
+        assert _primary(editor) == "#00BB00"
+        assert shown == ["beta"] and "alpha" not in loaded, (shown, loaded)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_edit_read_landing_after_back_changes_nothing(request, monkeypatch):
+    """AC#2: Back (or leaving) while Edit's read is in flight ends that
+    session; the read then lands without opening the editor or loading."""
+    host = _host()
+    _saved_theme(host, "alpha")
+    notes = []
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "alpha")
+        await _settle(host, pilot)
+        pane = host.screen.query_one("#settings-theme-pane")
+        editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
+        before = (editor.current_theme_name, editor._loaded_user_theme)
+        entered, release = _gate(monkeypatch, "_read_saved_theme")
+        worker = pane.open_editor("alpha", "edit")
+        await _until(pilot, entered.is_set, "alpha's read")
+        pane.show_picker()
+        host.notify = lambda message, **kw: notes.append(message)
+        release.set()
+        await worker.wait()
+        await _settle(host, pilot)
+        assert pane.current == "settings-theme-picker"
+        assert (editor.current_theme_name, editor._loaded_user_theme) == before
+        assert notes == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_reset_read_landing_after_back_changes_nothing(request, monkeypatch):
+    """AC#2: Reset's read that lands after Back does not reload the editor
+    or claim a reset."""
+    from textual.widgets import Input
+
+    host = _host()
+    _saved_theme(host, "alpha")
+    notes = []
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "alpha")
+        await _settle(host, pilot)
+        pane = host.screen.query_one("#settings-theme-pane")
+        editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
+        await pane.open_editor("alpha", "edit").wait()
+        await _settle(host, pilot)
+        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+        await pilot.pause(0.1)
+        entered, release = _gate(monkeypatch, "_read_saved_theme")
+        worker = editor.run_file_action(editor._reset_theme())
+        await _until(pilot, entered.is_set, "reset's read")
+        pane.show_picker()
+        host.notify = lambda message, **kw: notes.append(message)
+        release.set()
+        await worker.wait()
+        await _settle(host, pilot)
+        assert _primary(editor) == "#123456"
+        assert not any("reset" in message for message in notes), notes

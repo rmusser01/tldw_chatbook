@@ -780,67 +780,115 @@ class SettingsThemeEditor(Vertical):
         self._update_dark_mode_checkbox()
         self.is_modified = False
 
-    def load_user_theme(self, theme_name: str) -> bool:
-        """Load a saved theme file into the editor.
+    def load_user_theme(self, theme_name: str) -> Coroutine[Any, Any, bool | None]:
+        """Load a saved theme file into the editor (TASK-33240: off the UI thread).
+
+        The editing session starts at the call, not when the returned
+        coroutine first runs, so a file action already racing the open is
+        stale from here on (review I-1). The file is resolved and read on a
+        worker thread under the file-action lock; what it read is applied
+        only if the session is still this one -- Back, another Edit, Clone,
+        New or teardown in the meantime leave the editor as it is.
 
         Args:
             theme_name: The saved theme's ``[theme].name``.
 
         Returns:
-            True once loaded; False (with a notice) when the name is invalid,
-            the files are paused, or no readable file holds it any more --
-            the editor then keeps its previous palette (Qodo 4104047302).
+            A coroutine resolving to True once loaded; False (with a notice)
+            when the name is invalid, the files are paused, or no readable
+            file holds it any more -- the editor then keeps its previous
+            palette (Qodo 4104047302); None when the session moved on first
+            (no notice, nothing changed).
         """
+        self._session += 1
+        return self._load_user_theme(theme_name, self._session)
+
+    async def _load_user_theme(self, theme_name: str, session: int) -> bool | None:
         try:
             validate_filename(theme_name)
         except ValueError as exc:
             self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="error")
             return False
+        return self._show_saved(theme_name, await self._read_saved(theme_name, session), session)
 
-        # R12: resolve by [theme].name, so a.toml holding name "b" loads as b.
+    async def _read_saved(self, theme_name: str, session: int) -> Any:
+        """``_read_saved_theme`` on a worker thread, under the file lock (a
+        Rename between its steps must not be read half-done).
+
+        Returns:
+            Its result, or the exception it raised.
+        """
         try:
-            theme_path = self._user_theme_files().get(theme_name)
-        except RecoveryRequired:
+            async with self._file_lock:
+                return await asyncio.to_thread(self._read_saved_theme, theme_name)
+        except Exception as exc:  # noqa: BLE001 -- reported by _show_saved, in its session only
+            return exc
+
+    def _read_saved_theme(self, theme_name: str) -> tuple[Path, dict[str, Any]] | None:
+        """Resolve ``theme_name``'s file and read it (runs off the UI thread).
+
+        R12: resolve by [theme].name, so a.toml holding name "b" loads as b.
+
+        Returns:
+            ``(path, data)``; None when no readable file holds the name.
+
+        Raises:
+            RecoveryRequired: backup/recovery holds the theme files.
+            Exception: the file could not be read or is not a valid theme.
+        """
+        theme_path = self._user_theme_files().get(theme_name)
+        if theme_path is None:
+            return None
+        with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
+            with raw._file(operation, theme_path, "r") as f:
+                theme_data = toml.load(f)
+        # Follow-up (R41): validate what was read, not the scan's copy --
+        # the file can change in between.
+        theme_from_file_data(theme_data, theme_path.stem, theme_path.name)
+        return theme_path, theme_data
+
+    def _show_saved(self, theme_name: str, read: Any, session: int) -> bool | None:
+        """Apply ``_read_saved``'s result, if ``session`` is still current.
+
+        Returns:
+            See ``load_user_theme``.
+        """
+        if self._stale(session):
+            return None
+        if isinstance(read, RecoveryRequired):
             self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
             return False
-        if theme_path is None:
+        if read is None:
             self.app.notify(
                 f"No saved custom theme named '{escape_markup(printable(theme_name))}'",
                 severity="warning",
             )
             return False
-        if theme_path is not None:
-            try:
-                with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
-                    with raw._file(operation, theme_path, "r") as f:
-                        theme_data = toml.load(f)
-                # Follow-up (R41): validate what was read, not the earlier
-                # scan's copy -- the file can change in between.
-                theme_from_file_data(theme_data, theme_path.stem, theme_path.name)
+        try:
+            if isinstance(read, Exception):
+                raise read
+            theme_path, theme_data = read
+            self.current_theme_name = theme_name
+            self.current_theme_data = dict(theme_data.get("colors", {}))
+            self._theme_variables = sanitize_theme_variables(
+                theme_data.get("variables", {}) or {}, theme_path.name
+            )
+            self._loaded_catalog_theme = None
+            self.is_dark_theme = theme_file_dark(theme_data.get("theme", {}).get("dark", True))
+            self._snapshot_variables_palette()
 
-                self._session += 1
-                self.current_theme_name = theme_name
-                self.current_theme_data = dict(theme_data.get("colors", {}))
-                self._theme_variables = sanitize_theme_variables(
-                    theme_data.get("variables", {}) or {}, theme_path.name
-                )
-                self._loaded_catalog_theme = None
-                self.is_dark_theme = theme_file_dark(theme_data.get("theme", {}).get("dark", True))
-                self._snapshot_variables_palette()
+            name_input = self.query_one("#settings-theme-name", Input)
+            name_input.value = theme_name
+            name_input.disabled = False
 
-                name_input = self.query_one("#settings-theme-name", Input)
-                name_input.value = theme_name
-                name_input.disabled = False
-
-                self._update_color_inputs()
-                self._update_dark_mode_checkbox()
-                self.is_modified = False
-                self._loaded_user_theme = theme_name
-
-            except Exception as e:
-                logger.error(f"Failed to load user theme {printable(theme_name)}: {self._failure_reason(e)}")
-                self.app.notify(f"Failed to load theme: {escape_markup(self._failure_reason(e))}", severity="error")
-                return False
+            self._update_color_inputs()
+            self._update_dark_mode_checkbox()
+            self.is_modified = False
+            self._loaded_user_theme = theme_name
+        except Exception as e:
+            logger.error(f"Failed to load user theme {printable(theme_name)}: {self._failure_reason(e)}")
+            self.app.notify(f"Failed to load theme: {escape_markup(self._failure_reason(e))}", severity="error")
+            return False
         return True
 
     def _extract_theme_colors(self, theme: Theme) -> dict[str, str]:
@@ -1383,9 +1431,6 @@ class SettingsThemeEditor(Vertical):
             self.app.notify("No changes to reset", severity="information")
             return
 
-        async def _confirmed_reset() -> None:
-            self._reset_theme()
-
         self.app.push_screen(
             ConfirmationDialog(
                 title="Reset theme",
@@ -1394,31 +1439,36 @@ class SettingsThemeEditor(Vertical):
                 ),
                 confirm_label="Discard changes",
                 cancel_label="Keep editing",
-                confirm_callback=_confirmed_reset,
+                confirm_callback=self._as_file_action(self._reset_theme),
             )
         )
 
-    def _reset_theme(self) -> None:
-        """Reload original theme values (post-confirmation when modified)."""
+    async def _reset_theme(self) -> None:
+        """Reload original theme values (post-confirmation when modified).
+
+        TASK-33240: one read on a worker thread (a file action); it lands
+        only in the session it started in.
+        """
         # R28: resolve by [theme].name, so a.toml holding name "b" resets
         # from a.toml, like every other file operation (R12).
-        try:
-            saved = self.current_theme_name in self._user_theme_files()
-        except RecoveryRequired:
-            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
+        name = self.current_theme_name
+        self._session += 1
+        session = self._session
+        read = await self._read_saved(name, session)
+        if self._stale(session):
             return
-        if saved:
-            if not self.load_user_theme(self.current_theme_name):
+        if read is None:
+            if is_catalog_theme(name):
+                self.load_theme(name)
+            else:
+                # TASK-31251: a renamed, never-saved theme has nothing to go
+                # back to; say so instead of claiming a reset happened.
+                self.app.notify(
+                    f"No saved version of '{escape_markup(name)}' to reset to",
+                    severity="warning",
+                )
                 return
-        elif is_catalog_theme(self.current_theme_name):
-            self.load_theme(self.current_theme_name)
-        else:
-            # TASK-31251: a renamed, never-saved theme has nothing to go back
-            # to; say so instead of claiming a reset happened.
-            self.app.notify(
-                f"No saved version of '{escape_markup(self.current_theme_name)}' to reset to",
-                severity="warning",
-            )
+        elif not self._show_saved(name, read, session):
             return
         self.app.notify("Theme reset to original values", severity="information")
 

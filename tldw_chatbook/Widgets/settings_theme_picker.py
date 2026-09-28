@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -20,6 +20,7 @@ from textual.css.query import QueryError
 from textual.message import Message
 from textual.widgets import Button, ContentSwitcher, Input, OptionList, Static
 from textual.widgets.option_list import Option
+from textual.worker import Worker
 
 from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_themes_dir
@@ -971,24 +972,54 @@ class ThemePane(ContentSwitcher):
         picker.refresh_catalog()
         picker.focus_list()
 
-    def open_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> None:
+    def open_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> Worker[Any] | None:
+        """Open the editor on ``theme_id`` (Edit, Clone or New).
+
+        TASK-33240: a saved theme's file is read on a worker thread; the
+        picker stays up until it lands, so the editor never shows its
+        previous palette, and a read superseded meanwhile (Back, another
+        Edit, leaving Settings) opens nothing.
+
+        Returns:
+            The load's worker for a saved theme, else None (opened at once).
+        """
         editor = self._editor()
         picker = self.query_one(ThemePicker)
         entry = next((e for e in picker.entries if e.id == theme_id), None)
         if entry is not None and entry.origin == "yours":
-            if not editor.load_user_theme(theme_id):
+            load = editor.load_user_theme(theme_id)
+            worker = editor.run_file_action(self._open_saved(load, theme_id, mode))
+            if worker is None:  # quitting: the load never runs
+                load.close()
+            return worker
+        editor.load_theme(theme_id)
+        self._show_editor(theme_id, mode)
+        return None
+
+    async def _open_saved(
+        self, load: Coroutine[Any, Any, bool | None], theme_id: str, mode: Literal["clone", "new", "edit"]
+    ) -> None:
+        loaded = await load
+        if loaded is None:  # superseded, or the editor was torn down
+            return
+        try:
+            if not loaded:
                 # Qodo 4104047302: never open on the previous palette; the
                 # load said why, and the listing may be stale.
-                picker.refresh_catalog()
+                self.query_one(ThemePicker).refresh_catalog()
                 return
-        else:
-            editor.load_theme(theme_id)
+            self._show_editor(theme_id, mode)
+        except QueryError:
+            return  # the pane left the DOM meanwhile
+
+    def _show_editor(self, theme_id: str, mode: Literal["clone", "new", "edit"]) -> None:
+        editor = self._editor()
         if mode == "clone":
             editor.on_clone_theme()
         elif mode == "new":
             editor.on_new_theme()
         editor.set_editing_context(theme_id, mode)
-        editor.set_files_available(picker.files_available)
+        editor.set_files_available(self.query_one(ThemePicker).files_available)
         self.current = "settings-theme-editor-view"
         editor.query_one("#settings-theme-name").focus()
 
