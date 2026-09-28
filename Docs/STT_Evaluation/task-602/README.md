@@ -8,22 +8,22 @@ machine-readable result is
 
 ## Passing run
 
-- Tested commit: `60d8b73b9c9223cef696e9bc3577d186af7e26be`
-- Workflow run: [31618353807](https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807)
+- Tested commit: `f0d8ade47e593d8b4617337359fd9fd675b4c4eb`
+- Workflow run: [36353430360](https://github.com/rmusser01/tldw_chatbook/actions/runs/36353430360)
 - Run attempt: `1`
-- Trigger: the explicit `task-602-platform-evidence` PR label
+- Trigger: label-triggered rerun after PR #1991's latest-dev rebase
 - Python: 3.12 on every lane
 
 | Evidence lane | Native host | ONNX Runtime | Result |
 | --- | --- | --- | --- |
-| `linux-x86_64` | Linux x86_64 | 1.28.0 | Passed |
-| `linux-aarch64` | Linux aarch64 | 1.28.0 | Passed |
-| `windows-x86_64` | Windows x86_64 | 1.28.0 | Passed |
-| `macos-arm64` | macOS arm64 | 1.28.0 | Passed |
+| `linux-x86_64` | Linux x86_64 | 1.30.0 | Passed |
+| `linux-aarch64` | Linux aarch64 | 1.30.0 | Passed |
+| `windows-x86_64` | Windows x86_64 | 1.30.0 | Passed |
+| `macos-arm64` | macOS arm64 | 1.30.0 | Passed |
 | `macos-x86_64` | macOS x86_64 | 1.23.2 | Passed |
 
 Every lane resolved `onnx-asr==0.12.0`, `faster-whisper==1.2.1`, and
-`ctranslate2==4.8.1`, selected `CPUExecutionProvider`, completed cleanup, and
+`ctranslate2==4.8.2`, selected `CPUExecutionProvider`, completed cleanup, and
 passed all required checks:
 
 - package resolution and the cheap runtime probe;
@@ -60,6 +60,10 @@ The aggregate requires exactly the five expected platforms, the same tested
 commit, workflow run, attempt, canonical URL, and passed status. It excludes
 local paths, commands, transcripts, exceptions, environment values, PIDs,
 handles, credentials, and temporary names.
+
+A later integration rebase changed no task-owned executable, native STT,
+artifact, or dependency input. The aggregate retains the exact tested commit
+above; it does not substitute the rebased branch SHA for that source identity.
 
 ## Fixture attribution
 

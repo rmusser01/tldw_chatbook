@@ -16756,6 +16756,22 @@ so test both. Drive the explicit case through the Hub's own write path
 own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
 built-ins and inherited defaults, not an explicit override.
 
+### A module attribute patch can silently replace a process-wide clock (TASK-19642.4)
+
+**What happened.** The TASK-602 smoke node passed alone but errored during an
+interrupted broad run whose traceback was not retained. The test patched
+`smoke.time.monotonic` with a three-value iterator and a `5.0` fallback;
+`smoke.time` was the shared standard-library `time` module. A focused extra
+global clock read shifted the smoke's observations and failed its exact result
+assertion. The original broad-run exception remains unknown. The repair
+rebound only the loaded smoke module's `time` name to a private clock and
+asserted the process-wide function identity had not changed. The exact node
+then passed in eight Ubuntu/macOS lanes across Python 3.11-3.14, and
+TASK-602's five native evidence lanes passed on the reviewed executable commit.
+
+**What to do.** When faking time for a module, replace that module's binding
+with a private clock object. Assert that the shared `time.monotonic` identity
+survives the test, then rerun the exact node in the affected platform matrix.
 ### Count transcript work separately from coalesced draft repaints (PR #2196 / TASK-24300)
 
 **What happened.** The mounted empty-versus-400-message census counted zero transcript snapshots and zero history/context/spend row traversals in both arms after settled projection caching. It still failed exact equality because the total one-row draft estimate count was 19 versus 17: Textual coalesced a different number of repaint calls. That was not a transcript-size term. Recording the largest message input to any estimate kept the exact comparison deterministic and failed on a full-history estimate while admitting the one-row live draft. A separate one-app 400-message census pinned all full-history traversal totals to zero.
