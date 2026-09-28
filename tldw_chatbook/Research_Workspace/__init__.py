@@ -4,9 +4,10 @@ Lazy re-exports (PEP 562). The names in ``__all__`` resolve on first
 attribute access via module ``__getattr__`` -- the same pattern as
 ``tldw_api/__init__.py`` and ``Local_Ingestion/__init__.py``. This package
 sits on the boot import path through its cheapest member:
-``Library/library_ingest_jobs.py`` (an ``app.py`` module-scope dependency)
-imports ``source_operations.validate_source_operation_id``, and ``app.py``
-itself imports four more stdlib-light submodules directly. When this
+``Library/library_ingest_jobs.py`` (a module-scope dependency of
+``app_ingest_queue.py``, which ``app.py`` imports at boot) imports
+``source_operations.validate_source_operation_id``, and ``app.py`` itself
+imports four more stdlib-light submodules directly. When this
 ``__init__`` eagerly re-exported the whole tree, that one validator import
 also executed ``server_adapter`` -> ``tldw_api.notes_workspace_schemas``
 (26 pydantic models) plus the controller/overlay/layout modules only the

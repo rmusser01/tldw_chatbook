@@ -20,7 +20,7 @@ from loguru import logger
 
 # Per-format processing libraries (process_pdf/process_document/process_ebook/
 # LocalAudioProcessor/LocalVideoProcessor) are intentionally NOT imported at
-# module scope here. This module is imported directly by app.py (for
+# module scope here. This module is imported directly by app_ingest_queue.py (for
 # classify_ingest_source/persist_parsed_media), which bypasses
 # Local_Ingestion's own lazy `__init__.py` (PEP 562 `__getattr__`) --
 # standard Python import semantics run this file's module body regardless of
@@ -175,8 +175,9 @@ from ..DB.Client_Media_DB_v2 import MediaDatabase  # noqa: E402
 
 # (task-21102) The engine-version pin comes from the stdlib-only
 # ``chunking_engine_version`` module, NOT from ``Chunking.Chunk_Lib``: this
-# module is on the app's boot-import path (app.py / Library.ingest_capabilities
-# import it directly), and importing anything under ``tldw_chatbook.Chunking``
+# module is on the app's boot-import path (app_ingest_queue.py /
+# Library.ingest_capabilities import it directly), and importing anything
+# under ``tldw_chatbook.Chunking``
 # executes the package init and with it the full shim + vendored engine
 # (~15k LOC). ``Chunk_Lib.ENGINE_VERSION`` re-exports the same object, so the
 # stamp cannot drift. Guarded by
@@ -937,7 +938,7 @@ def parse_local_file_for_ingest(
     then hit the CONTENT-HASH dedup fallback, matched that degraded row,
     took the "already exists, overwrite not enabled" branch, and returned
     ``(None, None, ...)`` -- so every real audio/video local ingest
-    returned ``media_id=None``, and even ``app.py``'s
+    returned ``media_id=None``, and even ``app_ingest_queue.py``'s
     ``get_media_by_url("file://...")`` recovery missed, because the
     surviving row's URL was the bare path. With the processors never
     handed a DB, the degraded row is never written, the pipeline's write
