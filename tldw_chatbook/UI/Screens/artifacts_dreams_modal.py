@@ -122,6 +122,10 @@ _NO_TRACK_BACKEND_NOTICE = (
 _TRACK_CAP_NOTICE = (
     "Tracking budget is full: retire a tracked page before adding more."
 )
+_TRACK_SOURCE_DISABLED_NOTICE = (
+    "This page's source already exists but is disabled; enable it in "
+    "Watchlists first, then track again."
+)
 
 
 def _ingestable(story: Mapping[str, Any]) -> bool:
@@ -663,7 +667,11 @@ class DreamsStoryModal(ModalScreen[None]):
                         markup=False)
             return
         # Lazy Dreams import (same pattern as ``action_ingest``).
-        from ...Dreams.track_service import TrackCapReached, track_page
+        from ...Dreams.track_service import (
+            TrackCapReached,
+            TrackSourceDisabled,
+            track_page,
+        )
 
         # The story's kind maps onto the tracked-item intent vocabulary
         # ('event'/'deal' pass through; everything else is a topic watch).
@@ -683,6 +691,13 @@ class DreamsStoryModal(ModalScreen[None]):
             )
         except TrackCapReached:
             self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except TrackSourceDisabled:
+            # P7 (fix round 1): the URL's source exists but is disabled and
+            # is not ours to re-enable; the service raised before any write.
+            self.notify(
+                _TRACK_SOURCE_DISABLED_NOTICE, severity="warning", markup=False
+            )
             return
         except Exception as exc:  # noqa: BLE001 - a failed track is a notice
             logger.warning(f"Dreams track failed: {type(exc).__name__}")

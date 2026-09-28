@@ -10,6 +10,13 @@ inbox, and wrap all of it in one ``dream_tracked_items`` row (schema v2).
 membership and alert rules a user may have adopted, and an attached
 (not dream-created) subscription is never touched at all.
 
+Re-track after untrack (ruling P7, fix round 1): the URL lookup ignores
+``is_active``, so a found source may be one a prior untrack disabled. When
+it is (a retired, dream-created tracked row pins the provenance), the
+re-track RE-ENABLES it and reports ``"re-enabled"``; a disabled source with
+no dream provenance is refused with ``TrackSourceDisabled`` -- never
+adopted, never re-enabled behind the user's back.
+
 Scheduling needs no registration here: ``WatchlistProjection`` fabricates
 ``watchlist:<subscription_id>`` tasks straight from subscription rows, so
 creating the subscription IS the registration.
@@ -45,6 +52,21 @@ class TrackCapReached(RuntimeError):
     """
 
     reason_code = "track_cap_reached"
+
+
+class TrackSourceDisabled(RuntimeError):
+    """The URL belongs to a source that exists but is disabled (foreign).
+
+    Ruling P7 (fix round 1): a disabled source with no dream provenance is
+    never adopted, never re-enabled behind the user's back, and never given
+    an active tracked item against a dead watch. Raised BEFORE any write.
+
+    Attributes:
+        reason_code: Stable machine identifier
+            (``track_source_disabled``).
+    """
+
+    reason_code = "track_source_disabled"
 
 
 def _cap() -> int:
@@ -93,12 +115,18 @@ async def track_page(
 
     Returns:
         ``{"tracked_item_id": int, "subscription_id": int,
-        "outcome": "created" | "attached", "watchlist_id": int}``.
+        "outcome": "created" | "attached" | "re-enabled",
+        "watchlist_id": int}``. ``re-enabled`` means the URL resolved to a
+        subscription a prior untrack had disabled (retired dream-created
+        row with this subscription), and it was re-activated.
 
     Raises:
         TrackCapReached: When ``count_active_tracked()`` already meets the
             cap -- raised BEFORE any subscription, watchlist, alert, or
             tracked-item write.
+        TrackSourceDisabled: When the URL resolves to a DISABLED source
+            with no dream provenance (the user disabled it themselves) --
+            also raised before any write.
     """
     # Cap guard FIRST: the whole point is that a capped runtime creates
     # nothing, so this precedes every write below.
@@ -119,6 +147,36 @@ async def track_page(
         subscription_id = int(existing)
         outcome = "attached"
         created_by_dreams = 0
+        # P7 (fix round 1): the URL lookup ignores is_active, so a found
+        # source may be one this flow disabled on a prior untrack, or a
+        # foreign source the user disabled themselves. Attaching to either
+        # as-is would record an active tracked item against a dead watch.
+        source = await subs_service.get_source(subscription_id)
+        if not bool(source.get("active")) and not bool(source.get("paused")):
+            # "active=False, paused=False" is exactly the DISABLED state
+            # untrack writes (is_active=0, is_paused untouched at 0); an
+            # auto-paused source (task-1410, paused=True) keeps its own
+            # Resume lifecycle and rides the plain attach branch.
+            retired_rows = await asyncio.to_thread(
+                dreams_db.list_tracked_items, "retired"
+            )
+            dream_owned = any(
+                int(row.get("subscription_id") or 0) == subscription_id
+                and int(row.get("created_by_dreams") or 0) == 1
+                for row in retired_rows
+            )
+            if not dream_owned:
+                raise TrackSourceDisabled(
+                    "source exists but is disabled (no dream provenance): "
+                    f"subscription {subscription_id}"
+                )
+            # WE disabled it on a prior untrack (retired + dream-created +
+            # this subscription): re-enable and say so.
+            await subs_service.update_source(
+                subscription_id, {"active": True}
+            )
+            outcome = "re-enabled"
+            created_by_dreams = 1
     else:
         # Payload keys are the ones ``_source_batch_rows`` consumes:
         # ``source_type`` (not "type") and ``active`` (not "is_active").
