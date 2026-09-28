@@ -120,14 +120,12 @@ class _ScriptedShellServer(
         return websocket
 
     async def handle_served_canvas_session(self, request):
-        import json as _json
-
         from aiohttp import web
 
         self.session_requests.append(request)
         if self.session_script is not None:
+            # The script always finishes by raising an HTTP response.
             await self.session_script(self, request)
-            return None  # pragma: no cover - script raised or responded
         raise web.HTTPNotFound(text="Canvas unavailable")
 
 
