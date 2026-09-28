@@ -806,11 +806,26 @@ def _resume_tool_messages(
     ]
 
 
+def _durable_activity_presentation(presentation):
+    """Compare replay facts separately from live-only arguments, identity and timing."""
+    return (
+        ConsoleActivityPresentation(
+            presentation.kind, presentation.label, presentation.status
+        )
+        if presentation is not None
+        else None
+    )
+
+
 def _activity_marker_signature(
     messages: list[ConsoleChatMessage],
 ) -> list[tuple[str, ConsoleActivityPresentation | None, str | None]]:
     return [
-        (message.content, message.activity_presentation, message.tool_output_full)
+        (
+            message.content,
+            _durable_activity_presentation(message.activity_presentation),
+            message.tool_output_full,
+        )
         for message in messages
     ]
 
@@ -3411,6 +3426,7 @@ def test_provider_stream_signal_omission_preserves_legacy_gateway_signature(tmp_
     assert store.get_message(aid).content == "Unchanged."
 
 
+@pytest.mark.bootstrap_profile
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
@@ -3432,13 +3448,15 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     ]
     assert spawn_markers
     assert [marker.activity_presentation.kind for marker in live_markers] == [
-        "spawn",
         "tool",
+        "spawn",
     ]
     assert not any(
         marker.activity_presentation.kind == "planning" for marker in live_markers
     )
-    live_signature = _activity_marker_signature(live_markers)
+    # Live calls now appear before the child spawn receipt. Old replay keeps
+    # its receipt/result ordering; compare the corresponding retained facts.
+    live_signature = _activity_marker_signature([live_markers[1], live_markers[0]])
     resumed_signature = _activity_marker_signature(resumed_markers)
     assert live_signature[:1] == resumed_signature[:1]
     assert [item[1:] for item in live_signature] == [
@@ -3998,6 +4016,7 @@ def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     tmp_path,
 ):
@@ -4030,9 +4049,9 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         for m in store.messages_for_session(session.id)
         if m.role is ConsoleMessageRole.TOOL
     ]
-    assert [m.activity_presentation for m in live_markers] == [
-        m.activity_presentation for m in resumed_markers
-    ]
+    assert [
+        _durable_activity_presentation(m.activity_presentation) for m in live_markers
+    ] == [m.activity_presentation for m in resumed_markers]
 
 
 @pytest.mark.parametrize(
@@ -4042,6 +4061,7 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         CONTROLLER_USER_DENIED_REFUSAL.format(name="collision_tool"),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     tmp_path, content: str
 ) -> None:
@@ -4070,7 +4090,9 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     assert tool_step.tool_outcome == "success"
     assert persisted_step["tool_outcome"] == "success"
     assert live[-1].activity_presentation.status == "success"
-    assert resumed[-1].activity_presentation == live[-1].activity_presentation
+    assert resumed[-1].activity_presentation == _durable_activity_presentation(
+        live[-1].activity_presentation
+    )
     if content.startswith("tool call denied"):
         assert "***REDACTED***" in resumed[-1].content
         assert resumed[-1].tool_output_full is None
@@ -4412,6 +4434,7 @@ def test_live_callback_interleaving_preserves_primary_planning_and_resume_sequen
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
+@pytest.mark.bootstrap_profile
 def test_planning_live_resume_marker_order_content_and_presentation_parity(
     tmp_path,
 ) -> None:
@@ -4448,7 +4471,8 @@ def test_planning_live_resume_marker_order_content_and_presentation_parity(
         message.content for message in live
     ]
     assert [message.activity_presentation for message in resumed] == [
-        message.activity_presentation for message in live
+        _durable_activity_presentation(message.activity_presentation)
+        for message in live
     ]
     assert [message.tool_output_full for message in resumed] == [
         message.tool_output_full for message in live
@@ -7053,6 +7077,7 @@ def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
     assert any("mcp__srv_a__search" in row.content for row in tool_rows)
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     """`review_tool_calls=` must reach AgentService/the loop -- a batch
     verdict other than "proceed" skips dispatch and becomes the tool
@@ -7095,7 +7120,7 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     # copy, so the marker names the user, not a policy.
     assert live[1].activity_presentation.status == "denied"
     assert [row.activity_presentation for row in resumed] == [
-        row.activity_presentation for row in live
+        _durable_activity_presentation(row.activity_presentation) for row in live
     ]
     assert resumed[0].content == live[0].content
     assert "***REDACTED***" in resumed[1].content
@@ -11795,6 +11820,90 @@ def test_custom_ep_parent_child_routed_to_builtin_family_resolves_independently(
     assert resolution.base_url == ""
 
 
+def _swapped_custom_ep_parent_resolution():
+    """A parent resolution as the gateway resolves a swapped
+    ``openai_compatible`` registry entry (ADR-179 Phase 2 Task 6): raw
+    identity on ``provider``/``selected_provider``, engine execution key on
+    ``execution_key``, legacy readiness key alongside."""
+    return ConsoleProviderResolution(
+        provider="custom-ep:paid",
+        base_url="https://paid.example.com/v1",
+        model="paid-model",
+        ready=True,
+        readiness_key="custom",
+        execution_key="custom-hosted",
+        selected_provider="custom-ep:paid",
+    )
+
+
+def _unknown_provider_resolution(selection):
+    """Mirror of the real gateway's answer for an unselectable key: the
+    ``custom-hosted`` engine spelling resolves not-ready with "Unknown
+    provider" (it is execution-only, never a standalone provider id)."""
+    return ConsoleProviderResolution(
+        provider=selection.provider,
+        base_url="",
+        model=selection.explicit_model,
+        ready=False,
+        visible_copy=(
+            "custom_hosted is not ready: Unknown provider. Choose a "
+            "supported provider or add api_key under "
+            "[api_settings.custom_hosted]."
+        ),
+        readiness_key=selection.provider,
+        execution_key=selection.provider,
+    )
+
+
+def test_swapped_custom_ep_bridge_send_naming_execution_key_is_same_target(
+    monkeypatch,
+):
+    """The bridge-level send carries the plan's flattened execution key
+    (``api_endpoint="custom-hosted"``) while the parent's identity is
+    ``custom-ep:paid``: SAME target -- the parent resolution streams, and
+    the execution-only spelling is never re-resolved as a standalone
+    provider (the real gateway answers that "Unknown provider")."""
+    # Env-first read keeps the streamed-turn watchdog off this machine's
+    # config.toml (a recovery-required config would otherwise poison the
+    # turn with an unrelated RecoveryRequired error).
+    monkeypatch.setenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", "0")
+    gateway = _RoutingGateway(resolver=_unknown_provider_resolution)
+    parent = _swapped_custom_ep_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="custom-hosted",
+            model="paid-model",
+            messages_payload=[{"role": "user", "content": "ordinary send"}],
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    assert resolution is parent
+    assert resolution.base_url == "https://paid.example.com/v1"
+
+
+def test_bare_custom_hosted_as_an_actual_selection_still_fails_cleanly():
+    """Under a parent whose execution key is NOT the engine spelling, naming
+    bare ``custom-hosted`` is a routed call to an unselectable provider and
+    fails loudly through chat_call's error channel -- exactly as before."""
+    gateway = _RoutingGateway(resolver=_unknown_provider_resolution)
+    parent = _routing_parent_resolution()
+    with (
+        _streaming_adapter(parent, gateway) as adapter,
+        pytest.raises(RuntimeError, match="custom-hosted"),
+    ):
+        adapter.chat_call(
+            api_endpoint="custom-hosted",
+            model="some-model",
+            messages_payload=[{"role": "user", "content": "name the engine key"}],
+            streaming=False,
+        )
+    assert len(gateway.resolve_calls) == 1
+    assert gateway.stream_calls == []
+
+
 def test_routed_child_keeps_live_usage_scope_and_provider_counts():
     events = []
     terminal = ProviderToolCalls((), ProviderTurnMetadata(
@@ -11881,3 +11990,221 @@ def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(monkeyp
         assert all(url.startswith("http://saved-server:8080") for url in requests)
     finally:
         asyncio.run(client.aclose())
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_lifecycle_rows_exist_before_review_and_settle_in_place(tmp_path):
+    """Catch late-only markers, name-based pairing, and fake approval waits."""
+    calls = _native_calls("collision_tool", {"path": "first.txt"}, "first")
+    second = _native_calls("collision_tool", {"path": "second.txt"}, "second")
+    batch = ProviderToolCalls(tool_calls=calls.tool_calls + second.tool_calls)
+    bridge, db, store, session, aid = _bridge(tmp_path, [[batch], ["Finished."]])
+    observed = {}
+
+    def review(calls, run_id):
+        rows = [
+            m
+            for m in _tool_messages(store, session.id)
+            if m.activity_presentation.kind == "tool"
+        ]
+        assert len(rows) == 2, "both calls must be visible before permission review"
+        assert [m.activity_presentation.status for m in rows] == ["queued", "queued"]
+        observed.update({m.activity_presentation.call_id: m.id for m in rows})
+        bridge.set_tool_approval_pending(session.id, run_id, ["second"], True)
+        rows = [
+            m
+            for m in _tool_messages(store, session.id)
+            if m.activity_presentation.kind == "tool"
+        ]
+        assert [m.activity_presentation.status for m in rows] == [
+            "queued",
+            "awaiting_approval",
+        ]
+        bridge.set_tool_approval_pending(session.id, run_id, ["second"], False)
+        return {"second": CONTROLLER_USER_DENIED_REFUSAL}
+
+    class Provider(_ResultMCPProvider):
+        def invoke(self, tool_id, args):
+            rows = [
+                m
+                for m in _tool_messages(store, session.id)
+                if m.activity_presentation.kind == "tool"
+            ]
+            assert rows[0].id == observed["first"]
+            assert rows[0].activity_presentation.status == "running"
+            assert "first.txt" in rows[0].activity_presentation.arguments
+            return super().invoke(tool_id, args)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=_native_resolution(),
+        mcp_provider=Provider(ToolResult(ok=True, content="one\ntwo\nthree\nfour")),
+        review_tool_calls=review,
+    )
+    assert outcome.status == "done"
+    assert set(observed) == {"first", "second"}, "calls were not visible before review"
+    rows = [
+        m
+        for m in _tool_messages(store, session.id)
+        if m.activity_presentation.kind == "tool"
+    ]
+    assert [m.id for m in rows] == [observed["first"], observed["second"]]
+    assert [m.activity_presentation.status for m in rows] == ["success", "denied"]
+    assert rows[0].activity_presentation.result_preview == "one\ntwo\nthree\nfour"
+    assert rows[0].activity_presentation.elapsed_seconds is not None
+    proposals = [
+        s for s in db.list_runs("conv-1")[0]["steps"] if s["kind"] == "tool_proposed"
+    ]
+    assert all(not s.get("args") for s in proposals), (
+        "live arguments must not widen durable capture"
+    )
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_lifecycle_reused_provider_id_retains_every_round(tmp_path):
+    """Some compatible providers synthesize call_0 afresh in each response."""
+    bridge, _db, store, session, aid = _bridge(
+        tmp_path,
+        [
+            [_native_calls("collision_tool", {"path": "first.txt"}, "")],
+            [_native_calls("collision_tool", {"path": "second.txt"}, "")],
+            ["Finished."],
+        ],
+    )
+    provider = _ResultMCPProvider(ToolResult(ok=True, content="read"))
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=_native_resolution(),
+        mcp_provider=provider,
+    )
+    assert outcome.status == "done"
+    assert len(provider.invoke_calls) == 2
+    rows = [
+        m
+        for m in _tool_messages(store, session.id)
+        if m.activity_presentation.kind == "tool"
+    ]
+    assert len(rows) == 2, "a new model round must retain its own call and result"
+    assert "first.txt" in rows[0].activity_presentation.arguments
+    assert "second.txt" in rows[1].activity_presentation.arguments
+    assert rows[0].id != rows[1].id
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_lifecycle_discovery_keeps_existing_capture_exclusion(tmp_path):
+    """Showing a previously quiet call must not add a durable trajectory."""
+    bridge, _db, store, session, aid = _bridge(
+        tmp_path,
+        [
+            [_fence("find_tools", {"query": "calculator"})],
+            ["Finished."],
+        ],
+    )
+    assert _run(bridge, store, session, aid).status == "done"
+    rows = [
+        m
+        for m in _tool_messages(store, session.id)
+        if m.activity_presentation.kind == "tool"
+    ]
+    assert len(rows) == 1 and rows[0].activity_presentation.status == "success"
+    assert not store._pending_trajectory_tool_rows
+
+
+@pytest.mark.bootstrap_profile
+def test_live_tool_display_cleanup_failure_does_not_fail_run_or_leak_ownership(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+    def broken_finish(self, cancelled):
+        raise RuntimeError("secret output must never enter diagnostics")
+
+    monkeypatch.setattr(ConsoleToolActivity, "finish", broken_finish)
+    bridge, _db, store, session, aid = _bridge(
+        tmp_path, [[_fence("calculator", {"expression": "6*7"})], ["Finished."]]
+    )
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        assert _run(bridge, store, session, aid).status == "done"
+    finally:
+        logger.remove(sink)
+    assert not bridge._tool_activity_runs
+    assert not bridge._fleet_services
+    assert any(
+        "display could not be settled (RuntimeError)" in text for text in messages
+    )
+    assert all("secret output" not in text for text in messages)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("fail_adoption", [False, True])
+def test_run_teardown_settles_shell_when_tool_result_callback_never_arrives(
+    tmp_path, monkeypatch, cancelled, fail_adoption
+):
+    from Tests.Chat.test_console_raw_shell_progress import _call_step
+    from tldw_chatbook.Tools.raw_cli_executor import RawCliStreamEvent
+
+    bridge, db, store, session, aid = _bridge(tmp_path, [])
+    marker_ids = []
+    update = bridge._update_raw_shell_marker
+    failed = False
+
+    def fail_first_update(state):
+        nonlocal failed
+        if fail_adoption and not failed:
+            failed = True
+            raise RuntimeError("adoption display unavailable")
+        update(state)
+
+    monkeypatch.setattr(bridge, "_update_raw_shell_marker", fail_first_update)
+
+    def interrupted_turn(service, *, conversation_id, **_kwargs):
+        run_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
+        step = _call_step(tmp_path, "interrupted-shell", "printf alpha")
+        service._on_tool_activity(
+            replace(step, kind="tool_proposed"), "primary", run_id
+        )
+        marker_ids.append(_tool_messages(store, session.id)[-1].id)
+        # The runtime contains observer errors; execution can still outlive display.
+        if fail_adoption:
+            with pytest.raises(RuntimeError, match="adoption display"):
+                service._on_step(step, "primary", run_id)
+        else:
+            service._on_step(step, "primary", run_id)
+        bridge.raw_shell_progress_sink(
+            run_id,
+            step.call_id,
+            RawCliStreamEvent(
+                stream="stdout", text="partial alpha", total_bytes=13, truncated=False
+            ),
+        )
+        if cancelled:
+            db.set_status(run_id, "cancelled")
+            return run_id, RunOutcome("cancelled", [step])
+        raise RuntimeError("service interrupted before the result callback")
+
+    monkeypatch.setattr(AgentService, "run_turn", interrupted_turn)
+    if cancelled:
+        assert _run(bridge, store, session, aid).status == "cancelled"
+    else:
+        with pytest.raises(RuntimeError, match="service interrupted"):
+            _run(bridge, store, session, aid)
+    rows = [m for m in _tool_messages(store, session.id) if m.raw_cli_presentation]
+    assert [row.id for row in rows] == marker_ids
+    assert rows[0].raw_cli_presentation.lifecycle_state == (
+        "cancelled" if cancelled else "failed"
+    )
+    assert rows[0].raw_cli_presentation.cleanup_proven is None
+    assert "partial alpha" in rows[0].tool_output_full
+    assert "before a result" in rows[0].tool_output_full
+    assert not bridge._raw_shell_markers
+    assert not bridge._tool_activity_runs
+    assert not bridge._fleet_services

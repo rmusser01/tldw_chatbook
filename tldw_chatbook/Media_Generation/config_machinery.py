@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from collections.abc import Callable, Mapping
@@ -140,6 +141,49 @@ def coerce_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def coerce_bool_flag_or_warn(
+    value: Any, default: bool, *, section: str, key: str
+) -> bool:
+    """Coerce a feature-flag setting, warning when a *present* value is malformed.
+
+    ``Utils.coerce_bool_flag`` substitutes ``default`` for anything outside its
+    vocabulary, which is right for a UI preference but hides a typo'd TOML gate:
+    ``allow_uploads = "yess"`` reads exactly like an unset key, so the user sets
+    a gate and nothing happens. Config loading still must never raise (same
+    contract as :func:`warn_unknown_top_level_keys`), so the bad value is logged
+    and the default used.
+
+    Absence is not malformed: only a non-``None`` value is inspected, and the
+    vocabulary itself accepts ``0``/``False``/``"off"``, so a deliberate
+    switch-off never warns.
+
+    Args:
+        value: Raw config value (``None`` when the key is absent).
+        default: Fallback used when the value is absent or unrecognized.
+        section: TOML section label for the warning, e.g. ``video_generation.minimax``.
+        key: TOML key name for the warning.
+
+    Returns:
+        The coerced boolean, or ``default`` when the value is absent/malformed.
+    """
+    from tldw_chatbook.Utils.Utils import coerce_bool_flag  # ADR-097: lazy
+
+    if value is None:
+        return default
+    # Probing both defaults detects a fallback without restating the true/false
+    # vocabulary here -- coerce_bool_flag stays its single source of truth.
+    if coerce_bool_flag(value, True) != coerce_bool_flag(value, False):
+        # The rejected spelling is what makes the warning actionable, but it is
+        # user-typed config text going to a persistent sink -- bound it, the way
+        # the unknown-key scan logs only the short key token.
+        logger.warning(
+            f"[{section}] {key} = {repr(value)[:40]} is not a recognized boolean "
+            f"(true/false/1/0/yes/no/on/off) -- ignored, using {default}"
+        )
+        return default
+    return coerce_bool_flag(value, default)
+
+
 def coerce_choice(value: Any, *, default: str, allowed: set[str]) -> str:
     """Normalize a string choice to lowercase and return ``default`` when invalid."""
     raw = str(value or "").strip().lower()
@@ -233,6 +277,10 @@ def warn_unknown_top_level_keys(raw: Any, tables: ModalityConfigTables) -> None:
 # ponytail: a key added with `keyring set` shows up within this window.
 _KEYRING_READ_TTL_SECONDS = 10.0
 _KEYRING_READS: dict[tuple[str, str], tuple[float, str | None]] = {}
+# TASK-32926 (Qodo on #2831): Settings workers can overlap, so a miss is
+# single-flight per key -- one blocking lookup (one unlock prompt), not N.
+_KEYRING_READ_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_KEYRING_READ_LOCKS_GUARD = threading.Lock()
 
 
 def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
@@ -248,22 +296,28 @@ def keyring_get(backend: str, tables: ModalityConfigTables) -> str | None:
         after the lookup returns.
     """
     key = (tables.keyring_namespace, backend)
-    now = time.monotonic()
     hit = _KEYRING_READS.get(key)
-    if hit is not None and hit[0] > now:
+    if hit is not None and hit[0] > time.monotonic():
         return hit[1]
-    try:
-        value = keyring.get_password(tables.keyring_namespace, backend)
-    except Exception as e:  # keyring backend may be unavailable
-        logger.debug(
-            "keyring lookup failed for {}/{} (error_type={})",
-            tables.keyring_label,
-            backend,
-            type(e).__name__,
-        )
-        value = None
-    # Expiry starts when the (possibly blocking) lookup returns.
-    _KEYRING_READS[key] = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
+    with _KEYRING_READ_LOCKS_GUARD:
+        lock = _KEYRING_READ_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        # A concurrent caller may have filled the cache while we waited.
+        hit = _KEYRING_READS.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return hit[1]
+        try:
+            value = keyring.get_password(tables.keyring_namespace, backend)
+        except Exception as e:  # keyring backend may be unavailable
+            logger.debug(
+                "keyring lookup failed for {}/{} (error_type={})",
+                tables.keyring_label,
+                backend,
+                type(e).__name__,
+            )
+            value = None
+        # Expiry starts when the (possibly blocking) lookup returns.
+        _KEYRING_READS[key] = (time.monotonic() + _KEYRING_READ_TTL_SECONDS, value)
     return value
 
 

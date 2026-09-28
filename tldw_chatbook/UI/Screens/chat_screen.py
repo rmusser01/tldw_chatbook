@@ -51,7 +51,6 @@ from textual.widgets import Button, Static, Select, Collapsible, Input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import (
-    ConsoleProviderIntent,
     HandoffChannel,
     HandoffClaim,
     PendingHandoffStore,
@@ -656,6 +655,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_BUDDY,
     ACTION_IMPROVE_CURRENT_DRAFT,
     ACTION_PROMPTS,
+    ACTION_SAVE_PROMPT_DRAFT,
     ACTION_SAVE_CHATBOOK,
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
@@ -709,6 +709,9 @@ if TYPE_CHECKING:
         ConsoleSettingsDraftSnapshot,
         ConsoleSettingsModal,
         ConsoleSettingsResult,
+    )
+    from tldw_chatbook.Widgets.Console.console_prompt_draft_save_dialog import (
+        PromptDraftSaveChoice,
     )
     from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
         WorkspaceActionChosen,
@@ -807,6 +810,11 @@ CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # call to notice -- needs its own slow repaint timer. 10s keeps the
 # countdown's staleness bound well under the 300s cache TTL it is watching.
 CONSOLE_COST_TTL_TICK_SECONDS = 10.0
+# task-33081: during active streams the settings context estimate ran on
+# every 0.2s tick, re-tokenizing the entire growing streamed reply (the
+# token memo cannot hit while the content keeps changing). 1s staleness on
+# an estimate chip -- same spirit as the cost tick's 10s bound above.
+CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS = 1.0
 # task-13 (Console Inspector environment redesign): cadence for the
 # Environment panel's LOCAL tier (git status + the mtime-cached backlog
 # scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
@@ -7961,149 +7969,6 @@ class ChatScreen(BaseAppScreen):
             "",
         )
 
-    def _configured_console_provider(
-        self,
-        provider: str,
-    ) -> tuple[str, list[str]] | None:
-        """Resolve a normalized intent against configured provider identities."""
-        requested_key = provider_config_key(provider)
-        for configured_provider, configured_models in self._providers_models().items():
-            if provider_config_key(configured_provider) != requested_key:
-                continue
-            models = [
-                str(model).strip()
-                for model in configured_models
-                if str(model or "").strip()
-                and str(model).strip().lower() not in {"none", "null"}
-            ]
-            return requested_key, models
-        return None
-
-    def _configured_console_provider_default_model(
-        self,
-        provider: str,
-        models: list[str],
-    ) -> str | None:
-        """Return a valid configured default model for one provider."""
-        config = self._provider_readiness_app_config()
-        api_settings = (
-            config.get("api_settings", {}) if isinstance(config, Mapping) else {}
-        )
-        provider_settings: Mapping[str, Any] = {}
-        if isinstance(api_settings, Mapping):
-            for configured_provider, configured_settings in api_settings.items():
-                if provider_config_key(str(configured_provider)) != provider:
-                    continue
-                if isinstance(configured_settings, Mapping):
-                    provider_settings = configured_settings
-                break
-        candidates = (
-            provider_settings.get("model"),
-            provider_settings.get("api_model"),
-            provider_settings.get("default_model"),
-        )
-        for candidate in candidates:
-            model = str(candidate or "").strip()
-            if model and model in models:
-                return model
-
-        defaults = self._persisted_chat_defaults()
-        if provider_config_key(str(defaults.get("provider") or "")) == provider:
-            default_model = str(defaults.get("model") or "").strip()
-            if default_model and default_model in models:
-                return default_model
-        return models[0] if models else None
-
-    def _apply_console_provider_intent(
-        self,
-        intent: ConsoleProviderIntent,
-        *,
-        store: ConsoleChatStore,
-        session_id: str,
-        settings: ConsoleSessionSettings,
-    ) -> bool:
-        """Apply one validated intent to the session captured by its consumer."""
-        configured = self._configured_console_provider(intent.provider)
-        if configured is None:
-            self.app_instance.notify(
-                "That provider is unavailable. Choose a configured provider in Settings.",
-                severity="warning",
-            )
-            return False
-
-        provider, models = configured
-        model = self._configured_console_provider_default_model(provider, models)
-        derived = build_default_console_session_settings(
-            self._provider_readiness_app_config(),
-            provider,
-            model,
-        )
-        next_settings = replace(
-            settings,
-            provider=provider,
-            model=model,
-            base_url=derived.base_url,
-            source="user",
-        )
-        store.replace_session_settings(session_id, next_settings)
-        if store.active_session_id == session_id:
-            self._console_control_provider = next_settings.provider
-            self._console_control_model = next_settings.model
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
-            self._sync_console_control_bar()
-        self.app_instance.notify(
-            f"Console provider set to {provider} for this session.",
-            severity="information",
-        )
-        return True
-
-    def consume_pending_console_provider_intent(self) -> bool:
-        """Consume one typed provider intent after the Console session is ready."""
-        try:
-            store = self._ensure_console_chat_store()
-            settings = self._session._ensure_active_console_session_settings()
-            session_id = store.active_session_id
-            if session_id is None:
-                return False
-        except Exception as exc:
-            logger.warning(
-                "Console provider handoff is not ready (exception_category={})",
-                type(exc).__name__,
-            )
-            return False
-
-        claim = self.app_instance.pending_handoffs.claim(
-            HandoffChannel.CONSOLE_PROVIDER
-        )
-        if claim is None:
-            return False
-        try:
-            if not isinstance(claim.value, ConsoleProviderIntent):
-                raise TypeError("Console provider handoff was not typed")
-            self._apply_console_provider_intent(
-                claim.value,
-                store=store,
-                session_id=session_id,
-                settings=settings,
-            )
-        except Exception as exc:
-            self.app_instance.pending_handoffs.release(claim)
-            logger.warning(
-                "Console provider handoff will retry "
-                "(channel={}, revision={}, exception_category={})",
-                claim.channel.value,
-                claim.revision,
-                type(exc).__name__,
-            )
-            self.app_instance.notify(
-                "Console provider selection could not be applied yet; it will retry.",
-                severity="warning",
-            )
-            return False
-        self.app_instance.pending_handoffs.acknowledge(claim)
-        return True
-
     def consume_pending_vllm_console_intent(self) -> bool:
         """Apply one current verified vLLM target to the active session only."""
 
@@ -8323,13 +8188,6 @@ class ChatScreen(BaseAppScreen):
         )
         return True
 
-    def current_console_provider_for_command(self) -> str | None:
-        """Return the active session provider without creating a session."""
-        settings = self._session._active_console_session_settings()
-        if settings is None:
-            return None
-        return str(settings.provider or "").strip() or None
-
     def _active_console_settings_context_estimate(
         self,
     ) -> ConsoleSettingsContextEstimate:
@@ -8347,6 +8205,51 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_settings_context_estimate_for_session(session_id)
 
+    _console_estimate_cache: tuple[tuple[object, ...], float, Any] | None = None
+
+    def _console_display_history(
+        self,
+        store: ConsoleChatStore,
+        session_id: str,
+        controller: ConsoleChatController,
+    ) -> tuple[
+        tuple[object, ...],
+        list[ConsoleChatMessage],
+        spend.ConsoleSpendHistoryProjection,
+    ]:
+        """Reuse detached settled rows until store or run ownership changes."""
+        recovery = store.dispatch_recovery_for_session(session_id)
+        preparation = store.preparation_for_session(session_id)
+        run_status = controller.run_state_for(session_id).status
+        has_submit_task = bool(controller._submit_tasks_for_session(session_id))
+        key = (
+            id(store),
+            session_id,
+            store.display_projection_revision(session_id),
+            id(recovery),
+            id(preparation),
+            run_status,
+            has_submit_task,
+        )
+        cached = getattr(self, "_console_display_history_cache", None)
+        if cached is not None and cached[0] == key:
+            return key, cached[2], cached[3]
+        messages = store.messages_for_session(session_id)
+        history = spend.build_console_spend_history_projection(
+            messages, recovery, preparation, run_status, has_submit_task
+        )
+        # Retain the owner objects so their IDs cannot be reused while this
+        # screen still holds the corresponding projection.
+        self._console_display_history_cache = (
+            key,
+            store,
+            messages,
+            history,
+            recovery,
+            preparation,
+        )
+        return key, messages, history
+
     def _console_settings_context_estimate_for_session(
         self,
         session_id: str,
@@ -8359,6 +8262,55 @@ class ChatScreen(BaseAppScreen):
         if settings is None:
             raise KeyError(session_id)
         include_active_staging = store.active_session_id == session_id
+        controller = self._ensure_console_chat_controller()
+        run_status = controller.run_state_for(session_id).status
+        recovery = store.dispatch_recovery_for_session(session_id)
+        preparation = store.preparation_for_session(session_id)
+        composer = self._console_composer_or_none() if include_active_staging else None
+        draft_text = composer.draft_text() if composer is not None else ""
+        pending_owner = (
+            self._pending_console_launch_context if include_active_staging else None
+        )
+        # TASK-33081: keep the one-second streaming bound, but check its key
+        # before any transcript snapshots. Ordinary edits invalidate through
+        # payload/display revisions; growing stream text waits at most one second.
+        estimate_cache_key = (
+            store,
+            session_id,
+            store.message_count(session_id),
+            store.payload_revision(session_id),
+            None
+            if run_status in CONSOLE_ACTIVE_RUN_STATUSES
+            else store.display_projection_revision(session_id),
+            store.session_settings_revision(session_id),
+            settings.provider,
+            settings.model,
+            settings.max_tokens,
+            settings.system_prompt,
+            draft_text,
+            id(pending_owner),
+            id(recovery),
+            id(preparation),
+            run_status,
+            bool(controller._submit_tasks_for_session(session_id)),
+        )
+        now = time.monotonic()
+        cached_estimate = getattr(self, "_console_estimate_cache", None)
+        if (
+            cached_estimate is not None
+            and cached_estimate[0] == estimate_cache_key
+            and now - cached_estimate[1] < CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+        ):
+            return cached_estimate[2]
+
+        def remember(
+            estimate: ConsoleSettingsContextEstimate,
+        ) -> ConsoleSettingsContextEstimate:
+            self._console_estimate_cache = (estimate_cache_key, now, estimate)
+            # Keep immutable owners alive while their IDs are in the cache key.
+            self._console_estimate_cache_owners = (pending_owner, recovery, preparation)
+            return estimate
+
         workspace_context = (
             self._workspace._current_console_workspace_context()
             if include_active_staging
@@ -8368,30 +8320,75 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context if include_active_staging else None
         )
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        try:
-            session_messages = store.messages_for_session(session_id)
-        except KeyError:
-            session_messages = []
         greeting = ""
         composer = self._console_composer_or_none() if include_active_staging else None
         if include_active_staging:
             controller = self._ensure_console_chat_controller()
-            history = spend.build_console_spend_history_projection(
-                session_messages,
-                store.dispatch_recovery_for_session(session_id),
-                store.preparation_for_session(session_id),
-                controller.run_state_for(session_id).status,
-                bool(controller._submit_tasks_for_session(session_id)),
+            history_key, session_messages, history = self._console_display_history(
+                store, session_id, controller
             )
-            messages = spend.build_console_context_messages(
-                session_messages,
-                history.request_ids,
-                composer.draft_text() if composer is not None else "",
+            staged_text = console_prompted_evidence_text(pending_launch)
+            context_window = (
+                self._ensure_console_provider_gateway().cached_context_window(settings)
             )
-            greeting = controller._seeded_greeting_text(session_id, session_messages)
+            cache_key = (
+                history_key,
+                settings.provider,
+                settings.model,
+                settings.max_tokens,
+                settings.system_prompt,
+                len(workspace_context.staged_sources)
+                if workspace_context is not None
+                else 0,
+                staged_context_state.summary,
+                staged_text,
+                context_window,
+            )
+            cached_context = getattr(self, "_console_settled_context_cache", None)
+            if cached_context is None or cached_context[0] != cache_key:
+                greeting = controller._seeded_greeting_text(
+                    session_id, session_messages
+                )
+                settled_messages = spend.build_console_context_messages(
+                    session_messages, history.request_ids, ""
+                )
+                settled_estimate = build_console_context_estimate(
+                    settled_messages,
+                    settings.provider,
+                    settings.model,
+                    staged_source_count=cache_key[5],
+                    staged_context_summary=staged_context_state.summary,
+                    max_tokens_response=settings.max_tokens,
+                    system_prompt=spend.fold_system_prompt(
+                        settings.system_prompt, greeting
+                    ),
+                    staged_text=staged_text,
+                    context_window=context_window,
+                )
+                self._console_settled_context_cache = (cache_key, settled_estimate)
+            else:
+                settled_estimate = cached_context[1]
+            draft = composer.draft_text() if composer is not None else ""
+            if not draft.strip() or settled_estimate.used_tokens is None:
+                return remember(settled_estimate)
+            estimate = build_console_context_estimate(
+                [{"role": "user", "content": draft}],
+                settings.provider,
+                settings.model,
+                staged_source_count=cache_key[5],
+                staged_context_summary=staged_context_state.summary,
+                max_tokens_response=settings.max_tokens,
+                context_window=context_window,
+                history_used_tokens=settled_estimate.used_tokens,
+            )
+            return remember(estimate)
         else:
+            try:
+                session_messages = store.messages_for_session(session_id)
+            except KeyError:
+                session_messages = []
             messages = spend.build_console_context_messages(session_messages, None, "")
-        return build_console_context_estimate(
+        estimate = build_console_context_estimate(
             messages,
             settings.provider,
             settings.model,
@@ -8413,8 +8410,11 @@ class ChatScreen(BaseAppScreen):
             # no extra DB round trip. The actual send may shrink this after
             # its authority check.
             staged_text=console_prompted_evidence_text(pending_launch),
-            context_window=self._ensure_console_provider_gateway().cached_context_window(settings),
+            context_window=self._ensure_console_provider_gateway().cached_context_window(
+                settings
+            ),
         )
+        return remember(estimate)
 
     def _active_console_context_control_state(
         self,
@@ -10947,6 +10947,9 @@ class ChatScreen(BaseAppScreen):
         if action_id == ACTION_IMPROVE_CURRENT_DRAFT:
             self._open_console_prompts_modal(initial_mode="improve")
             return
+        if action_id == ACTION_SAVE_PROMPT_DRAFT:
+            self.action_save_console_prompt_draft()
+            return
         if action_id == ACTION_UNDO_PROMPT_IMPROVEMENT:
             self._undo_console_prompt_improvement()
             return
@@ -10985,6 +10988,37 @@ class ChatScreen(BaseAppScreen):
         self._focus_console_composer_if_needed(force=True)
         return True
 
+    def action_save_console_prompt_draft(self) -> None:
+        """Ask whether to keep or clear the composer after a local draft save."""
+        from ...Widgets.Console.console_prompt_draft_save_dialog import (
+            ConsolePromptDraftSaveDialog,
+        )
+
+        composer = self._console_composer_or_none()
+        if composer is None or not composer.draft_text().strip():
+            self.app_instance.notify(
+                "Write something before saving a draft.", severity="warning"
+            )
+            return
+        self.app.push_screen(
+            ConsolePromptDraftSaveDialog(),
+            callback=self._handle_console_prompt_draft_save_choice,
+        )
+
+    def _handle_console_prompt_draft_save_choice(
+        self, choice: "PromptDraftSaveChoice | None"
+    ) -> None:
+        if choice is None:
+            self._focus_console_composer_if_needed(force=True)
+            return
+        self.run_worker(
+            self._prompts._save_current_prompt_draft(
+                clear_after_save=choice == "clear"
+            ),
+            exclusive=True,
+            group="console-prompt-draft-save",
+        )
+
     def _open_console_prompt_comparison(self) -> None:
         """Open the safe before/after view for the current improvement Undo."""
         composer = self._console_composer_or_none()
@@ -11008,10 +11042,16 @@ class ChatScreen(BaseAppScreen):
         self._focus_console_composer_if_needed(force=True)
 
     def _open_console_prompts_modal(
-        self, *, initial_mode: Literal["browse", "improve"] = "browse"
+        self,
+        *,
+        initial_mode: Literal["browse", "improve"] = "browse",
+        initial_source: Literal["local", "server", "draft_shelf"] = "local",
     ) -> None:
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
-        self._prompts._open_console_prompts_modal(initial_mode=initial_mode)
+        self._prompts._open_console_prompts_modal(
+            initial_mode=initial_mode,
+            initial_source=initial_source,
+        )
 
     @on(ConsoleTemporaryChip.SaveRequested)
     def on_console_temporary_chip_save(
@@ -11283,7 +11323,11 @@ class ChatScreen(BaseAppScreen):
         session_id = store.active_session_id
         message = None
         if session_id:
-            for candidate in reversed(store.messages_for_session(session_id)):
+            # TASK-24300: lazy newest-first walk. This looks for the most
+            # recent complete assistant turn and almost always stops within
+            # the first few; snapshotting the whole transcript to do it
+            # priced the scan at O(transcript) for an O(1) answer.
+            for candidate in store.iter_messages_newest_first(session_id):
                 if candidate.role == "assistant" and candidate.status == "complete":
                     message = candidate
                     break
@@ -11628,24 +11672,19 @@ class ChatScreen(BaseAppScreen):
                 self._console_cost_cache_state = ConsoleCacheState.NONE
                 return None
             session_id = session.id
-            try:
-                messages = store.messages_for_session(session_id)
-            except KeyError:
-                self._console_cost_cache_state = ConsoleCacheState.NONE
-                return None
-
             controller = self._ensure_console_chat_controller()
-            history = spend.build_console_spend_history_projection(
-                messages,
-                store.dispatch_recovery_for_session(session_id),
-                store.preparation_for_session(session_id),
-                controller.run_state_for(session_id).status,
-                bool(controller._submit_tasks_for_session(session_id)),
-            )
-            snapshot_messages = spend.build_console_current_cost_messages(
-                messages, history.current_ids
+            history_key, messages, history = self._console_display_history(
+                store, session_id, controller
             )
             provider, model, _settings = self._active_console_provider_model_display()
+            catalog = get_pricing_catalog()
+            projection_key = (
+                history_key,
+                provider,
+                model,
+                store.session_settings_revision(session_id),
+                catalog,
+            )
             # PR2b Task 5 (cost rollup): the active conversation's LIVE
             # sub-agent fleet spend, folded into the snapshot's token total
             # (never priced -- see `ConsoleCostSnapshot.fleet_tokens`'s
@@ -11685,8 +11724,9 @@ class ChatScreen(BaseAppScreen):
             # (all user/system rows, legacy assistant rows, the staged
             # evidence pseudo-row) was re-tokenized by a per-character
             # Python loop 5x/s: ~28ms/tick on a 99KB transcript, measured.
-            # The memo re-verifies each row's own text before serving a hit,
-            # so it can change how long this takes but not what it returns.
+            # Row estimates are verified against detached text when a
+            # display revision changes. Unchanged ticks reuse the settled
+            # aggregate without traversing every row.
             #
             # Gating the whole snapshot on `store.payload_revision` instead
             # was considered and rejected: usage is not payload-affecting, so
@@ -11694,13 +11734,55 @@ class ChatScreen(BaseAppScreen):
             # a real priced usage landing on an ALREADY-terminal row (the
             # documented Stop-path ordering) would leave the chip showing the
             # estimated total until some unrelated edit moved the revision.
+            # ADR-190's display revision observes that late usage separately.
             estimate_cache = self._console_cost_estimate_cache_or_new()
-            snapshot = build_cost_snapshot(
-                snapshot_messages,
-                provider=provider,
-                model=model,
+            cached_spend = getattr(self, "_console_settled_spend_cache", None)
+            if cached_spend is None or cached_spend[0] != projection_key:
+                snapshot_messages = spend.build_console_current_cost_messages(
+                    messages, history.current_ids
+                )
+                settled_snapshot = build_cost_snapshot(
+                    snapshot_messages,
+                    provider=provider,
+                    model=model,
+                    fleet_tokens=0,
+                    estimate_cache=estimate_cache,
+                )
+                historical_media = any(
+                    message.role is ConsoleMessageRole.USER
+                    and message.attachments
+                    and message.id in history.request_ids
+                    for message in messages
+                ) and any(
+                    row.attachments
+                    for row in controller._lightweight_provider_message_rows(
+                        [
+                            message
+                            for message in messages
+                            if message.id in history.request_ids
+                        ],
+                        skip_failed=True,
+                        session_id=session_id,
+                        turn_context=controller.resolve_turn_configuration_snapshot(
+                            session_id
+                        ),
+                    )
+                )
+                self._console_settled_spend_cache = (
+                    projection_key,
+                    snapshot_messages,
+                    settled_snapshot,
+                    historical_media,
+                )
+            else:
+                snapshot_messages = cached_spend[1]
+                settled_snapshot = cached_spend[2]
+                historical_media = cached_spend[3]
+            fleet_tokens = max(0, fleet_tokens)
+            snapshot = replace(
+                settled_snapshot,
+                total_tokens=settled_snapshot.total_tokens + fleet_tokens,
                 fleet_tokens=fleet_tokens,
-                estimate_cache=estimate_cache,
             )
 
             controller = self._console_chat_controller
@@ -11741,7 +11823,6 @@ class ChatScreen(BaseAppScreen):
 
             projected_delta_usd: float | None = None
             pricing_as_of: str | None = None
-            catalog = get_pricing_catalog()
             provider_key = provider_config_key(provider)
             pricing = catalog.get_pricing(provider_key, model or "")
             if pricing is not None:
@@ -11773,37 +11854,49 @@ class ChatScreen(BaseAppScreen):
                     # `alert` -- is frozen during the run, but this
                     # projection is computed fresh every call).
                     #
-                    # task-15451: gated, but not cheap -- an alerting
-                    # session pays a WHOLE-transcript estimate on every tick
-                    # for as long as the alert stands. Same memo, same
-                    # guarantee: the hit is verified against every row's
-                    # (role, content) before it is served.
-                    projection_rows = tuple(
-                        (
-                            str(getattr(message.role, "value", message.role)),
-                            message.content,
-                        )
-                        for message in snapshot_messages
+                    # ADR-190: unchanged display revisions reuse this total
+                    # directly. A changed transcript verifies the row
+                    # signature through the existing token-estimate memo.
+                    projection_tokens_key = (projection_key, provider_key)
+                    cached_tokens = getattr(
+                        self, "_console_cost_projection_tokens_cache", None
                     )
-
-                    def _estimate_projection() -> int:
-                        return _estimate_tokens_locally(
-                            [
-                                {"role": role, "content": content}
-                                for role, content in projection_rows
-                            ],
-                            model or "",
-                            provider_key,
+                    if (
+                        cached_tokens is not None
+                        and cached_tokens[0] == projection_tokens_key
+                    ):
+                        estimated_tokens = cached_tokens[1]
+                    else:
+                        projection_rows = tuple(
+                            (
+                                str(getattr(message.role, "value", message.role)),
+                                message.content,
+                            )
+                            for message in snapshot_messages
                         )
 
-                    projection_cache = self._console_cost_estimate_cache_or_new()
-                    estimated_tokens = projection_cache.estimate(
-                        ("#cost-projection", session_id),
-                        token_estimate_signature(
-                            projection_rows, model or "", provider_key
-                        ),
-                        _estimate_projection,
-                    )
+                        def _estimate_projection() -> int:
+                            return _estimate_tokens_locally(
+                                [
+                                    {"role": role, "content": content}
+                                    for role, content in projection_rows
+                                ],
+                                model or "",
+                                provider_key,
+                            )
+
+                        projection_cache = self._console_cost_estimate_cache_or_new()
+                        estimated_tokens = projection_cache.estimate(
+                            ("#cost-projection", session_id),
+                            token_estimate_signature(
+                                projection_rows, model or "", provider_key
+                            ),
+                            _estimate_projection,
+                        )
+                        self._console_cost_projection_tokens_cache = (
+                            projection_tokens_key,
+                            estimated_tokens,
+                        )
                     rate_delta = (
                         pricing.cache_write_per_mtok - pricing.cache_read_per_mtok
                     ) / 1_000_000
@@ -11827,27 +11920,7 @@ class ChatScreen(BaseAppScreen):
                 context_state,
                 # Configuration capture resolves RAG defaults; text-only
                 # display refreshes must not pull that work onto first paint.
-                any(
-                    message.role is ConsoleMessageRole.USER
-                    and message.attachments
-                    and message.id in history.request_ids
-                    for message in messages
-                )
-                and any(
-                    row.attachments
-                    for row in controller._lightweight_provider_message_rows(
-                        [
-                            message
-                            for message in messages
-                            if message.id in history.request_ids
-                        ],
-                        skip_failed=True,
-                        session_id=session_id,
-                        turn_context=controller.resolve_turn_configuration_snapshot(
-                            session_id
-                        ),
-                    )
-                ),
+                historical_media,
                 bool(store.pending_attachments(session_id)),
                 pricing.input_per_mtok if pricing is not None else None,
                 composer.draft_text() if composer is not None else "",
@@ -16829,7 +16902,6 @@ class ChatScreen(BaseAppScreen):
             # a failed early attempt releases its claim for this screen's
             # existing resume/user-triggered retry paths.
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert)
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_console_provider_intent)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
@@ -16906,7 +16978,6 @@ class ChatScreen(BaseAppScreen):
             )
             self._consume_pending_console_roleplay_repair()
             await self._consume_pending_console_prompt_insert()
-            self.consume_pending_console_provider_intent()
             fleet_result = self._fleet.consume_pending_console_fleet_completion()
             if inspect.isawaitable(fleet_result):
                 await fleet_result
@@ -18167,6 +18238,8 @@ class ChatScreen(BaseAppScreen):
                     _thinking_signature(getattr(message, "thinking", None)),
                     variant_signature,
                     getattr(message, "citation_presentation", None),
+                    getattr(message, "activity_presentation", None),
+                    getattr(message, "raw_cli_presentation", None),
                 )
             )
         return (
@@ -21160,22 +21233,28 @@ class ChatScreen(BaseAppScreen):
         def schedule() -> None:
             from tldw_chatbook.config import get_canvas_config_policy
 
-            policy = get_canvas_config_policy()
-            if (
-                not self._console_runtime().canvas_enabled()
-                or not policy.auto_open_on_create
-            ):
+            if not self._console_runtime().canvas_enabled():
                 return
             gateway = self._console_runtime().canvas_gateway
             if gateway is not None and gateway.has_browser_session_for(session_id):
                 return
-            self.run_worker(
-                self._open_console_canvas_selection(
+
+            async def open_when_policy_allows() -> None:
+                # task-33081: policy resolution can fall back to the OS
+                # keyring (remote web_server token) -- never resolve it on
+                # the UI event loop that runs this worker.
+                policy = await asyncio.to_thread(get_canvas_config_policy)
+                if not policy.auto_open_on_create:
+                    return
+                await self._open_console_canvas_selection(
                     session_id=session_id,
                     canvas_id=info.canvas_id,
                     revision_id=info.revision_id,
                     follow_latest=True,
-                ),
+                )
+
+            self.run_worker(
+                open_when_policy_allows(),
                 exclusive=True,
                 group="console-canvas-auto-open",
             )
@@ -23723,10 +23802,6 @@ class ChatScreen(BaseAppScreen):
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self._consume_pending_console_prompt_insert,
-                ),
-                self.set_timer(
-                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                    self.consume_pending_console_provider_intent,
                 ),
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,

@@ -19,6 +19,7 @@ from tldw_chatbook.runtime_policy.server_event_scope import (
 
 from .contracts import WorkspaceDataSource
 from .source_operation_store import ResearchSourceOperationStore
+from .source_readiness import report_resume_failures
 from .source_operations import (
     ResearchSourceOperation,
     SourceOperationStage,
@@ -543,10 +544,12 @@ class ResearchSourceAssociationScheduler:
             if SourceOperationStatus.FAILED
             not in {operation.catalog_status, operation.association_status}
         )
-        await asyncio.gather(
-            *(self.resume(operation.operation_id) for operation in actionable),
+        operation_ids = [operation.operation_id for operation in actionable]
+        outcomes = await asyncio.gather(
+            *(self.resume(operation_id) for operation_id in operation_ids),
             return_exceptions=True,
         )
+        report_resume_failures("association", operation_ids, outcomes)
 
     async def resume_readiness_incomplete(self, *, limit: int = 50) -> None:
         """Resume one bounded stage-specific page after association recovery."""

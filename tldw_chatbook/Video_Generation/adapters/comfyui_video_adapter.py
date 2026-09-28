@@ -31,7 +31,10 @@ from tldw_chatbook.Image_Generation.http_client import (
     fetch_json,
 )
 from tldw_chatbook.Utils.egress import origin_set
-from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.path_validation import (
+    validate_path,
+    validate_recovery_relative_path,
+)
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.adapters.base import (
     ResolvedReferenceAsset,
@@ -975,6 +978,19 @@ class ComfyUIVideoAdapter:
                         filename = filename.strip()
                         suffix = Path(filename).suffix
                         if suffix != expected_suffix:
+                            continue
+                        # The descriptor is server-supplied and is urlencoded
+                        # straight into `/view?`. The image twin validates the
+                        # identical descriptor shape (`_safe_filename` /
+                        # `_safe_subfolder`, comfyui_image_adapter.py); this
+                        # path checked only the type and the suffix. Two
+                        # adapters against one protocol with two trust postures
+                        # is how the next copy inherits the weaker one.
+                        try:
+                            validate_recovery_relative_path(subfolder)
+                            if "/" in validate_recovery_relative_path(filename):
+                                raise ValueError("filename_is_not_one_component")
+                        except ValueError:
                             continue
                         matches.append(
                             {

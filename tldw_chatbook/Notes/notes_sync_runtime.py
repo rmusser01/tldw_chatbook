@@ -16,6 +16,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
+from loguru import logger
+
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     ProducerLifetime,
     producer_call,
@@ -167,6 +169,32 @@ def _validate_projection(status: str, next_action: str) -> None:
         raise ValueError("unknown runtime status")
     if next_action not in _NEXT_ACTIONS:
         raise ValueError("unknown runtime next action")
+
+
+def _log_bounded_failure(stage: str, error: BaseException) -> None:
+    """Record one path-free diagnostic for a failure this module swallows.
+
+    Only a literal stage name and the exception's CLASS name are written. This
+    package deliberately keeps note titles, sync-root paths and driver message
+    text out of the log, and `str(exc)` on an `OSError`/`sqlite3.Error` carries
+    a filesystem path routinely -- so the class name is the widest bounded fact
+    available. Without it a start failure reaches the user as the single word
+    "failed" with nothing recorded anywhere, which is zero bits of support.
+
+    Both values are interpolated INTO the message: loguru keyword arguments
+    that do not appear as `{placeholders}` land in `record["extra"]`, and this
+    app's sink forwards `record["message"]` to stdlib logging, so an extras-only
+    field is discarded before it reaches any handler.
+
+    Args:
+        stage: Literal call-site name, e.g. `"store initialization"`.
+        error: The swallowed exception; only its type name is used.
+    """
+    logger.warning(
+        "notes sync: {stage} failed ({error})",
+        stage=stage,
+        error=type(error).__name__,
+    )
 
 
 class NotesSyncRootRefused(RuntimeError):
@@ -1089,9 +1117,6 @@ class _ProductionRuntimeAdapter:
             obsidian_mode=self.obsidian_mode(root.root_id),
         )
         token = plan_reconciliation(request).observation_token
-        if len(self._bundles) >= _OBSERVATION_BUNDLE_LIMIT:
-            raise RuntimeError("observation_capacity_exceeded")
-        self._bundles[token] = MappingProxyType(bundle)
         # task-32534 AC#4: SEED the watcher's change baseline, never advance
         # it. This pass used to overwrite it, so a manual Check right after a
         # disk edit consumed the change -- `changed_root_ids` then saw no
@@ -1133,6 +1158,15 @@ class _ProductionRuntimeAdapter:
             )
 
         self._observation_reuse[root.root_id] = await asyncio.to_thread(build_reuse)
+        # Register LAST, after the final await: an owner only exists once this
+        # returns, because every `release_observation` call site guards its
+        # `finally` on a value computed from the return. Registering before the
+        # `to_thread` above left a cancelled pass's token in `_bundles` with no
+        # owner and no expiry -- eight of those and the capacity raise below
+        # fires for every root, for the rest of the process.
+        if len(self._bundles) >= _OBSERVATION_BUNDLE_LIMIT:
+            raise RuntimeError("observation_capacity_exceeded")
+        self._bundles[token] = MappingProxyType(bundle)
         return request
 
     @staticmethod
@@ -1870,8 +1904,8 @@ class NotesSyncRuntimeOwner:
                     projection.note_title,
                     projection.relative_path,
                 )
-            except Exception:
-                pass
+            except Exception as error:
+                _log_bounded_failure("undo projection", error)
         return fallback or NotesSyncUndoProjection(
             False,
             "Unavailable",
@@ -1985,7 +2019,8 @@ class NotesSyncRuntimeOwner:
         try:
             await self._maintenance_offload(self._store.initialize)
             marker = await self._maintenance_offload(self._store.get_setting, "cutover_marker")
-        except Exception:
+        except Exception as error:
+            _log_bounded_failure("store initialization", error)
             self._status = "failed"
             self._next_action = "review_settings"
             return
@@ -2007,7 +2042,8 @@ class NotesSyncRuntimeOwner:
                     self._store.set_setting,
                     marker,
                 )
-            except Exception:
+            except Exception as error:
+                _log_bounded_failure("legacy migration", error)
                 self._status = "failed"
                 self._next_action = "review_settings"
                 return
@@ -2033,7 +2069,8 @@ class NotesSyncRuntimeOwner:
             incomplete_operations = await self._maintenance_offload(
                 self._store.list_incomplete_operations
             )
-        except Exception:
+        except Exception as error:
+            _log_bounded_failure("root load", error)
             self._status = "failed"
             self._next_action = "review_settings"
             return
@@ -2051,7 +2088,8 @@ class NotesSyncRuntimeOwner:
                 self._blocked_roots.add(root.root_id)
                 await self._publish(root.root_id, *blocked)
             await self._resume_incomplete(roots, incomplete_operations)
-        except Exception:
+        except Exception as error:
+            _log_bounded_failure("incomplete-operation resume", error)
             self._status = "failed"
             self._next_action = "review_settings"
             return

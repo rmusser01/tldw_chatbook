@@ -8,13 +8,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
-from tldw_chatbook.STT.persistence import (
-    dump_failed_transcription_attempt,
-    dump_transcription_provenance_document,
-    load_failed_transcription_attempt,
-    load_transcription_provenance_document,
-)
-
 
 class ViewMode(str, Enum):
     single = "single"
@@ -71,6 +64,18 @@ def _normalize_nonempty_string(value: Any, *, field_name: str) -> str:
 def _normalize_transcription_provenance(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
+    # Imported here, not at module scope: `client.py` imports this module
+    # at module scope and `STT.persistence` pulls in 9 STT submodules
+    # (~95 ms, ~20% of the client's import cost) for these two validators,
+    # which fire only when a media record carries transcription
+    # provenance. Same shape as `Research_Workspace/server_adapter.py`
+    # (TASK-23023), guarded by
+    # `Tests/Packaging/test_tldw_api_import_closure.py`.
+    from tldw_chatbook.STT.persistence import (
+        dump_transcription_provenance_document,
+        load_transcription_provenance_document,
+    )
+
     return load_transcription_provenance_document(
         dump_transcription_provenance_document(value)
     )
@@ -79,6 +84,11 @@ def _normalize_transcription_provenance(value: Any) -> dict[str, Any] | None:
 def _normalize_failed_attempt(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
+    from tldw_chatbook.STT.persistence import (
+        dump_failed_transcription_attempt,
+        load_failed_transcription_attempt,
+    )
+
     return load_failed_transcription_attempt(dump_failed_transcription_attempt(value))
 
 

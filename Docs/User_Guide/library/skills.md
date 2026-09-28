@@ -75,7 +75,7 @@ grip reveals the list; **Back to list**, **Discard changes**, and new-draft
 
 | Line | Action button |
 |---|---|
-| "Skill trust isn't set up, so every skill reads “needs review” — set it up to review and use skills." | **Set up skill trust** |
+| "Skill trust isn't set up, so every skill you added reads “needs review” — built-in skills don't need it. Set it up to review and use yours." | **Set up skill trust** |
 | "Skill trust needs to be set up again after an update." | **Set up skill trust** |
 | "Skill trust is temporarily unavailable — try again." | **Retry** |
 | "Skill trust is locked for this session." | **Unlock** |
@@ -87,6 +87,32 @@ A standalone **Reset skill trust…** button appears next to the header for
 the locked and set-up-again states. It two-step confirms with "Reset skill
 trust? Every skill will need re-approval. Your skills are not deleted."
 (**Reset** / **Cancel**).
+
+### Built-in skills
+
+Some skills ship with the app — today, **Character Creator**
+(`character-creator`), which guides the Console assistant through creating
+and editing character cards. A built-in row reads **Built-in** after its
+trust word and always shows ✓: built-ins are checked against the copy
+shipped with the app, so they never need review and work before skill trust
+is set up.
+
+Selecting a built-in opens a **read-only preview**, not the editor — the
+heading reads "*name* · Built-in (read-only)" above the rendered skill, with
+two controls:
+
+- **Customize** copies the skill into your own skills ("Copied to your skills
+  — edit your copy."). Your copy then replaces the built-in everywhere (its
+  row reads **overrides built-in**) and, like any skill you add, it needs
+  review before the assistant can use it once trust is set up. Delete your
+  copy to go back to the built-in.
+- **Enabled** turns the built-in off or on for the assistant, the `$name`
+  command and the Console, without a restart. A disabled built-in stays in
+  the list as **Built-in · Disabled** so you can turn it back on. The setting
+  is saved as `disabled_builtins` under `[skills]` in `config.toml`.
+
+A built-in can't be edited or deleted in place — Customize is the way to
+change one.
 
 ### Pager
 
@@ -499,3 +525,9 @@ trust banner says that with no trust store every skill reads "needs review",
 so an approval made earlier is unverifiable rather than lost; task-32354: the
 Skills pager drops "Page 1 of 1", its boundary reasons and the two dead
 controls when everything fits on one page).*
+
+*Verified against feat/character-card-tools @ d35ffeaa04 — 2026-09-25
+(TASK-32954: "Built-in skills" added — the Built-in badge, the read-only
+preview with **Customize** and **Enabled**, "Built-in · Disabled" rows, and
+"overrides built-in" on a customized copy; the trust banner now says only
+the skills you added read "needs review").*

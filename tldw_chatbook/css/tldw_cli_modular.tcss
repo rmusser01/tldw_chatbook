@@ -255,6 +255,8 @@ $ds-messages-text-scroll-cap: 40vh;
 
 $ds-console-frame: #6f7782;
 
+$ds-tool-preview-max-height: 3;
+
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -3734,6 +3736,95 @@ ConsolePromptsModal {
     align: center middle;
 }
 
+ConsolePromptDraftSaveDialog {
+    align: center middle;
+}
+
+#console-prompt-draft-save-dialog {
+    width: $ds-size-60;
+    max-width: $ds-percent-96;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-prompt-draft-save-copy {
+    width: $ds-width-full;
+    height: auto;
+    margin-bottom: $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#console-prompt-draft-save-actions {
+    width: $ds-width-full;
+    height: auto;
+    align-horizontal: right;
+}
+
+#console-prompt-draft-editor {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-12;
+}
+
+#console-prompt-draft-editor-copy,
+#console-prompt-draft-status,
+#console-prompt-draft-promote-title {
+    width: $ds-width-full;
+    height: auto;
+}
+
+#console-prompt-draft-editor-copy,
+#console-prompt-draft-status {
+    color: $ds-text-muted;
+}
+
+#console-prompt-draft-status.error {
+    color: $ds-status-error-readable;
+}
+
+#console-prompt-draft-content {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-6;
+    margin-top: $ds-space-1;
+}
+
+#console-prompt-draft-actions,
+#console-prompt-draft-promote-fields {
+    width: $ds-width-full;
+    height: auto;
+}
+
+#console-prompt-draft-promote-title {
+    margin-top: $ds-space-1;
+    text-style: bold;
+}
+
+#console-prompt-draft-library-name,
+#console-prompt-draft-library-collection {
+    width: $ds-width-fill;
+}
+
+.console-prompts-result.highlighted {
+    border-left: thick $ds-action-focus;
+    background: $ds-focus-bg;
+}
+
+ConsolePromptsModal.-narrow #console-prompt-draft-actions,
+ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields {
+    layout: vertical;
+}
+
+ConsolePromptsModal.-narrow #console-prompt-draft-actions Button,
+ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields Button,
+ConsolePromptsModal.-narrow #console-prompt-draft-library-name,
+ConsolePromptsModal.-narrow #console-prompt-draft-library-collection {
+    width: $ds-width-full;
+}
+
 
 PromptBlockEditor #prompt-editor-lane-options Checkbox {
     width: auto;
@@ -4923,6 +5014,15 @@ AppFooterStatus {
 }
 
 
+AppFooterStatus #footer-tamagotchi {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    background: transparent;
+    border: none;
+}
+
+
 
 .loading-state-container {
     width: $ds-width-full;
@@ -5304,12 +5404,145 @@ StatCard:hover {
 
 
 
-#settings-theme-tree {
-    width: $ds-width-full;
-    height: $ds-size-12;
+#settings-theme-pane,
+#settings-theme-picker,
+#settings-theme-picker-columns,
+#settings-theme-list-column,
+#settings-theme-card-column {
+    height: auto;
+}
+#settings-theme-list-column,
+#settings-theme-card-column {
+    width: 1fr;
+}
+#settings-theme-list {
+    height: auto;
     min-height: $ds-size-8;
-    border: solid $ds-grid-line;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+}
+
+#settings-theme-pane.-picker {
+    height: $ds-height-fill;
+    min-height: $ds-size-24;
+}
+#settings-theme-pane.-picker.-stacked {
+    min-height: $ds-size-32;
+}
+#settings-theme-pane.-picker.-stacked.-narrow-card {
+    min-height: $ds-size-40;
+}
+#settings-theme-pane.-stacked #settings-theme-picker-columns {
+    layout: vertical;
+}
+#settings-theme-pane.-picker #settings-theme-picker,
+#settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-theme-pane.-picker #settings-theme-list-column,
+#settings-theme-pane.-picker #settings-theme-list {
+    height: $ds-height-fill;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list-column,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    height: auto;
+    min-height: $ds-size-0;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    min-height: $ds-size-8;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-picker-columns {
+    layout: vertical;
+}
+
+#settings-theme-list > .option-list--option-highlighted {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    text-style: bold;
+}
+
+#settings-theme-list > .option-list--option-disabled {
+    color: $ds-text-muted;
+    text-style: bold;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-list {
+    max-height: $ds-size-9;
+}
+
+#settings-theme-card-column .settings-action-row {
+    height: auto;
+}
+#settings-theme-card-column .theme-action-group {
+    margin-top: $ds-space-1;
+}
+#settings-theme-card-column .theme-editor-action {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+#settings-theme-card-column #settings-theme-revert {
+    width: $ds-width-full;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .settings-action-row {
+    layout: vertical;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .theme-editor-action {
+    width: $ds-width-full;
+}
+
+#settings-theme-card-column #settings-theme-export-result {
+    layout: vertical;
+}
+#settings-theme-card-column #settings-theme-copy-path {
+    width: $ds-width-full;
+}
+
+#settings-theme-card-column .settings-action-row .theme-editor-action.-error:focus {
+    background: $ds-status-error-readable;
+    color: $ds-surface-panel;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+#settings-theme-card-column .settings-action-row .theme-editor-action.-primary:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-user,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-assistant,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-success,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-warning,
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview-error {
+    display: none;
+}
+
+#settings-workbench.settings-workbench-compact #settings-theme-picker-preview {
+    border: none;
+    margin: $ds-space-0;
+}
+
+
+
+#settings-theme-editor-header {
+    width: $ds-width-full;
+    height: auto;
+    color: $ds-text-primary;
+    text-style: bold;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+
+#settings-theme-editor-columns,
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    height: auto;
+}
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    width: 1fr;
+}
+#settings-theme-editor.-stacked #settings-theme-editor-columns {
+    layout: vertical;
 }
 
 
@@ -5337,6 +5570,7 @@ StatCard:hover {
     text-style: bold;
 }
 
+
 .color-preset-swatch {
     width: $ds-size-3;
     min-width: $ds-size-3;
@@ -5344,11 +5578,15 @@ StatCard:hover {
     min-height: $ds-size-1;
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     border: none;
+    border-left: vkey $foreground;
+    border-right: vkey $foreground;
 }
 
 
 .color-preset-swatch:focus {
-    outline: solid $ds-focus-accent;
+    outline: none;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
     text-style: bold;
 }
 
@@ -5361,11 +5599,61 @@ StatCard:hover {
     border: none;
     padding: $ds-space-0;
 }
+
 #settings-theme-dark-mode > .toggle--button {
-    color: $ds-surface-panel;
+    color: $ds-text-muted;
 }
 #settings-theme-dark-mode.-on > .toggle--button {
     color: $success;
+}
+
+
+.theme-editor-action {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    border-left: outer $foreground;
+    border-right: outer $foreground;
+}
+.theme-editor-action.-primary:enabled {
+    background: $ds-surface-panel;
+    color: $text-primary;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+.theme-editor-action.-success:enabled {
+    background: $ds-surface-panel;
+    color: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+.theme-editor-action.-warning:enabled {
+    background: $ds-surface-panel;
+    color: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
+}
+.theme-editor-action.-error:enabled {
+    background: $ds-surface-panel;
+    color: $ds-status-error-readable;
+    border-left: outer $ds-status-error-readable;
+    border-right: outer $ds-status-error-readable;
+}
+
+#settings-theme-card .settings-action-row .theme-editor-action:focus {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    border-left: outer $text-primary;
+    border-right: outer $text-primary;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-success:focus {
+    background: $text-success;
+    border-left: outer $text-success;
+    border-right: outer $text-success;
+}
+#settings-theme-card .settings-action-row .theme-editor-action.-warning:focus {
+    background: $text-warning;
+    border-left: outer $text-warning;
+    border-right: outer $text-warning;
 }
 
 
@@ -10016,8 +10304,8 @@ ChatScreen.-focus #console-workbench-header {
 }
 
 #console-prompts-source {
-    width: $ds-size-18;
-    min-width: $ds-size-14;
+    width: $ds-size-22;
+    min-width: $ds-size-18;
     height: $ds-size-3;
     border: none;
     border-left: solid $ds-grid-line;
@@ -10460,6 +10748,58 @@ ConsoleConversationInspector #console-inspector-tabs > ContentTabs {
 
 .inspector-usage-detail.inspector-detail-narrow .inspector-section-list { width: $ds-width-fill; }
 ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
+
+
+.console-activity-status-tool {
+    width: $ds-width-auto;
+    min-width: $ds-size-0;
+    max-width: $ds-percent-70;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-activity-status-queued,
+.console-activity-status-running {
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.console-activity-status-awaiting_approval,
+.console-activity-status-timed_out {
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.console-tool-preview {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    max-height: $ds-tool-preview-max-height;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-inset;
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.console-tool-detail {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    color: $ds-text-primary;
+}
+
+.console-tool-approval {
+    width: $ds-width-auto;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0 $ds-space-inset;
+    padding: $ds-space-0 $ds-space-inline;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-tool-approval:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
+.console-tool-approval:focus { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
+.console-tool-approval:disabled { background: $ds-disabled-bg; color: $ds-text-disabled-readable; }
 
 /* ===== MODULE: features/_library.tcss ===== */
 
@@ -15926,6 +16266,11 @@ SmartContentTree Tree > .selected-node {
 
 .setup-voice {
     padding: $ds-space-0 $ds-space-2 $ds-space-1 $ds-space-2;
+}
+
+
+#setup-voice-omnivoice-panel {
+    height: auto;
 }
 
 .setup-voice-segmented {

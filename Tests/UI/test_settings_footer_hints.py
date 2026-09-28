@@ -76,6 +76,12 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
     for category_value in ALL_CATEGORY_IDS:
         category = SettingsCategoryId(category_value)
         shortcuts = SettingsScreen._category_footer_shortcuts(category)
+        theme_keys = SettingsScreen.THEME_SHORTCUTS
+        if category is SettingsCategoryId.THEME:
+            # TASK-33062: the theme list's own bindings, listed after the
+            # screen-level keys (and only there).
+            assert shortcuts[-len(theme_keys):] == theme_keys
+            shortcuts = shortcuts[: -len(theme_keys)]
         keys = tuple(key for key, _label in shortcuts)
         # Network owns a self-contained save path without a SettingsDraft;
         # guided categories own the paired save/revert path.

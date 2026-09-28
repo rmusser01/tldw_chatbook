@@ -37,8 +37,8 @@ task...".
   line clear of the status row above and the footer below. Its one-column
   left edge shows its state (muted at rest, green with a draft, thick blue
   focused), and the bar is exactly as tall as your draft. Left to right:
-  the "Composer ▾" collapse button, the **Menu** button (Prompts, Attach,
-  Save as Chatbook, Generate Image/Caption, Impersonate), the draft area,
+  the "Composer ▾" collapse button, the **Menu** button (Improve, Save draft,
+  Prompts, Attach, Save as Chatbook, Generate Image/Caption, Impersonate), the draft area,
   and the Send / Mic buttons.
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
@@ -193,6 +193,29 @@ tool, code, and link styling keeps priority over immersive coloring.
   "Queued N", or "Paused N" apply. Queued prompt text is never shown while
   collapsed. Click **"Expand ▴"** (or
   press **Esc**) to restore it; the caret returns to your draft.
+
+### Saving drafts to the Draft Shelf
+
+With a nonblank unsent message, open **Menu** and choose **Save draft to
+shelf…**, or run **Console: Save draft to shelf…** from the command palette.
+Choose **Save and keep** to leave the composer unchanged, or **Save and clear**
+to clear only the exact revision that was saved. If you edit the composer or
+switch sessions while the save is finishing, the newer text is kept. Saving a
+draft never sends it and does not call the configured model.
+
+Open **Browse Prompt Library…** and switch the source to **Draft Shelf** to
+search or page through saved drafts. The search field keeps keyboard focus:
+type to filter, use **Up/Down** to highlight a result, and press **Enter** to
+open it. A draft can be edited, inserted at the current composer caret without
+replacing the surrounding text, or saved as a first-class local Prompt in
+**Library > Prompts**. Promotion may assign one existing local collection and
+always keeps the shelf copy. Deleting requires two deliberate presses and is
+permanent.
+
+The Draft Shelf is device-local and holds 100 entries. At 100 of 100, new
+saves are blocked until you delete one; the app never silently evicts an older
+draft. Shelf entries do not sync, export, or appear as Library Prompts until
+you explicitly promote them.
 
 ### Improving the current draft
 

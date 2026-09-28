@@ -10858,6 +10858,10 @@ _CONSOLE_ONLY_LOCAL_NAMES = {
     "watchlists_check_sources",
     "watchlists_set_briefing_schedule",
     "watchlists_generate_briefing",
+    # TASK-32956: listed for per-tool permissions, never runnable from the Hub.
+    "character_search",
+    "character_get",
+    "character_save",
 }
 
 

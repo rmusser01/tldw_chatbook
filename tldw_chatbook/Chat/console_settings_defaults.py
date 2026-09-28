@@ -12,12 +12,8 @@ from types import MappingProxyType
 from urllib.parse import urlsplit
 
 from tldw_chatbook import config as config_module
-from tldw_chatbook.Chat.console_provider_support import (
-    build_local_thinking_payload_fields,
-    resolve_console_provider_identity,
-)
+from tldw_chatbook.Chat.console_provider_support import supported_generation_fields
 from tldw_chatbook.Chat.console_session_settings import (
-    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_settings_readiness,
@@ -34,29 +30,8 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
-from tldw_chatbook.model_capabilities import (
-    anthropic_model_rejects_fixed_thinking_budget,
-    moonshot_model_supports_reasoning_effort,
-    zai_model_supports_reasoning_effort,
-)
 
 
-_PROVIDER_SPECIFIC_FIELDS = frozenset(
-    {
-        "reasoning_effort",
-        "reasoning_summary",
-        "verbosity",
-        "thinking_effort",
-        "thinking_budget_tokens",
-    }
-)
-_DIRECT_PROVIDER_FIELDS = {
-    "openai": frozenset({"reasoning_effort", "reasoning_summary", "verbosity"}),
-    "qwencloud": frozenset({"reasoning_effort"}),
-}
-_LOCAL_THINKING_BUDGET_KEYS = frozenset(
-    {"llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"}
-)
 _ENDPOINT_KEYS = (
     "api_base_url",
     "api_base",
@@ -339,32 +314,6 @@ class _PendingRetryState:
 
 
 _PENDING_RETRY_STATE: _PendingRetryState | None = None
-
-
-def _supported_profile_fields(provider: str, model: str) -> frozenset[str]:
-    """Mirror the controller's provider/model capability projection."""
-
-    canonical = provider_config_key(provider)
-    supported = set(FULL_MODEL_DEFAULT_FIELDS - _PROVIDER_SPECIFIC_FIELDS)
-    if canonical == "moonshot" and moonshot_model_supports_reasoning_effort(model):
-        supported.add("reasoning_effort")
-    if canonical == "zai" and zai_model_supports_reasoning_effort(model):
-        supported.add("reasoning_effort")
-    supported.update(_DIRECT_PROVIDER_FIELDS.get(canonical, ()))
-    if canonical == "anthropic":
-        supported.add("thinking_effort")
-        if not anthropic_model_rejects_fixed_thinking_budget(model):
-            supported.add("thinking_budget_tokens")
-
-    identity = resolve_console_provider_identity(
-        canonical,
-        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-    )
-    if build_local_thinking_payload_fields(identity.execution_key, "low", None):
-        supported.add("reasoning_effort")
-    if identity.execution_key in _LOCAL_THINKING_BUDGET_KEYS:
-        supported.add("thinking_budget_tokens")
-    return frozenset(supported)
 
 
 def _intent_fingerprint(intent: ConsoleDefaultMutationIntent) -> str:
@@ -1234,7 +1183,9 @@ def _build_locked_default_mutation(
         if validation_errors or not readiness.native_send_supported:
             raise ValueError("Selected provider/model is not ready for new chats")
 
-    supported = _supported_profile_fields(canonical_provider, literal_model)
+    # TASK-33001.2: a field the request never carries is neither written nor
+    # deleted, so a value saved for it earlier stays exactly as it was.
+    supported = supported_generation_fields(canonical_provider, literal_model)
     owned_fields = intent.field_mask & supported & frozenset(intent.values)
     profile_values: dict[str, object] = {}
     profile_deletes: list[str] = []

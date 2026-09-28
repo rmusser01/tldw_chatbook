@@ -1218,3 +1218,34 @@ def test_title_controls_reject_titles_with_unrelated_words(adapter):
     }
 
     assert all(adapter._title_controls(node) == set() for node in workflow.values())
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        {"filename": "../escape.mp4", "subfolder": "", "type": "output"},
+        {"filename": "nested/movie.mp4", "subfolder": "", "type": "output"},
+        {"filename": "movie.mp4", "subfolder": "../..", "type": "output"},
+        {"filename": "movie.mp4", "subfolder": "/abs", "type": "output"},
+        {"filename": "movie.mp4", "subfolder": "a/../../b", "type": "output"},
+        {"filename": "movie.mp4", "subfolder": "win\\path", "type": "output"},
+    ],
+)
+def test_terminal_output_rejects_traversal_shaped_descriptors(adapter, descriptor):
+    """Server-supplied names must be validated, as the image twin does.
+
+    `filename`/`subfolder` arrive from the backend and are urlencoded straight
+    into `/view?`. The image adapter validates the identical descriptor shape
+    (`_safe_filename`/`_safe_subfolder`); this path checked only `type` and the
+    suffix, so two adapters against one protocol had two trust postures.
+    """
+    graph = _h3_workflow()
+    history = {
+        "job": {
+            "outputs": {"save": {"files": [descriptor]}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    with pytest.raises(VideoGenerationError, match="no matching canonical"):
+        adapter._find_output_descriptor(history, "job", graph, "mp4")

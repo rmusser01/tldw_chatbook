@@ -1,0 +1,769 @@
+# SSH Remote Workspace Bindings — Design
+
+Date: 2026-09-24
+Status: Draft (revision 5; four review rounds incorporated)
+Related ADR: ADR-181 (to be created with this design). Numbering caution: ADR
+files 005/028/032/068/069/102 each have duplicates across branches and 178 is
+duplicated on dev; 179/180 exist only on this branch. **Re-check 181 against
+origin/dev at merge time.** Interacts with (by filename):
+`005-console-workspace-server-readiness`,
+`028-settings-workspaces-category-and-folder-roots`,
+`032-local-agent-tool-permission-boundary`,
+`069-console-project-instruction-local-state-and-preflight`,
+`101/102` (pinned-worker seam), `174` (workspace binding exclusions — not
+173, which is the UTC-timestamp decision on dev).
+
+## Problem
+
+The Console's named Workspaces can bind **local** folders only
+(`RuntimeBindingKind.LOCAL_FILESYSTEM` is the single implemented kind).
+A user running chatbook on a laptop who wants their workspace root — plus
+AGENTS.md project instructions — to live on a remote Linux server has no
+supported path today: mounting (sshfs/FUSE) is fragile on macOS 26 and a
+dead server can hang a stale mount, and nothing in the app speaks SSH.
+
+The requirement is a first-class remote binding: chatbook stays on the
+laptop, connects via SSH, exposes a folder on the remote server as a
+workspace binding alongside ordinary local folder bindings, and degrades
+gracefully — an unreachable remote never blocks use of the workspace's
+local bindings or scratch.
+
+## Requirements
+
+- A user can add an SSH folder binding to a **named** workspace (never the
+  default workspace) from Settings → Workspaces: SSH target, absolute remote
+  path, read-only/read-write.
+- All `fs_*` tools (read/write/edit/list/glob/grep) work against the remote
+  binding with the same semantics as local bindings, including the ro/rw
+  toggle and CAS read-before-write stamps. Tools execute **server-side** —
+  meaning, concretely, that request building, path validation, hashing, and
+  exclusion/sensitive-path checks for a remote root never consult the
+  laptop's filesystem (see "Remote roots never touch the laptop's disk").
+- The remote binding can be selected as the Console working folder, so
+  AGENTS.md / AGENTS.override.md load from it under all existing ADR-068/069
+  rules (byte caps, untrusted content, activation ledger, first-use consent).
+- **Availability guarantee, both directions** (the core requirement, with
+  named regression tests): (1) an unreachable, auth-failing, or
+  handshake-timing-out remote binding is excluded from the run's admitted
+  roots; sends still compose; local bindings and scratch keep working; the
+  context note says the remote root was excluded and why. (2) An operation
+  that runs past its deadline is a typed tool error that **never changes
+  the binding's status** — the next send admits the root again. (3)
+  Recovery is automatic: a debounced background probe re-admits the root
+  once the host returns or a recreated root's identity is re-captured —
+  no user action required (see "Automatic recovery").
+- Nothing is installed, persisted, or left behind on the server — including
+  **no orphaned processes after a timed-out call** (worker-side watchdog in
+  two tiers: a graceful Timer, plus an OS-level `signal.alarm` backstop
+  that cannot be starved by GIL-holding C code such as a catastrophic
+  `fs_grep` regex) and **no orphaned temp files after an aborted atomic
+  write** (the graceful tier unlinks the worker's registered temp files
+  before it exits; the alarm tier's strays are the same bounded exception
+  the local worker has always had — see "Worker-side watchdog").
+  Each tool call runs a transient python3 process whose code arrives over
+  the SSH session's stdin and vanishes with it. (ControlMaster sockets live
+  on the laptop, not the server.)
+- Chatbook stores no SSH credentials. Authentication is fully delegated to
+  the user's ssh-agent / `~/.ssh/config` (BatchMode; never prompt).
+- Server prerequisites: sshd with exec, and `python3` ≥ 3.10 (overridable
+  per binding via an interpreter setting for servers with versioned
+  interpreters).
+
+## Non-goals (v1)
+
+- Native SFTP transport (no remote execution), FUSE/sshfs mount management,
+  or rsync/mirror-sync semantics.
+- `git_*` tools on remote bindings (call-time typed error; stay available
+  for local aliases on mixed runs).
+- **Change review on remote bindings — rows included, not just
+  finalization**: `add_folder_binding`-style `binding_added` events schedule
+  per-root change-review setup work; since no finalization actions exist for
+  remote rows in v1, capturing rows nobody can act on is noise. SSH bindings
+  fire no change-review setup and capture nothing in v1.
+- RAG indexing of remote roots; background status polling; remote-side
+  bundle caching; credential storage or management of any kind.
+- Accepting `ssh://…` URIs as path arguments (no second path grammar —
+  ADR-069 rejected that ambiguity class for `fs_glob` already).
+- Multi-hop reachability beyond what the user's ssh config already
+  expresses (ProxyJump etc. work for free; chatbook manages no tunnels).
+- ControlMaster on Windows-as-local-host (ssh.exe lacks it; degrades to
+  per-call connections via the same kill switch).
+- Human-readable root aliases (alias stays binding_id-derived — see
+  "Model-facing surface").
+- Transparent mid-run read retries (executor-owned failure-triggered
+  master restart plus typed errors suffice; retrying the failed op itself
+  stays excluded — revisit only with measurements).
+
+## Decision summary
+
+Add a `SSH_FILESYSTEM` runtime binding kind whose tool access reuses the
+existing one-shot pinned-worker architecture over SSH stdio instead of a
+local `Popen`. Per tool call, chatbook spawns
+`ssh [opts] [-p <port>] [-l <user>] -- <host> <interpreter> -I -c '<bootstrap>'`
+(argv built from the **parsed locator components** — see "Shell safety"),
+writes a
+**zlib-compressed, stdlib-only worker bundle** followed by the request
+itself to the subprocess's stdin, and reads the response from stdout. The
+protocol has no length prefix, magic, or checksum today — the worker reads
+plain JSON in one bounded `stdin.read()` — so the **bundle's size prefix
+and the response's magic prefix are new SSH-transport additions**,
+designed and tested as transport concerns, not protocol changes. The
+worker pins the remote root (`O_DIRECTORY|O_NOFOLLOW`, `fchdir`,
+`(st_dev, st_ino)` identity) exactly as the local worker does — from the
+worker's perspective the remote root *is* a local filesystem, so pinning,
+confinement, atomic writes, and CAS identity checks all keep their current
+semantics and run server-side.
+
+Two prerequisites make that true rather than aspirational, and each is a
+budgeted phase, not a detail:
+
+1. **The worker's import closure is stdlib-only** (today
+   `workspace_tool_protocol.py` imports pydantic; `sensitive_paths.py` and
+   `path_validation.py` import loguru, config, Skills_Interop, RAG_Search,
+   Metrics). Phase 0 fixes this at the *local* worker so the bundle really
+   is the same code — **without weakening the parent side**: the laptop
+   keeps pydantic models for request/response validation (the repo's
+   one-strict-JSON acceptance contract — TASK-32855's shared payload
+   validators — is a parent-side property), while the
+   bundle ships a stdlib decoder whose **accept/reject behavior is
+   provably identical** — a conformance test feeds both decoders the same
+   corpus of valid and malformed frames and requires identical outcomes
+   (see Testing).
+2. **Remote roots get their own type** (`LocalRoot | RemoteRoot`), because
+   roughly a dozen call sites today do laptop-disk work off
+   `RunAdmittedWorkspaceRoot.root: Path` — request building, CAS hashing,
+   exclusions, admission checks. A distinct type makes every un-migrated
+   site fail loudly instead of quietly reading the laptop's copy of a path
+   like `/tmp/x` or `/var/www/site`.
+
+Warm connections come from an **explicitly-managed** OpenSSH ControlMaster
+(`ssh -MNf` in its own session; per-call clients with `ControlMaster=no`)
+so a timed-out call's process-group kill cannot take down the shared
+connection. Availability is the existing per-binding status model driven by
+a cheap `ping` op → `READY` / `BLOCKED` / `MISSING`, cached in memory (never
+read from the stored status column at admission), refreshed lazily, and
+learned from **transport-classified** op outcomes only — classified by the
+protocol's existing `admitted` marker, not exit-code guessing (a slow op
+that times out is a typed error, never a status flip). **Run composition reads cache
+only — the dispatch hot path never touches the network or spawns a
+subprocess.** Degradation
+excludes the binding from the run exactly like a missing local folder.
+
+## Binding model & data layer
+
+- New `RuntimeBindingKind.SSH_FILESYSTEM = "ssh-filesystem"`. A new kind
+  rather than the already-reserved `REMOTE_RUNTIME` because that value is
+  reserved for "the agent *runtime* executes remotely" semantics (future
+  VM/container runtimes); an SSH binding is a *filesystem* binding whose
+  agent-side semantics are identical to `LOCAL_FILESYSTEM` (same tools,
+  same admission, same consent flows) — reusing it would conflate the two.
+  The `workspace_runtime_bindings` table already stores `binding_kind` as
+  text — **no schema migration**. Bindings remain device-local, and
+  `save_runtime_binding`'s default-workspace rejection applies unchanged.
+- **Locator**: `ssh://[user@]host[:port]/absolute/path`. The host may be an
+  `~/.ssh/config` alias; user/port/jumps resolve through the user's config.
+- **Canonical locator** (fingerprint source): computed at add/edit time via
+  `ssh -G` (argv built from the same parsed locator components as call
+  spawns — `-p <port> -l <user> -- <host>`, brackets stripped) — the config-**expanded symbolic** identity (HostName
+  as written in config, port, user, host lowercased; never DNS-resolved to
+  an IP) plus the normalized path. Stored with the binding; dispatch
+  compares stored fingerprint vs. binding row as a pure local string
+  compare. Cosmetic alias edits don't trip re-consent; a config change that
+  actually moves the destination does (ADR-069 retarget semantics); same-
+  host nesting/duplicate checks become correct. Fresh `ssh -G` resolution
+  happens only on add, edit, manual refresh, and workspace open (async) —
+  never in the send path.
+- **Registry**: `add_ssh_binding(workspace_id, target, path, *,
+  allow_write=False)` mirroring `add_folder_binding` — absolute POSIX path
+  required (no `~`), nesting/overlap checks only between SSH bindings on
+  the same resolved host, never across local/remote. `metadata` carries
+  `{"access": "rw"|"ro", "python": "python3"}`. No credentials in metadata,
+  ever.
+- **Charset validation, three distinct sets** (these values cross a remote
+  shell command line, and OpenSSH parses options appearing after the host
+  too, so position alone is not protection):
+  - **Locator components, validated separately — `@` appears in no
+    component ever.** The URI grammar is `ssh://[user@]host[:port]/path`,
+    but the add-time validator parses it into user / host / port first and
+    validates each: user `[A-Za-z0-9._-]+`; host `[A-Za-z0-9._-]+` or a
+    bracketed IPv6 literal `[A-Za-z0-9:]+` (brackets are **stripped before
+    argv construction**); port `[0-9]+`. Each component **must not start
+    with `-`**; all other shell metacharacters and whitespace rejected.
+    Because argv is rebuilt from these parts (`-p <port> -l <user> --
+    <host>`), no single argv token ever mixes metacharacters.
+  - Interpreter command: `[A-Za-z0-9_./-]+`, **must not start with `-`**,
+    no spaces.
+  - Bootstrap payload: the exact version-gated string in Transport; its
+    charset is letters, digits, space, and `_ . , ( ) " ; : < > = + % \ [ ]`
+    — enforced by test against that exact string. All characters live
+    inside the enclosing single quotes, and the set excludes every
+    shell-active character (no `'`, `$`, backtick, `!`, glob wildcards,
+    or control characters), so the payload stays literal under
+    sh/bash/zsh/fish/csh quoting.
+- **Status semantics** (recomputed lazily like local bindings; reason
+  strings live in the ephemeral layer):
+
+  | Probe (ping op) result | Status | Effect |
+  |---|---|---|
+  | Root stat returned | `READY` | admitted as a run root |
+  | Connection/auth/connect-timeout (transport), python missing, pin refused | `BLOCKED` | excluded from run roots; reason surfaced ("unreachable", "host lacks python3", "root rejected: symlink"). **Operation timeouts are not here** — a ping that connects and runs past its deadline is a typed error, not a status change |
+  | Connects, root path absent | `MISSING` | excluded; "missing on host" |
+
+  **Admission reads the in-memory status cache, never the stored `status`
+  column** (which `add_*_binding` writes as READY and which stays
+  informational for SSH bindings). **Cold start is optimistic**: an empty
+  cache admits the binding; a dead host costs one typed mid-run error and
+  flips the cache to BLOCKED for subsequent sends. This matches the
+  availability-first posture and the op-outcome learning below.
+- **Selected working folder + failures**: fingerprint mismatch or `MISSING`
+  → explicit re-selection (ADR-069 consistency). `BLOCKED` (transient
+  network) → the dispatch degrades to scratch + local bindings with a
+  visible warning and an easy retry; **no forced re-selection**, because a
+  flaky link is not a retarget.
+- **Status cache learning — transport failures only, classified by the
+  admitted marker**: op outcomes feed the cache, but only failures where
+  the worker's **admitted marker was never received** flip the binding to
+  `BLOCKED` immediately: ssh exit 255 with no remote output (unreachable /
+  auth), connect or handshake timeout (`ConnectTimeout` expiry,
+  banner/kex stall), interpreter missing (remote exit 127), root pin
+  refused. **Once the admitted marker has been received, every failure —
+  watchdog exit 75, death by the alarm signal, connection lost mid-op,
+  laptop-side kill — is a typed tool error ("operation timed out" /
+  "remote op failed") and leaves the cache unchanged**: a slow `fs_grep`
+  on an otherwise healthy host must not take the root out of the next
+  send. A mux-protocol error likewise does not flip the cache: it
+  triggers the failure-triggered master restart (below) and, if the
+  restart's own connect fails with a no-marker 255/timeout, *that* is the
+  transport failure that flips it. Any successful op or probe flips the
+  cache back to READY. Degradation compounds send-to-send without
+  polling.
+- **Automatic recovery (the flip side of degradation)**: exclusion is
+  never a one-way door. When composition sees BLOCKED, or a pin failure
+  marks the cached identity stale (see "Identity freshness"), it schedules
+  a **non-blocking background probe** — debounced to one per resolved host
+  per ~30s — which re-runs the ping and updates the cache, so the next
+  send picks up the recovery. This keeps the hot-path rule: composition
+  only *schedules* the probe; it never spawns a process or waits on
+  anything. The same probe re-captures identity after a recreated root,
+  giving remote roots parity with local roots' per-run
+  `capture_directory_chain` re-capture.
+
+## Remote roots never touch the laptop's disk
+
+`RunAdmittedWorkspaceRoot.root` becomes a union — `LocalRoot` (wraps `Path`)
+or `RemoteRoot` (a pure-Python descriptor: alias, canonical locator,
+`PurePosixPath` root) — so every existing `root: Path` consumer fails
+loudly at the type boundary until migrated. The migrations:
+
+- **Request building** (`WorkspaceToolExecutor._build_request`, currently
+  `capture_directory_chain(root)` + `resolve_workspace_path` +
+  `_parent_read_exclusions` on the laptop): the remote request builder does
+  lexical normalization only (reject `..` escapes, hidden-path rules) and
+  carries **no laptop-captured identity**; identity values in the request
+  come from worker ping/stat responses.
+- **CAS read-before-write** (four laptop-hashing sites:
+  `_record_fs_read_observation`, `_fs_write_guard_injection`,
+  `_stale_targets_for`, and `_update_ledger_after_write`
+  (`local_tool_provider.py` ~2417 — re-stamps edit/patch targets after a
+  write by resolving and hashing on the laptop via `_hash_file`; a fourth
+  CAS site beyond the original three) — these hash files laptop-side via
+  `_hash_file(resolved)` today, and the ledger stamps are the **full
+  sha256 + size** (`sha256[:8]` is only how the refusal message displays
+  the hash), not stat tuples): hashing moves into worker responses —
+  `fs_read` returns sha256 + size alongside bytes (the worker already
+  honours `expected_sha256`/`expected_absent`), and ledger stamps use
+  worker-reported values only. **`_stale_write_refusal`** also hashes the
+  laptop file to show the "now" value in the refusal message — its remote
+  variant takes the worker-reported hash. **Wrong-file hazard**: if the
+  remote path also exists on the laptop (`/tmp/x`, `/var/www/site`), the
+  laptop copy must never be read, hashed, or stamped — covered by a named
+  test.
+- **Workspace exclusions** (`_exclusion_paths_provider`,
+  `_project_instruction_excluded_dirs` — today `(root / rel).resolve()` on
+  the laptop; on macOS `/var`, `/tmp`, `/etc` are symlinks into
+  `/private`, so a remote root like `/var/www/site` would resolve every
+  exclusion outside the root and silently drop it): exclusions ride the
+  request as **serialized relative path strings**, matched **in the
+  worker**; nothing resolves them against the laptop's filesystem.
+  `add_binding_exclusion` (which currently refuses non-local bindings and
+  stats the laptop's disk) learns SSH bindings: the exclusion UI stores raw
+  relative paths for them, validated worker-side at apply time.
+- **`_call_context`** (`path.is_file()` on the laptop): remote variant
+  asks the worker for a stat.
+- **Admission** (`_validate_project_instruction_binding` — local
+  `resolve(strict=True)` + stat, serving as both admission check and
+  per-call guard): for remote roots, admission = registry read + cached
+  status (+ one synchronous ping at first selection, where the user is
+  already waiting); the per-call guard is the worker's root pin.
+- **Identity freshness — parity with local per-run re-capture**: local
+  roots re-capture the directory chain on every run (the executor's
+  `__init__` plus per-call validation), so a root recreated between runs
+  (`rm -rf` + `git clone`) is simply re-captured on the next run. Remote
+  roots must not do worse: a pin failure is **not** BLOCKED — it marks the
+  cached identity **stale** and triggers the debounced re-probe, whose
+  ping re-captures the full chain (READY with fresh identity — the
+  recreated-root case), reports MISSING if the root is gone, or BLOCKED
+  "root rejected" if the root genuinely will not pin. A swapped symlink
+  is still caught: it fails the pin within the run, every time.
+
+## Transport & executor
+
+- `RemoteWorkspaceToolExecutor` implements the same
+  `execute(tool, args, intent)` surface as `WorkspaceToolExecutor`, slotting
+  into `RunAdmittedWorkspaceRoot.workspace_executor` so provider dispatch is
+  transport-agnostic.
+- **Spawn (per call)**, options first, argv rebuilt from the parsed
+  locator components (brackets stripped from IPv6 literals):
+  `ssh -o BatchMode=yes -o ConnectTimeout=3 -o ControlMaster=no -o ControlPath=<cm-dir>/%C [-p <port>] [-l <user>] -- <host> <python> -I -c '<bootstrap>'`
+  — then stdin carries: N bytes of zlib-compressed bundle (the size prefix
+  is a transport addition), then the request JSON (read by the worker in
+  one bounded read, as today). The bootstrap is **exactly** (N embedded as
+  a literal by the executor; the charset test asserts this exact string):
+  `import sys,zlib;exec(compile(zlib.decompress(sys.stdin.buffer.read(N)),"b","exec"))if sys.version_info>=(3,10)else(sys.stderr.write("tldw-worker:python3.10+:found:%d.%d\n"%sys.version_info[:2]),sys.exit(76))`
+  The version gate runs **before** the bundle is compiled: an old server
+  Python would otherwise die in `SyntaxError` at compile time (exit 1, no
+  marker, unlabelled); instead it exits **76** with the found version on
+  stderr, which the taxonomy maps to BLOCKED "python ≥ 3.10 required
+  (found X.Y)". The payload now contains spaces and `< > = + % : \ [ ]` —
+  safe because every character lives inside the enclosing single quotes
+  and the charset still excludes every shell-active character (no `'`,
+  `$`, backtick, `!`, glob wildcards `* ?`, or control characters) under
+  sh/bash/zsh/fish/csh
+  single-quote rules (brackets and redirects are literal inside single
+  quotes). `ssh -G` canonicalization
+  builds its argv the same way from the same parsed parts.
+- **ControlMaster lifecycle — explicit, and the executor owns its health**:
+  the first need for a host starts `ssh -MNf [opts] -o
+  ControlPersist=<control_persist> -o ServerAliveInterval=15 -o
+  ServerAliveCountMax=2 -- <host>` (same parsed-parts argv) in its own
+  session (`start_new_session=True`), outside any call's process group,
+  **under a per-host master lock** — two concurrent first calls would
+  otherwise race to create the same socket; the loser of the lock finds the
+  master already present. `ControlPersist` rides the `-MNf` command itself
+  so a master orphaned by an app crash (no clean `ssh -O exit`)
+  self-expires instead of living until the network drops. The
+  **keepalive options belong on the master only** — per-call clients ride
+  the shared connection and never run their own keepalives, so
+  ServerAlive on them does nothing. Per-call clients use
+  `ControlMaster=no` + the shared `ControlPath` — which means **the
+  executor, not OpenSSH, must detect and replace a dead master** (with
+  `auto`, a client would transparently start a replacement; with `no`, it
+  cannot). Detection is **failure-triggered only**: a failed mux
+  connection or mux-protocol error from a call starts a fresh master under
+  the same lock — no proactive `ssh -O check` per send batch, which would
+  cost a subprocess every batch. The failed *call* still
+  returns a typed transport error — the restart is for subsequent calls,
+  not a retry of the failed one. A deadline kill of a call therefore
+  cannot take the shared connection or other in-flight calls with it, and
+  cleanup checks don't see a leftover master as an orphan (masters close
+  via `ssh -O exit` on app quit; ControlPersist bounds idle lifetime as
+  the crash backstop). The mux directory is a **short `0700` dir** chosen
+  so the full socket path stays under macOS's 104-byte `sun_path` limit
+  (`%C` alone is 40 characters).
+- **Shell safety**: bootstrap charset per above (no spaces by construction);
+  target/interpreter charsets validated at add time with leading-dash
+  rejection. Bundle bytes travel via stdin — invisible to `ps` on the
+  server and never shell-parsed.
+- **Stdout contamination**: the worker's response begins with a fixed
+  16-byte magic constant; the executor scans **raw bytes** — not lines —
+  for the magic, discards everything up to and including it, and only
+  then hands the remainder to the line-based response parser, so noise
+  containing newlines cannot inject fake response lines; a constant
+  longer than plausible rc-file output makes accidental collision
+  negligible. A garbage cap (~4KB) with no magic found → typed "remote
+  shell emits stdout noise" error with a hint to guard `.bashrc`.
+  Debian/Ubuntu source `.bashrc` for `ssh host cmd`; unguarded rc files
+  otherwise corrupt framing. **The local worker does not grow a magic
+  prefix** — its pipe has no noise source and the local path stays
+  untouched; the bundle's IO entry point therefore differs from the local
+  worker's by exactly this strip-before-parse adapter, which lives in the
+  bundle build, not the shared worker code.
+- **Bundle**: committed, build-time-generated single file
+  (`Tools/remote_worker_bundle.py`) assembled from the existing protocol
+  framing, root pinning, `local_tool_impls` core, dispatch, and sensitive
+  -path modules by `Tools/build_remote_worker_bundle.py` — possible only
+  after Phase 0 makes that closure stdlib-only. Python ≥ 3.10 floor,
+  enforced by **compiling the bundle under a real 3.10 in CI**
+  (`uv python install 3.10`); an import denylist alone cannot catch
+  3.11/3.12 syntax. The bundle reads frames only from the same buffered
+  stdin stream the bootstrap used (the build script emits the IO entry
+  point to take the stream as an argument). Compression ~4:1 puts per-call
+  overhead at ~40KB. A drift-guard test rebuilds and diffs. Each call logs
+  the bundle hash for audit.
+- **Remote denylist, separate from the laptop's**: the sensitive-path
+  denylist shipped in the bundle is **remote-home-relative** (`~/.ssh`,
+  `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, …), not the laptop's
+  app-config/data directories (which mean nothing on the server). ADR-174
+  user exclusions ride the serialized request as relative paths and are
+  matched worker-side.
+- **Worker-side watchdog, two tiers**: the request already carries
+  `timeout_seconds` (today `WORKSPACE_HELPER_TIMEOUT_SECONDS = 300`), but
+  the executor sends the **remaining budget** (`timeout_seconds −
+  elapsed_at_spawn`) — the server-side clock starts only after connect,
+  auth, and the ~40KB bundle transfer, so a fixed grace cannot guarantee
+  ordering. The bundle then arms:
+  1. `threading.Timer(budget, _watchdog)` — the graceful path: `_watchdog`
+     **unlinks the worker's registered temp files** (every atomic write
+     registers its temp path on creation and deregisters on success —
+     `os._exit` skips `finally` blocks, so the timer callback itself does
+     the cleanup), writes the stderr marker, and calls `os._exit(75)`.
+     Exit **75** (`EX_TEMPFAIL`) is fixed and reserved to the watchdog:
+     neither 255 nor 127, and no other worker path may exit 75 (the
+     worker's own failure paths exit 2).
+  2. `signal.alarm(budget + 2)` with the **default action and no Python
+     handler** — the OS-level backstop the worker cannot block. This is
+     required, not belt-and-braces: `fs_grep` compiles the model's
+     pattern with Python `re`, and C-level regex matching holds the
+     interpreter lock for its whole duration — a catastrophic pattern
+     starves the Timer for exactly the runaway op the watchdog exists
+     for. The alarm kills the process by signal; its ssh-reported exit
+     code is deliberately **not decoded** — post-admission failures are
+     bucketed by the admitted marker (below), not by exit-code guessing.
+     `resource.setrlimit(RLIMIT_CPU, …)` is an optional additional
+     backstop.
+  The laptop side runs **two anchored deadlines**: a marker-arrival
+  deadline at spawn + `timeout_seconds` + grace (no marker by then →
+  kill; the failure buckets as no-marker by construction), and a
+  completion deadline at `admitted_at + budget + grace`. Anchoring the
+  completion kill to the marker's arrival (not to spawn) is what makes
+  "watchdog strictly earlier" actually hold — the worker arms its tiers
+  at the same moment it emits the marker, both sides then count the same
+  remaining budget, and the ~5s grace absorbs channel latency and clock
+  drift (both sides measure durations from their own anchors, never wall
+  clocks). The local ssh
+  process-group kill is the last-resort backstop. Either tier guarantees
+  "nothing left behind" as far as
+  processes go: no orphaned process; temp-file cleanup is best-effort
+  from the Timer tier (the alarm tier cannot clean up — same bounded
+  exception as the local worker). No separate `call_timeout_s` config —
+  the existing constant is the single deadline source.
+- **New `ping` op**: returns the **full directory identity chain** — the
+  root and every ancestor component's identity tuples in the exact form
+  the worker's `DirectoryChain(identities=(root_identity,
+  *ancestor_identities[1:]))` reconstruction consumes (a root-only stat
+  cannot build a request the worker will accept) — plus canonical remote
+  path, remote python version, and bundle-hash echo. One multiplexed
+  round trip powering the status probe, authority capture, and identity
+  re-capture.
+- **Timeouts, two classes by design**: `ConnectTimeout` bounds TCP only;
+  connect/handshake timeouts (with the handshake/banner stall bounded by
+  the same deadline machinery) are **transport failures** (no admitted
+  marker) and feed the BLOCKED learning. An operation that connected and
+  ran past its deadline is **not** a transport failure — the request
+  carries the remaining budget, and watchdog exit 75, the alarm backstop,
+  or the laptop-side kill all produce the typed "operation timed out"
+  tool error with status unchanged (see the watchdog and status-learning
+  rules). Every call and probe has the hard process-side deadline with
+  process-group kill (the hooks system's established pattern).
+- **Concurrency**: semaphore keyed by **resolved host / ControlPath
+  identity** (not per binding) — sshd's `MaxSessions` is per connection and
+  multiple bindings on one host share one master. Default cap 8, config
+  `max_concurrent_calls`; the probe counts against the same cap.
+- **Failure taxonomy — bucketed by the protocol's existing `admitted`
+  marker, not by exit-code guessing**: `WorkspaceResponseOutcome` already
+  includes `"admitted"` (`workspace_tool_protocol.py:44`); the worker
+  emits it before dispatching the op, and the executor watches for it.
+  - **No admitted marker received** before the failure →
+    connection/setup failure → **BLOCKED**-eligible: ssh exit 255 with no
+    remote output (unreachable/auth), connect or handshake timeout,
+    remote exit 127 (interpreter missing — "host lacks python3"), remote
+    exit **76** ("python ≥ 3.10 required (found X.Y)" — the bootstrap's
+    version gate, see the spawn rule), stdout-noise magic-cap exceeded
+    (the channel is unusable), and a catch-all: **any other exit code with
+    no marker → BLOCKED, "remote worker failed to start"** — an old
+    server Python that dies in `SyntaxError` before the version gate can
+    never surface as an unlabelled failure.
+  - **Pin/identity failure is its own class, not BLOCKED**: the worker
+    sends the admitted marker (`root_pinned`) only after the pin
+    succeeds, so a pin mismatch surfaces as either a framed `failure`
+    response or a no-marker exit; either way the executor marks the
+    cached identity **stale** and triggers the debounced re-probe rather
+    than latching BLOCKED (see "Identity freshness"). The marker design
+    rides existing behavior: the admitted line is emitted and flushed
+    right after pinning (`workspace_tool_worker.py`), and the parent
+    already accepts the two-line admitted+final response
+    (`_parse_worker_output`).
+  - **Admitted marker received, then anything** — watchdog exit 75, death
+    by signal (alarm backstop), ssh exit 255 after admission (connection
+    lost mid-op), laptop deadline kill, EOF without a final frame → typed
+    **"operation timed out"** or **"remote op failed"**, status
+    **unchanged**. The marker is what disambiguates a stalled handshake
+    (no marker — transport) from a slow op (marker seen — typed error)
+    when the laptop kill fires.
+  - Mux-protocol/mux-connection failure → typed transport error +
+    failure-triggered master restart (cache untouched — only the
+    restart's own no-marker 255/timeout flips it). Worker-side errors
+    return a framed `failure` response and exit 2 rather than dying
+    silently.
+- **BatchMode limitations, documented**: agent-confirmed keys (`ssh-add -c`)
+  fail rather than prompt; unknown host keys fail closed (correct default);
+  channel integrity for the bundle inherits the user's
+  `StrictHostKeyChecking` policy — chatbook does not override it.
+- Startup checks for a local `ssh` binary; the feature disables with a
+  clear message if absent.
+- **Future hook (explicitly not v1)**: a content-hash bundle cache in the
+  remote `$TMPDIR` would cut per-call payload to ~50 bytes; the protocol
+  shape (size-prefixed stdin payload) makes it a drop-in later.
+
+## Run composition & tool parity
+
+- `capture_run_admitted_workspace_roots` admits SSH bindings as
+  `RunAdmittedWorkspaceRoot`s: own `root_alias`, `allow_write` from
+  `metadata["access"]`, `RemoteWorkspaceToolExecutor` in the executor slot,
+  and the `RemoteRoot` descriptor in the `root` slot. Aliases stay
+  **binding_id-derived**, hence unique by construction — no disambiguation
+  machinery (`proj-2`) is added.
+- **Split authority** (same fail-closed posture, no added latency):
+  client-side per call — registry row re-read, fingerprint match, access
+  match, cache not BLOCKED (catches retarget/permission changes); server
+  side per call — the worker's root pin re-validates `(st_dev, st_ino)`
+  before executing anything, catching symlink/mount drift inside the same
+  round trip.
+- **Parity matrix**:
+
+  | Capability | SSH binding in v1 |
+  |---|---|
+  | fs_list / fs_read / fs_glob / fs_grep | full parity, server-side |
+  | fs_write / fs_edit / fs_patch | full parity incl. CAS stamps (sha256+size from worker responses; re-check runs in-worker) |
+  | Read-only binding | mutating specs not advertised (existing `any_write` preflight) |
+  | Result spill to local scratch | unchanged |
+  | git_* | call-time typed error "git tools not yet supported on SSH bindings"; still advertised for local aliases on mixed runs |
+  | Change review | none in v1 — no `binding_added` change-review setup, no row capture (finalization doesn't exist for remote rows; rows nobody can act on are noise) |
+  | Sensitive-path denylist + ADR-174 user exclusions | remote-home-relative denylist ships in the bundle; per-binding exclusions ride the request as relative paths, matched worker-side |
+
+- **Model-facing surface**: remote roots appear only as
+  `ssh://alias/path` URIs in the context note alongside an explicit
+  alias→URI mapping (`proj → ssh://devbox/home/me/proj, remote, rw`), with
+  a note that remote roots are reachable via `fs_*` tools only. Bare URIs
+  passed as path arguments are rejected with a message that teaches the
+  correct convention (`use root_alias "proj" with a relative path`) —
+  self-correcting in one turn, no second grammar.
+- **Family B** (`read_file`/`write_file`/`list_directory`/`edit_file`):
+  local-only in v1; URIs don't parse as local paths so `validate_path`
+  rejects them cleanly — a remote path can never alias a local file.
+- **AGENTS.md from remote**: `_validate_project_instruction_binding`
+  accepts `ssh-filesystem` + cache-READY; the resolver's reads route through
+  the executor via a bounded-read op (bytes + stat in one call); nested
+  discovery's directory chain uses worker stats for `BindingRootIdentity`.
+  Everything above the IO layer — caps, untrusted-content rules, ledger,
+  lazy activation, first-use consent — unchanged. Instruction-loading
+  failures on an unreachable remote follow ADR-069's prep-failure posture:
+  content-free warning, proceed.
+- **Degraded semantics**: at composition, BLOCKED/MISSING bindings are
+  excluded and the note says so; mid-run drops return a typed
+  transport-error tool result and the run continues on local roots. No
+  transparent retry of the failed op: with `ControlMaster=no` the
+  **executor owns master health** (failure-triggered restart after a mux
+  failure, so the *next* call is healthy — see the lifecycle rule), but
+  the failed
+  call itself still returns its typed error; write idempotency is
+  unknowable; retrying a long op doubles the wait.
+- **Hot-path rule (load-bearing)**: run composition reads cached status
+  only. Stale-READY → mid-run typed error handles it; stale-BLOCKED →
+  binding stays excluded (which is the availability requirement). Probes
+  refresh asynchronously (workspace open, binding list, manual refresh,
+  op-outcome learning). The **two** synchronous probe points are
+  add-binding and first-selection — both places where the user is already
+  waiting — and add-time is advisory: a failing probe lets you save the
+  binding with the reason shown, so setup works offline. No other probe
+  is ever synchronous.
+
+## Local-folder-binding touch points (enumerate before coding)
+
+Sites that today filter or special-case `local-filesystem` / do laptop-disk
+work per binding, to be migrated or explicitly extended (the implementation
+plan completes this list with a `grep -rn "local-filesystem\|LOCAL_FILESYSTEM"`
+pass; the OmniVoice spec's UI touch-point list is the format). Entries were
+verified on dev, which the implementation branch is cut from; the planning
+pass re-confirms each site there:
+
+- `Chat/console_chat_controller.py` — `_validate_project_instruction_binding`
+  (admission), `_exclusion_paths_provider`,
+  `_project_instruction_excluded_dirs` (laptop-resolved exclusions),
+  `_workspace_binding_authority_is_current`.
+- `Agents/local_tool_provider.py` — admission preflight (any_write),
+  CAS machinery (`_record_fs_read_observation`, `_fs_write_guard_injection`,
+  `_stale_targets_for`, `_update_ledger_after_write`, `_hash_file`), and
+  **result redaction**: `redaction_root = authority.root`
+  (~`local_tool_provider.py:1824`) needs a remote-path variant; the
+  sibling `_result_redaction_root` in `virtual_cli_provider.py` (~212) is
+  checked for the same treatment — if the virtual CLI can never hold a
+  remote root, record that conclusion at the site instead.
+- `Tools/workspace_tool_executor.py` — `_build_request`
+  (`capture_directory_chain`, `resolve_workspace_path`,
+  `_parent_read_exclusions`) and `_call_context` (~148, `path.is_file()`
+  on the laptop — the remote variant asks the worker for a stat).
+- `Tools/workspace_file_roots.py` — `_iter_valid_folder_bindings`,
+  `allowed_file_roots`, `_binding_matches_frozen_authority`
+  (per-component laptop `lstat`).
+- `Workspaces/registry_service.py` — `list_folder_bindings` kind filter (×3
+  local-filesystem literals), `_filesystem_binding_missing`,
+  `add_folder_binding` validators.
+- `Workspaces/display_state.py` — ~5 local-filesystem branches.
+- `UI/Console_Modules/wiring.py`, `UI/Console_Modules/workspace.py`,
+  Console file inspector — binding listing/labeling/status surfaces.
+- `UI/Screens/settings_screen.py` — `_render_workspace_folder_bindings`
+  and add/toggle/remove handlers.
+- `Workspaces/change_review` setup scheduled off `binding_added`.
+
+## UX surfaces & configuration
+
+- **Settings → Workspaces**: "Add SSH folder…" inline form (target, path,
+  ro/rw, interpreter override), advisory add-time probe, per-binding status
+  column gains `unreachable` / `missing on host` states refreshed async
+  (never blocking UI on a probe).
+- **Console working-folder picker** and the **Alt+W workspace switcher**
+  list SSH bindings with status chips; selection follows the existing
+  ADR-069 consent flow unchanged.
+- **Context note**: alias→URI mapping, `[ssh]` tags, explicit
+  "remote binding unreachable — excluded this run" degradation line.
+- **Config** (`[console_ssh]` in config.toml): `control_persist` (`"10m"`),
+  `enable_multiplexing` (`true`; doubles as the Windows kill switch),
+  `connect_timeout_s` (3), `max_concurrent_calls` (8). Deadlines reuse
+  `WORKSPACE_HELPER_TIMEOUT_SECONDS`; no separate call-timeout knob. No
+  master enable flag — the feature is dormant unless an SSH binding exists.
+
+## Security posture (ADR-181 content)
+
+- Auth fully delegated (BatchMode; agent/config only; no secrets in app,
+  keyring, or metadata).
+- The only code executed remotely is chatbook-shipped: stdlib-only,
+  commit-time-built, drift-guarded, hash-logged per call, shell-charset
+  validated end to end, with leading-dash option injection rejected at
+  validation.
+- Remote AGENTS.md is untrusted repo content under every ADR-068/069 rule;
+  it never grants permission. Permission gates, hooks (deny-only
+  PreToolUse), and approval effects apply to remote ops identically —
+  `MUTATES_LOCAL` semantically means "mutates workspace storage" (rename
+  deferred).
+- Sensitive-path denylist enforced server-side in the bundle against a
+  remote-home-relative list; ADR-174 user exclusions ride the serialized
+  request and match worker-side.
+- Remote file content transits the user's own SSH channel — same trust as
+  their manual ssh. Host-key policy is the user's ssh config decision;
+  BatchMode's unknown-host fail-closed is the default posture.
+- The remote host itself is user-trusted infrastructure (their server,
+  their ssh config); the worker runs as their SSH user with root-pin
+  confinement equivalent to the local worker's. The worker watchdog
+  bounds its lifetime to the request deadline — no orphaned processes.
+
+## Testing
+
+1. **Unit**: locator parse/canonicalize into user/host/port components
+  (aliases, ports, IPv6 brackets — and **argv construction from the parsed
+  parts**: `-p <port> -l <user> -- <host>` with brackets stripped, `ssh -G`
+  argv identical), component charset validators (per-component; `@`
+  rejected everywhere; leading-dash rejection), status mapping, bundle
+  drift-guard, bootstrap shell-safety charset **asserted against the exact
+  bootstrap string from the transport section**, compression round-trip,
+  watchdog exit code (75) and temp-file registry/unlink behavior.
+2. **Phase 0 gate**: import-closure test proving the *local* worker's
+   import set is stdlib-only, **plus the decoder conformance test**: a
+   shared corpus fed to both the parent's pydantic acceptance and the
+   worker's stdlib decoder, requiring **identical accept/reject
+   outcomes** — targeting what the parent's decoder actually rejects:
+   duplicate keys (TASK-32855's strict-JSON rule), NaN/Infinity, invalid
+   UTF-8, unknown fields, bool-vs-int strictness, wrong version, and
+   oversize payloads. Matching pydantic's strict-type behaviour in a
+   stdlib decoder is the known hard part of the split. (The protocol has
+   no length prefix, magic, or checksum — those framing notions do not
+   exist to be tested here; the SSH transport's size prefix and response
+   magic are tested separately as transport concerns.)
+3. **Loopback integration (workhorse)**: execute the bundle via
+  `python3 -I -c` + stdin against a temp dir, no ssh — bundle-size prefix
+  handling and response-magic handling (both **transport** additions,
+  tested separately from protocol conformance), magic-prefix skip over
+  injected leading noise, pinning, all ops, CAS stamps (sha256+size),
+  single-stream discipline, watchdog firing.
+4. **Fake-ssh**: stub `ssh` script simulating unreachable / exit-127 /
+  exit-**76**-with-old-python-stderr / exit-1-no-marker (the catch-all) /
+  stdout noise **including newline-containing noise** (byte-level magic
+  strip, no injected response lines) / hang-past-deadline, unknown-host —
+  asserting the typed
+  "operation timed out" result, the **watchdog's exit 75 observed before
+  the laptop kill**, **status cache unchanged after the timeout**, and
+  **that the remote child is gone after timeout**. Includes a
+  **catastrophic-regex starvation case**: an `fs_grep` pattern that holds
+  the GIL past the budget (Timer starved) must be killed by the
+  `signal.alarm` backstop with no orphaned process, and must still bucket
+  as "operation timed out" via the admitted marker. Admitted-marker
+  bucketing is asserted in both directions (no-marker failure → BLOCKED;
+  post-admission failure → status unchanged). A master-restart scenario
+  (dead master socket → the failed call's mux error triggers restart and
+  the *next* call succeeds) and a concurrent first-call race (two
+  callers, one per-host lock, one master) are covered here too.
+5. **Wrong-file hazard (named test)**: a remote root whose path also
+  exists on the laptop with different contents — the laptop copy is never
+  read, hashed, or stamped (all four CAS sites plus `_stale_write_refusal`
+  and result redaction).
+6. **Composition, degradation, and recovery**, including three **named
+  availability regression tests**: *workspace with remote BLOCKED + local
+  READY → send composes, local tools advertised, remote excluded, note
+  mentions it*; the inverse direction — *a healthy remote whose op times
+  out (75) stays READY and is admitted on the next send*; and *a BLOCKED
+  remote whose debounced background probe succeeds is re-admitted on the
+  next send with no user action*; plus cold-start-optimistic admission
+  and the identity-staleness path (*pin failure → identity marked stale →
+  re-probe re-captures the chain → READY with fresh identity*, the remote
+  `rm -rf && git clone` parity case).
+7. **3.10 floor**: CI compiles the bundle under a real 3.10
+  (`uv python install 3.10`).
+8. **Opt-in marked test** with `ssh localhost` where key auth exists; plus
+  a genuine live run against a real server before any task is marked Done
+  (`lessons-live-verification.md`).
+9. Existing suites stay green: `test_workspace_file_roots`,
+  `test_local_tool_provider`, `test_project_instruction_resolver`,
+  `test_console_project_instructions`, `test_workspace_tool_executor`,
+  `test_workspace_tool_protocol`, `test_local_tool_impls`, and neighbors.
+
+## Rollout (six independently testable phases)
+
+**Cut the implementation branch from `origin/dev`** — the touch-point
+list's dev-verified entries (`_call_context` at
+`workspace_tool_executor.py:148`, the CAS line numbers) exist there, not
+on the branch this spec was drafted against.
+
+0. **Stdlib-only worker**: split protocol serde — parent keeps pydantic,
+   bundle ships a stdlib decoder — strip pydantic/loguru/config/interop
+   imports from the worker's closure (protocol serde, sensitive-path
+   core); gated by the import-closure test **and** the decoder
+   conformance corpus test (identical accept/reject on both sides). No
+   behavior change to local tools.
+1. **Binding foundation**: binding kind, registry methods, locator
+   canonicalization + charset validation, remote denylist definition,
+   bundle build + drift guard + 3.10 CI compile, loopback executor — zero
+   network code.
+2. **Transport**: explicit `ssh -MNf` master lifecycle (per-host lock,
+   `ControlPersist` + keepalives on the master command, failure-triggered
+   restart), hardened spawn (parsed-parts argv, leading-dash rejection,
+   version-gated bootstrap), response magic, two-tier deadline
+   (remaining-budget Timer + exit 75, `signal.alarm` backstop,
+   marker-anchored laptop kill), admitted-marker failure bucketing, ping
+   with full identity chain, probe + status cache (optimistic cold start,
+   transport-only op-outcome learning, debounced automatic-recovery
+   probe, identity-staleness marking), failure taxonomy.
+3. **Server-side authority relocation**: `LocalRoot | RemoteRoot` type
+   split; migrate request building, CAS hashing (worker-reported
+   sha256+size), exclusions (worker-matched, serialized relative paths),
+   `_call_context`, admission — the phase that makes "tools execute
+   server-side" literally true.
+4. **Run integration**: admitted roots with remote executors, degraded
+   composition, AGENTS.md remote reads, context-note surfaces.
+5. **Surface**: Settings form, picker/switcher entries, `[console_ssh]`
+   config, user-guide docs, repo AGENTS.md note.
+
+ADR-181 is authored and committed **before Phase 0 code** (repo rule), and
+linked from the backlog task, plan, and implementation notes.
+
+## Alternatives considered
+
+| Option | Why rejected |
+| --- | --- |
+| Native SFTP client (asyncssh/paramiko) | Reimplements the filesystem: `fs_grep` means downloading candidates, atomic replace/flock/CAS need weaker analogues, largest scope, new dependency, worst performance. |
+| Laptop-side mount (sshfs / macFUSE / rclone mount) | macOS 26 FUSE friction (system-extension approvals), slow remote grep/glob, no first-class status — and a stale mount on a dead server can hang the app, the exact opposite of the availability requirement. |
+| Install chatbook (or a persistent agent) on the server | Explicitly excluded by the user's requirement: nothing runs or persists on the server. |
+| rsync/git mirror + sync engine | Not live (remote changes invisible until sync), needs conflict resolution, mutations need push — surprising semantics for a workspace root. |
+| Reuse `REMOTE_RUNTIME` for the kind | Reserved for agent-runtime-remote semantics; conflates filesystem bindings with runtime bindings. |
+| Per-call `ssh -G` canonicalization at dispatch | Subprocess spawn in the send path violates the hot-path rule; resolved identity is stored at add/edit instead. |
+| Transparent mid-run read retry | The executor's failure-triggered master restart covers stale masters between calls; retrying the failed op itself is still excluded (write idempotency unknowable; long ops double the wait). Revisit only with measurements. |
+| Change-review row capture in v1 | `binding_added` schedules per-root review setup; with no finalization actions for remote rows, captured rows are unactionable noise. |

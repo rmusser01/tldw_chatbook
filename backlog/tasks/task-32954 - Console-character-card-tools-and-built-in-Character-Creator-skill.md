@@ -1,0 +1,92 @@
+---
+id: TASK-32954
+title: Console character card tools and built-in Character Creator skill
+status: Done
+created_date: 2026-09-25 18:23
+labels:
+- characters
+- agents
+- skills
+priority: high
+updated_date: 2026-09-26 04:21
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Users want to ask the Console assistant to create a new character card or update an existing one, with a Character Creator skill guiding the conversation. The skill ships with the app and the tools are on by default; every save asks for approval. Design: Docs/superpowers/specs/2026-09-25-character-card-tools-design.md.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 A user can ask the Console assistant to create a character; after an interview and a draft they approve, the character is saved locally and can be chatted with
+- [x] #2 A user can ask to change specific fields of an existing character; only those fields change, and a stale or partially-read card is never overwritten
+- [x] #3 A save can attach an avatar generated through the configured Image Gen backend or read from a local file; an avatar failure never loses the text
+- [x] #4 Every save shows an approval card that summarises the change without exposing full field text
+- [x] #5 The Character Creator skill is available on a fresh install without skill-trust setup, can be disabled, and can be customised into the user's own copy
+- [x] #6 In a server-mode Console session the tools refuse clearly instead of writing locally
+<!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Shipped on feat/character-card-tools (plan Docs/superpowers/plans/2026-09-25-character-card-tools.md, spec Docs/superpowers/specs/2026-09-25-character-card-tools-design.md), eight SDD tasks.
+
+**Approach / what shipped**
+- `LocalCharacterPersonaService` now decodes `image_base64` into stored image bytes and supports `clear_image` (images sent through it were silently dropped before).
+- `Character_Chat/character_avatar.py`: UI-free `resolve_avatar` (generate via the Image Gen backend, local file with the Personas size/type limits, remove); never raises, reports failures.
+- `Tools/character_tool_service.py`: `CharacterToolService` with `search`/`get`/`save`, bounded output, per-session truncation guard, optimistic `expected_version`, duplicate-name handling, validate-before-avatar, one write per save, server-mode refusal, `save_approval_summary` (names and sizes, never field text).
+- `Agents/local_tool_provider.py`: `character_search`/`character_get`/`character_save` (Console-only; save tagged `mutates`, `DEFINITIVE_AFTER_START`, avatar-aware timeout) behind `[tools] character_tools_enabled` (default on), hand-listed in `all_tool_gates()`; wired per session by `ConsoleChatController._character_wiring`.
+- `Character_Chat/character_events.py`: `CharacterCardChanged`, posted after a save and forwarded by `app.py` to Personas, which reloads the card or keeps unsaved edits with a notice.
+- Built-in skills source (`Skills_Interop/builtin_skills.py`, `assets/skills/character-creator/SKILL.md`, digest-pinned, `.gitattributes -text`, packaged); `LocalSkillsService` merges built-ins on every read path, refuses edits/deletes, Customize = seed one copy; `[skills] disabled_builtins` (now loaded into `app_config` by `load_settings`).
+- Library ▸ Skills (`library_skills_builtin_controller.py`): Built-in badge, read-only preview with Customize and Enabled, "Built-in · Disabled" rows, "overrides built-in" on a user copy; trust banner no longer says built-ins need review.
+- Docs: Console "Creating and editing characters" (agent-runs-and-tools.md) and Library ▸ Skills "Built-in skills", both stamped.
+
+**Rulings (ledger R1-R14) and outcomes**
+- R1 `overrides_builtin` produced by Task 6's `_visible_records` — done there, with its test.
+- R2 Task 4 imports `character_events` lazily inside `_changed` — kept; Task 5 created the module.
+- R3 Personas handler tested on a stand-in object — done; the mounted UAT covers delivery.
+- R4 `LLM_SPEND` not in `character_save`'s static effects; the cost note is in the approval summary — **deviation from spec §3.2**.
+- R5 `resolve_avatar` must never raise (blank description, file read error) — fixed in Task 2.
+- R6 no name-only fallback avatar prompt; generate with no prompt and no description reports "add a description or give an avatar prompt" — done.
+- R7 no-query browse reports `has_avatar: null` (unknown) — done.
+- R8 service lives in `Tools/character_tool_service.py`, not `Character_Chat/` — **deviation from spec §3.1** (follows WatchlistsToolService).
+- R9 truncation guard requires contiguous full coverage; avatar resolved after validation — fixed in Task 3.
+- R10 character tools are not in the MCP hub per-tool Permissions catalog, so the skill does not advise setting reads to Allow — follow-up filed as TASK-32956.
+- R11 `_changed` uses `app.post_message` directly (thread-safe, non-blocking) — done in Task 5.
+- R12 built-ins appear only where a `builtin_disabled_loader` is supplied (the app); MCP server and evals constructors show none — **deviation (loader opt-in)**.
+- R13 `Tests/Architecture/test_screen_size_ratchet.py` not re-pinned for `library_screen.py` (already red on dev) — **deviation (size ratchet)**; note it in the PR.
+- R14 the Library controller ratchet must not be re-pinned for Task 7's growth (only sanctioned moves may raise it) — the built-in preview/Customize/Enabled/review-link cluster moved to `UI/Library_Modules/library_skills_builtin_controller.py` (`LibrarySkillsBuiltinController`, reached as `LibrarySkillsController.builtin`); behaviour unchanged; the skills controller's budget row is untouched.
+
+**Test evidence**
+- New files, all green locally: test_character_local_tools 5, test_character_avatar 8, test_local_character_service_images 3, test_console_character_wiring 5, test_console_skill_capture_builtin 2, test_builtin_skill_packaged 4, test_builtin_skills 22 (+2 skipped locally on the ADR-126 gate), test_character_tool_service 30, test_library_skills_builtin_rows 15, test_personas_character_changed 8, test_console_character_tools_mounted_uat 1.
+- Mounted UAT (`Tests/UI/test_console_character_tools_mounted_uat.py`, under `@private_profile_test`): scripted model runs find_tools → load_tools → character_search → character_save(create, description, avatar generate); the save's approval card is approved; asserts no field text in the card or its source arguments, one DB row with text + image at version 1, one generation, and one `CharacterCardChanged`. Negative control (summary leaking description text) fails it.
+- Name-set comparison vs a clean origin/dev worktree (461668df00), same files, `-n 8 --timeout=120`: Tests/Agents, Skills, Character_Chat, Library, Tools, Packaging, MCP, the Console controller/bridge/skill/character files in Tests/Chat, Tests/UI library-skills/personas/console-skill/mounted UATs, Tests/test_config* — branch 2219 failed/173 errors, dev 2225/173 (the local ADR-126 RecoveryRequired baseline); **zero failure names only on the branch**. Tests/Architecture (serial): the only branch-only failures were the Library controller size ratchet rows for `library_skills_controller.py` (Task 7's built-in cluster) and `library_skills_browse_controller.py` (+3). Resolved per R14: the built-in cluster moved to its own module, so the skills controller is back within its unchanged budget (3141 ≤ 3142); the browse row (+3, parameter threading) and a new-module row for `library_skills_builtin_controller.py` are pinned with dated comments. The screen ratchet for `library_screen.py` is red on both (R13).
+- AC evidence: AC#1 — the mounted UAT proves an approved `character_save` writes the DB row (text + avatar, version 1) and posts the Personas `CharacterCardChanged`; the interview/draft steps are skill-instructed model behaviour (SKILL.md content tests), and chatting with the saved card is the existing Roleplay path, not exercised here. AC#2 — update/stale/truncation-guard tests in test_character_tool_service. AC#3 — avatar tests (generate, file, failure keeps text). AC#4 — approval-summary tests + the UAT's card assertions. AC#5 — test_builtin_skills + Library built-in row tests. AC#6 — `test_server_mode_refuses`.
+- ruff: no new findings in touched files vs origin/dev. `./scripts/preflight.sh` exit 0 (diagnostic inventory re-pinned for two reviewed constant-message warnings).
+
+**Follow-ups:** TASK-32956 (per-tool permission rows). Deferred minors (not filed): an empty `image_base64` writes an empty BLOB (tool layer never sends one); file avatars are rejected by suffix before sniffing; the tool service calls the private `service._require_db()` for duplicate lookup; search `offset` is uncapped and the query path loads image BLOBs for offset+limit rows; `_character_read_guards` is never popped on session teardown; a restored Personas preview can keep an old greeting; the MCP server constructor could list built-ins; `seed_builtin_skills` reads the index outside its lock; the Library rail count includes a disabled built-in; the spec's "overridden" label on the built-in row cannot render (one merged row; the user row says "overrides built-in").
+
+**Final review fixes** (whole-branch review, one wave)
+- C1 (data loss): the runtime cuts every tool result head-first at `RunBudget.max_tool_result_chars` (16,000) and the local provider at 32 KB, so an 8,000-char-per-field full card could exceed both while the guard recorded [0,8000) as read. `character_get` now sizes every result to fit both, measured after JSON escaping: full-card fields get `CHARACTER_FIELD_READ_BOUND` (≈1,076 serialized chars / 2,366 bytes each; was a raw 8,000), `field=` pages get `CHARACTER_FIELD_PAGE_BOUND` (12,000 chars / 24,000 bytes). The guard threshold is now "the full card would truncate this field", and coverage records only what reached the model. Known ceiling: sized for the default 16,000 cap (an `[agents]` cap below ~15,000 would re-open it; `ponytail:` comment in the module). Skill text unchanged (its paging instruction still holds), so no digest re-pin.
+- I1: a dirty Personas editor records a Console-changed character; the first Save of it is refused ("Save again to overwrite that version with your edits, or Cancel to load it"), the second proceeds, and Cancel reloads the new version. Notice copy now says what Save and Cancel do.
+- I2 (spec §4.3): the approval card names the character on update, from an id→name map on the per-session guard filled by search/get/save (the service is rebuilt per turn, so the map lives with the guard); `#id` only when unknown; no DB call. The provider registers the bound `CharacterToolService.approval_summary`.
+- M1: `save_approval_summary` survives a failing image config ("unknown backend"); `LocalToolProvider._resolve_pending_gate` survives a raising `approval_arguments` with `{"summary": "unavailable"}` (never the raw args). Diagnostic inventory re-pinned for that one constant-message warning.
+- M2: an update that writes nothing reports `avatar_failed` (avatar failed) or `invalid_argument` (no fields, no avatar) instead of `saved`.
+- Tests: +8 service, +2 provider, +4 Personas (12 total there); all nine feature files 112 passed / 1 skipped (ADR-126). Local-provider, ask_user and MCP tools-mode suites: failure-name sets identical to the pre-fix branch tip (257/257, ADR-126 baseline).
+**Qodo review (PR #2842)** — 8 findings, each verified against the code; 7 fixed, 1 fixed on a different mechanism than claimed. RED tests first for each fix.
+- #1 (Personas edits lost) — mechanism as filed is not reachable: the dirty check, `_edit_mode = "view"` and `_show_center` all run before the reload's first yield. A real neighbouring hole was: the fresh card lands later from a thread worker, and until then Edit opened the cached pre-Console card, whose Save overwrote the Console change silently (the reload had already cleared the console-changed mark). The handler now drops the cached card before reloading, so Edit says "not loaded yet" until the new card lands (c40f3a7872).
+- #2 (security) — Customize now copies a built-in only from a private temp snapshot of its pinned files, re-hashing the bytes it writes after `verify_builtin_skill`; a modified, extra-file or swapped-after-check built-in is refused as `{"blocked": {name: reason}}` and Library says it failed its integrity check. Own new-module ratchet row +3 (dated) (9d7a0e6e54).
+- #3 avatar requests validated by a strict Pydantic `_AvatarRequest` before any backend call; #4 query-search offset capped at `CHARACTER_SEARCH_QUERY_MAX_OFFSET` (100; browse keeps SQL paging); #5 duplicate lookups go through a new guarded `LocalCharacterPersonaService.get_character_by_name` (the private `_require_db()` seam skipped the chat-source admission guard; a single-row read needs no transaction — the UNIQUE constraint + `ConflictError` stay authoritative); #6 docstrings; #7 the boundary logs `function:line` frames (no message, locals or file names; `from None` kept so the message cannot leak upstream), inventory re-pinned after `--statements` review (adbb646bff, 1efb78a866).
+- #8 the Personas handler ignores `CharacterCardChanged` unless `runtime_source == "local"` (c40f3a7872).
+- Resolves two deferred minors above (private `_require_db()`, uncapped offset). Feature files + Tests/Skills/test_local_skills_service.py: 248 passed / 1 skipped; ruff: no new findings vs the pre-fix tip; preflight exit 0.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+
+<!-- SECTION:FINAL_SUMMARY:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+<!-- DOD:END -->

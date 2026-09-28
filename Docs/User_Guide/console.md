@@ -423,6 +423,11 @@ button, the Model section's **Configure** button in the left rail, or the
   URL serves, and the **Base URL** field for local/self-hosted endpoints.
 - **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
   related knobs), then **Provider-specific**, **Context**, and **Identity**.
+  The modal still shows every sampling field, but a field the selected
+  provider's request does not carry is dropped: for Anthropic, Min P, Seed,
+  Presence and Frequency are accepted without error, never sent, and not
+  written by **Save as model default**. A value saved for such a field earlier
+  stays in `config.toml` untouched.
 - Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
   applies to this session only. Save as default also writes provider +
   streaming defaults to config."
@@ -439,6 +444,30 @@ Models ▸ Custom endpoints**.
 
 For a faster switch, **Alt+M** opens the quick **Model** popover —
 provider, model, and temperature without the full modal.
+
+Switching the provider, here or in the full modal, picks that provider's
+own model: its `model`, `api_model` or `default_model` in
+`[api_settings.<provider>]`, or, for a custom endpoint, the first model
+listed in that endpoint's entry. Your default model (`[chat_defaults]
+model`) only comes along when you switch to your default provider. A
+provider with no configured model gets no model, and Console asks you to
+choose one. In the popover, the model field shows its "Choose or search
+models" placeholder, **Apply to this chat** answers "Choose a model.", and
+**Defaults…** says "Unavailable: choose a model first." It never borrows
+another provider's model.
+
+Focusing the **Provider** or **Model** field, by Tab or by a click, keeps
+its current value on screen, selected, and opens the full list below it;
+the first key you type replaces the value and filters the list, and
+**Escape** puts the value back.
+The line under the model field counts the list — "1 model available. Type
+to filter." or "12 models available. Type to filter." — and when more models
+match than the 20 rows the list shows, it says so: "Showing 20 of 57
+matching models. Type to narrow the list." A catalog warning takes that
+line first: "Current model is not in the latest catalog. Choose another or
+keep it.", "Catalog unavailable. Use a configured model or Custom ID." and
+"Live catalog unavailable. Showing N configured models." are never replaced
+by the count, however long the list.
 
 #### QwenCloud in Console
 
@@ -538,6 +567,48 @@ TLDW_LIVE_ZAI=1 .venv/bin/python -m pytest -q \
 Use `TLDW_LIVE_MOONSHOT_MODEL` / `TLDW_LIVE_MOONSHOT_API_BASE_URL` or
 `TLDW_LIVE_ZAI_MODEL` / `TLDW_LIVE_ZAI_API_BASE_URL` only when your account
 requires an override. The default test suite makes no paid request.
+
+#### Databricks (AI Gateway) in Console
+
+**Databricks** uses its stable provider identity and the ordinary streaming
+Console path. It is per-account: set `DATABRICKS_TOKEN` (or a Settings-saved
+key) and `api_base_url` to your workspace host — the `/openai/v1` path is
+appended automatically; there is no shipped default model. Readiness blocks
+sends with actionable copy until both exist.
+
+- Chatbook function tools use the standard approval, cancellation,
+  execution, budget, and durable recovery loop for the gateway models that
+  support them.
+- Model discovery reuses the chat endpoint and credential (authenticated
+  `GET {base}/models`); the provider list starts empty because gateway
+  availability is workspace-dependent, and a failed refresh keeps configured
+  or cached models without blocking generation.
+- Terminal usage reaches Console when returned. Unpriced models show
+  **pricing unknown**, which never means free.
+
+Optional live verification is paid and skipped by default. It requires a
+nonblank `DATABRICKS_TOKEN` and `DATABRICKS_HOST` (for example
+`https://adb-1234567890123456.7.azuredatabricks.com`); override the model
+with `DATABRICKS_TEST_MODEL` when your account requires it:
+
+```bash
+DATABRICKS_TOKEN=… DATABRICKS_HOST=… .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_databricks_api.py
+```
+
+The default test suite makes no paid request.
+
+#### Inference clouds (Together, Fireworks, Cerebras) in Console
+
+**Together**, **Fireworks**, and **Cerebras** run on the ordinary streaming
+Console path — set the provider's API key (`TOGETHER_API_KEY`,
+`FIREWORKS_API_KEY`, or `CEREBRAS_API_KEY`) in Settings and pick a model.
+Chatbook function tools use the standard approval and execution loop for the
+models that support them, and **Discover models** reuses the chat credential
+(authenticated `GET {base}/models`) to fill the provider's empty model list.
+Fireworks keeps R1-family reasoning private — reasoning never appears in the
+transcript, which is provider behavior, not dropped output. Setup details
+live in [Settings — Inference clouds](settings.md#inference-clouds-together-fireworks-cerebras).
 
 ### Leaving Console during a run
 
@@ -766,3 +837,47 @@ detected loopback server adds "Use detected \<provider\> (\<host:port\>)"
 credentials stripped). Corrected from the source, not from a capture — this
 sweep drove no Console profile with a local server running, and does not
 claim to have seen the third button.)*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-26 (TASK-33001.1,
+provider switch picks that provider's own model). Switching llama.cpp to
+Anthropic under the shipped `[chat_defaults]` pair (OpenAI /
+`gpt-5.6-terra`) used to fill `gpt-5.6-terra`; it now fills Anthropic's own
+configured model, or no model with a "Missing model" readiness block. The
+evidence is headless: real-path rebase tests in
+`Tests/Chat/test_console_settings_apply.py` for both editors' field sets, and
+a mounted Conversation settings modal driving the real controller rebase in
+`Tests/Chat/test_console_session_settings.py`. Not re-checked live.)*
+
+*Re-verified live on feat/model-config-p1-root-fixes — 2026-09-26
+(TASK-33001.1 fix round 1). A scratch profile from the shipped template
+(OpenAI / `gpt-5.6-terra` defaults), driven in tmux: in the **Alt+M**
+popover, OpenAI → Anthropic filled `claude-sonnet-5`, and Anthropic →
+llama.cpp (shipped `model = ""`) left the model field on its "Choose or
+search models" placeholder with "No models reported for this provider. Use
+Custom ID if needed." **Apply to this chat** showed "Choose a model." and
+the chat stayed on OpenAI / `gpt-5.6-terra`; **Defaults…** read "Defaults
+target: llama_cpp/No model" and "Unavailable: choose a model first." A
+mounted popover test (`Tests/Chat/test_console_session_settings.py`) pins
+the same states. The full modal was not driven live.)*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001.7,
+picker focus and counts). Driven live at 211x44 on a scratch profile
+(llama.cpp / `qwen`, users_name `verify_mc33001_t7`): the Conversation
+settings modal opened with **Provider** focused and still reading
+"llama.cpp", selected, over the open provider list; Tab to **Model** kept
+"qwen" painted and selected, with "1 model available. Type to filter."
+below; typing `q` replaced it and Escape restored "qwen". A second run
+clicked into the Model field (reading `qwen-t7`) and typed `q`: the field
+read `q`, a fresh search, not an edit of the value. Before this fix
+both fields blanked to their "Choose or search …" placeholders on focus. The
+20-row cap line is pinned by mounted picker tests, not seen live.)*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001
+final fix wave, merged with dev 88b61879b9). The model field's status line
+keeps a catalog warning over the 20-row count on focus: before the fix,
+focusing the Model field on a catalog of more than 20 models replaced "Current
+model is not in the latest catalog…", "Catalog unavailable…" and "Live
+catalog unavailable…" with "Showing 20 of N matching models". Pinned by a
+widget test with 25 models for each warning
+(`Tests/Widgets/test_model_search_picker.py`), not driven live. The rest of
+this page's content unchanged from the prior stamp.)*

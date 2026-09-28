@@ -460,3 +460,85 @@ def test_explicit_empty_source_fails_instead_of_cloning(monkeypatch):
         sync_helper._run_with_source("")
 
     assert calls == []
+
+
+# --- task-32902 (tier-2 review, slice S26 P3) --------------------------------
+
+# Upstream-at-pin shape for security_logger.py, reduced to the five anchors
+# _patch_vendored_security_logger rewrites. A hand-edit to a vendored file is
+# only durable if it also lives in ENGINE_PATCHES: the sync script overwrites
+# the tree from upstream + rewrite + patches, "nowhere else" (manifest §5.2).
+_UPSTREAM_SECURITY_LOGGER = (
+    '# security_logger.py\n'
+    '"""\n'
+    "Security event logging for the Chunking module.\n"
+    "Logs security-related events for audit and monitoring.\n"
+    '"""\n'
+    "\n"
+    "import json\n"
+    "import threading\n"
+    "from datetime import datetime\n"
+    "\n"
+    '    def log_xxe_attempt(self, xml_content: str, source: Optional[str] = None) -> None:\n'
+    '        """\n'
+    "        Log an XXE attack attempt.\n"
+    "\n"
+    "        Args:\n"
+    "            xml_content: The malicious XML content (truncated)\n"
+    "            source: Optional source identifier\n"
+    '        """\n'
+    "        self.log_event(\n"
+    "            SecurityEventType.XXE_ATTEMPT,\n"
+    '            "XML External Entity (XXE) attack attempt blocked",\n'
+    "            {\n"
+    '                "xml_sample": xml_content[:500] if xml_content else "",\n'
+    '                "source": source,\n'
+    '                "blocked_patterns": ["DOCTYPE", "ENTITY", "SYSTEM"]\n'
+    "            },\n"
+    '            severity="ERROR"\n'
+    "        )\n"
+    "\n"
+    "        event = {\n"
+    '            "timestamp": datetime.utcnow().isoformat(),\n'
+    "        }\n"
+    "\n"
+    "    def export_events(self, output_file: Path) -> None:\n"
+    '        """\n'
+    "        Export security events to a JSON file.\n"
+    "\n"
+    "        Args:\n"
+    "            output_file: Path to output file\n"
+    '        """\n'
+    "        with open(output_file, 'w') as f:\n"
+    "            json.dump(self._events, f, indent=2, default=str)\n"
+    "\n"
+    '        logger.info(f"Exported {len(self._events)} security events to {output_file}")\n'
+    "\n"
+    "    def clear_events(self) -> None:\n"
+)
+
+
+def test_security_logger_timestamp_fix_is_carried_forward_by_the_sync_script():
+    """c255ec3936 (task-32803.1 / ADR-173) hand-edited the vendored
+    security_logger.py onto Utils.timestamps.utc_now_iso, but registered no
+    patch -- so the next re-sync would have restored the naive
+    datetime.utcnow() the timestamp guard exists to forbid."""
+    patched = sync_helper.patch_vendored_file(
+        "security_logger.py", _UPSTREAM_SECURITY_LOGGER
+    )
+    assert "datetime.utcnow()" not in patched
+    assert "from tldw_chatbook.Utils.timestamps import utc_now_iso" in patched
+    assert '"timestamp": utc_now_iso(),' in patched
+
+    # ...and the vendored tree already carries exactly that state.
+    vendored = (ENGINE / "security_logger.py").read_text()
+    assert "datetime.utcnow()" not in vendored
+    assert '"timestamp": utc_now_iso(),' in vendored
+
+
+def test_manifest_patch_table_records_the_timestamp_patch():
+    """A patch lands in ENGINE_PATCHES AND in the manifest, nowhere else."""
+    manifest = tomllib.loads(
+        (ENGINE / "VENDOR_MANIFEST.toml").read_text(encoding="utf-8")
+    )
+    assert "utc_now_iso" in manifest["patches"]["security_logger.py"]

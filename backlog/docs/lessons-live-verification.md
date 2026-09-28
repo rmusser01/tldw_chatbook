@@ -3123,6 +3123,11 @@ is not evidence that the picture is unobscured.
 
 ## A "Verified against" stamp verifies what it names, not the page around it (task-32558, 2026-09-14)
 
+> **2026-09-27:** verification is now recorded in the task's Implementation Notes, not
+> as a "Verified against" paragraph on the User Guide page (CLAUDE.md "UI changes").
+> The discipline below -- run it before you claim it -- is unchanged; only where the
+> claim is written moved.
+
 **task-32558, 2026-09-14.** `Docs/User_Guide/library/file-notes.md` told
 readers the Session Git panel is headed "Prepare session for commit", with
 the scope line "Session paths only · stages complete file state" and the
@@ -3355,3 +3360,27 @@ before the layout callback fixed the real production-CSS regression. Keep the
 existing profile, selection, visit, and exact shell guards around the final
 scroll application; a layout refresh alone is not evidence that Markdown
 children are ready.
+
+
+## A handoff test over a mounted Console skips the first mount's own config write (TASK-33001.5, 2026-09-26)
+
+**Incident.** A review asked when Console's mount-time rail-state write runs
+relative to the first-run "Start chatting" handoff. The mounted handoff tests
+passed, and the implementer's notes assumed the handoff lands first. A tmux run
+on a fresh scratch profile showed the opposite, on BASE and HEAD alike. Setup
+committed; then Console's compose found no rail scope and wrote one to the
+config file on a worker; then `on_mount` consumed the handoff. The write
+advanced the config generation, so the handoff's fence released it and Console
+warned "Provider settings changed before Console opened. Review setup and try
+again." The chat was right anyway (TASK-33001.5's convergence delivers it),
+which is why no test noticed. Every mounted handoff test opens the wizard over
+a Console that is already mounted, so its rail scope already exists and nothing
+writes between stage and consume. Rider: TASK-33001.10.
+
+**What to do.** For a first-run or first-mount flow, drive it from a fresh
+profile where the destination screen has never mounted. A wizard pushed over an
+already-mounted screen skips every "seed what is missing" write the first mount
+makes. The app log orders these writes for you: grep `tldw_cli_app.log` for
+"caches invalidated", "Navigating to screen" and "Screen <name> mounted". Local
+servers the flow probes can be a stdlib `ThreadingHTTPServer` answering
+`/v1/models`; the wizard only offers "Start chatting" after a probe succeeds.

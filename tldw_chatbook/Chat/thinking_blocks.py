@@ -361,6 +361,19 @@ def read_thinking_blocks_json(value: object) -> ThinkingEnvelopeRead:
         )
 
 
+def canonical_json_text_bytes(text: str) -> int:
+    """Exact canonical-JSON byte contribution of ``text`` inside a string.
+
+    task-33081 (Qodo round): the incremental thinking-append path must
+    measure what the canonical encoder will actually emit -- control
+    characters expand six-fold under ``\\uXXXX`` escaping -- so envelope
+    growth is tracked without serializing the whole envelope per delta.
+    """
+    if not text:
+        return 0
+    return max(len(_CANONICAL_ENCODER.encode(text).encode("utf-8")) - 2, 0)
+
+
 def dump_thinking_blocks_json(envelope: ThinkingEnvelope | None) -> str | None:
     """Serialize a valid envelope using deterministic canonical JSON."""
     if envelope is None:

@@ -242,8 +242,12 @@ sys.meta_path.insert(0, BlockTiktoken())
 import tldw_chatbook
 from tldw_chatbook.Utils import token_counter
 
-assert token_counter.TIKTOKEN_AVAILABLE is False
+# Distribution metadata may still be installed while its native import fails.
+# Verify the public counting fallback and that no tokenizer was loaded.
+assert token_counter.get_tiktoken_encoding("gpt-4o") is None
+assert token_counter.count_tokens_tiktoken("abcdefghij", "gpt-4o") == 3
 assert token_counter.estimate_tokens("abcdefghij", provider="openai") == 3
+assert "tiktoken" not in sys.modules
 """,
         env,
     )

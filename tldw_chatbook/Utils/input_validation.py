@@ -750,6 +750,62 @@ class ConsoleSwitcherQueryInput(BaseModel):
     query: str = Field(max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH)
 
 
+class PromptDraftShelfInput(BaseModel):
+    """Strict exact-text boundary for one locally persisted Prompt draft.
+
+    Attributes:
+        content: Nonblank, bounded, NUL-free Unicode text preserved verbatim.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
+    )
+
+    content: str
+
+    @field_validator("content", mode="plain")
+    @classmethod
+    def _validate_exact_content(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("Prompt draft content must be text")
+        if len(value) > CONSOLE_DRAFT_MAX_LENGTH:
+            raise ValueError(
+                "Prompt draft content exceeds the Console draft length limit"
+            )
+        if not value.strip():
+            raise ValueError("Prompt draft content must contain non-whitespace text")
+        if "\x00" in value:
+            raise ValueError("Prompt draft content must not contain NUL")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("Prompt draft content must be valid Unicode") from exc
+        return value
+
+
+def validate_prompt_draft_shelf_content(value: object) -> str:
+    """Validate a shelf payload without trimming or rewriting its text.
+
+    Args:
+        value: Candidate unsent Prompt draft content.
+
+    Returns:
+        The exact validated content.
+
+    Raises:
+        ValueError: If content is non-text, blank, oversized, contains NUL, or
+            cannot be encoded as UTF-8.
+    """
+
+    try:
+        return PromptDraftShelfInput.model_validate({"content": value}).content
+    except (PydanticValidationError, TypeError):
+        raise ValueError(
+            "Prompt draft content must be nonblank valid Unicode text without NUL, "
+            f"at most {CONSOLE_DRAFT_MAX_LENGTH} characters."
+        ) from None
+
+
 class ConsoleCharacterQueryInput(ConsoleSwitcherQueryInput):
     """Character Keyword input constrained to the repository's raw query cap."""
 
@@ -1301,6 +1357,48 @@ def validate_buddy_import_path(value: object) -> str:
 
 
 
+def validate_request_endpoint_path(endpoint: object) -> str:
+    """Refuse an API request path that an interpolated value has escaped.
+
+    Clients build request paths with f-strings (``f"/api/v1/sharing/public/
+    {token}"``); most of those segments are ``str``-annotated parameters that
+    reach no ``quote()``. httpx resolves the path via ``base_url.join()``,
+    which treats ``?``/``#`` as delimiters and normalises ``..`` -- so a
+    pasted share token containing ``?`` appends attacker-chosen query
+    parameters to an authenticated request, and one containing ``../`` walks
+    out of the API namespace with the credential header still attached.
+
+    Lives here rather than in the client so the delimiter and traversal
+    policy cannot drift away from the repository's shared input boundary.
+    Fails CLOSED: no endpoint in `tldw_api` carries a literal ``?``/``#``.
+    It deliberately does not re-encode ``/`` -- per-segment quoting remains
+    the complete fix.
+
+    Args:
+        endpoint: The request path assembled by the calling method.
+
+    Returns:
+        The endpoint, unchanged, when it is safe to send.
+
+    Raises:
+        ValueError: On a non-string, a query/fragment delimiter, or a ``..``
+            segment. Callers translate this into their own error family.
+    """
+    if not isinstance(endpoint, str):
+        raise ValueError("Refusing to send a non-string request path.")
+    if "?" in endpoint or "#" in endpoint:
+        raise ValueError(
+            "Refusing to send a request path containing '?' or '#': a value "
+            "interpolated into the endpoint escaped its path segment."
+        )
+    if ".." in endpoint.split("/"):
+        raise ValueError(
+            "Refusing to send a request path containing a '..' segment: a "
+            "value interpolated into the endpoint escaped its path segment."
+        )
+    return endpoint
+
+
 def validate_url(url: str) -> bool:
     """Validate an http/https URL by scheme and host.
 
@@ -1827,4 +1925,3 @@ def escape_markup(value: object) -> str:
         The same text with every ``[`` backslash-escaped.
     """
     return str(value).replace("[", "\\[")
-

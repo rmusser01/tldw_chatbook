@@ -32,6 +32,9 @@ from tldw_chatbook.state import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_ROOT = PROJECT_ROOT / "tldw_chatbook"
 APP_PATH = PRODUCTION_ROOT / "app.py"
+#: TASK-33011: TldwCli's destination launchers, handoffs and Personal Context
+#: launchers live here as functions of ``app``; ``TldwCli`` keeps stubs.
+APP_DESTINATIONS_PATH = PRODUCTION_ROOT / "app_destinations.py"
 BOOTSTRAP_PATH = PRODUCTION_ROOT / "runtime_policy" / "bootstrap.py"
 SOURCE_STATE_PATH = PRODUCTION_ROOT / "runtime_policy" / "source_state.py"
 SCHEDULES_WORKBENCH_PATH = (
@@ -971,6 +974,34 @@ class TldwCli(QueueMixin, external.App):
         "QueueMixin",
         "RootStateMixin",
     ]
+
+
+def test_app_destinations_functions_take_the_root_app_as_app() -> None:
+    """Keep the moved TldwCli bodies inside the root-app sweeps (TASK-33011).
+
+    ``_local_tldw_root_classes`` follows only classes, so it cannot see
+    ``app_destinations``. Its bodies stay guarded because they reach the app
+    through a parameter named ``app``, which ``_is_root_app_expression`` and
+    the production-wide ``_root_app_*`` sweeps recognize; a rename to
+    ``self`` or ``host`` would silently drop them out of every sweep.
+    """
+    former_staticmethods = {
+        "_watchlists_run_navigation_context",
+        "_await_character_conversation_post_commit",
+    }
+    functions = [
+        node
+        for node in _parse(APP_DESTINATIONS_PATH).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    assert functions
+    violations = [
+        node.name
+        for node in functions
+        if node.name not in former_staticmethods
+        and [arg.arg for arg in node.args.args[:1]] != ["app"]
+    ]
+    assert violations == []
 
 
 def test_tldw_cli_root_guard_detects_only_root_owned_syntax(
@@ -2198,14 +2229,16 @@ def test_pending_handoff_owner_has_no_persistence_or_serialization_calls() -> No
 
 
 def test_handoff_exception_logs_are_metadata_only() -> None:
-    app_class = _class_definition(APP_PATH, "TldwCli")
     chat_class = _class_definition(CHAT_SCREEN_PATH, "ChatScreen")
     study_class = _class_definition(STUDY_SCREEN_PATH, "StudyScreen")
     artifacts_class = _class_definition(ARTIFACTS_SCREEN_PATH, "ArtifactsScreen")
     acp_class = _class_definition(ACP_SCREEN_PATH, "ACPScreen")
     prompts_class = _class_definition(CONSOLE_PROMPTS_PATH, "ConsolePromptsController")
     methods = (
-        (APP_PATH, _method_definition(app_class, "_stage_handoff")),
+        (
+            APP_DESTINATIONS_PATH,
+            _top_level_function(APP_DESTINATIONS_PATH, "_stage_handoff"),
+        ),
         (
             CHAT_SCREEN_PATH,
             _method_definition(chat_class, "_consume_pending_console_launch"),
@@ -2221,13 +2254,6 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
         (
             CHAT_SCREEN_PATH,
             _method_definition(chat_class, "_stage_handoff_as_console_live_work"),
-        ),
-        (
-            CHAT_SCREEN_PATH,
-            _method_definition(
-                chat_class,
-                "consume_pending_console_provider_intent",
-            ),
         ),
         (
             STUDY_SCREEN_PATH,

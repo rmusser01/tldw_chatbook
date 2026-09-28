@@ -478,9 +478,13 @@ class DiarizationService:
         # Override with settings from config file
         config = {}
         for key, default_value in default_config.items():
-            config[key] = (
-                get_cli_setting(f"diarization.{key}", default_value) or default_value
-            )
+            # No trailing `or default_value`: `get_cli_setting` already
+            # returns `default_value` when the key is absent, so the `or`
+            # could only ever fire on a successfully resolved FALSY value
+            # -- silently discarding a documented `segment_overlap = 0`
+            # and making `False` unsettable for any boolean whose default
+            # is `True`.
+            config[key] = get_cli_setting(f"diarization.{key}", default_value)
 
         return config
 

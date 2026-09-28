@@ -51,6 +51,28 @@ from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixi
 #
 
 
+#: Cloning backends in default-preference order (Higgs stays the default
+#: whenever it is installed).
+_CLONING_BACKEND_ORDER = ("higgs", "omnivoice", "chatterbox")
+
+
+def default_cloning_backend(local: Any) -> Optional[str]:
+    """Pick the backend the Voice Cloning window should open on.
+
+    Args:
+        local: A ``SpeechLocalDependencyAvailability`` snapshot (anything with
+            boolean ``higgs``/``omnivoice``/``chatterbox`` attributes).
+
+    Returns:
+        The first installed cloning backend in preference order, or None when
+        no cloning backend is installed (the window then shows its alert).
+    """
+    return next(
+        (name for name in _CLONING_BACKEND_ORDER if getattr(local, name, False)),
+        None,
+    )
+
+
 class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
     """
     Voice Cloning management view supporting multiple TTS backends.
@@ -270,14 +292,23 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
 
     async def on_mount(self) -> None:
         """Initialize the window on mount"""
-        # Check if TTS dependencies are available
-        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+        # Warn only when no cloning backend is installed. This used to test
+        # `tts_processing` (Kokoro + pyaudio), which no cloning backend uses,
+        # so the window blocked OmniVoice/Higgs/Chatterbox users with a
+        # "Text-to-Speech not available" alert for packages they don't need.
+        from .Lab_Modules.lab_speech_status import speech_local_dependency_availability
 
-        if not DEPENDENCIES_AVAILABLE.get("tts_processing", False):
-            from ..Utils.widget_helpers import alert_tts_not_available
+        backend = default_cloning_backend(
+            speech_local_dependency_availability(refresh=True)
+        )
+        if backend is None:
+            from ..Utils.widget_helpers import alert_voice_cloning_not_available
 
             # Show alert after a short delay to ensure UI is ready
-            self.set_timer(0.1, lambda: alert_tts_not_available(self))
+            self.set_timer(0.1, lambda: alert_voice_cloning_not_available(self))
+        elif backend != self.current_backend:
+            self.current_backend = backend
+            self.query_one("#backend-select", Select).value = backend
 
         # Initialize backend managers
         await self._initialize_backends()

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Iterable
 import re
 from typing import Any
+
+from loguru import logger
 
 from .contracts import (
     QualifiedWorkspaceRef,
@@ -20,6 +22,40 @@ from .source_operations import (
     SourceOperationStage,
     SourceOperationStatus,
 )
+
+
+def report_resume_failures(
+    stage: str,
+    operation_ids: Sequence[str],
+    outcomes: Iterable[object],
+) -> None:
+    """Record every failure a startup fan-out isolated and swallowed.
+
+    Both startup resume paths fan out with
+    ``asyncio.gather(..., return_exceptions=True)`` so one corrupt receipt
+    cannot stop the rest. That isolation is deliberate; discarding the
+    returned list was not -- every operation could fail and nothing was
+    reported anywhere (tier-2 S13 P3).
+
+    Args:
+        stage: The resume stage name, for the log line.
+        operation_ids: The operation ids passed to ``gather``, in order.
+        outcomes: ``gather``'s return value, in the same order.
+
+    Note:
+        Only the exception *class* is logged. A resume failure can carry a
+        filesystem path or a source title in its text, and this module has
+        no redaction of its own.
+    """
+
+    for operation_id, outcome in zip(operation_ids, outcomes):
+        if isinstance(outcome, BaseException):
+            logger.warning(
+                "Research source {} resume failed for {}: {}",
+                stage,
+                operation_id,
+                type(outcome).__name__,
+            )
 
 
 _SERVER_STATE_MAP = {
@@ -302,10 +338,12 @@ class ResearchSourceReadinessCoordinator:
                 return self._operation_store.list_readiness_actionable(limit=limit)
 
         operations = await asyncio.to_thread(list_in_worker)
-        await asyncio.gather(
-            *(self.resume(operation.operation_id) for operation in operations),
+        operation_ids = [operation.operation_id for operation in operations]
+        outcomes = await asyncio.gather(
+            *(self.resume(operation_id) for operation_id in operation_ids),
             return_exceptions=True,
         )
+        report_resume_failures("readiness", operation_ids, outcomes)
 
     async def _require_operation(self, operation_id: str) -> ResearchSourceOperation:
         operation = await asyncio.to_thread(self._operation_store.get, operation_id)

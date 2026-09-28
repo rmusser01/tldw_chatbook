@@ -14,11 +14,13 @@ import copy
 import difflib
 import importlib.util
 import json
+import re
 import shutil
 import sys
 from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -72,6 +74,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
+from tldw_chatbook.provider_registry import CLOUD_PROVIDER_CONFIG_KEYS
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -406,6 +409,91 @@ def get_canvas_execution_enabled() -> bool:
         diagnostics=[],
     )
     return enabled
+
+
+# --- [console_ssh]: SSH ControlMaster lifecycle for remote bindings -------
+# (spec 2026-09-24-ssh-remote-workspace-bindings, "ControlMaster lifecycle —
+# explicit, and the executor owns its health"). These four values are the
+# whole section; `Tools/remote_workspace_transport.py` consumes the first
+# three, the executor's call cap consumes `max_concurrent_calls`.
+
+DEFAULT_CONSOLE_SSH_CONTROL_PERSIST = "10m"
+DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S = 3
+DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSshSettings:
+    """Effective ``[console_ssh]`` settings, coerced to their use types.
+
+    Attributes:
+        control_persist: OpenSSH ControlPersist duration, passed VERBATIM
+            as the ``ControlPersist=`` value on the ``ssh -MNf`` master
+            command (never parsed locally; unusable values fall back to the
+            default rather than shipping garbage on an argv).
+        enable_multiplexing: False disables the whole ControlMaster
+            machinery — per-call direct connections, no sockets, no
+            masters. The Windows posture (ssh.exe lacks ControlMaster).
+        connect_timeout_s: Ceiling on the master handshake and per-call
+            connects, in seconds.
+        max_concurrent_calls: Cap on in-flight per-binding ssh calls.
+    """
+
+    control_persist: str = DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
+    enable_multiplexing: bool = True
+    connect_timeout_s: int = DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+    max_concurrent_calls: int = DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS
+
+
+def get_console_ssh_settings() -> ConsoleSshSettings:
+    """Return the effective ``[console_ssh]`` settings.
+
+    The default returned when the section is absent or unusable is always
+    the shipped default (multiplexing ON), matching the fallback posture
+    of the sibling section accessors: a malformed key must not silently
+    degrade remote workspaces into per-call direct connections.
+
+    Returns:
+        The coerced settings; per-key fallbacks on invalid values.
+    """
+
+    raw_persist = get_cli_setting(
+        "console_ssh", "control_persist", DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
+    )
+    # ssh_config(5) ControlPersist grammar: yes/no, or a TIME FORMAT --
+    # bare seconds or number+unit groups such as "10m" or "1h30m".
+    control_persist = (
+        raw_persist
+        if isinstance(raw_persist, str)
+        and re.fullmatch(r"yes|no|\d+|(?:\d+[sSmMhHdDwW])+", raw_persist)
+        else DEFAULT_CONSOLE_SSH_CONTROL_PERSIST
+    )
+    # Strict bool (TOML delivers real booleans): a hand-edited non-boolean
+    # falls back to the shipped default rather than coercing through the
+    # truthy-string ladder, which turned "maybe" into OFF — a silent
+    # multiplexing kill switch no user asked for.
+    raw_enabled = get_cli_setting("console_ssh", "enable_multiplexing", True)
+    enable_multiplexing = raw_enabled if type(raw_enabled) is bool else True
+    return ConsoleSshSettings(
+        control_persist=control_persist,
+        enable_multiplexing=enable_multiplexing,
+        connect_timeout_s=coerce_int_setting(
+            get_cli_setting(
+                "console_ssh", "connect_timeout_s", DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+            ),
+            DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
+            minimum=1,
+        ),
+        max_concurrent_calls=coerce_int_setting(
+            get_cli_setting(
+                "console_ssh",
+                "max_concurrent_calls",
+                DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS,
+            ),
+            DEFAULT_CONSOLE_SSH_MAX_CONCURRENT_CALLS,
+            minimum=1,
+        ),
+    )
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
@@ -416,9 +504,28 @@ CLI_APP_CLIENT_ID = installation_client_id()
 DEFAULT_CONFIG_PATH = profile_paths.default_config_path()
 
 
+@lru_cache(maxsize=16)
+def _resolve_effective_config_path(
+    override: str | None,
+    home: str | None,
+    userprofile: str | None,
+    cwd: str | None,
+) -> Path:
+    """Cache lexical selection for one environment and relative-path base."""
+    del home, userprofile, cwd  # Key the environment read by expanduser/abspath.
+    return profile_paths.lexical_path(override or DEFAULT_CONFIG_PATH)
+
+
 def _get_effective_config_path() -> Path:
     """Return the lexical active CLI config path."""
-    return profile_paths.effective_config_path(DEFAULT_CONFIG_PATH)
+    override = os.environ.get("TLDW_CONFIG_PATH")
+    cwd = os.getcwd() if override and not os.path.isabs(override) else None
+    return _resolve_effective_config_path(
+        override,
+        os.environ.get("HOME"),
+        os.environ.get("USERPROFILE"),
+        cwd,
+    )
 
 
 def get_cli_config_path() -> Path:
@@ -2113,10 +2220,11 @@ def _load_settings_uncached(
     final_mcp_settings_cli = copy.deepcopy(get_toml_section("mcp"))
     if not isinstance(final_mcp_settings_cli, dict):
         final_mcp_settings_cli = {}
-    final_mcp_settings_cli["expose_local_tools"] = coerce_bool_setting(
-        final_mcp_settings_cli.get("expose_local_tools", False),
-        False,
-    )
+    for mcp_switch in ("expose_local_tools", "expose_character_tools"):
+        final_mcp_settings_cli[mcp_switch] = coerce_bool_setting(
+            final_mcp_settings_cli.get(mcp_switch, False),
+            False,
+        )
 
     # --- Application Mode ---
     single_user_mode_str = os.getenv(
@@ -2343,6 +2451,9 @@ def _load_settings_uncached(
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
         "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
+        # [skills] disabled_builtins is read from app_config on every skills
+        # read (TASK-32954); without this a disabled built-in returned on restart.
+        "skills": copy.deepcopy(toml_config_data.get("skills", {})),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -3619,6 +3730,12 @@ shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+# Custom endpoints (ADR-146): execute the openai_compatible family through
+# the strict hosted engine (custom-hosted execution key) instead of the
+# legacy custom handlers. Set false to roll back to the legacy path
+# (ADR-179 Phase 2 kill switch); identity, readiness, saved sessions, and
+# the [api_settings.custom] fallbacks are identical either way.
+custom_endpoints_use_engine = true
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
 # Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
@@ -3705,6 +3822,21 @@ scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
 
+[console_ssh]
+# SSH ControlMaster lifecycle for remote workspace bindings (spec
+# 2026-09-24-ssh-remote-workspace-bindings). `control_persist` rides the
+# `ssh -MNf` master command verbatim (OpenSSH duration like "10m"/"45s"/"4h";
+# it is the crash backstop that self-expires an orphaned master).
+control_persist = "10m"
+# Kill switch for connection multiplexing: false = per-call direct
+# connections, no master, no ControlPath (also the Windows posture, where
+# ssh.exe lacks ControlMaster).
+enable_multiplexing = true
+# Bounds both the master spawn handshake and per-call connects, in seconds.
+connect_timeout_s = 3
+# Cap on in-flight per-binding ssh calls (consumed by the transport executor).
+max_concurrent_calls = 8
+
 [hooks]
 enabled = true  # master switch for Console run hooks (external commands on session/run lifecycle events)
 # [[hooks.hook]] entries: event / matcher / command / timeout_s
@@ -3715,6 +3847,16 @@ enabled = true  # master switch for Console run hooks (external commands on sess
 
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
+# disabled_builtins = []  # built-in skills to hide, e.g. ["character-creator"]
+
+[tamagotchi]
+enabled = false  # opt-in virtual pet in the footer status bar; off unless you ask for it
+# Write a TOML boolean. The gate is fail-closed: anything it cannot read as
+# true/yes/1 (or their negatives) -- including "on" -- leaves the pet off.
+# name = "Bit"  # 1-20 chars, letters/digits/space/-/_ only
+# personality = "balanced"  # balanced, energetic, lazy, needy, independent, playful
+# State lives in ~/.config/tldw_chatbook/tamagotchi_pets.json (backed up by the
+# "tamagotchi.config" backup/recovery owner). Nothing is created while disabled.
 
 [appearance]
 character_expression_mode = "dynamic"  # Dynamic animates character expressions; Static changes poses without motion
@@ -4123,6 +4265,12 @@ Moonshot = ["kimi-k3", "kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
 QwenCloud = ["qwen3.8-max"]
 ZAI = ["glm-5.2", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
+Databricks = [] # Empty: model availability is workspace-dependent; fills via discovery or manual seeding
+# Inference clouds (ADR-179 Phase 2): engine presets with no per-provider
+# module; empty model lists fill via discovery or manual seeding.
+Together = [] # Inference cloud: fills via /v1/models discovery or manual seeding
+Fireworks = [] # Inference cloud: fills via /inference/v1/models discovery or manual seeding
+Cerebras = [] # Inference cloud: fills via /v1/models discovery or manual seeding
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4322,6 +4470,54 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     timeout = 90
     retries = 3
     retry_delay = 5
+    streaming = true
+
+    [api_settings.databricks] # Matches key in [providers]; values mirror provider_registry.DATABRICKS.settings_defaults (ADR-179)
+    # Databricks Model Serving / AI Gateway. The workspace host is
+    # per-account, so NO api_base_url ships here: the user configures their
+    # workspace URL (the engine appends the /openai/v1 suffix). No `model`
+    # key ships either: served models are workspace-configured and fill via
+    # discovery/seeding — a PRESENT-but-blank value would be rejected by the
+    # engine resolver (present-but-blank settings fail closed; only the
+    # UNSET key resolves to the payload-gated ""), so the key stays absent.
+    api_key_env_var = "DATABRICKS_TOKEN"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # --- Inference clouds (ADR-179 Phase 2) ---
+    # Engine presets (provider_registry.TOGETHER/FIREWORKS/CEREBRAS): no
+    # per-provider handler module exists. Each table mirrors its record's
+    # settings_defaults plus the default api_base_url (the record's
+    # default_base_url). No `model` key ships (same blank-model lesson as
+    # databricks): models fill via discovery or manual seeding, and the
+    # UNSET key resolves to the payload-gated "".
+    [api_settings.together] # Matches key in [providers]
+    api_key_env_var = "TOGETHER_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.together.xyz/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.fireworks] # Matches key in [providers]
+    api_key_env_var = "FIREWORKS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.fireworks.ai/inference/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.cerebras] # Matches key in [providers]
+    api_key_env_var = "CEREBRAS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.cerebras.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
     streaming = true
 
     # --- Local Providers ---
@@ -5562,6 +5758,7 @@ max_concurrent_requests = 10  # Max concurrent requests
 # approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
 
 # expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
+# expose_character_tools = false   # expose character_search and character_get to external MCP clients (independent of expose_local_tools and [tools] character_tools_enabled); each tool remains permission-gated
 
 # Tool-specific settings
 [mcp.tools]
@@ -9840,20 +10037,10 @@ API_MODELS_BY_PROVIDER: Dict[str, List[str]] = {}
 LOCAL_PROVIDERS: Dict[str, List[str]] = {}
 
 _config_providers = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML.get("providers", {}))
-_cloud_provider_keys = [
-    "OpenAI",
-    "Anthropic",
-    "Cohere",
-    "DeepSeek",
-    "Groq",
-    "Google",
-    "HuggingFace",
-    "MistralAI",
-    "Moonshot",
-    "OpenRouter",
-    "QwenCloud",
-    "ZAI",
-]  # Example list
+# ADR-179: cloud classification is derived from the provider registry
+# (single source of truth) instead of a hand-typed list here, so a newly
+# registered cloud provider is classified without touching this module.
+_cloud_provider_keys = CLOUD_PROVIDER_CONFIG_KEYS
 
 for provider_name, models_list in _config_providers.items():
     if isinstance(models_list, list):

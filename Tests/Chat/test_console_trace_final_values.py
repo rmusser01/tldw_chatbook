@@ -677,7 +677,15 @@ def test_provider_mapping_and_sensitive_route_censuses_are_bidirectional() -> No
 
     assert handler_keys == frozenset(PROVIDER_PARAM_MAP)
     assert handler_keys == SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
-    assert handler_keys == CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+    # ADR-179: "custom-hosted" is an execution-only spelling (identity
+    # surfaces keep the "custom"/"custom-openai-api" spellings per Phase 2
+    # Task 6 decision 1), so the settings support set covers every handler
+    # key except it. TASK-32919 folded the engine cloud presets
+    # (databricks/together/fireworks/cerebras) into the settings set, so any
+    # residue here is drift, not a known gap.
+    assert handler_keys - frozenset({"custom-hosted"}) == (
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+    )
     assert {"llama_cpp", "local_llamacpp"} < handler_keys
 
 

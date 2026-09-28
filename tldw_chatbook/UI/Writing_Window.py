@@ -261,12 +261,7 @@ class WritingWindow(Container):
         if not self.is_mounted:
             return
         set_status_line(self, "#writing-status", message)
-        try:
-            self.source_panel.query_one("#writing-source-status", Static).update(
-                message
-            )
-        except Exception:
-            pass
+        set_status_line(self.source_panel, "#writing-source-status", message)
 
     @staticmethod
     def _normalize_source(source: str) -> str:

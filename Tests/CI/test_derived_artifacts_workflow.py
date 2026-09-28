@@ -214,13 +214,3 @@ def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
 def test_required_check_name_is_stable():
     """Renaming this silently detaches branch protection from the job."""
     assert _job()["name"] == "Derived artifacts reproduce from their sources"
-
-
-def test_backlog_guard_delegates_to_the_shared_script():
-    """backlog-guard and derived-artifacts must not keep two copies of the
-    duplicate-id logic, or the required check and the standalone guard drift."""
-    backlog_guard = (
-        PROJECT_ROOT / ".github" / "workflows" / "backlog-guard.yml"
-    ).read_text(encoding="utf-8")
-    assert "scripts/check_backlog_task_ids.py" in backlog_guard
-    assert "uniq -d" not in backlog_guard, "inline shell copy was reintroduced"

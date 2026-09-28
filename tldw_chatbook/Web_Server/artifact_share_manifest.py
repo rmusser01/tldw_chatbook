@@ -102,7 +102,12 @@ def verify_share_auth(auth: ArtifactShareAuth, username: str, password: str) -> 
 class SharedArtifact(BaseModel):
     """One staged bundle entry: opaque key, provenance, and staged filename."""
 
-    key: str
+    # `new_artifact_key()` produces `secrets.token_urlsafe(16)`, so the
+    # pattern costs staging nothing -- but the SERVER is a separate
+    # process trusting whatever manifest path it is handed, and this is
+    # the value `_render_index` interpolates into an `href`. Constrained
+    # so `load_manifest` fails closed on a hand-edited manifest.
+    key: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     display_name: str
     description: str = ""
     kind: str = "chatbook"

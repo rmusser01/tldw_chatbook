@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 import threading
+from pathlib import Path
+
+import pytest
 
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
@@ -257,3 +259,151 @@ def test_provider_forwards_stream_and_settlement_with_run_and_call_identity(
     ]
     assert isinstance(forwarded[0][2], RawCliStreamEvent)
     assert isinstance(forwarded[1][2], RawCliResult)
+
+
+def test_model_shell_adopts_its_queued_marker_before_execution(tmp_path):
+    """A shell approval/proposal row must not duplicate the raw execution row."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+    bridge, store, session_id = _bridge(tmp_path)
+    activity = ConsoleToolActivity(store, session_id)
+    bridge._tool_activity_runs["run-1"] = activity
+    step = _call_step(tmp_path, "call-a", "printf alpha")
+    activity.observe(replace(step, kind="tool_proposed"), None)
+    rows = _tool_markers(store, session_id)
+    assert len(rows) == 1
+    original_id = rows[0].id
+    activity.approval(["call-a"], True)
+    assert (
+        _tool_markers(store, session_id)[0].activity_presentation.status
+        == "awaiting_approval"
+    )
+    activity.approval(["call-a"], False)
+    assert bridge._project_raw_shell_step(session_id, "run-1", step, AGENT_KIND_PRIMARY)
+    assert [m.id for m in _tool_markers(store, session_id)] == [original_id]
+    assert (
+        _tool_markers(store, session_id)[0].raw_cli_presentation.command
+        == "printf alpha"
+    )
+    bridge.raw_shell_progress_sink(
+        "run-1", "call-a", _raw_result(tmp_path, "call-a", "final-alpha")
+    )
+    assert bridge._project_raw_shell_step(
+        session_id,
+        "run-1",
+        replace(
+            step, kind=STEP_TOOL_RESULT, result="final-alpha", tool_outcome="success"
+        ),
+        AGENT_KIND_PRIMARY,
+    )
+    activity.finish(False)
+    marker = _tool_markers(store, session_id)[0]
+    assert marker.id == original_id
+    assert marker.raw_cli_presentation.lifecycle_state == "exited"
+    assert "final-alpha" in marker.activity_presentation.result_preview
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("has_result", [False, True])
+def test_teardown_settles_adopted_shell_and_preserves_executor_result(
+    tmp_path, cancelled, has_result
+):
+    """A missing tool-result callback must not strand an adopted running row."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+    from tldw_chatbook.Widgets.Console.console_assistant_turn import raw_cli_status_copy
+
+    bridge, store, session_id = _bridge(tmp_path)
+    clock = [10.0]
+    bridge._clock = lambda: clock[0]
+    activity = ConsoleToolActivity(store, session_id)
+    bridge._tool_activity_runs["run"] = activity
+    step = _call_step(tmp_path, "call", "printf alpha")
+    activity.observe(replace(step, kind="tool_proposed"), 1)
+    marker_id = _tool_markers(store, session_id)[0].id
+    bridge._project_raw_shell_step(session_id, "run", step, AGENT_KIND_PRIMARY)
+    event = RawCliStreamEvent(
+        stream="stderr", text="partial diagnostic", total_bytes=18, truncated=False
+    )
+    bridge.raw_shell_progress_sink("run", "call", event)
+    if has_result:
+        bridge.raw_shell_progress_sink(
+            "run", "call", _raw_result(tmp_path, "call", "final-alpha")
+        )
+    other_step = _call_step(tmp_path, "other", "printf beta")
+    bridge._project_raw_shell_step(
+        session_id, "other-run", other_step, AGENT_KIND_PRIMARY
+    )
+    clock[0] = 13.0
+    bridge._clear_raw_shell_progress(
+        {"run"}, **({"cancelled": True} if cancelled else {})
+    )
+    activity.finish(cancelled)
+    marker = _tool_markers(store, session_id)[0]
+    assert marker.id == marker_id
+    if has_result:
+        assert marker.raw_cli_presentation.lifecycle_state == "exited"
+        assert marker.raw_cli_presentation.cleanup_proven is True
+        assert marker.raw_cli_presentation.elapsed_seconds == 0.25
+        assert "final-alpha" in marker.tool_output_full
+        assert "before a result" not in marker.content
+    else:
+        assert marker.raw_cli_presentation.lifecycle_state == (
+            "cancelled" if cancelled else "failed"
+        )
+        assert marker.raw_cli_presentation.cleanup_proven is None
+        assert marker.raw_cli_presentation.exit_code is None
+        assert marker.raw_cli_presentation.elapsed_seconds == 3.0
+        assert "partial diagnostic" in marker.tool_output_full
+        assert "Cleanup: Unknown" in marker.content
+        assert "Exit code: Unknown" in marker.content
+        assert "before a result" in marker.activity_presentation.result_preview
+        assert "cleanup is unknown" in marker.activity_presentation.result_preview
+        assert raw_cli_status_copy(marker.raw_cli_presentation, now=99.0).endswith(
+            "3.0s"
+        )
+    bridge.raw_shell_progress_sink("run", "call", event)
+    assert _tool_markers(store, session_id)[0] == marker
+    assert ("run", "call") not in bridge._raw_shell_markers
+    assert ("other-run", "other") in bridge._raw_shell_markers
+
+
+def test_teardown_detaches_all_shells_before_best_effort_display_updates(
+    tmp_path, monkeypatch
+):
+    from loguru import logger
+
+    bridge, store, session_id = _bridge(tmp_path)
+    for call_id in ("first", "second"):
+        bridge._project_raw_shell_step(
+            session_id,
+            "run",
+            _call_step(tmp_path, call_id, "printf alpha"),
+            AGENT_KIND_PRIMARY,
+        )
+    update = bridge._update_raw_shell_marker
+
+    def broken_update(state):
+        assert not bridge._raw_shell_markers
+        if state.presentation.invocation_id == "first":
+            raise RuntimeError("secret output must never enter diagnostics")
+        update(state)
+
+    monkeypatch.setattr(bridge, "_update_raw_shell_marker", broken_update)
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        bridge._clear_raw_shell_progress({"run"})
+    finally:
+        logger.remove(sink)
+    assert (
+        _tool_markers(store, session_id)[1].raw_cli_presentation.lifecycle_state
+        == "failed"
+    )
+    assert any(
+        "display could not be settled (RuntimeError)" in text for text in messages
+    )
+    assert all("secret output" not in text for text in messages)

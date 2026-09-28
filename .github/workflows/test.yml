@@ -88,6 +88,16 @@ jobs:
       with:
         fetch-depth: 0
 
+    # Remote worker bundle 3.10 floor (Tests/Tools/test_remote_worker_bundle.py):
+    # the guard's finder looks for `python3.10` on PATH, skipping loudly
+    # when absent. Installed BEFORE the 3.12 setup so the toolchain set up
+    # last keeps the default `python` name; 3.10 is only ever addressed
+    # by its versioned binary name.
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:

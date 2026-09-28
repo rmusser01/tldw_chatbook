@@ -1093,6 +1093,24 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
             "test_hosted_chat.py", "test_qwencloud.py",
             "test_groq_openrouter_migration_characterization.py",
+            # The sentinel redaction tests drive the real OpenAI adapter into
+            # its ConnectionError branch; the adapter's session construction
+            # goes through create_default_session -> get_config_value on the
+            # guarded config loader (same admission signature as
+            # test_hosted_chat.py above). They fake load_settings, not the
+            # config getters, so they keep the bootstrap profile.
+            "test_sensitive_llm_logging.py",
+            # The mocked local-service connection test drives chat_api_call
+            # for koboldcpp, whose handler reads settings through the guarded
+            # config loader under the per-test redirect (same admission
+            # signature as test_hosted_chat.py above).
+            "test_chat_unit_mocked_APIs.py",
+            # The catalog client-factory tests build real httpx clients
+            # through the TLS-trust factory, whose trust/timeout reads go
+            # through the guarded config loader under the per-test redirect
+            # (same admission signature as test_hosted_chat.py above).
+            "test_openai_compatible_model_discovery.py",
+            "test_server_llm_provider_catalog_service.py",
             "test_summarization_diagnostic_privacy.py",
             "test_summarization_model_capabilities.py",
             # TASK-32853/32854: the analyze boundary and the local config
@@ -1109,6 +1127,27 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # path); same admission signature as the suites above.
             "test_console_modal_dismissal.py",
             "test_library_modal_dismissal.py",
+            # TASK-32856 follow-up trial: media-generation suites import the
+            # real app (config participants on the import path); same
+            # admission signature as the suites above.
+            "test_adapter_registry.py",
+            "test_comfyui_image_adapter.py",
+            "test_request_validation.py",
+            "test_fal_adapter.py",
+            "test_gemini_adapter.py",
+            "test_loose_voice_finite_operations.py",
+            "test_http_client.py",
+            "test_worker.py",
+            "test_video_store.py",
+            "test_swarmui_adapter.py",
+            "test_openrouter_adapter.py",
+            "test_image_format_utils.py",
+            "test_comfyui_adapter.py",
+            "test_modelstudio_adapter.py",
+            "test_together_adapter.py",
+            "test_novita_adapter.py",
+            "test_config_projection.py",
+            "test_comfyui_workflow_distribution.py",
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the
@@ -1120,6 +1159,23 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # reads go through the config-participant admission.
             "test_install_skill_runtime_tool.py",
             "test_console_chat_create_integration.py",
+            # ADR-179 Task 4: the engine resolution suite drives
+            # resolve_hosted_request without app_config on its preset-rule
+            # cases, which reads get_runtime_config_snapshot on the guarded
+            # config loader (same admission signature as test_hosted_chat.py
+            # above).
+            "test_hosted_provider_engine_resolution.py",
+            # ADR-179 Task 11: three pre-existing red suites with the same
+            # admission signature -- the Kimi/Z.ai native-tool suite drives
+            # the real hosted handlers (owned_json_post session construction
+            # reads the guarded config loader), and the two console
+            # continuation suites drive the real Console controller submit
+            # path whose config reads go through the same admission. None of
+            # them re-selects a config itself, so they keep the bootstrap
+            # profile like the hosted-chat class above.
+            "test_kimi_zai_native_tools.py",
+            "test_console_continuation_review_fixes.py",
+            "test_console_trace_transform_continuations.py",
         }
     )
     test_data_dir = (

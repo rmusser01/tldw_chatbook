@@ -63,6 +63,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     tool_state_kind,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
+from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
 
 _TOOL_TEST_TEXT_LIMIT = 480
 _TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
@@ -336,7 +337,16 @@ _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
 _RISK_FLOORED_NOTICE = (
     "High-risk tool — asks even though the inherited default is Allow."
 )
+_ALWAYS_ASK_NOTICE = "Asks on every call, even when set to Allow."
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
+
+
+def _risk_floored_notice(effective: EffectiveToolState) -> str:
+    """Floor notice copy: a floored explicit Allow (TASK-32956's
+    ``ALWAYS_ASK_TOOLS``) is not an inherited default."""
+    if effective.origin == "tool_override":
+        return _ALWAYS_ASK_NOTICE
+    return _RISK_FLOORED_NOTICE
 # task-32281: cap on one exact-input allow rule row's displayed argument
 # summary -- long enough to be legible, short enough that a row with a big
 # argument payload doesn't dominate the permission block.
@@ -1611,7 +1621,7 @@ class MCPInspector(VerticalScroll):
                     "", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False
                 ),
                 Label("Payload (JSON)", classes="form-label"),
-                TextArea("{}", id="mcp-adv-payload"),
+                DetachSafeTextArea("{}", id="mcp-adv-payload"),
                 Button(
                     "Run Action",
                     id="mcp-adv-run",
@@ -2390,7 +2400,7 @@ class MCPInspector(VerticalScroll):
         elif effective.risk_floored:
             widgets.append(
                 Static(
-                    _RISK_FLOORED_NOTICE,
+                    _risk_floored_notice(effective),
                     id="mcp-inspector-permission-notice",
                     classes="ds-field-row",
                     markup=False,

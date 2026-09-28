@@ -151,7 +151,26 @@ def _unbreakable_size_text(size_text: str) -> str:
     return size_text.replace(" ", "")
 
 
-def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
+def _active_library_principal_id(app_instance: Any) -> str | None:
+    """Authenticated principal scope for the active server context.
+
+    Reads the auth token, which can be an OS-keyring read that blocks for
+    seconds on Linux (TASK-32926): call it from a worker thread, never from
+    the event loop.
+    """
+    server_context_provider = getattr(app_instance, "server_context_provider", None)
+    get_active_context = getattr(server_context_provider, "get_active_context", None)
+    if not callable(get_active_context):
+        return None
+    try:
+        return event_principal_id_from_active_context(get_active_context())
+    except Exception:
+        return None
+
+
+def _active_library_sync_scope(
+    app_instance: Any, *, resolve_principal: bool = True
+) -> dict[str, str | None]:
     runtime_policy = getattr(app_instance, "runtime_policy", None)
     runtime_state = runtime_policy.state if runtime_policy is not None else None
     active_source = str(
@@ -162,18 +181,8 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
         "server" if active_source == "server" and server_profile_id else "local"
     )
     authenticated_principal_id = None
-    if source_authority == "server":
-        server_context_provider = getattr(app_instance, "server_context_provider", None)
-        get_active_context = getattr(
-            server_context_provider, "get_active_context", None
-        )
-        if callable(get_active_context):
-            try:
-                authenticated_principal_id = event_principal_id_from_active_context(
-                    get_active_context()
-                )
-            except Exception:
-                authenticated_principal_id = None
+    if source_authority == "server" and resolve_principal:
+        authenticated_principal_id = _active_library_principal_id(app_instance)
     workspace_scope = None
     workspace_service = getattr(app_instance, "workspace_registry_service", None)
     get_active_workspace = getattr(workspace_service, "get_active_workspace", None)

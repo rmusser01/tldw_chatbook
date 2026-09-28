@@ -140,8 +140,28 @@ def _heavy_task(self):
    `len(_GATEABLE_BUILTINS)` (they used to break on every new row). A `_GATEABLE_BUILTINS` row surfaces automatically as a switch in the MCP hub (Servers mode ▸ built-in-source detail ▸ "Tool gates" group), via the single enumerator `all_tool_gates()` in `Agents/builtin_tool_gate.py` (task-3240) -- no manual UI wiring needed. Caveat: a config-gated `LocalToolSpec` tool that isn't a `_GATEABLE_BUILTINS` entry (e.g. `web_deep_search`, `Agents/local_tool_provider.py`) doesn't get a switch for free either way -- it needs one hand-added entry in `all_tool_gates()`'s own hand-list (see the `web_deep_search`/`WEB_DEEP_SEARCH_GATE_KEY` precedent there). Do not confuse this REGISTRATION-gate surface with the MCP screen's Tools/Permissions modes, which browse the catalog and set per-tool Allow/Ask/Off; those manage the PERMISSION layer, and a gate-off tool is absent from that surface entirely. The older `ToolsSettingsWindow` (`DEPRECATED (TASK-1346)`; its route resolves to the MCP screen) stays nav-unreachable and untouched -- it is not this enumerator's consumer.
 5. Override `risk_tags` if the tool mutates or reads user data; a tagged tool is floored to `ask` and raises an approval card per call
 
-**UI changes:** PRs that change a screen's UI should update the matching
-`Docs/User_Guide/` page (or at least its "Verified against" stamp).
+**UI changes:** PRs that change a screen's UI update the matching `Docs/User_Guide/`
+page's content where behaviour changed. Record what was verified -- and against which
+branch and date -- in the task's Implementation Notes, not in the User Guide page. Do
+not add "Verified against" paragraphs to User Guide pages: parallel PRs appending them
+at the same spot caused most User Guide sync conflicts in the 2026-09-27 CI spec's replay of real sync merges.
+
+**Merging into `dev`** (protection as of 2026-09-27): GitHub refuses a merge unless all of these hold:
+
+- the required check is green;
+- the branch is up to date with `dev` (strict);
+- every review thread is resolved.
+
+These apply to admins too.
+
+- Re-sync a PR that is behind with `gh pr update-branch <n>` (or a local rebase plus push).
+  Then merge the moment the required check is green, because each merge to `dev` makes the
+  other ready PRs behind again.
+- `gh pr merge <n> --auto --merge` is allowed **only** when both hold:
+  - Qodo has posted its review on the *current* head;
+  - every thread on that head is addressed and resolved.
+- Auto-merge stays armed across later pushes, so run `gh pr merge <n> --disable-auto` before
+  pushing any further work to that PR.
 
 ### Security Requirements
 
@@ -216,7 +236,13 @@ Key sections:
 
 ### Notes Sync
 - Bidirectional file ↔ DB
-- Last-write-wins conflict resolution
+- **No automatic winner.** When both sides moved, `notes_sync_reconciler._plan_bound`
+  returns `ReconciliationAttention(CONFLICT, "both_sides_changed")` and waits: resolution
+  needs an explicit `NotesSyncConflictChoice` (`KEEP_FILE`/`KEEP_NOTE`/`KEEP_BOTH`/`SKIP`)
+  supplied through `apply_reviewed`. The old `ask`/`disk_wins`/`db_wins`/`newer_wins` names
+  survive only as legacy config the migration drops (`notes_sync_legacy.py`, reported as
+  `legacy_policy_ignored`) — this file used to say "last-write-wins", which cost one
+  reviewer a full pass hunting a silent-winner data-loss shape the design does not have.
 - Background monitoring
 
 ### Pre-commit Hook

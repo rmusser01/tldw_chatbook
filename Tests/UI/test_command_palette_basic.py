@@ -2,6 +2,8 @@
 #
 # Basic tests for command palette functionality without complex imports
 #
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -205,26 +207,32 @@ def test_keybinding_registration():
 def test_theme_config_integration():
     """Test that theme config integration works."""
     try:
-        with patch("tldw_chatbook.app.get_cli_setting"):
-            with patch(
-                "tldw_chatbook.config.save_setting_to_cli_config"
-            ) as mock_save_setting:
-                from tldw_chatbook.app import ThemeProvider
+        with (
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog._apply_config_mutation"
+            ) as mock_apply,
+            patch(
+                "tldw_chatbook.css.Themes.theme_catalog.current_launch_default",
+                return_value="textual-dark",
+            ),
+        ):
+            mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=True)
+            from tldw_chatbook.app import ThemeProvider
 
-                # Create mock screen with app attached
-                mock_app = MagicMock()
-                mock_screen = MagicMock()
-                mock_screen.app = mock_app
+            # Create mock screen with app attached
+            mock_app = MagicMock()
+            mock_screen = MagicMock()
+            mock_screen.app = mock_app
 
-                provider = ThemeProvider(mock_screen)
+            provider = ThemeProvider(mock_screen)
 
-                # Test theme switching saves to config
-                provider.switch_theme("test-theme")
+            # Test theme switching saves to config
+            provider.switch_theme("test-theme")
 
-                # Should save to config
-                mock_save_setting.assert_called_once_with(
-                    "general", "default_theme", "test-theme"
-                )
+            # Should save to config
+            mock_apply.assert_called_once_with(
+                {"general": {"default_theme": "test-theme"}}
+            )
 
     except ImportError:
         pytest.skip("ThemeProvider or config functions not available")

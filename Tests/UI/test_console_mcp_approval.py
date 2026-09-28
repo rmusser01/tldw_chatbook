@@ -1102,6 +1102,34 @@ async def test_single_row_batch_renders_fast_approve_and_deny_buttons():
 
 
 @pytest.mark.asyncio
+async def test_two_option_save_row_renders_once_and_deny_only():
+    """TASK-32956: character_save cards offer only Approve once / Deny --
+    the narrowed Select and the fast buttons must still render cleanly."""
+    call = {
+        **_single_call()[0],
+        "llm_name": "character_save",
+        "server_key": "local:__local__",
+        "tool_name": "character_save",
+        "options": ["approve_once", "deny"],
+    }
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch([call], timeout_seconds=45.0, round_id="round-save")
+        await pilot.pause()
+
+        select = app.query_one(".approval-row-decision", Select)
+        assert [value for _label, value in select._options] == ["approve_once", "deny"]
+        assert select.value == "approve_once"
+        assert str(app.query_one(".approval-row-fast-approve", Button).label) == "Approve once"
+        assert str(app.query_one(".approval-row-fast-deny", Button).label) == "Deny"
+
+        app.query_one("#approval-submit", Button).press()
+        await pilot.pause()
+        assert app.decided == [{"character_save": "approve_once"}]
+
+
+@pytest.mark.asyncio
 async def test_multi_row_batch_omits_fast_buttons():
     """Multi-row cards keep the Select+Submit-only flow -- the fast path
     is gated on exactly one row (`ChatApprovalCard.set_batch`'s
@@ -4653,6 +4681,60 @@ def test_request_mcp_approvals_marks_human_input_wait_while_round_armed():
     assert human_input_wait_active("run-approval-wait") is False
 
 
+@pytest.mark.asyncio
+async def test_real_approval_round_marks_only_its_pending_tool_call():
+    from tldw_chatbook.Agents.agent_models import AgentStep
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    bridge = ConsoleAgentBridge(agent_runs_db=None, store=store, provider_gateway=None)
+    controller._agent_bridge = bridge
+    activity = ConsoleToolActivity(store, session.id)
+    bridge._tool_activity_runs["run-real-approval"] = activity
+    for call_id in ("approved", "pending"):
+        activity.observe(
+            AgentStep(index=1, kind="tool_proposed", tool_name="tool", call_id=call_id),
+            1,
+        )
+    received = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    with use_run_id("run-real-approval"):
+        worker = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals,
+                [_pending(call_id="pending")],
+                session_id=session.id,
+            )
+        )
+    try:
+        for _ in range(100):
+            if received:
+                break
+            await asyncio.sleep(0.01)
+        assert received and received[0] is not None
+        assert [
+            row.activity_presentation.status
+            for row in store.messages_for_session(session.id)
+        ] == ["queued", "awaiting_approval"]
+    finally:
+        if received and received[0]:
+            controller.resolve_pending_approval(
+                {"pending": "approve_once"}, round_id=received[0]["round_id"]
+            )
+        else:
+            await controller.shutdown()
+        decisions = await asyncio.wait_for(worker, 5)
+    assert decisions == {"pending": "approve_once"}
+    assert [
+        row.activity_presentation.status
+        for row in store.messages_for_session(session.id)
+    ] == ["queued", "queued"]
+
+
 def test_request_mcp_approvals_without_ui_fails_closed_immediately():
     """With no UI bridge wired nothing can EVER resolve the round, and the
     no-deadline default means the poll loop would never end -- so the
@@ -5238,3 +5320,40 @@ def test_sibling_payload_remounts_after_round_ends(kind, ending, monkeypatch):
             ctrl.revoke_approval_rounds_for_run(run)
         for worker in workers:
             worker.join(3)
+
+
+@pytest.mark.parametrize("raise_when_pending", [True, False])
+def test_tool_display_observer_failure_cannot_break_real_approval(raise_when_pending):
+    from types import SimpleNamespace
+
+    from loguru import logger
+
+    controller, _store = _build_controller()
+    controller.app = _FakeApp()
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def project_wait(_session_id, _run_id, _call_ids, pending):
+        if pending == raise_when_pending:
+            raise RuntimeError("secret arguments must never enter diagnostics")
+
+    def decide(payload):
+        if payload:
+            controller.resolve_pending_approval(
+                {"call": "approve_once"}, round_id=payload["round_id"]
+            )
+
+    controller._agent_bridge = SimpleNamespace(set_tool_approval_pending=project_wait)
+    controller.set_pending_approval = decide
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        assert controller.request_mcp_approvals([_pending(call_id="call")]) == {
+            "call": "approve_once"
+        }
+    finally:
+        logger.remove(sink)
+    assert not controller._pending_approval_rounds
+    assert any(
+        "display could not be updated (RuntimeError)" in text for text in messages
+    )
+    assert all("secret arguments" not in text for text in messages)

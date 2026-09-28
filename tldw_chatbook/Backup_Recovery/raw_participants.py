@@ -305,6 +305,8 @@ class _State:
     descriptors: set = field(default_factory=set)
     created_files: dict = field(default_factory=dict)
     observed_files: dict = field(default_factory=dict)
+    # theme_directory only: members refused as non-regular, never observed.
+    rejected_files: dict = field(default_factory=dict)
     temporaries: dict = field(default_factory=dict)
     temporary: Path | None = None
     backup: Path | None = None
@@ -746,6 +748,8 @@ def _scope(
             dictionary_files.pin_inputs(state)
         if route == "theme_directory" or (route == "pet" and writing):
             settings_files.preflight(state, route, attempt)
+        if route == "theme_export":
+            settings_files.check_export_parent(state)
         if any(
             hold is not None and hold.authority.pause_requested(hold.names)
             for hold in state.holds
@@ -899,7 +903,29 @@ def _file(operation, path, mode):
             if not text.closed or not native.closed:
                 state.uncertain = True
                 raise bootstrap.RecoveryRequired("raw_resources_not_retired")
+            # Bookkeeping for a wrapper that is now provably closed, and it
+            # must not hang off the fsync below. `_retire` gates on
+            # `state.files`, so a writeback error leaving a closed wrapper
+            # listed as live permanently refuses to release this operation's
+            # pins and leases -- and it does so without setting `uncertain`,
+            # i.e. outside the module's one deliberate fail-closed signal.
+            # Rejecting an unprovable write is intended; wedging retirement on
+            # stale bookkeeping is not.
             state.files.remove(text)
+            if mode in {"w", "a"}:
+                # Durability, not atomicity. Closing the wrapper only hands the
+                # bytes to the OS; `_replace` then publishes a name that can
+                # point at an inode with no committed blocks while the old
+                # content is already unlinked -- a crash there loses BOTH. Every
+                # writer through this helper is a whole-file read-modify-write
+                # of a single store (note templates, prompt history, eval
+                # config), so the loss is the whole store, not one record.
+                # Raising here is the right direction: an unprovable write must
+                # not be published.
+                # ponytail: file fsync only, no parent-directory fsync -- that
+                # residual loses at most the newest publish (the destination
+                # keeps its previous, intact inode), not the file's contents.
+                os.fsync(fd)
     finally:
         # closefd=False makes descriptor lifetime independent of wrapper GC.
         if native is not None and not native.closed:
@@ -908,11 +934,78 @@ def _file(operation, path, mode):
         _close_descriptor(state, fd)
 
 
-def _replace(operation, temporary, destination):
+_UNCHECKED = object()
+
+
+def _entry_identity(state, path):
+    """``path``'s (dev, inode) without following a leaf link, or None if absent."""
+    try:
+        info = (
+            os.stat(path.name, dir_fd=state.pins[path.parent], follow_symlinks=False)
+            if state.pinned
+            else os.stat(path, follow_symlinks=False)
+        )
+    except FileNotFoundError:
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _replace(operation, temporary, destination, *, expected=_UNCHECKED):
+    """Publish ``temporary`` as ``destination``.
+
+    Args:
+        operation: The active raw write scope.
+        temporary: The admitted temporary this scope created.
+        destination: The admitted publication target.
+        expected: Omitted, replace whatever is there (the historical
+            behaviour). ``None``, create ``destination`` only if it is still
+            absent (a hard link, which fails on an existing entry). A
+            ``(st_dev, st_ino)`` pair, replace only that observed file.
+
+    Raises:
+        FileExistsError: ``destination`` is not the entry ``expected`` names;
+            nothing was published and the scope stays usable.
+    """
     state = _check(operation, temporary, writing=True)
     _check(operation, destination, writing=True)
     temporary, destination = lexical_path(temporary), lexical_path(destination)
+    linked = False
+    if expected is not _UNCHECKED:
+        if _entry_identity(state, destination) != expected:
+            raise FileExistsError(f"{destination.name} changed before it was written")
+        if expected is None:
+            _check_temporary_identity(state, temporary)
+            try:
+                if state.pinned:
+                    os.link(
+                        temporary.name,
+                        destination.name,
+                        src_dir_fd=state.pins[temporary.parent],
+                        dst_dir_fd=state.pins[destination.parent],
+                    )
+                else:
+                    os.link(temporary, destination)
+                linked = True
+            except FileExistsError:
+                raise FileExistsError(
+                    f"{destination.name} appeared before it was written"
+                ) from None
+            except OSError:
+                # ponytail: no hard links on this filesystem (FAT/exFAT) --
+                # fall back to the checked replace below; its window is the
+                # microseconds since the identity check above.
+                pass
     try:
+        if linked:
+            # Published by the link; retire the temporary's own name.
+            if state.pinned:
+                os.unlink(temporary.name, dir_fd=state.pins[temporary.parent])
+                flush_directory(state.pins[destination.parent])
+            else:
+                os.unlink(temporary)
+                fsync_parent_directory(destination.parent)
+            state.created_files.pop(temporary)
+            return
         if destination == state.backup:
             try:
                 info = (
@@ -944,6 +1037,14 @@ def _replace(operation, temporary, destination):
                 src_dir_fd=state.pins[temporary.parent],
                 dst_dir_fd=state.pins[destination.parent],
             )
+            # The rename itself is only durable once its directory entry is.
+            # One pin covers both ends: `state.pins` holds the single anchor
+            # directory, which is why the os.replace above can index it for
+            # both parents. A failure here falls into the BaseException
+            # handler below and is treated as an unresolved publication,
+            # which is what an unproven barrier is. Pinned is the only
+            # posture the config, settings, dictionary and MCP routes accept,
+            # so every route that writes user-owned files is covered.
             flush_directory(state.pins[destination.parent])
         else:
             os.replace(temporary, destination)

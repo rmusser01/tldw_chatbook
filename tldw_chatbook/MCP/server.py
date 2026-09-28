@@ -32,6 +32,17 @@ Console path. The standalone server supplies no Console `SessionTodoStore`, so
 `todo_create`, `todo_update`, `todo_get`, and `todo_list` are not registered;
 the retired `todo_write` tool is also absent.
 
+## Exposed character reads (opt-in, TASK-32955)
+
+`[mcp] expose_character_tools = true` (default false, independent of
+`expose_local_tools` and of the Console's `[tools] character_tools_enabled`)
+publishes `character_search` and `character_get` through the same permission
+gate. `character_save` stays Console-only; external writes are ADR-183's
+`create_character`/`update_character`, which refuse in server runtime mode.
+Once the reads are published, `update_character` shares their per-process read
+guard and cannot replace a long field that `character_get` has not returned in
+full at the current version; with the switch off it behaves as ADR-183 shipped.
+
 ## Exposed local Library tools (task-1337)
 
 The 21 descriptor-backed `library_*` tools (media/notes/prompts/skills/
@@ -156,6 +167,8 @@ def _annotation_to_property(node: ast.expr | None) -> dict:
             items = _annotation_to_property(inner)
             if items:
                 return {"type": "array", "items": items}
+        if node.value.id in ("Dict", "dict"):
+            return {"type": "object"}
     return {}
 
 
@@ -163,7 +176,7 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
     """Synthesize a JSON-schema ``inputSchema`` fragment from a tool function's AST signature.
 
     Keyword-only args (``fn.args.kwonlyargs``/``kw_defaults``) are
-    intentionally unhandled: none of the nine built-in ``@self.mcp.tool()``
+    intentionally unhandled: none of the built-in ``@self.mcp.tool()``
     registrations in this module use them (verified by reading
     ``server.py``'s ``_register_tools`` body), so there is nothing to map
     yet -- add support here if a future tool introduces one.
@@ -500,7 +513,11 @@ class TldwMCPServer:
         from .resources import MCPResources
         from .prompts import MCPPrompts
 
+        from ..Tools.character_tool_service import load_runtime_source
+
         self.tools = MCPTools(self.chachanotes_db, self.media_db)
+        # No Console session here: the default profile's source decides.
+        self.tools.runtime_source_loader = load_runtime_source
         self.resources = MCPResources(self.chachanotes_db, self.media_db)
         self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
 
@@ -778,6 +795,64 @@ class TldwMCPServer:
             """List all available characters."""
             return await self.tools.list_available_characters()
 
+        @self.mcp.tool()
+        async def create_character(
+            name: str,
+            fields: Optional[dict[str, Any]] = None,  # noqa: UP045 -- AST schema parser
+        ) -> dict[str, Any]:
+            """Create a character card; fields: description, personality, scenario, system_prompt, post_history_instructions, first_message, message_example, creator_notes, alternate_greetings, tags, creator, character_version, extensions. No images. Requires operator permission.
+
+            Args:
+                name: Non-empty, unique character name.
+                fields: Optional mapping of the supported text/JSON fields above.
+                    Images, unknown fields, and null values are rejected.
+
+            Returns:
+                A receipt containing id, name, and version, or a mapping with
+                error_code and error for permission, validation, or storage failure.
+
+            Raises:
+                asyncio.CancelledError: If the caller cancels the request.
+            """
+            from .builtin_tool_policy import standalone_character_write_refusal
+
+            refusal = await asyncio.to_thread(
+                standalone_character_write_refusal, "create_character"
+            )
+            if refusal:
+                return refusal
+            return await self.tools.create_character(name, fields)
+
+        @self.mcp.tool()
+        async def update_character(
+            character_id: int, expected_version: int, fields: dict[str, Any]
+        ) -> dict[str, Any]:
+            """Update character fields using expected_version from list_characters; fields accepts name and the fields supported by create_character. No images or nulls. Requires operator permission.
+
+            Args:
+                character_id: Strict positive integer identifying the card.
+                expected_version: Strict positive version last read by the caller.
+                fields: Non-empty mapping of supported fields to replace.
+
+            Returns:
+                A receipt containing id, name, and the new version, or a mapping
+                with error_code and error for permission, validation, missing-card,
+                conflict, or storage failure. Stale versions leave the card intact.
+
+            Raises:
+                asyncio.CancelledError: If the caller cancels the request.
+            """
+            from .builtin_tool_policy import standalone_character_write_refusal
+
+            refusal = await asyncio.to_thread(
+                standalone_character_write_refusal, "update_character"
+            )
+            if refusal:
+                return refusal
+            return await self.tools.update_character(
+                character_id, expected_version, fields
+            )
+
         # Get conversation history tool
         @self.mcp.tool()
         async def get_conversation_history(
@@ -952,10 +1027,12 @@ class TldwMCPServer:
             )
 
     def _register_local_agent_tools(self):
-        """Register workspace, web, and Watchlists agent tools when enabled.
+        """Register workspace, web, Watchlists, and character reads when enabled.
 
-        Gated behind ``[mcp] expose_local_tools`` (default false); a no-op
-        when the flag is off. Called from ``__init__`` -- deliberately NOT
+        Gated behind ``[mcp] expose_local_tools`` and, for
+        ``character_search``/``character_get``, the independent
+        ``[mcp] expose_character_tools`` (both default false); a no-op when
+        both are off. Called from ``__init__`` -- deliberately NOT
         part of ``_register_tools`` so the AST-walking
         ``_extract_registered_entries`` capability catalog stays unaffected.
 
@@ -970,17 +1047,22 @@ class TldwMCPServer:
         staged together and published only after the full set validates.
         """
         from ..config import get_user_data_dir
+        from ..Tools.character_tool_service import CharacterReadGuard
         from .local_server_tools import (
             _local_agent_tool_registrations,
             build_server_local_provider,
+            character_tools_exposure_enabled,
             local_tools_exposure_enabled,
             resolve_server_workspace_root,
+            server_character_service,
         )
         from .permission_store import MCPPermissionStore
 
-        # The gate lives in local_server_tools (server.py never calls
+        # The gates live in local_server_tools (server.py never calls
         # get_cli_setting directly — an AST test pins that).
-        if not local_tools_exposure_enabled():
+        local_tools = local_tools_exposure_enabled()
+        character_tools = character_tools_exposure_enabled()
+        if not (local_tools or character_tools):
             return
 
         # Guard the whole flag-on body: a failure here must never cost the
@@ -988,10 +1070,22 @@ class TldwMCPServer:
         try:
             workspace_root = resolve_server_workspace_root()
             store = MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")
-            provider = build_server_local_provider(workspace_root, store)
+            # One per process = one per stdio client session (TASK-32955).
+            guard = CharacterReadGuard() if character_tools else None
+            provider = build_server_local_provider(
+                workspace_root,
+                store,
+                local_tools=local_tools,
+                character_service=(
+                    server_character_service(self.tools, guard) if guard else None
+                ),
+            )
 
             registrations = _local_agent_tool_registrations(provider)
             self.mcp.register_local_tools(registrations)
+            # Only once character_get is published can the guard be satisfied;
+            # otherwise update_character stays exactly as ADR-183 shipped it.
+            self.tools.character_read_guard = guard
         except Exception:  # noqa: BLE001 — never sink the whole server for this
             import sys
 

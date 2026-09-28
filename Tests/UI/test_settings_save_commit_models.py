@@ -19,6 +19,7 @@ These tests pin:
 import pytest
 from textual.widgets import Checkbox, Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -142,9 +143,10 @@ async def test_splash_category_labels_its_instant_save_model():
 
 
 @pytest.mark.asyncio
-async def test_theme_category_documents_its_editor_owned_save_model():
-    """Theme keeps its editor-owned Apply/Save/Reset flow; the inspector
-    names that model explicitly."""
+@private_profile_test
+async def test_theme_category_documents_its_editor_owned_save_model(request):
+    """The inspector names Theme's model: Use/Try switch themes, the
+    editor's Save stores a file (TASK-33062: there is no Apply button)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -154,7 +156,8 @@ async def test_theme_category_documents_its_editor_owned_save_model():
 
         text = _visible_text(screen)
         assert "Save: editor-owned" in text
-        assert "Apply/Save/Reset" in text
+        assert "Use/Try switch themes; the editor's Save stores a file" in text
+        assert "Apply" not in text
 
 
 def test_guidance_row_builders_keep_a_uniform_row_count():
@@ -190,7 +193,7 @@ def test_guidance_row_builders_keep_a_uniform_row_count():
         "settings-model-profile-streaming",
     )
     appearance_field_ids = (
-        "settings-appearance-theme",
+        "settings-appearance-open-theme",
         "settings-appearance-palette-theme-limit",
         "settings-appearance-font-size",
         "settings-appearance-density",

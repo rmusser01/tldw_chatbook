@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -78,10 +78,13 @@ class ConsoleProviderCatalogEntry:
 
 _PROVIDER_DISPLAY_NAMES = {
     "anthropic": "Anthropic",
+    "cerebras": "Cerebras",
     "cohere": "Cohere",
     "custom": "Custom OpenAI",
     "custom_2": "Custom OpenAI 2",
+    "databricks": "Databricks",
     "deepseek": "DeepSeek",
+    "fireworks": "Fireworks",
     "google": "Google",
     "groq": "Groq",
     "huggingface": "Hugging Face",
@@ -95,6 +98,7 @@ _PROVIDER_DISPLAY_NAMES = {
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
     "qwencloud": "QwenCloud",
+    "together": "Together",
     "vllm": "vLLM",
     "zai": "Z.ai",
 }
@@ -110,11 +114,27 @@ def _provider_display_name(provider_key: str) -> str:
 
 # ADR-066: per-execution-key wire formats for Console thinking controls.
 # Level = reasoning_effort; budget = thinking_budget_tokens.
+CUSTOM_OPENAI_EXECUTION_KEYS = frozenset(
+    {"custom-openai-api", "custom-openai-api-2", "custom-hosted"}
+)
+"""The custom-endpoint family's execution keys (ADR-179 Phase 2 Task 6).
+
+Every gateway/trace surface keyed on the custom family's EXECUTION keys
+must consume THIS constant, never a bare literal set: the engine swap
+routes ``openai_compatible`` custom-ep entries through ``custom-hosted``,
+and a literal set would drop the swapped key from base-URL forwarding,
+credential decisions, and thinking support in one silent step. Identity
+surfaces (aliases, readiness maps, dispatch registration) keep their own
+spellings -- they key on ``custom``/``custom-ep:<slug>``, which
+``family_execution_key`` resolves to the legacy slots
+(ADR-179 Phase 2 Task 6 decision 1). Guarded by the literal-grep test
+``Tests/Chat/test_custom_openai_execution_keys_constant.py``.
+"""
 _LLAMA_CPP_THINKING_KEYS = frozenset(
     {"llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"}
 )
 _VLLM_THINKING_KEYS = frozenset({"vllm", "local_vllm"})
-_CUSTOM_OPENAI_THINKING_KEYS = frozenset({"custom-openai-api", "custom-openai-api-2"})
+_CUSTOM_OPENAI_THINKING_KEYS = CUSTOM_OPENAI_EXECUTION_KEYS
 # MLX-LM: template-kwargs shape pending live verification of mlx_lm.server
 # support; if unsupported this row degrades to drop-and-log.
 _TEMPLATE_KWARGS_THINKING_KEYS = frozenset({"local_mlx_lm"})
@@ -135,6 +155,120 @@ _LOCAL_BUDGET_EXECUTION_KEYS = _LLAMA_CPP_THINKING_KEYS
 _LOCAL_DROPPED_CONTROLS = frozenset(
     {"reasoning_summary", "verbosity", "thinking_effort"}
 )
+
+#: Each generation field's ``chat_api_call`` request key(s): the generic names
+#: the Console send builders fill from that field
+#: (``ConsoleProviderGateway._chat_api_kwargs_from_prepared`` for sends and
+#: tool rounds, ``_auxiliary_chat_api_kwargs`` for auxiliary calls; the table
+#: test in Tests/Chat/test_console_provider_support.py measures both).
+#: ``top_p`` rides both ``topp`` and ``maxp``, so a provider map carrying
+#: either one forwards it (OpenAI's carries only ``maxp``). The only place the
+#: support decision's field-to-key mapping is defined.
+GENERATION_FIELD_REQUEST_KEYS: dict[str, tuple[str, ...]] = {
+    "temperature": ("temp",),
+    "top_p": ("topp", "maxp"),
+    "min_p": ("minp",),
+    "top_k": ("topk",),
+    "max_tokens": ("max_tokens",),
+    "seed": ("seed",),
+    "presence_penalty": ("presence_penalty",),
+    "frequency_penalty": ("frequency_penalty",),
+    "reasoning_effort": ("reasoning_effort",),
+    "reasoning_summary": ("reasoning_summary",),
+    "verbosity": ("verbosity",),
+    "thinking_effort": ("thinking_effort",),
+    "thinking_budget_tokens": ("thinking_budget_tokens",),
+    "streaming": ("streaming",),
+}
+_PROVIDER_GATED_GENERATION_FIELDS = frozenset(
+    {
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
+    }
+)
+_DIRECT_PROVIDER_GENERATION_FIELDS = {
+    "openai": frozenset({"reasoning_effort", "reasoning_summary", "verbosity"}),
+    "qwencloud": frozenset({"reasoning_effort"}),
+}
+
+
+def _capability_generation_fields(
+    provider: str | None, model: str | None
+) -> frozenset[str]:
+    """Return the fields the provider/model capability rules allow."""
+
+    provider_key = provider_config_key(provider or "")
+    supported = set(GENERATION_FIELD_REQUEST_KEYS) - _PROVIDER_GATED_GENERATION_FIELDS
+    if provider_key == "moonshot" and moonshot_model_supports_reasoning_effort(model):
+        supported.add("reasoning_effort")
+    if provider_key == "zai" and zai_model_supports_reasoning_effort(model):
+        supported.add("reasoning_effort")
+    supported.update(_DIRECT_PROVIDER_GENERATION_FIELDS.get(provider_key, ()))
+    if provider_key == "anthropic":
+        supported.add("thinking_effort")
+        if not anthropic_model_rejects_fixed_thinking_budget(model):
+            supported.add("thinking_budget_tokens")
+
+    execution_key = resolve_console_provider_identity(provider_key).execution_key
+    if build_local_thinking_payload_fields(execution_key, "low", None):
+        supported.add("reasoning_effort")
+    if execution_key in _LOCAL_BUDGET_EXECUTION_KEYS:
+        supported.add("thinking_budget_tokens")
+    return frozenset(supported)
+
+
+def supported_generation_fields(
+    provider: str | None,
+    model: str | None,
+    app_config: Mapping[str, object] | None = None,
+) -> frozenset[str]:
+    """Return the generation fields one provider/model request really carries.
+
+    The single field-support decision for the Console draft rebase, the
+    model-default writer and Settings' model-default rows: the capability
+    rules intersected with the provider's ``PROVIDER_PARAM_MAP`` entry, so a
+    field the request would drop (Anthropic's Min P, Seed and penalties) is
+    never reported supported. A provider with no map entry keeps the
+    capability answer unchanged (TASK-30012 AC#3).
+
+    Args:
+        provider: Provider identity or config key selected by the draft.
+        model: Selected model identifier, when one is chosen.
+        app_config: Config holding the ADR-146 endpoint registry. With it, a
+            ``custom-ep`` id is decided as its entry's family, the way the
+            gateway sends it; without it, a registry id has no map entry.
+
+    Returns:
+        Names of the supported fields, drawn from
+        ``GENERATION_FIELD_REQUEST_KEYS``.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+
+    if app_config is not None:
+        # Lazy: the registry imports this module via console_session_settings.
+        from tldw_chatbook.Chat.custom_endpoint_registry import (
+            entry_for,
+            family_execution_key,
+        )
+
+        entry = entry_for(app_config, provider)
+        if entry is not None:
+            provider = family_execution_key(entry.family)
+    provider_key = provider_config_key(provider or "")
+    capable = _capability_generation_fields(provider_key, model)
+    request_keys = PROVIDER_PARAM_MAP.get(
+        resolve_console_provider_identity(provider_key).execution_key
+    )
+    if request_keys is None:
+        return capable
+    return frozenset(
+        field
+        for field in capable
+        if any(key in request_keys for key in GENERATION_FIELD_REQUEST_KEYS[field])
+    )
 
 
 def console_generation_control_support(

@@ -106,7 +106,7 @@ def test_activity_presentation_accepts_only_the_bounded_contract() -> None:
         ("tool", "two\nlines", "success"),
         ("tool", "carriage\rreturn", "success"),
         ("tool", "x" * 201, "success"),
-        ("tool", "Label", "running"),
+        ("tool", "Label", "unknown-state"),
     ],
 )
 def test_activity_presentation_rejects_invalid_values(

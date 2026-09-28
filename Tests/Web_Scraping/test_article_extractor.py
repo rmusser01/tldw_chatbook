@@ -359,5 +359,24 @@ class TestConcurrentOperations:
                     assert not isinstance(result, Exception)
 
 
+# --- task-32902 (tier-2 review, slice S14 P3) --------------------------------
+
+
+def test_format_content_with_metadata_stamps_canonical_utc():
+    """`ContentMetadataHandler` is duplicated: `Article_Scraper/utils.py` already
+    stamps `utc_now_iso()`, this copy stamped a naive LOCAL
+    `"%Y-%m-%d %H:%M:%S"`. It is on the live `scrape_article` path
+    (`Article_Extractor_Lib.py:590`), not in the dead half of the module."""
+    from tldw_chatbook.Utils.timestamps import parse_utc
+
+    formatted = ContentMetadataHandler.format_content_with_metadata(
+        url="https://example.com/a", content="body text"
+    )
+    metadata, _clean = ContentMetadataHandler.extract_metadata(formatted)
+    stamp = metadata["ingestion_date"]
+    assert stamp.endswith("Z"), stamp
+    assert parse_utc(stamp).tzinfo is not None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
