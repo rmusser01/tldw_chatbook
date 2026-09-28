@@ -102,6 +102,12 @@ class SessionStartError(Exception):
         self.failure = failure
 
 
+class SessionClosed(Exception):
+    """The laptop closed this healthy session (idle reap, run end, app
+    exit) before the call's request was registered: nothing was sent, so
+    the caller may ask the registry again (TASK-33401)."""
+
+
 class _HandshakeFailed(Exception):
     """Internal: the handshake ended; carries what classification needs."""
 
@@ -231,6 +237,9 @@ class RemoteSessionWorker:
         #: death (EOF / ssh exited), False when the laptop ended it.
         self._death_natural: bool | None = None
         self._death_code: int | None = None
+        #: True once close() closed a session that was alive at that moment
+        #: (TASK-33401): the caller's request never reached this session.
+        self._retired = False
         self._settled = threading.Event()  # set once _die has reaped
 
     @property
@@ -581,12 +590,15 @@ class RemoteSessionWorker:
             return RemoteCallResult(False, _OVERSIZED_REQUEST_FRAME, None)
         with self._lock:
             alive = self._alive
+            retired = self._retired
             if alive:
                 request_id = self._next_id
                 self._next_id += 1
                 pending = self._pending[request_id] = _Pending()
                 self._idle_since = None
         if not alive:
+            if retired:
+                raise SessionClosed()
             return self._dead_session_result()
         grace = self._transport.grace_seconds
         sent_at = time.monotonic()
@@ -745,6 +757,7 @@ class RemoteSessionWorker:
             if self._death_natural is None:
                 self._death_natural = False
             was_alive, self._alive = self._alive, False
+            self._retired = self._retired or was_alive
         proc = self._proc
         if proc is None:
             return

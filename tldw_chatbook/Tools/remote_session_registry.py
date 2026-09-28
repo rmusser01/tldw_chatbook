@@ -12,8 +12,34 @@ from loguru import logger
 #: reopens a session; the oldest tombstone is evicted past this bound.
 _CLOSED_KEYS_MAX = 1024
 
+#: How long run end / app exit waits for session closes (all in parallel).
+#: A close still running after this finishes on its daemon thread; at app
+#: exit the master's ``-O exit`` ends its channel anyway.
+_CLOSE_JOIN_S = 5.0
+
 from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
 from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+
+
+def _close_workers(workers: list[RemoteSessionWorker], *, wait: float | None) -> None:
+    """Close ``workers`` concurrently, one daemon thread each.
+
+    Args:
+        workers: Sessions already removed from the registry.
+        wait: Total seconds to wait for all closes; ``None`` returns at once
+            (the idle reaper: a close never lands on the calling tool call).
+    """
+    threads = [
+        threading.Thread(target=worker.close, name="ssh-session-close", daemon=True)
+        for worker in workers
+    ]
+    for thread in threads:
+        thread.start()
+    if wait is None:
+        return
+    deadline = time.monotonic() + wait
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
 
 
 class RemoteSessionRegistry:
@@ -147,8 +173,7 @@ class RemoteSessionRegistry:
             }
             self._mux_failed = {k for k in self._mux_failed if k[0] != session_key}
             self._key_locks = {k: v for k, v in self._key_locks.items() if k[0] != session_key}
-        for worker in workers:
-            worker.close()
+        _close_workers(workers, wait=_CLOSE_JOIN_S)
 
     def close_all(self) -> None:
         """Close every session (app shutdown); later acquires go one-shot."""
@@ -158,8 +183,7 @@ class RemoteSessionRegistry:
             self._disabled.clear(); self._restarted.clear(); self._key_locks.clear()
             self._start_failures.clear()
             self._mux_failed.clear()
-        for worker in workers:
-            worker.close()
+        _close_workers(workers, wait=_CLOSE_JOIN_S)
 
     def reap_idle(self, now: float, idle_s: float) -> None:
         """Close sessions idle for at least ``idle_s`` (a later call starts a fresh one)."""
@@ -167,8 +191,7 @@ class RemoteSessionRegistry:
             stale = [k for k, w in self._sessions.items()
                      if w.idle_since is not None and now - w.idle_since >= idle_s]
             workers = [self._sessions.pop(k) for k in stale]
-        for worker in workers:
-            worker.close()
+        _close_workers(workers, wait=None)
 
 
 _REGISTRY: RemoteSessionRegistry | None = None

@@ -344,12 +344,21 @@ def test_natural_255_death_classifies_by_real_exit_code(worker_factory, workspac
     assert after.failure.kind is TransportFailureKind.UNREACHABLE
 
 
-def test_call_after_close_is_remote_op_failed(worker_factory, workspace):
+def test_call_after_close_raises_session_closed(worker_factory, workspace):
+    """TASK-33401: a session the laptop retired sent nothing; the caller re-acquires."""
     worker, _ = worker_factory()
     worker.start()
     worker.close()
+    with pytest.raises(worker_module.SessionClosed):
+        worker.call(read_request(workspace, "a.txt"), budget=10)
+
+
+def test_call_after_a_stuck_kill_is_still_remote_op_failed(worker_factory, workspace):
+    """Only a laptop close of a HEALTHY session is retryable; a killed one is not."""
+    worker, _ = worker_factory()
+    worker.start()
+    worker._die(natural=False)
     result = worker.call(read_request(workspace, "a.txt"), budget=10)
-    assert not result.admitted
     assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
 
 

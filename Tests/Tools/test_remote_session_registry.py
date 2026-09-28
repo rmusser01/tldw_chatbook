@@ -102,6 +102,10 @@ def test_close_key_and_idle_reap():
     assert reg._key_locks == {}
     w2 = reg.acquire(("run-2", "b1"), lambda: FakeWorker(idle_since=0.0))
     reg.reap_idle(now=100.0, idle_s=60)
+    # reap_idle closes off the calling thread (TASK-33401): bounded poll.
+    deadline = time.monotonic() + 5
+    while not w2.closed and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert w2.closed
 
 
@@ -340,3 +344,48 @@ def test_repeated_mux_start_failure_disables_the_key_for_the_run():
     assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
     assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
     assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("mux-disabled key restarted")) is None
+
+
+class SlowCloseWorker(FakeWorker):
+    def __init__(self, delay=1.0, **kwargs):
+        super().__init__(**kwargs)
+        self.delay, self.closed_on = delay, None
+
+    def close(self):
+        self.closed_on = threading.current_thread()
+        time.sleep(self.delay)
+        super().close()
+
+
+def test_reap_idle_never_closes_on_the_calling_thread():
+    """TASK-33401: a wedged session's close never lands on an unrelated call."""
+    reg = RemoteSessionRegistry()
+    worker = reg.acquire(("run-1", "b1"), lambda: SlowCloseWorker(delay=2.0, idle_since=0.0))
+    started = time.monotonic()
+    reg.reap_idle(now=100.0, idle_s=1.0)
+    assert time.monotonic() - started < 0.5
+    deadline = time.monotonic() + 5
+    while worker.closed_on is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert worker.closed_on is not threading.current_thread()
+
+
+def test_close_all_closes_in_parallel_and_is_bounded(monkeypatch):
+    """TASK-33405: app exit costs about the slowest close, never their sum."""
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+
+    reg = RemoteSessionRegistry()
+    workers = [
+        reg.acquire((f"run-{i}", "b1"), lambda: SlowCloseWorker(delay=1.0)) for i in range(3)
+    ]
+    started = time.monotonic()
+    reg.close_all()
+    assert time.monotonic() - started < 2.5  # serial would be ~3 s
+    assert all(w.closed for w in workers)
+
+    monkeypatch.setattr(registry_module, "_CLOSE_JOIN_S", 0.5)
+    reg = RemoteSessionRegistry()
+    reg.acquire(("run-x", "b1"), lambda: SlowCloseWorker(delay=5.0))
+    started = time.monotonic()
+    reg.close_all()
+    assert time.monotonic() - started < 2.0  # a wedged close never holds app exit

@@ -975,6 +975,32 @@ def test_session_start_against_a_silent_host_is_bounded_by_the_call_budget(
     assert raised.value.code == TransportFailureKind.UNREACHABLE.value
 
 
+def test_session_reaped_between_acquire_and_call_is_not_a_tool_error(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-33401: the reaper closing a just-handed-out session costs a new session, not an error."""
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+
+    executor = _session_executor(env, sessions)
+    assert env.read(executor)["outcome"] == "success"
+    real_acquire = registry_module.RemoteSessionRegistry.acquire
+    raced = {"left": 1}
+
+    def racing_acquire(self, key, create):
+        worker = real_acquire(self, key, create)
+        if worker is not None and raced["left"]:
+            raced["left"] -= 1
+            self.reap_idle(time.monotonic() + 1e6, 0)  # reaper wins the race
+            deadline = time.monotonic() + 5
+            while worker.alive and time.monotonic() < deadline:
+                time.sleep(0.01)
+        return worker
+
+    monkeypatch.setattr(registry_module.RemoteSessionRegistry, "acquire", racing_acquire)
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2
+
+
 def test_stale_control_socket_at_start_runs_one_shot_then_session(
     env: SimpleNamespace, sessions: SimpleNamespace
 ) -> None:
