@@ -25,13 +25,17 @@ from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
     CACHE_REFRESH_FAILED,
+    ORIGIN_LABELS,
+    QueuedLaunchDefault,
     ThemeChange,
     ThemeEntry,
     build_catalog,
     current_launch_default,
     display_name,
     launch_default_restorable,
-    revert_theme,
+    queue_launch_default,
+    settle_launch_default,
+    start_revert,
     use_theme,
     use_theme_toast,
     user_theme_names,
@@ -46,24 +50,80 @@ from .settings_theme_editor import (
 )
 from .theme_preview import ThemePreview
 
-_GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "TEXTUAL"}
+_GROUP_TITLES = {"yours": "YOUR THEMES", "shipped": "SHIPPED", "textual": "BUILT-IN"}  # TASK-33073
 THEMES_LOADING_LABEL = "Loading your themes…"
 # TASK-32957: one exclusive group per picker for the off-thread folder scan.
 _SCAN_GROUP = "settings-theme-scan"
 
 
-def _row(entry: ThemeEntry) -> Text:
-    text = Text(f"{entry.display_name}  ")
-    for colour in entry.strip:
-        # entry.strip is always an uppercase #RRGGBB (theme_catalog._colour_hex
-        # resolves alpha hex and ANSI colour names before they reach here).
-        text.append("▮", Style(color=colour))
-    markers = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
-    if entry.overrides:
-        markers.append(f"overrides {entry.overrides}")
-    if markers:
-        text.append("  " + " · ".join(markers))
-    return text
+def _bare_name(entry: ThemeEntry) -> str:
+    """The entry's label without the origin word a shared name carries.
+
+    build_catalog tells "Solarized Light" apart as "Solarized Light ·
+    built-in"; the card title already names the origin, and the filter
+    matches names only (P3 review M3/M4).
+    """
+    return entry.display_name.removesuffix(f" · {ORIGIN_LABELS[entry.origin]}")
+
+
+_MIN_NAME_CELLS = 10  # a narrow row keeps at least this much of the name
+
+
+def _row(entry: ThemeEntry, width: int | None = None) -> Text:
+    """One list row: name, colour strip, then the active/launch/overrides markers.
+
+    Args:
+        entry: The theme to show.
+        width: The cells the row may take. When the whole row doesn't fit,
+            the tail gives way first, least important part first, until the
+            name keeps ``_MIN_NAME_CELLS`` (TASK-33074): "overrides built-in"
+            becomes "overrides", then goes, then the strip shrinks to three
+            swatches, then "launch" goes. "active" always stays. Only then
+            does the name take an ellipsis. None means no limit.
+    """
+    flags = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
+    overrides = [f"overrides {ORIGIN_LABELS[entry.overrides]}"] if entry.overrides else []
+    strip = list(entry.strip)
+    tails = [(strip, flags + overrides)]
+    if width is not None:
+        short = ["overrides"] if overrides else []
+        tails += [(strip, flags + short), (strip, flags), (strip[:3], flags), (strip[:3], ["active"] if entry.is_active else [])]
+
+    def build(colours: list[str], markers: list[str]) -> Text:
+        tail = Text("  ")
+        for colour in colours:
+            # entry.strip is always an uppercase #RRGGBB (theme_catalog._colour_hex
+            # resolves alpha hex and ANSI colour names before they reach here).
+            tail.append("▮", Style(color=colour))
+        if markers:
+            tail.append("  " + " · ".join(markers))
+        return tail
+
+    name = Text(entry.display_name)
+    if width is None:
+        return name + build(*tails[0])
+    need = min(name.cell_len, _MIN_NAME_CELLS)
+    built = [build(*t) for t in tails]
+    tail = next((t for t in built if t.cell_len + need <= width), built[-1])
+    name.truncate(max(width - tail.cell_len, 1), overflow="ellipsis")
+    return name + tail
+
+
+def _dropped_status(entry: ThemeEntry, width: int | None) -> str:
+    """Spell out the launch/overrides markers the row dropped at ``width`` (TASK-33122).
+
+    Returns:
+        e.g. "launch default · overrides built-in" when the fitted row lost
+        any of them ("active" always stays), else "". Fixed vocabulary only.
+    """
+    launch = ["launch"] if entry.is_launch_default else []
+    overrides = [f"overrides {ORIGIN_LABELS[entry.overrides]}"] if entry.overrides else []
+    if not (launch or overrides) or width is None:
+        return ""
+    full = " · ".join((["active"] if entry.is_active else []) + launch + overrides)
+    if _row(entry, width).plain.endswith(full):
+        return ""
+    return " · ".join((["launch default"] if launch else []) + overrides)
 
 
 class ThemeFilterInput(Input):
@@ -78,6 +138,10 @@ class ThemeFilterInput(Input):
 
 class ThemeOptionList(OptionList):
     BINDINGS: ClassVar[list[Binding]] = [
+        # TASK-33072: vim keys too. The Settings screen's own j/k rail
+        # handler stands aside while focus is in the detail pane.
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
         Binding("t", "try_theme", "Try"),
         Binding("c", "clone_theme", "Clone"),
         Binding("n", "new_theme", "New"),
@@ -86,6 +150,24 @@ class ThemeOptionList(OptionList):
         Binding("delete", "delete_theme", "Delete"),
         Binding("i", "import_theme", "Import"),
     ]
+
+    def row_width(self) -> int | None:
+        """Cells a row may take (TASK-33074).
+
+        The vertical scrollbar is always reserved: the ~95-row catalog
+        overflows at every size, and it appearing sends no Resize.
+
+        Returns:
+            The width in cells left for a row's text after the scrollbar and
+            the option padding; None before layout gives the list a width.
+        """
+        padding = self.get_component_styles("option-list--option").padding
+        width = self.content_region.width - self.styles.scrollbar_size_vertical - padding.width
+        return width if width > 0 else None
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Refit the rows' names to the new width."""
+        self.query_ancestor(ThemePicker).refit_rows()
 
     def _first_enabled_index(self) -> int | None:
         for index in range(self.option_count):
@@ -206,6 +288,14 @@ class ThemePicker(Vertical):
         # YOUR THEMES shows a loading row. The pending highlight is
         # (requested id, the highlight when requested): a user move in
         # between wins over it (Qodo 4116061873).
+        # TASK-33069: the highlight from before the filter was typed, so
+        # clearing it returns there instead of to row 1.
+        self._prefilter_highlight: str | None = None
+        # Qodo 4118068766: the row the list fell back to because the filter
+        # hid the highlight. Still on it when the filter clears = the user
+        # never moved, so the pre-filter highlight wins; moved = theirs sticks.
+        self._filter_fallback: str | None = None
+        self._filtering = False
         self._scan_generation = 0
         self._pending_highlight: tuple[str, str | None] | None = None
         self._scanned = False
@@ -256,7 +346,12 @@ class ThemePicker(Vertical):
                     "", id="settings-theme-launch-missing", classes="settings-help-copy", markup=False
                 )
                 yield ThemeOptionList(id="settings-theme-list")
+                # TASK-33122: one reserved line, so the list never jumps.
+                yield Static("", id="settings-theme-row-status", classes="settings-help-copy", markup=False)
                 yield Static("", id="settings-theme-empty", classes="settings-help-copy", markup=False)
+                # Spec §9: a no-match filter offers a way back.
+                with Horizontal(id="settings-theme-clear-filter-row", classes="settings-action-row"):
+                    yield Button("Clear filter", id="settings-theme-clear-filter", classes="theme-editor-action")
             with Vertical(id="settings-theme-card-column"):
                 yield Static("", id="settings-theme-card-title", classes="destination-section", markup=False)
                 yield Static("", id="settings-theme-card-error", classes="settings-help-copy", markup=False)
@@ -389,7 +484,12 @@ class ThemePicker(Vertical):
 
     def _render_list(self, highlight: str | None) -> None:
         query = self.query_one("#settings-theme-filter", Input).value.strip().casefold()
-        shown = [e for e in self.entries if not query or query in e.display_name.casefold() or query in e.id.casefold()]
+        # Names only, never origin words (P3 review M4): the group headers
+        # already sort by origin, and matching "built-in"/"shipped" would make
+        # every short query ("i", "p") list whole groups.
+        shown = [e for e in self.entries if not query or query in _bare_name(e).casefold() or query in e.id.casefold()]
+        lst = self.query_one("#settings-theme-list", ThemeOptionList)
+        width = lst.row_width()
         options: list[Option] = []
         for origin, title in _GROUP_TITLES.items():
             group = [e for e in shown if e.origin == origin]
@@ -405,17 +505,27 @@ class ThemePicker(Vertical):
                 continue
             header = f"{title} ({len(group)})" if query else title
             options.append(Option(header, disabled=True))
-            options.extend(Option(_row(e), id=e.id) for e in group)
+            options.extend(Option(_row(e, width), id=e.id) for e in group)
             if placeholder is not None:
                 options.append(Option(placeholder, disabled=True))
-        lst = self.query_one("#settings-theme-list", OptionList)
         lst.clear_options()
         lst.add_options(options)
         empty = self.query_one("#settings-theme-empty", Static)
         empty.display = not shown
         empty.update(f"No themes match '{query}'" if not shown else "")
+        # The button too: its own display doesn't follow a hidden row's
+        # (see _show's export-result note).
+        self.query_one("#settings-theme-clear-filter-row").display = not shown
+        self.query_one("#settings-theme-clear-filter", Button).display = not shown
         ids = [e.id for e in shown]
-        target = highlight if highlight in ids else (ids[0] if ids else None)
+        # TASK-33069: a highlight the filter hid comes back when it shows
+        # again; failing that the active theme, and only then row 1.
+        target = next(
+            (c for c in (highlight, self._prefilter_highlight, str(self.app.theme)) if c in ids),
+            ids[0] if ids else None,
+        )
+        if target != highlight:
+            self._filter_fallback = target
         if target is not None:
             lst.highlighted = lst.get_option_index(target)
         pending = self._pending_highlight
@@ -423,6 +533,26 @@ class ThemePicker(Vertical):
             # A re-render's move is not the user's: the request still stands.
             self._pending_highlight = (pending[0], target)
         self._show(target)
+
+    def refit_rows(self) -> None:
+        """Re-truncate the rows' names for the list's current width, in place."""
+        lst = self.query_one("#settings-theme-list", ThemeOptionList)
+        width = lst.row_width()
+        by_id = {e.id: e for e in self.entries}
+        for index in range(lst.option_count):
+            entry = by_id.get(lst.get_option_at_index(index).id)
+            if entry is not None:
+                lst.replace_option_prompt_at_index(index, _row(entry, width))
+        self._sync_dropped_status()
+
+    def _sync_dropped_status(self) -> None:
+        """TASK-33122: what the highlighted row dropped goes on the line under
+        the list -- at 80x24 the card is scrolled off below it. (Not the
+        list's border subtitle: the focus outline paints over it.)"""
+        lst = self.query_one("#settings-theme-list", ThemeOptionList)
+        entry = self._highlighted_entry()
+        text = _dropped_status(entry, lst.row_width()) if entry is not None else ""
+        self.query_one("#settings-theme-row-status", Static).update(text)
 
     def _show(self, theme_id: str | None) -> None:
         self.highlighted_id = theme_id
@@ -434,6 +564,7 @@ class ThemePicker(Vertical):
         self.query_one("#settings-theme-export-result").display = False
         self.query_one("#settings-theme-copy-path", Button).display = False
         entry = self._highlighted_entry()
+        self._sync_dropped_status()
         error = entry.error if entry is not None else None
         # Tooltips parse markup; the error quotes untrusted file content.
         unreadable_tip = f"This theme file can't be read: {escape_markup(error)}" if error else None
@@ -471,6 +602,10 @@ class ThemePicker(Vertical):
         card_error = self.query_one("#settings-theme-card-error", Static)
         card_error.display = error is not None
         card_error.update(error or "")
+        # TASK-33067/33069: no preview for nothing, and an unreadable file's
+        # error stands in its place (its palette is all grey, 1:1).
+        preview = self.query_one(ThemePreview)
+        preview.display = entry is not None and error is None
         if entry is None:
             title.update("")
             return
@@ -478,8 +613,9 @@ class ThemePicker(Vertical):
             title.update(entry.display_name)
         else:
             tone = "dark" if entry.dark else "light"
-            title.update(f"{entry.display_name}  ·  {tone} · {entry.origin}")
-        self.query_one(ThemePreview).paint(dict(entry.colours))
+            title.update(f"{_bare_name(entry)}  ·  {tone} · {ORIGIN_LABELS[entry.origin]}")
+        if preview.display:
+            preview.paint(dict(entry.colours))
 
     def _highlighted_entry(self) -> ThemeEntry | None:
         return next((e for e in self.entries if e.id == self.highlighted_id), None)
@@ -505,7 +641,30 @@ class ThemePicker(Vertical):
     @on(Input.Changed, "#settings-theme-filter")
     def _filter_changed(self, event: Input.Changed) -> None:
         event.stop()
+        if not event.value.strip():
+            self._end_filter()
+            return
+        if not self._filtering:
+            self._filtering = True
+            self._prefilter_highlight = self.highlighted_id
+            self._filter_fallback = None
         self._render_list(self.highlighted_id)
+
+    def _end_filter(self) -> None:
+        """Re-list every theme once the filter is empty: back on the
+        pre-filter highlight, unless the user moved while filtering."""
+        moved = self.highlighted_id != self._filter_fallback
+        self._render_list(self.highlighted_id if moved else None)
+        self._prefilter_highlight = self._filter_fallback = None
+        self._filtering = False
+
+    @on(Button.Pressed, "#settings-theme-clear-filter")
+    def _clear_filter_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        with self.prevent(Input.Changed):
+            self.query_one("#settings-theme-filter", Input).value = ""
+        self._end_filter()
+        self.focus_list()
 
     @on(Input.Submitted, "#settings-theme-filter")
     def _filter_submitted(self, event: Input.Submitted) -> None:
@@ -582,17 +741,35 @@ class ThemePicker(Vertical):
             return
         change, self._revert = self._revert, None
         try:
-            restored, caches_reloaded = revert_theme(self.app, change)
+            write = start_revert(self.app, change)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Theme revert failed: {exc}")
             self.app.notify(f"Could not revert the theme: {escape_markup(exc)}", severity="error")
         else:
-            if not restored:
-                self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
-            elif not caches_reloaded:
-                self.app.notify(f"Reverted the theme; {CACHE_REFRESH_FAILED}", severity="warning")
+            if write is not None:
+                # Review #4: the write queues behind a pending Use's (so it
+                # wins) and is awaited off the UI thread.
+                self.app.run_worker(self._report_revert(write), group="settings-theme-use", exit_on_error=False)
         self._sync_revert_chip()
         self.refresh_catalog(rescan=False)
+
+    async def _report_revert(self, write: QueuedLaunchDefault) -> None:
+        """Await Revert's launch-default write, then warn if it did not land.
+
+        Args:
+            write: The queued write restoring the previous launch default.
+        """
+        try:
+            restored, caches_reloaded, latest = await settle_launch_default(self.app, write)
+        except Exception as exc:  # noqa: BLE001 - reported as "not restored" below
+            logger.warning(f"Restoring the launch default {printable(write.name)!r} failed: {type(exc).__name__}")
+            restored, caches_reloaded, latest = False, False, True
+        if not latest:
+            return
+        if not restored:
+            self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
+        elif not caches_reloaded:
+            self.app.notify(f"Reverted the theme; {CACHE_REFRESH_FAILED}", severity="warning")
 
     # -- actions -------------------------------------------------------
     def use_highlighted(self) -> None:
@@ -667,11 +844,17 @@ class ThemePicker(Vertical):
         if theme_id is None or not self._highlighted_readable():
             return
         try:
-            change = use_theme(self.app, theme_id, persist=persist)
+            # TASK-33121: the switch shows now; Use's launch-default write
+            # (~140 ms) runs off the UI thread in _persist_use.
+            change = use_theme(self.app, theme_id, persist=False)
         except Exception as exc:  # noqa: BLE001 - stale entry / unregistered theme
             self.app.notify(f"Could not apply {escape_markup(display_name(theme_id))}: {escape_markup(exc)}", severity="error")
             self.refresh_catalog()
             return
+        if persist:
+            # Revert counts on the write landing: its own write queues behind
+            # this one (theme_catalog's one writer thread), so it still wins.
+            change = replace(change, persisted=True)
         if change.previous_active.startswith("custom_"):
             # Review I-1/P6: an editor Try's custom_* registration is never a
             # row; Revert targets the listed theme behind it, else the launch
@@ -684,9 +867,35 @@ class ThemePicker(Vertical):
         if not persist:
             self.app.notify(f"Trying {escape_markup(display_name(theme_id))} for this session", severity="information")
         else:
-            message, severity = use_theme_toast(theme_id, change)
-            self.app.notify(message, severity=severity)
+            # Review #2: queued now, so a Revert pressed before the worker
+            # runs still queues after it. App-owned: leaving Settings
+            # mid-write must not drop the report.
+            write = queue_launch_default(theme_id)
+            self.app.run_worker(self._persist_use(change, write), group="settings-theme-use", exit_on_error=False)
         self.refresh_catalog(highlight=theme_id, rescan=False)
+
+    async def _persist_use(self, change: ThemeChange, write: QueuedLaunchDefault) -> None:
+        """Await Use's launch-default write off the UI thread, then say how it went.
+
+        Args:
+            change: The switch, for the toast's "was:" name.
+            write: The queued write of the theme Use switched to.
+        """
+        theme_id = write.name
+        try:
+            persisted, caches_reloaded, latest = await settle_launch_default(self.app, write)
+        except Exception as exc:  # noqa: BLE001 - reported as "not saved" below
+            logger.warning(f"Saving the launch default {printable(theme_id)!r} failed: {type(exc).__name__}")
+            persisted, caches_reloaded, latest = False, False, True
+        if not latest:
+            # Review M-1: a Revert or palette switch asked for a later write
+            # meanwhile; it reports, and this Use's toast would be stale.
+            return
+        outcome = replace(change, persisted=persisted, caches_reloaded=caches_reloaded)
+        message, severity = use_theme_toast(theme_id, outcome)
+        self.app.notify(message, severity=severity)
+        if self.is_attached:
+            self.refresh_catalog(rescan=False)  # the launch marker moves now
 
 
 class ThemePane(ContentSwitcher):
@@ -755,7 +964,8 @@ class ThemePane(ContentSwitcher):
         return set(files), unreadable
 
     def show_picker(self) -> None:
-        self._editor().discard_try()  # review I-1: every Back undoes an unsaved Try
+        # Review I-1: every Back undoes an unsaved Try and ends the session.
+        self._editor().end_session()
         self.current = "settings-theme-picker"
         picker = self.query_one(ThemePicker)
         picker.refresh_catalog()
@@ -790,12 +1000,14 @@ class ThemePane(ContentSwitcher):
     @on(ThemePicker.DeleteRequested)
     def _delete_requested(self, event: ThemePicker.DeleteRequested) -> None:
         event.stop()
-        self._editor().request_delete(event.theme_id)
+        editor = self._editor()
+        editor.run_file_action(editor.request_delete(event.theme_id))
 
     @on(ThemePicker.ExportRequested)
     def _export_requested(self, event: ThemePicker.ExportRequested) -> None:
         event.stop()
-        self._editor().export_theme(event.theme_id)
+        editor = self._editor()
+        editor.run_file_action(editor.export_theme(event.theme_id))
 
     @on(SettingsThemeEditor.Saved)
     def _saved(self, event: SettingsThemeEditor.Saved) -> None:

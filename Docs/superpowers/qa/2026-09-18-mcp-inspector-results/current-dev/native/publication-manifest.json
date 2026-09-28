@@ -1,0 +1,254 @@
+[
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-corrected-raw.svg",
+    "export": "textual-dark-170x48-corrected-raw.svg",
+    "source_sha256": "3e3eb7459a29fad2844fbbc9b6c28bc2b0fe5faebf65e0cb515e8a0393bfe02c",
+    "export_sha256": "7a1e7f59558e5cd1851ddde894004b37d3db3d7320f9cb3a4ea9c1915321693e",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-invalid.svg",
+    "export": "textual-dark-170x48-invalid.svg",
+    "source_sha256": "368b7ff65da7fd9c9e7a101a2cfe15e4251946a946ad00c45b78cc7e100f1150",
+    "export_sha256": "5716e7d49006dfb1930420d12d4f0de9f27490545e1384f7339ac92f1b185e38",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-previous-raw.svg",
+    "export": "textual-dark-170x48-previous-raw.svg",
+    "source_sha256": "9f0fce1b355ff955c29563aa66e0a71371c928e06b2bbb73c5c7bd94b483eea7",
+    "export_sha256": "de7149fc30ab1f3734846dd7c4600152ac4a47da736bbd80e42116c2ba4fa2be",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-reopened.svg",
+    "export": "textual-dark-170x48-reopened.svg",
+    "source_sha256": "619f6775dcf224fa239a418a01a727534905bad7026270c9bab164481b53a8a5",
+    "export_sha256": "faaf5a87cdad08941ca4a8d94e986477550ec2f31fd9ad993de12967e5a7d03a",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-corrected-raw.svg",
+    "export": "textual-dark-80x24-corrected-raw.svg",
+    "source_sha256": "0dabb41329edb90fe4f2f1d52baded21641907f293e850be8e532afbbd737b74",
+    "export_sha256": "84d668f71f7b9ce79b2254b706dd32a1b3f3bd139e74fdbea9af986d1c7bc131",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-invalid.svg",
+    "export": "textual-dark-80x24-invalid.svg",
+    "source_sha256": "cba10f956d86894b529cff2c9abbdf3521308f726bdd9cffe24b503fc04f9cbf",
+    "export_sha256": "415dedf1e1ee7559cebdaf0502274395e76934b6494674a3db4805331c870043",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-previous-raw.svg",
+    "export": "textual-dark-80x24-previous-raw.svg",
+    "source_sha256": "49c10ad29febe711e21336bace8698a69f80056fc26ef739209f7814869b80cc",
+    "export_sha256": "0a495fb4f2a2a68b5dd626ce1512ca4ee70f8347a62f87075071615664475ac4",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-reopened.svg",
+    "export": "textual-dark-80x24-reopened.svg",
+    "source_sha256": "ce77d1a8d14b8768b38c37423305ffceafe832e0fa757ced39cf6157cd99b771",
+    "export_sha256": "0fd2ef3fb21b06978498abd2a04100b28012bf879cf0e4e1f98b87324d8e3cc0",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-corrected-raw.svg",
+    "export": "textual-light-170x48-corrected-raw.svg",
+    "source_sha256": "2889782ab4b73fa99148efa55f805a22f0a611c5a761416023f325c89d0a6dc1",
+    "export_sha256": "b0a4192286a59d475a2b53b808f2ef8d0ebd52ff6708fa3ee1b95702d739bac9",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-invalid.svg",
+    "export": "textual-light-170x48-invalid.svg",
+    "source_sha256": "24a50187f10d3d91c5561e2a589d9ba23529f32cdc74083b2ac0308d287bd802",
+    "export_sha256": "f7b66e739a1dcb4da9f267e1d764c689aba6c8c76ba063fd96f3093c7da07e9a",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-previous-raw.svg",
+    "export": "textual-light-170x48-previous-raw.svg",
+    "source_sha256": "140c66104b49f9385f626c8fc58810921ebdadbcc18e2cd37ba46a12404b3856",
+    "export_sha256": "b4b7ac4b29af15340a7eacf644f554b5bc48b566f7808ee0663754ff4b06c2a3",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-reopened.svg",
+    "export": "textual-light-170x48-reopened.svg",
+    "source_sha256": "5f222a61a975317c6179cc5b39aa2cf119f99b1ef5a31d29b9a3f1a48aea8df5",
+    "export_sha256": "b64ba1f9e03b871032da18e888e62c5aae9c41afc05be207fd67f0d753f7d7aa",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-corrected-raw.svg",
+    "export": "textual-light-80x24-corrected-raw.svg",
+    "source_sha256": "4e2bea568351064471d4bc680bfd0b0bab566d7c1ecb8f79fb196b6718c19f06",
+    "export_sha256": "fc8e90071b9e82e9fd196de6b7b84f47bb0acb05f976bac5a81efebb1c3d06fe",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-invalid.svg",
+    "export": "textual-light-80x24-invalid.svg",
+    "source_sha256": "1d2f2c69da51a167fbacbda9268ca0749270af5470134dea45f39908c1f5de4c",
+    "export_sha256": "3957ee9b36c58de29c846e8eb9cee0299b2dd64245c91d1dfd78033dff682201",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-previous-raw.svg",
+    "export": "textual-light-80x24-previous-raw.svg",
+    "source_sha256": "441050c737b71792f403fb6c0197c703a18d86005135d42fcfdb551e0525ae75",
+    "export_sha256": "96216f7ec36f770ac9e7de157dc7a9167acf68621c12df2f88fde36736552ac3",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-reopened.svg",
+    "export": "textual-light-80x24-reopened.svg",
+    "source_sha256": "a5722c3bfe7e48f4ca6d9835b91205e1b453447d7103d08d4e05b7502f7c2d71",
+    "export_sha256": "97f1bb38c452c949addbddfc560d1e5da617f2bcc60b2ecd799fbe27e13a27c4",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-corrected-raw.txt",
+    "export": "textual-dark-170x48-corrected-raw.txt",
+    "source_sha256": "039014c91b5f3e513cceca60f42c490ae6cfa02f994eae62c6b1e69acf615fdd",
+    "export_sha256": "039014c91b5f3e513cceca60f42c490ae6cfa02f994eae62c6b1e69acf615fdd",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-invalid.txt",
+    "export": "textual-dark-170x48-invalid.txt",
+    "source_sha256": "867d3f4e68242d0eeaded660e9810acefb52e23ee814c67f790f4879ac55defa",
+    "export_sha256": "867d3f4e68242d0eeaded660e9810acefb52e23ee814c67f790f4879ac55defa",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-previous-raw.txt",
+    "export": "textual-dark-170x48-previous-raw.txt",
+    "source_sha256": "04f93792fd5da142604763337f4024e5e4a0d763ff04b3bc90db7637e27db58d",
+    "export_sha256": "04f93792fd5da142604763337f4024e5e4a0d763ff04b3bc90db7637e27db58d",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-170x48-reopened.txt",
+    "export": "textual-dark-170x48-reopened.txt",
+    "source_sha256": "95cdb4c10fabdeed4a220bdad9c56f07ae56c9ddda5d12cd7832a77f763a5186",
+    "export_sha256": "95cdb4c10fabdeed4a220bdad9c56f07ae56c9ddda5d12cd7832a77f763a5186",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-corrected-raw.txt",
+    "export": "textual-dark-80x24-corrected-raw.txt",
+    "source_sha256": "e2424268f677796d63ead3fa0ed59118795c18f4f63454fda38b31ee2b772fa1",
+    "export_sha256": "e2424268f677796d63ead3fa0ed59118795c18f4f63454fda38b31ee2b772fa1",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-invalid.txt",
+    "export": "textual-dark-80x24-invalid.txt",
+    "source_sha256": "14e82990128ed19008711789b76baa09e14274cc77bb69dd132fd05cb969ad55",
+    "export_sha256": "14e82990128ed19008711789b76baa09e14274cc77bb69dd132fd05cb969ad55",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-previous-raw.txt",
+    "export": "textual-dark-80x24-previous-raw.txt",
+    "source_sha256": "4b7c20c4a9a170cd1b23c28068425ac0f6f4a41b1c29f083ce6e3fc70ec71170",
+    "export_sha256": "4b7c20c4a9a170cd1b23c28068425ac0f6f4a41b1c29f083ce6e3fc70ec71170",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-dark-80x24-reopened.txt",
+    "export": "textual-dark-80x24-reopened.txt",
+    "source_sha256": "7d2ccbd326aa75a8cb3d8397c12ab2d576a15158945fb9906b9172bcf8154752",
+    "export_sha256": "7d2ccbd326aa75a8cb3d8397c12ab2d576a15158945fb9906b9172bcf8154752",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-corrected-raw.txt",
+    "export": "textual-light-170x48-corrected-raw.txt",
+    "source_sha256": "3476d453702068f246e830b612356ca36de98d1c7fc4610f31a1e7b236e33dfe",
+    "export_sha256": "3476d453702068f246e830b612356ca36de98d1c7fc4610f31a1e7b236e33dfe",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-invalid.txt",
+    "export": "textual-light-170x48-invalid.txt",
+    "source_sha256": "c58fc47e83615facfbf45d76838e4b81a1675e5652f37fa181a37226dc1573c0",
+    "export_sha256": "c58fc47e83615facfbf45d76838e4b81a1675e5652f37fa181a37226dc1573c0",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-previous-raw.txt",
+    "export": "textual-light-170x48-previous-raw.txt",
+    "source_sha256": "b400fcdbcb6de0aa8ba97f8b6ee3543a162c68b13a6f36170fee0975e3c9ccee",
+    "export_sha256": "b400fcdbcb6de0aa8ba97f8b6ee3543a162c68b13a6f36170fee0975e3c9ccee",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-170x48-reopened.txt",
+    "export": "textual-light-170x48-reopened.txt",
+    "source_sha256": "aaa714ed18f8e61003d59006e1c16e52dab11b2f5d797243abe09ebfe20ad62d",
+    "export_sha256": "aaa714ed18f8e61003d59006e1c16e52dab11b2f5d797243abe09ebfe20ad62d",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-corrected-raw.txt",
+    "export": "textual-light-80x24-corrected-raw.txt",
+    "source_sha256": "411c5732642afb2c52120aa1c4e65cb1b7753b0f13e9587f14a38c3b182fb2d5",
+    "export_sha256": "411c5732642afb2c52120aa1c4e65cb1b7753b0f13e9587f14a38c3b182fb2d5",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-invalid.txt",
+    "export": "textual-light-80x24-invalid.txt",
+    "source_sha256": "e31aa938d5224fe02e4b6f44e067e33862ead2cd90d7a72630bafe76d887cba8",
+    "export_sha256": "e31aa938d5224fe02e4b6f44e067e33862ead2cd90d7a72630bafe76d887cba8",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-previous-raw.txt",
+    "export": "textual-light-80x24-previous-raw.txt",
+    "source_sha256": "c72c07115845772728d6aeda4cea09ad383687453f24e407dace9b1d97fb52cf",
+    "export_sha256": "c72c07115845772728d6aeda4cea09ad383687453f24e407dace9b1d97fb52cf",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/textual-light-80x24-reopened.txt",
+    "export": "textual-light-80x24-reopened.txt",
+    "source_sha256": "fafb6ac76852d85db7e32032d877266a081a2c6e8b0adac743f0ed69168896bb",
+    "export_sha256": "fafb6ac76852d85db7e32032d877266a081a2c6e8b0adac743f0ed69168896bb",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/result.json",
+    "export": "result.json",
+    "source_sha256": "4182308d8f9ee4c26889cdb3304b28345e727f127dbf86f173fffb14555161a1",
+    "export_sha256": "2c9f35560cd62682c71110f4abdcd91dd245d694cf9d5272e980624a4e6a74ba",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/evidence/fixture-trace.jsonl",
+    "export": "fixture-trace.jsonl",
+    "source_sha256": "1348e732363c1189f6f56f92de0b85a2af7c459d26585c576936a96728139a47",
+    "export_sha256": "1348e732363c1189f6f56f92de0b85a2af7c459d26585c576936a96728139a47",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/lifecycle.json",
+    "export": "lifecycle.json",
+    "source_sha256": "5d53ae77af7ab64c2a79610255b1a63438966673a316edfb94e4448cfe36802f",
+    "export_sha256": "5d53ae77af7ab64c2a79610255b1a63438966673a316edfb94e4448cfe36802f",
+    "normalization": "host paths and trailing whitespace"
+  },
+  {
+    "source": "<tmp>/tldw-32913-results-005/launch.json",
+    "export": "launch.json",
+    "source_sha256": "a695b0fd10d14020c6982498fcc4d2b91edf0c2dc51cdc6d97f39831e9854a18",
+    "export_sha256": "67132f3632cde203533b7b0a03e0d3ff70186c00b737fccbdcefcdc03e079def",
+    "normalization": "host paths and trailing whitespace"
+  }
+]

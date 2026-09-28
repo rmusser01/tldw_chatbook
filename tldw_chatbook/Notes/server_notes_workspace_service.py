@@ -569,10 +569,50 @@ class ServerNotesWorkspaceService:
             ),
         )
 
-    async def delete_note_link(self, edge_id: str) -> dict[str, Any]:
+    async def delete_note_link(
+        self,
+        edge_id: str,
+        *,
+        dataset_id: str | None = None,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete the selected link with caller-owned version preconditions.
+
+        Args:
+            edge_id: Identifier of the selected Notes graph link.
+            dataset_id: Optional dataset containing the selected link.
+            expected_version: Version observed when the link was selected; never
+                refreshed here.
+            idempotency_key: Caller-retained key reused for retries of the same logical
+                operation.
+            reason: Optional audit reason for deleting the link.
+
+        Returns:
+            The server deletion acknowledgement; conflicts are not retried
+                automatically.
+
+        Raises:
+            ValueError: The requested scope or configured server service is unavailable.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+                Server 409 and 428 precondition failures remain visible to the caller.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         self._enforce_policy(self._graph_action_id("delete"))
         client = self._require_client()
-        return await client.delete_note_link(edge_id)
+        preconditions = {
+            key: value
+            for key, value in {
+                "dataset_id": dataset_id,
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+                "reason": reason,
+            }.items()
+            if value is not None
+        }
+        return await client.delete_note_link(edge_id, **preconditions)
 
     async def list_workspaces(self) -> list[dict[str, Any]]:
         self._enforce_policy(self._workspace_action_id("list"))

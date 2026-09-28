@@ -128,6 +128,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 
 | [ADR-172](172-library-artifacts-browse-and-navigation.md) | Accepted; implementation pending | Browse reports and registered Chatbooks in Library while retaining kept-copy identity, source ownership, app-owned sharing, and the linked ZIP-pack manager. |
 | [ADR-184](184-local-console-prompt-draft-shelf.md) | Accepted | Store explicitly managed unsent Console drafts in a capped, local-only shelf inside the Prompts database and promote them through existing Prompt and collection contracts. |
+| [ADR-185](185-network-chat-ircv3-and-tldw-pydle-boundary.md) | Accepted; ADR-186 amendments proposed | Preserve the approved Network Chat ownership and separately maintained Codeberg pydle fork boundary. |
+| [ADR-186](186-network-chat-handoff-reliability-amendments.md) | Proposed | Clarify bounded callback/transport delivery, late-reply isolation, current screen lifecycle and truthful release completion for the PTO handoff. |
 
 ## Historical Decision Material
 
@@ -170,3 +172,5 @@ Use numeric filenames:
 - `002-short-title.md`
 
 Do not reuse numbers.
+
+| [ADR-187](187-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |

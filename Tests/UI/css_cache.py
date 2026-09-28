@@ -78,6 +78,9 @@ def install() -> bool:
         _GLOBAL_PARSE_CACHE[key] = list(rules)
         return rules
 
+    # Lets a test that measures the app's own parse caching (TASK-33120)
+    # step around this global cache.
+    cached_parse_rules.__wrapped__ = original_parse_rules
     Stylesheet._parse_rules = cached_parse_rules
     _installed = True
     return True

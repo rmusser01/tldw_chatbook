@@ -1134,3 +1134,30 @@ for a full-tree baseline: `git worktree add --detach /tmp/baseline <sha>`, measu
 **The general rule.** In a repo with concurrent worktrees, treat anything under `.git/` that is not
 per-worktree as shared mutable state: `refs/stash`, `refs/heads`, `rr-cache`, `config`. A command that
 writes to one of them affects every worktree, including other people's.
+
+## Check task syntax guard findings against YAML (PR #2026, 2026-09-27)
+
+While rebasing PR #2026 onto current `dev`, its task-file guard flagged eight
+new files. PyYAML confirmed seven malformed frontmatter headers, but the eighth
+was valid: a multiline quoted value ended with a quote on an unindented line.
+The guard had assumed every continuation line must be indented. A regression
+test reproduced that false positive before the guard was fixed.
+
+When a lightweight task-file checker flags existing records, compare the
+result with a real YAML parser before editing those records. Keep a regression
+test for any syntax the lightweight checker misreads.
+
+## Codex turn snapshots can contain the task you just created
+
+**TASK-32645, plugin design, 2026-09-15.** The final ID sweep using
+`git rev-list --objects --all` reported the newly authored task as an existing
+claim even though it was still untracked and `git log --all -- <task path>`
+showed no commit. The blob was an earlier copy of this session's task, with
+the same title and creation timestamp, reachable through a
+`refs/codex/turn-diffs/...` tree snapshot. Treating it as a competing claim
+would have renumbered the task in response to its own checkpoint.
+
+**What to do.** Keep broad snapshot-aware allocation scans, but inspect matching
+blob identity, creation metadata and ref object type before renumbering.
+A checkpoint of the same uncommitted task is not another owner. Do not exclude
+all Codex snapshots: they can also expose another session's uncommitted claim.

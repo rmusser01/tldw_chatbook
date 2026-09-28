@@ -100,15 +100,104 @@ class ServerSharingService:
     async def clone_shared_workspace(
         self, share_id: int, **payload: Any
     ) -> dict[str, Any]:
+        """Admit or replay a logical clone using its caller-retained key.
+
+        Args:
+            share_id: Recipient share identifier.
+            payload: Clone request fields, including name/new_name and a retained
+                idempotency_key.
+
+        Returns:
+            The durable operation receipt or a compatible legacy job response.
+
+        Raises:
+            ValueError: The clone request or returned receipt fails validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
         request_data = CloneWorkspaceRequest(**payload)
         result = await self._require_client().clone_shared_workspace(
             int(share_id), request_data
         )
         return self._as_dict(result)
 
+    async def get_shared_workspace_clone_operation(
+        self,
+        share_id: int,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Read a recipient-owned clone receipt, including after share revocation.
+
+        Args:
+            share_id: Recipient share identifier.
+            operation_id: UUID of the recipient-owned durable clone receipt.
+
+        Returns:
+            The receipt with operation identity, progress, result, and error details.
+
+        Raises:
+            ValueError: The operation UUID or returned receipt is invalid.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
+        return self._as_dict(
+            await self._require_client().get_shared_workspace_clone_operation(
+                int(share_id), operation_id
+            )
+        )
+
+    async def list_shared_workspace_source_page(
+        self,
+        share_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Read one validated source page with completeness metadata.
+
+        Args:
+            share_id: Recipient share identifier.
+            offset: Nonnegative source offset, defaulting to zero.
+            limit: Page size from 1 through 200, defaulting to 50.
+            q: Optional search text, 1 through 512 characters; sent unchanged.
+            state: Optional free-text status filter, 1 through 64 characters.
+
+        Returns:
+            Source items, pagination, summary, and partial errors without truncation.
+
+        Raises:
+            ValueError: Page filters or the returned page fail validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
+        return self._as_dict(
+            await self._require_client().list_shared_workspace_source_page(
+                int(share_id), offset=offset, limit=limit, q=q, state=state
+            )
+        )
+
     async def list_shared_workspace_sources(
         self, share_id: int
     ) -> list[dict[str, Any]]:
+        """Collect sources across advancing pages, including empty pages.
+
+        Args:
+            share_id: Recipient share identifier.
+
+        Returns:
+            All source rows in server page order.
+
+        Raises:
+            ValueError: A returned page is invalid or its cursor does not advance.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
         result = await self._require_client().list_shared_workspace_sources(
             int(share_id)
         )

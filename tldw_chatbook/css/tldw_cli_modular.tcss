@@ -3451,6 +3451,22 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 
+#mcp-inspector-test-result-raw > CollapsibleTitle {
+    width: $ds-width-full;
+    height: auto;
+    min-width: $ds-size-0;
+}
+
+#mcp-inspector-test-result-raw > Contents {
+    padding: $ds-space-0;
+}
+
+
+.mcp-compact #mcp-inspector-test-result-raw-scroll {
+    height: $ds-size-8;
+}
+
+
 #mcp-hub-grid.mcp-compact #mcp-hub-rail {
     width: $ds-fr-2;
     min-width: $ds-size-16;
@@ -5459,8 +5475,19 @@ StatCard:hover {
     color: $ds-surface-panel;
     text-style: bold;
 }
+
+#settings-theme-list > .option-list--option-disabled {
+    color: $ds-text-muted;
+    text-style: bold;
+}
 #settings-workbench.settings-workbench-compact #settings-theme-list {
     max-height: $ds-size-9;
+}
+
+#settings-theme-row-status {
+    height: $ds-size-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 #settings-theme-card-column .settings-action-row {

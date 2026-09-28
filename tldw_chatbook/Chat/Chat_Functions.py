@@ -83,7 +83,13 @@ from tldw_chatbook.provider_registry import (  # noqa: E402
     CEREBRAS,
     CUSTOM_HOSTED,
     DATABRICKS,
+    DEEPINFRA,
     FIREWORKS,
+    MINIMAX,
+    NEBIUS,
+    NOVITA,
+    NVIDIA,
+    SAMBANOVA,
     TOGETHER,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
@@ -178,6 +184,13 @@ API_CALL_HANDLERS = {
     "together": _LazyHostedChatHandler(TOGETHER),
     "fireworks": _LazyHostedChatHandler(FIREWORKS),
     "cerebras": _LazyHostedChatHandler(CEREBRAS),
+    # Doc-derived inference-cloud presets (TASK-33201).
+    "sambanova": _LazyHostedChatHandler(SAMBANOVA),
+    "nvidia": _LazyHostedChatHandler(NVIDIA),
+    "deepinfra": _LazyHostedChatHandler(DEEPINFRA),
+    "nebius": _LazyHostedChatHandler(NEBIUS),
+    "novita": _LazyHostedChatHandler(NOVITA),
+    "minimax": _LazyHostedChatHandler(MINIMAX),
     # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
     # gateway identity site swaps ``openai_compatible`` custom-ep entries to
     # this key when ``[console] custom_endpoints_use_engine`` is on. The
@@ -869,6 +882,12 @@ PROVIDER_PARAM_MAP = {
     "together": ENGINE_PROVIDER_PARAM_MAP,
     "fireworks": ENGINE_PROVIDER_PARAM_MAP,
     "cerebras": ENGINE_PROVIDER_PARAM_MAP,
+    "sambanova": ENGINE_PROVIDER_PARAM_MAP,
+    "nvidia": ENGINE_PROVIDER_PARAM_MAP,
+    "deepinfra": ENGINE_PROVIDER_PARAM_MAP,
+    "nebius": ENGINE_PROVIDER_PARAM_MAP,
+    "novita": ENGINE_PROVIDER_PARAM_MAP,
+    "minimax": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
 

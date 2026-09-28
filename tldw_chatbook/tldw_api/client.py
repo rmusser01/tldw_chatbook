@@ -1043,6 +1043,8 @@ from .sharing_schemas import (
     SharedWithMeResponse,
     SharedWorkspaceResponse,
     SharedWorkspaceSourceResponse,
+    SharedWorkspaceSourcePage,
+    SharedWorkspaceSourceQuery,
     TokenListResponse,
     TokenResponse,
     UpdateShareRequest,
@@ -2541,8 +2543,48 @@ class TLDWAPIClient:
             json_data=payload,
         )
 
-    async def delete_note_link(self, edge_id: str) -> Dict[str, Any]:
-        return await self._request("DELETE", f"/api/v1/notes/links/{edge_id}")
+    async def delete_note_link(
+        self,
+        edge_id: str,
+        *,
+        dataset_id: str | None = None,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
+        reason: str | None = None,
+    ) -> Dict[str, Any]:
+        """Delete the selected link with caller-owned version preconditions.
+
+        Args:
+            edge_id: Identifier of the selected Notes graph link.
+            dataset_id: Optional dataset containing the selected link.
+            expected_version: Version observed when the link was selected; never
+                refreshed here.
+            idempotency_key: Caller-retained key reused for retries of the same logical
+                operation.
+            reason: Optional audit reason for deleting the link.
+
+        Returns:
+            The server deletion acknowledgement; conflicts are not retried
+                automatically.
+
+        Raises:
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+                Server 409 and 428 precondition failures remain visible to the caller.
+        """
+        params = {
+            key: value
+            for key, value in {
+                "dataset_id": dataset_id,
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+                "reason": reason,
+            }.items()
+            if value is not None
+        }
+        return await self._request(
+            "DELETE", f"/api/v1/notes/links/{edge_id}", params=params or None
+        )
 
     async def list_workspaces(self) -> Dict[str, Any]:
         return await self._request("GET", "/api/v1/workspaces/")
@@ -8959,20 +9001,121 @@ class TLDWAPIClient:
         share_id: int,
         request_data: CloneWorkspaceRequest,
     ) -> CloneWorkspaceResponse:
+        """Admit or replay a logical clone using its caller-retained key.
+
+        Args:
+            share_id: Recipient share identifier.
+            request_data: Clone request containing canonical name and its retained
+                idempotency key.
+
+        Returns:
+            The durable operation receipt or a compatible legacy job response.
+
+        Raises:
+            ValueError: The clone request or returned receipt fails validation.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
         response = await self._request(
             "POST",
             f"/api/v1/sharing/shared-with-me/{share_id}/clone",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"Idempotency-Key": request_data.idempotency_key},
         )
         return CloneWorkspaceResponse.model_validate(response)
 
-    async def list_shared_workspace_sources(
-        self, share_id: int
-    ) -> list[SharedWorkspaceSourceResponse]:
+    async def get_shared_workspace_clone_operation(
+        self,
+        share_id: int,
+        operation_id: str,
+    ) -> CloneWorkspaceResponse:
+        """Read a recipient-owned clone receipt, including after share revocation.
+
+        Args:
+            share_id: Recipient share identifier.
+            operation_id: UUID of the recipient-owned durable clone receipt.
+
+        Returns:
+            The receipt with operation identity, progress, result, and error details.
+
+        Raises:
+            ValueError: The operation UUID or returned receipt is invalid.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
+        from uuid import UUID
+
+        normalized_id = str(UUID(operation_id))
         response = await self._request(
-            "GET", f"/api/v1/sharing/shared-with-me/{share_id}/sources"
+            "GET",
+            f"/api/v1/sharing/shared-with-me/{share_id}/clone/{normalized_id}",
         )
-        return [SharedWorkspaceSourceResponse.model_validate(item) for item in response]
+        return CloneWorkspaceResponse.model_validate(response)
+
+    async def list_shared_workspace_source_page(
+        self,
+        share_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> SharedWorkspaceSourcePage:
+        """Read one validated source page with completeness metadata.
+
+        Args:
+            share_id: Recipient share identifier.
+            offset: Nonnegative source offset, defaulting to zero.
+            limit: Page size from 1 through 200, defaulting to 50.
+            q: Optional search text, 1 through 512 characters; sent unchanged.
+            state: Optional free-text status filter, 1 through 64 characters.
+
+        Returns:
+            Source items, pagination, summary, and partial errors without truncation.
+
+        Raises:
+            ValueError: Page filters or the returned page fail validation.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
+        params = SharedWorkspaceSourceQuery(
+            offset=offset, limit=limit, q=q, state=state
+        ).model_dump(exclude_none=True)
+        response = await self._request(
+            "GET",
+            f"/api/v1/sharing/shared-with-me/{share_id}/sources",
+            params=params,
+        )
+        return SharedWorkspaceSourcePage.model_validate(response)
+
+    async def list_shared_workspace_sources(
+        self,
+        share_id: int,
+    ) -> list[SharedWorkspaceSourceResponse]:
+        """Collect sources across advancing pages, including empty pages.
+
+        Args:
+            share_id: Recipient share identifier.
+
+        Returns:
+            All source rows in server page order.
+
+        Raises:
+            ValueError: A returned page is invalid or its cursor does not advance.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
+        items: list[SharedWorkspaceSourceResponse] = []
+        offset = 0
+        while True:
+            page = await self.list_shared_workspace_source_page(share_id, offset=offset)
+            items.extend(page.items)
+            if not page.pagination.has_more:
+                return items
+            next_offset = page.pagination.offset + page.pagination.limit
+            if next_offset <= offset:
+                raise ValueError("Shared source pagination did not advance")
+            offset = next_offset
 
     async def get_shared_workspace_media(
         self, share_id: int, media_id: int

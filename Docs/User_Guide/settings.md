@@ -154,7 +154,7 @@ page links to each backend's setup guide and displays these restrictions.
 | Core | **Web Search** | Shared basic/deep search default, backend credentials, local setup checks, and explicit saved-settings test. | Draft — save with s |
 | Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
 | Interface | **Appearance** | Density and visual defaults shared with the app shell, plus a read-only theme row that links to the Theme picker. | Draft — save with s |
-| Interface | **Theme** | A filterable picker of every theme (yours, shipped, Textual's) with live preview, Use/Try/Revert, Edit/Rename/Delete/Export for your own, and an editor behind Clone/New/Edit. | Applies immediately |
+| Interface | **Theme** | A filterable picker of every theme (yours, shipped, built-in) with live preview, Use/Try/Revert, Edit/Rename/Delete/Export for your own, and an editor behind Clone/New/Edit. | Applies immediately |
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
@@ -393,9 +393,11 @@ workspace URL without credentials in the URL, then correct
 timeout/retry/streaming types under **Advanced Config**. Test the draft again
 before saving.
 
-#### Inference clouds (Together, Fireworks, Cerebras)
+#### Inference clouds
 
-**Together**, **Fireworks**, and **Cerebras** are engine presets: each one is
+**Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** are
+engine presets: each one is
 a provider registry record served through the shared strict hosted-provider
 engine (the same path Databricks uses), not a per-provider adapter. There is
 no API mode selector for any of them.
@@ -405,13 +407,28 @@ no API mode selector for any of them.
 | **Together** | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
 | **Fireworks** | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
 | **Cerebras** | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+| **SambaNova** | `https://api.sambanova.ai/v1` | `SAMBANOVA_API_KEY` |
+| **NVIDIA NIM** | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` |
+| **DeepInfra** | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_API_KEY` |
+| **Nebius Token Factory** | `https://api.tokenfactory.nebius.com/v1` | `NEBIUS_API_KEY` |
+| **Novita AI** | `https://api.novita.ai/openai/v1` | `NOVITA_API_KEY` |
+| **MiniMax** | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` |
 
-All three are **discovery-first**: no models ship in the config because each
-account serves a different catalog. The provider model list starts empty —
-fill it with **Discover models** (an authenticated `GET {base}/models` that
-reuses the chat credential) or by seeding `[providers].Together` /
-`[providers].Fireworks` / `[providers].Cerebras` manually. Until a model is
-set, readiness blocks sends with the model named as the missing piece.
+All except MiniMax are **discovery-first**: no models ship in the config
+because each account serves a different catalog. The provider model list
+starts empty — fill it with **Discover models** (an authenticated
+`GET {base}/models` that reuses the chat credential) or by seeding the
+provider's `[providers]` entry (for example `[providers].Together`) manually.
+Until a model is set, readiness blocks sends with the model named as the
+missing piece. **MiniMax** documents no models route, so its list ships
+seeded with the models its API reference names (`MiniMax-M3`,
+`MiniMax-M2.7`, …) and is not refreshed automatically.
+
+SambaNova, NVIDIA NIM, DeepInfra, Nebius, Novita, and MiniMax were set up
+from each provider's public API documentation rather than from a recorded
+response, so an unexpected field in
+a real reply fails with a protocol error instead of being passed through.
+If that happens, please report the provider and the error.
 
 Function tools are exposed for the models that support them. Reasoning
 differs by provider: Together and Cerebras have no reasoning-effort control,
@@ -419,11 +436,23 @@ while **Fireworks keeps R1-family model reasoning private** — the server
 reasons behind its own API surface and does not stream it with the reply, so
 reasoning does not appear in transcripts (any `reasoning_content` the server
 does return gets Z.ai's private treatment: kept off the live stream). That is
-provider behavior, not the app dropping output.
+provider behavior, not the app dropping output. **NVIDIA NIM**, **Nebius**,
+**Novita**, and **MiniMax** reasoning models get the same private treatment;
+Novita and MiniMax are asked to return reasoning separately so it never
+leaks into the reply text as `<think>` tags. **SambaNova** documents reasoning
+inline as `<think>` text on non-streaming replies (streamed replies send it in
+a separate field, which is dropped); this preset does not split the inline
+form out of the reply text.
+
+**NVIDIA NIM** streams do not report token usage, so streamed NVIDIA replies
+show no token counts. Nebius and MiniMax treat a `content_filter` finish as
+a provider error rather than a partial reply.
+
+GitHub Models and Hyperbolic are not offered: both services retired their
+hosted inference APIs in 2026.
 
 If Test Provider reports invalid settings, keep exactly one canonical
-`[api_settings.together]` / `[api_settings.fireworks]` /
-`[api_settings.cerebras]` table, set the API key (or its env var), and leave
+`[api_settings.<provider>]` table (for example `[api_settings.together]`), set the API key (or its env var), and leave
 the shipped `api_base_url` unless your account documents a different one.
 Test the draft again before saving.
 
@@ -598,16 +627,32 @@ Library readers after a successful save.
 ### Interface — Theme
 
 Theme now opens on a **picker**, not the editor. A **Filter themes** box
-narrows the list live, by display name or id. Below it, one grouped,
+narrows the list live, by theme name or id (not by group words such as
+"built-in" or "shipped" — the group headings already sort by those). Below it, one grouped,
 scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then
-**TEXTUAL** (Textual's own built-ins) — each group's heading shows a count
-while you're filtering (e.g. "SHIPPED (12)"). Every row paints a seven-colour
+**BUILT-IN** (the themes that come with the Textual framework) — each group's heading shows a count
+while you're filtering (e.g. "SHIPPED (12)"); the headings are bold, muted
+text, not greyed-out rows. Every row paints a seven-colour
 strip plus word markers, never colour alone: **active** on the theme running
 right now, **launch** on the configured launch default, and **overrides
-shipped** / **overrides textual** when one of your saved themes shadows a
-built-in name of the same id. Moving the highlight (mouse or **↑**/**↓**)
+shipped** / **overrides built-in** when one of your saved themes shadows a
+theme of the same id. Two themes whose names read the same (Textual's
+`solarized-dark` and the shipped `solarized_dark`) are told apart by their
+origin — "Solarized Dark · built-in" and "Solarized Dark · shipped" — and
+only fall back to the id when both come from the same group. Each row stays
+on one line: when the list is too narrow (e.g. at 80x24), the row keeps at
+least ten cells of the name and gives up the rest in this order — "overrides
+built-in" shortens to "overrides", then that marker goes, then the strip drops
+to three colours, then **launch** goes; **active** always stays. Only then is
+the name cut short with "…". Whatever the highlighted row had to shorten or
+drop is spelled out on the line under the list — e.g. "launch default ·
+overrides built-in" — so it stays visible even when the preview card is
+scrolled out of view; the line is blank when the row already shows it all.
+Moving the
+highlight (mouse, **↑**/**↓** or **j**/**k**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
-dark/light · yours/shipped/textual") and a live swatch preview — without
+dark/light · yours/shipped/built-in", the origin named once even for a
+name like "Solarized Dark · built-in") and a live swatch preview — without
 touching the app you're actually using. The list takes all the height the
 detail pane has (at full-screen sizes it no longer stops at 24 rows), and the
 highlighted row is filled in the theme's primary text colour as well as bold.
@@ -617,6 +662,9 @@ longer exists (its file was deleted or renamed outside the app), a notice
 appears above the list — "Launch default missing: \<id\> — Use any theme to
 fix it" — the same wording Appearance's summary row uses; using any theme
 clears it.
+
+Entering Theme — from the rail or Appearance's **Open Theme** — puts focus
+in the list, so these keys work at once.
 
 **Keys**, active while the list has focus: **Enter** (or the **Use this
 theme** button) — switch to the highlighted theme now *and* save it as the
@@ -628,12 +676,15 @@ top row returns focus to the filter box instead of wrapping to the bottom.
 When the highlighted theme is one of **yours**, three more keys work: **e** —
 **Edit** it in place (no `_copy` suffix, unlike Clone), **r** — **Rename**,
 and **Delete** — remove it. These three, plus **Export**, have no effect on a
-shipped or Textual theme (Clone or New it first to make your own copy).
+shipped or built-in theme (Clone or New it first to make your own copy).
 While the list has focus the footer lists these keys; **F1** lists them too.
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
-match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
-starts from the theme you are running.
+match '\<text\>'" with a **Clear filter** button under it, the preview card
+is empty, and Enter does nothing; **New** (**n**) still works and starts from
+the theme you are running. Clearing the filter (the button, or deleting the
+text) returns the highlight to the theme you had before filtering, or else to
+the active theme.
 
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
@@ -648,9 +699,16 @@ longer a registered theme (the "Launch default missing" case), Revert does not
 write it back: the label reads "Revert to \<theme\> (launch unchanged)" and
 the saved launch default stays as it is. The Revert button hides whenever
 pressing it would change nothing — its theme is already the one running and
-the launch default would not change (e.g. you switched back by hand). Toasts name what happened: Try says
+the launch default would not change (e.g. you switched back by hand). Switching back to a
+theme you used recently in this session (Revert, or returning to an earlier row) is
+faster than the first switch to it: the app keeps the styling it built for your last
+four themes. Toasts name what happened: Try says
 "Trying \<name\> for this
-session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
+session"; Use switches at once and saves the launch default in the
+background, then says "\<name\> is now your theme (was: \<previous\>)" (quitting
+waits for that save to finish; a Revert or palette switch right after Use
+drops that toast, since it no longer holds — and Revert, too, saves in the
+background and always lands after Use's save); if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
 crashes and Revert stays available. If the save lands but the in-process
@@ -666,20 +724,42 @@ creating — **Clone**, **New** and **Import…**; and, for **your themes** only
 **Edit**, **Rename**, **Export** and **Delete**. Each group is one row when the
 card is at least 48 columns wide; on a narrower card (always at compact
 width) every button takes its own full-width row. The your-theme group is
-visible only when the highlighted theme is one of yours (a shipped or Textual theme shows neither
+visible only when the highlighted theme is one of yours (a shipped or built-in theme shows neither
 the row's buttons nor its keys; Clone or New it first). An empty YOUR THEMES
 group shows a disabled "(none yet)" row instead. The themes folder is read in
 the background: the first time the picker opens, YOUR THEMES shows a disabled
 "Loading your themes…" row until the read finishes, and after a file action
 or Back from the editor the previous list stays up until the new one arrives.
+File actions (Save, Save as…, Rename, Delete, Import…, Export) also read and
+write in the background, so the screen stays responsive with many saved
+themes; they run one at a time, and a second one started meanwhile waits for
+the first — even one started after you left Theme and came back. Leaving
+Theme or quitting mid-action does not cut it short — including an action
+you confirmed in its dialog. Quitting waits up to five seconds in all for
+running file actions and the launch-default save together, and starts no new
+file action ("Theme file action not started: the app is quitting"). An action finishes only its own file once you have moved on
+(Back, or opened another theme): it does not change what the editor now shows,
+and if it would have needed a confirmation it skips it and says so ("Did not
+delete '\<name\>': the theme editor changed meanwhile. Delete it again.").
+Leaving the editor while a Save is still running does not ask about unsaved
+changes: Back and leaving wait for the Save, and stay in the editor, edits
+kept, if it fails (its toast says why) or asks to overwrite.
 **Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
-`_copy`. **Rename** and **Delete** ask first: Rename opens a name prompt
-("Rename theme '\<old\>'"); a name already in use answers "Name taken:
-'\<new\>'" and changes nothing. Renaming your launch default updates the
+`_copy`. **Rename** and **Delete** ask first, and every theme dialog names
+the theme as the list shows it together with its file ("'Warm Paper'
+(warm_paper.toml)"): Rename opens a name prompt ("Rename theme 'Warm Paper'
+(warm_paper.toml)"); a name already in use ("Name taken: '\<new\>'") or an
+invalid one shows its reason inside the prompt, which stays open with what
+you typed so you can correct it. Renaming your launch default updates the
 saved launch default to the new name without changing the theme you are
 running (if it is the running theme, the app follows it to the new name). **Delete** confirms ("Delete the saved theme
-'\<name\>'? This removes the theme file and cannot be undone."); if the
+'\<Name\>' (\<file\>.toml)? This removes the theme file and cannot be undone."),
+and when the theme is in use the dialog says what happens next: "It is your
+current and launch theme; the app will switch to Textual Dark and launch
+with it.", "It is your launch theme; the app will launch with Textual Dark
+from now on.", or "It is your current theme; the app will switch to your
+launch theme, \<Name\>." (Textual Dark if that launch theme is missing). If the
 deleted theme is both the launch default and the one on screen, the launch
 default and the running theme both reset to Textual Dark and the toast says
 so; if it is the launch default but not the one on screen, only the launch
@@ -687,13 +767,20 @@ default setting resets to Textual Dark — the running theme is left alone —
 and the toast says "launch default reset to Textual Dark"; if it was merely
 active (not the launch default) it switches to your launch default instead;
 and either way, deleting a saved theme that reuses a shipped or built-in
-name (say `nord`) brings the original back. **Export** writes the saved
-file to your Downloads folder and asks before replacing an earlier export;
+name (say `nord`) brings the original back. **Export** asks where to write
+the saved file, prefilled with `~/Downloads/<name>_theme.toml`. The path must
+be absolute, end in `.toml`, and be in a folder that already exists (only the
+Downloads folder is created if missing) other than the themes folder — however
+it is spelled (`..`, a symlinked folder, a different letter case); a
+folder, symlink or other non-file at that path is refused. Each refusal shows
+inside the prompt, which keeps what you typed. An existing file is replaced
+only after an "Overwrite export" confirmation;
 on success the card shows "Exported to \<full path\>" with a **Copy path**
 button (copies the path to the clipboard and confirms "Path copied") — the
 row clears the next time you highlight a different theme.
 
-A saved file that can't be read — invalid TOML, a missing or unparseable
+A saved file that can't be read — invalid TOML (the card names the line
+and column, e.g. "not valid TOML (line 3, column 1)"), a missing or unparseable
 primary colour, a `[colors]` key that isn't one of the ten base colours, a
 colour that isn't `#RGB`, `#RRGGBB` or `#RRGGBBAA` ("invalid colour 'secondary'"), or
 a name containing control characters ("name has control characters"), a
@@ -701,8 +788,8 @@ name starting with a reserved prefix ("reserved name"), a symlinked or
 hard-linked file ("not a regular file"), or a second file claiming a name
 another file already holds ("duplicate of '\<name\>'"; the app uses the
 later file) — is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
-the reason as both a short label on the card and every disabled button's
-tooltip. It is listed even when its file name matches a shipped or Textual
+the reason as both a short label on the card — shown in place of the preview,
+which a broken file can't paint — and every disabled button's tooltip. It is listed even when its file name matches a shipped or Textual
 theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
 Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
 pressing one of their keys shows the reason instead. Only **Delete** works,
@@ -727,10 +814,12 @@ unescapes every backslash-escaped character a drop pastes on macOS
 #RGB, #RRGGBB or #RRGGBBAA" — no names or `rgb(…)`), invalid TOML, or a name that isn't
 filename-safe, contains `[`, contains control characters, or starts with
 `custom_` or `unreadable:` each refuse with a specific reason and write
-nothing. A `[variables]` entry that isn't a colour
+nothing. The reason shows inside the Import prompt, which stays open with
+the path you typed; invalid TOML names the parser's line and column ("File
+is not valid TOML (line 3, column 1)"). A `[variables]` entry that isn't a colour
 (or `auto NN%`, or a text style) is dropped with a warning instead, the same
 as Save. Importing a name you already have asks first ("Replace the saved
-theme '\<name\>'?"); Cancel leaves the existing file byte-for-byte
+theme '\<Name\>' (\<file\>.toml)?"); Cancel leaves the existing file byte-for-byte
 unchanged. On success the picker highlights the new theme and shows
 "Imported '\<name\>'".
 

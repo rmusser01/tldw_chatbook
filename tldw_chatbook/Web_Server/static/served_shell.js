@@ -8,9 +8,23 @@
   const openButton = document.getElementById("served-open-canvas");
   const closeButton = document.getElementById("served-close-canvas");
   const restartButton = document.getElementById("terminal-restart");
+  const terminal = document.getElementById("terminal");
   let latest = null;
   let userClosed = false;
   let pollTimer = null;
+  let canvasDisabled = false;
+
+  // The terminal websocket is always same-origin. The server-substituted
+  // absolute URL (from public_url, default localhost) only matches the page
+  // host when that default is right; loading the page via 127.0.0.1, a LAN
+  // IP, or any other name crossed the session-cookie boundary and the
+  // socket died at the handshake ("Terminal session ended"). textual.js
+  // reads this attribute when it connects at window.onload, which always
+  // runs after this deferred script, so the override wins.
+  if (terminal) {
+    terminal.dataset.sessionWebsocketUrl =
+      (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+  }
 
   function setStatus(message) {
     if (state.textContent !== message) state.textContent = message;
@@ -48,8 +62,21 @@
   }
 
   function disableCanvas() {
+    // Latch before anything else: an older refreshCanvasState() request may
+    // still be in flight and resolve with a "ready" state AFTER the
+    // disabling 404, and with the poll stopped nothing would correct the
+    // state -- applyState must ignore it permanently (PR #2856 Qodo #5).
+    canvasDisabled = true;
     latest = null;
     userClosed = false;
+    // A 404 from /canvas/api/session means Canvas is unavailable at the
+    // server (kill switch off): it cannot become ready again without a
+    // server restart and page reload, so the 1 Hz poll would only burn
+    // requests forever.
+    if (pollTimer !== null) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    }
     frame.setAttribute("src", "about:blank");
     region.hidden = true;
     workbench.classList.add("terminal-only");
@@ -60,6 +87,7 @@
   }
 
   function applyState(detail) {
+    if (canvasDisabled) return;
     if (!detail || typeof detail !== "object") return;
     if (detail.status === "ready") {
       const url = safeCanvasPath(detail.url);

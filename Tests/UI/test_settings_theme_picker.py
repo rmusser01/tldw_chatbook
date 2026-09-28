@@ -1,11 +1,12 @@
+import types
 from types import SimpleNamespace
 
 import pytest
 from textual import on
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.content import Content
 from textual.theme import Theme
-from textual.widgets import Button, OptionList
+from textual.widgets import Button, Input, OptionList
 
 from Tests.private_profile import private_profile_test
 from Tests.textual_test_harness import IsolatedWidgetTestApp
@@ -28,7 +29,10 @@ def _app(*widgets):
     def compose() -> ComposeResult:
         yield from widgets
 
-    return IsolatedWidgetTestApp(compose)
+    app = IsolatedWidgetTestApp(compose)
+    # TASK-33121: Use writes the launch default in an app worker.
+    app.run_worker = types.MethodType(App.run_worker, app)
+    return app
 
 
 @pytest.mark.asyncio
@@ -118,6 +122,7 @@ async def test_filter_narrows_and_enter_uses(request, config_writes):
         await pilot.pause()
         assert app.focused.id == "settings-theme-list"
         await pilot.press("enter")          # Use
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert app.theme == picker.highlighted_id
         assert config_writes[-1] == {"general": {"default_theme": app.theme}}
@@ -154,6 +159,28 @@ async def test_highlight_repaints_preview_not_app(request, config_writes):
             display_name_for(picker, picker.highlighted_id)
             in str(picker.query_one("#settings-theme-card-title").render())
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_shared_name_shows_origin_once_and_filter_ignores_origin_words(request, config_writes):
+    """P3 review M3/M4: a name shared across origins is labelled "X · built-in";
+    the card title used to repeat the origin ("X · built-in  ·  light ·
+    built-in") and the filter "built" listed just those few rows."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        shared = next(e for e in picker.entries if e.display_name.endswith(" · built-in"))
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index(shared.id)
+        await pilot.pause()
+        title = str(picker.query_one("#settings-theme-card-title").render())
+        assert title.count("built-in") == 1, title
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"built")
+        await pilot.pause()
+        assert shared.id not in _option_ids(picker)
 
 
 def display_name_for(picker, theme_id):
@@ -284,6 +311,7 @@ async def test_use_toast_when_persist_fails(request, monkeypatch, config_writes)
     async with app.run_test(size=(160, 45)) as pilot:
         picker.query_one("#settings-theme-list").focus()
         await pilot.press("down", "enter")
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any("launch default was not saved" in n for n in notes)
 
@@ -301,6 +329,7 @@ async def test_use_toast_warns_when_cache_reload_fails(request, monkeypatch, con
     async with app.run_test(size=(160, 45)) as pilot:
         picker.query_one("#settings-theme-list").focus()
         await pilot.press("down", "enter")  # Use (persisted, cache reload fails)
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any(
             "is now your theme" in message
@@ -385,6 +414,7 @@ async def test_revert_label_names_the_launch_default_when_it_differs(request, co
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         revert = picker.query_one("#settings-theme-revert", Button)
         assert str(revert.label) == (
@@ -406,6 +436,7 @@ async def test_revert_leaves_a_missing_launch_default_alone(request, config_writ
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         revert = picker.query_one("#settings-theme-revert", Button)
         assert str(revert.label) == f"Revert to {tc.display_name('textual-dark')} (launch unchanged)"
@@ -432,6 +463,7 @@ async def test_revert_chip_hides_when_it_would_change_nothing(request, config_wr
         assert not revert.display
         picker.highlighted_id = "apricot"
         picker.use_highlighted()  # persisted: launch default -> apricot
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert revert.display
         app.theme = "textual-dark"  # active matches, launch default still differs
@@ -568,6 +600,24 @@ async def test_empty_your_themes_says_none_yet(request, config_writes):
         await pilot.pause()
         prompts = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
         assert "(none yet)" not in prompts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_builtin_group_has_a_user_facing_title(request, config_writes):
+    """TASK-33073: Textual's own themes are grouped as BUILT-IN, not by the
+    framework's name."""
+    app, picker = await _picker_app(list_user_names=set)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        headers = [
+            str(lst.get_option_at_index(i).prompt)
+            for i in range(lst.option_count)
+            if lst.get_option_at_index(i).id is None
+        ]
+        assert any(h.startswith("BUILT-IN") for h in headers), headers
+        assert not any("TEXTUAL" in h for h in headers), headers
 
 
 @pytest.mark.asyncio
@@ -769,12 +819,13 @@ async def test_revert_and_apply_failure_toasts_show_a_markup_name_literally(requ
         def boom(*_args, **_kwargs):
             raise ValueError("theme 'x[/]' is gone")
 
-        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.revert_theme", boom)
+        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.start_revert", boom)
         picker.query_one("#settings-theme-revert", Button).press()
         await pilot.pause()
         assert "Could not revert the theme: theme 'x[/]' is gone" in notes
         monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.use_theme", boom)
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any(n.endswith(": theme 'x[/]' is gone") and n.startswith("Could not apply") for n in notes)
 
@@ -955,6 +1006,7 @@ async def test_revert_label_strips_control_characters_from_the_launch_default(
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         label = str(picker.query_one("#settings-theme-revert", Button).label)
         # TASK-33061: a launch default that is no registered theme is never
@@ -1240,3 +1292,231 @@ async def test_apply_scan_outcomes_set_availability_and_listing(request, config_
         assert picker.files_available is True and _yours(picker) == {"other"}
 
     await _mounted_picker(body)
+
+
+# -- Critique #3 P3 wave (lane A) ---------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_row_shows_its_error_in_place_of_the_preview(request, config_writes):
+    """TASK-33067: an unreadable row painted every preview row #808080 on
+    #808080 (1:1); the error line stands in for the preview instead."""
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: (set(), {"a": "bad colour"}))
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("unreadable:a")
+        await pilot.pause()
+        assert picker.query_one("#settings-theme-card-error").display
+        assert not picker.query_one(ThemePreview).display
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        assert picker.query_one(ThemePreview).display
+        assert not picker.query_one("#settings-theme-card-error").display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_no_match_filter_offers_clear_and_restores_the_previous_highlight(request, config_writes):
+    """TASK-33069: spec §9 Clear filter chip, no stale preview, and clearing
+    lands back on the theme highlighted before the filter -- not row 1."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        clear = picker.query_one("#settings-theme-clear-filter", Button)
+        assert not clear.display
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"zzzqqq")
+        await pilot.pause()
+        assert clear.display
+        assert not picker.query_one(ThemePreview).display
+        assert str(picker.query_one("#settings-theme-card-title").render()) == ""
+        clear.press()
+        await pilot.pause()
+        assert picker.query_one("#settings-theme-filter").value == ""
+        assert picker.highlighted_id == "nord"
+        assert lst.highlighted == lst.get_option_index("nord")
+        assert picker.query_one(ThemePreview).display
+        assert not clear.display
+        assert app.focused is lst
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clearing_a_no_match_filter_by_hand_falls_back_to_the_active_theme(request, config_writes):
+    """TASK-33069 AC2: with no earlier highlight left to return to, clearing
+    lands on the active theme, not the first row (an unreadable file here)."""
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: (set(), {"a": "bad"}))
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"zzzqqq")
+        await pilot.pause()
+        picker._prefilter_highlight = None  # nothing to return to
+        picker.query_one("#settings-theme-filter").value = ""
+        await pilot.pause()
+        assert picker.highlighted_id == str(app.theme)
+
+
+async def _filter_then_clear(pilot, picker, lst, *, move: bool):
+    """Highlight nord, filter it out, optionally move, then delete the
+    filter text by hand (Clear filter only shows on a no-match filter,
+    where nothing is highlighted to fall back from or move to)."""
+    lst.highlighted = lst.get_option_index("nord")
+    await pilot.pause()
+    field = picker.query_one("#settings-theme-filter", Input)
+    field.focus()
+    await pilot.press(*"textual")
+    await pilot.pause()
+    fallback = picker.highlighted_id
+    assert fallback not in (None, "nord")
+    moved_to = None
+    if move:
+        moved_to = next(
+            lst.get_option_at_index(i).id
+            for i in range(lst.option_count)
+            if lst.get_option_at_index(i).id not in (None, fallback)
+        )
+        lst.highlighted = lst.get_option_index(moved_to)
+        await pilot.pause()
+        field.focus()
+        await pilot.press("-")  # still filtering after the move
+        await pilot.pause()
+        assert picker.highlighted_id == moved_to
+    field.focus()
+    await pilot.pause()
+    await pilot.press(*["backspace"] * len(field.value))
+    await pilot.pause()
+    assert field.value == ""
+    return moved_to
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clearing_a_filter_returns_from_the_filtered_fallback(request, config_writes):
+    """Qodo 4118068766: the row the filter fell back to never outranks the
+    highlight from before the filter when the filter text is deleted."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        await _filter_then_clear(pilot, picker, lst, move=False)
+        assert picker.highlighted_id == "nord"
+        assert lst.highlighted == lst.get_option_index("nord")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clearing_a_filter_keeps_a_highlight_the_user_moved_to(request, config_writes):
+    """A row the user moved to while filtering is their choice: it stays
+    highlighted when the filter clears."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        moved_to = await _filter_then_clear(pilot, picker, lst, move=True)
+        assert picker.highlighted_id == moved_to
+        assert lst.highlighted == lst.get_option_index(moved_to)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_j_and_k_move_the_list_highlight(request, config_writes):
+    """TASK-33072 AC2."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("nord")
+        lst.focus()
+        await pilot.pause()
+        start = lst.highlighted
+        await pilot.press("j")
+        await pilot.pause()
+        assert lst.highlighted > start and picker.highlighted_id != "nord"
+        await pilot.press("k")
+        await pilot.pause()
+        assert lst.highlighted == start and picker.highlighted_id == "nord"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_row_truncates_only_the_name_to_fit(request):
+    """TASK-33074: the name gives way (ellipsis); strip and markers stay."""
+    from tldw_chatbook.Widgets.settings_theme_picker import _row
+
+    entry = tc.ThemeEntry(
+        id="x",
+        display_name="A Very Long Theme Name That Keeps Going",
+        origin="yours",
+        dark=True,
+        colours=tuple((key, "#112233") for key in tc.STRIP_KEYS),
+        is_active=True,
+        is_launch_default=False,
+    )
+    full = _row(entry).plain
+    assert full.startswith("A Very Long Theme Name That Keeps Going")
+    fitted = _row(entry, 30)
+    assert fitted.cell_len <= 30
+    assert "…" in fitted.plain and "▮" * len(tc.STRIP_KEYS) in fitted.plain and fitted.plain.endswith("active")
+
+
+@pytest.mark.parametrize("width", [32, 26])
+def test_row_tail_gives_way_before_the_name(width):
+    """P3 review I2: active + launch + overrides used to leave the name as a
+    bare ellipsis and still overflow the row. The tail shrinks first; the
+    name keeps a readable prefix and "active" never drops."""
+    from tldw_chatbook.Widgets.settings_theme_picker import _row
+
+    entry = tc.ThemeEntry(
+        id="textual-dark",
+        display_name="Textual Dark",
+        origin="yours",
+        dark=True,
+        colours=tuple((key, "#112233") for key in tc.STRIP_KEYS),
+        is_active=True,
+        is_launch_default=True,
+        overrides="textual",
+    )
+    assert _row(entry).plain.endswith("active · launch · overrides built-in")
+    fitted = _row(entry, width)
+    assert fitted.cell_len <= width, fitted.plain
+    assert fitted.plain.startswith("Textual D"), fitted.plain
+    assert "active" in fitted.plain
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_dropped_status_names_only_what_the_row_lost(request):
+    """TASK-33122: the line under the list spells out launch/overrides when
+    the fitted row dropped either, and stays blank otherwise."""
+    from tldw_chatbook.Widgets.settings_theme_picker import _dropped_status, _row
+
+    def entry(**flags):
+        return tc.ThemeEntry(
+            id="textual-dark",
+            display_name="Textual Dark",
+            origin="yours",
+            dark=True,
+            colours=tuple((key, "#112233") for key in tc.STRIP_KEYS),
+            **flags,
+        )
+
+    both = entry(is_active=True, is_launch_default=True, overrides="textual")
+    assert _dropped_status(both, None) == ""
+    assert _dropped_status(both, 200) == ""
+    for width in (40, 32, 26):  # "overrides built-in" shortened, dropped, then "launch" too
+        assert _dropped_status(both, width) == "launch default · overrides built-in", width
+    assert "launch" not in _row(both, 26).plain
+    assert _dropped_status(entry(is_active=True, is_launch_default=False), 26) == ""
+    assert _dropped_status(entry(is_active=False, is_launch_default=True), 200) == ""

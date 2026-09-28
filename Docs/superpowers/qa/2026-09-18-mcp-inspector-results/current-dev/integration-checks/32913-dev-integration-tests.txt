@@ -1,0 +1,26 @@
+.................                                                        [100%]
+============================= slowest 25 durations =============================
+5.70s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-light]
+5.45s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size0-textual-dark]
+5.17s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-dark]
+4.98s call     Tests/UI/test_mcp_inspector_results.py::test_raw_response_keyboard_access_survives_resize[size1-textual-light]
+3.77s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True]
+3.55s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False]
+3.54s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False]
+3.53s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True]
+1.31s call     Tests/App/test_umask002_fallback_root_boot.py::test_two_boots_under_umask_002_with_fallback_root
+
+(16 durations < 1s hidden.)
+17 passed in 40.22s
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-043ab760-c1ac-4ab2-9b0a-c462fab55778/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-043ab760-c1ac-4ab2-9b0a-c462fab55778/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-043ab760-c1ac-4ab2-9b0a-c462fab55778
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-043ab760-c1ac-4ab2-9b0a-c462fab55778'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-bf5c6661-ca37-4115-98e9-de4c7f4aa71a/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-bf5c6661-ca37-4115-98e9-de4c7f4aa71a/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+<repo>/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing <tmp>/pytest-of-user/garbage-bf5c6661-ca37-4115-98e9-de4c7f4aa71a
+<class 'OSError'>: [Errno 66] Directory not empty: '<tmp>/pytest-of-user/garbage-bf5c6661-ca37-4115-98e9-de4c7f4aa71a'
+  warnings.warn(

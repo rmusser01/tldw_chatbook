@@ -63,9 +63,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011 decomposition: lowered as each extraction PR lands
     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
     # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658; task-33081 on dev
-    # +24 -> 19,682; Library ingest queue -> app_ingest_queue.py: 19,682 ->
-    # 14,739).
-    "tldw_chatbook/app.py": 14739,
+    # +24 -> 19,682; dev growth (theme tail, Dreams wiring) +191 -> 19,873;
+    # Library ingest queue -> app_ingest_queue.py: 19,873 -> 14,930).
+    "tldw_chatbook/app.py": 14930,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     "tldw_chatbook/app_ingest_queue.py": 4999,

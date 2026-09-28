@@ -12,7 +12,7 @@ import re
 import json
 import math
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Never, Protocol, cast
@@ -166,8 +166,16 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         allowed_choice_keys: frozenset[str] = frozenset(),
         allowed_message_keys: frozenset[str] = frozenset(),
         tolerant_top_level_extras: bool = False,
+        usage_optional: bool = False,
+        event_check: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         self._records = records
+        # Provider-specific check on each decoded event before parsing
+        # (TASK-33201: MiniMax status envelope); may raise ChatProviderError.
+        self._event_check = event_check
+        # A provider whose documented chunk schema has no usage (TASK-33201):
+        # [DONE] without usage ends a usage-None turn; nothing else relaxes.
+        self._usage_optional = usage_optional
         self._finish_policy = finish_policy
         self._allowed_extra_keys = allowed_extra_keys
         self._allowed_choice_keys = allowed_choice_keys
@@ -210,7 +218,8 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             # captured long-tail servers ship none) ends a usage-None turn;
             # a missing finish reason still fails (controller ruling b).
             if self._finish_reason is None or (
-                self._usage is None and not self._tolerant
+                self._usage is None
+                and not (self._tolerant or self._usage_optional)
             ):
                 self.close()
                 raise HostedChatProtocolError(
@@ -233,6 +242,8 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             self.close()
             raise HostedChatProtocolError("Hosted Chat stream JSON is malformed.")
         try:
+            if self._event_check is not None:
+                self._event_check(cast(Mapping[str, Any], event))
             safe_event = self._consume_event(cast(Mapping[str, Any], event))
         except (HostedChatProtocolError, ChatProviderError):
             self.close()

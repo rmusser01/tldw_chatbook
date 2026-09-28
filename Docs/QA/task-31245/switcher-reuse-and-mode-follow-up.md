@@ -104,3 +104,30 @@ new native-terminal acceptance. On a restarted fixed build, verify:
 Task-31245 stays In Progress. Existing native, Windows, participant, and deferred
 performance qualifications in the main QA report are not waived. Existing
 ADR-120, ADR-031, and ADR-097 apply; no new architectural decision is required.
+
+## 2026-09-25 qualification refresh
+
+The merged code's focused tests were rerun on a clean isolated checkout of
+`461668df00` (a descendant of PR #2487). Later config-participant admission
+had made the mounted tests' per-case profile redirects invalid before any
+switcher action. The test module now uses its collection-time private profile,
+as other source-bound mounted suites do. Later Console visit ownership also
+required the unit doubles to expose the optional visit callbacks and
+`resume_if` argument. No product code changed.
+
+The installed scope-refresh test uses Console's Alt+I Inspector shortcut; its
+incidental pointer click had become out of bounds under the current layout.
+Wait failures now identify the switcher stage. After these test-only repairs,
+the focused unit file passed **12/12** and the installed switcher file passed
+**14/14**, including all four History/Character reopening combinations with
+both current and inactive tabs, exact saved identity, 52x20/120x50 mode paint,
+and scope refresh. Ruff checks and whitespace checks passed. Earlier attempts
+included an isolated private SQLite helper timeout and two 5-second wait
+timeouts that passed on retry; keep those attempts in the evidence history.
+
+The short native-terminal smoke remains unverified: the prior QA window was
+removed, the shell-side controller daemon could not start in this host session,
+and the connected desktop controller refuses terminal-app control. No native
+keyboard or screenshot outcome is inferred from the mounted tests. TASK-31245
+remains In Progress; Windows, participant, and performance evidence also remain
+open.
