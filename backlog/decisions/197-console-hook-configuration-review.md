@@ -1,0 +1,82 @@
+# ADR-197: Console hook configuration review and local consent
+
+Date: 2026-09-27
+Status: Proposed; native layout approved, written spec awaiting review
+Task: [TASK-33151](../tasks/task-33151%20-%20Design-Console-hook-settings-and-persistent-review.md)
+Spec: [Console hook settings and review](../../Docs/superpowers/specs/2026-09-27-console-hook-settings-and-review-design.md)
+Extends: [ADR-148](148-console-run-hooks.md)
+Follows: [ADR-033](033-settings-commit-models-three-honestly-labeled.md),
+[ADR-029](029-local-private-data-boundary.md),
+[ADR-069](069-console-project-instruction-local-state-and-preflight.md), and
+[ADR-150](150-design-token-system-and-design-language.md)
+
+## Context
+
+The existing user-scope hooks execute validated external argv commands through one
+ConsoleRuntime engine, but have no consent store, guided Settings editor, or visible
+permissions control. The user approved a native Console toolbar icon, a review
+modal, canonical Settings editing, one-time review of existing hooks, and review of
+new/changed hooks on the next Send. Approvals must survive restarts.
+
+The existing Approvals chip belongs to tool requests, the composer has bounded
+width, and Settings already owns category/detail/impact panes and config writes.
+An editor-only or screen-only gate would leave shared/background execution open.
+
+## Decision
+
+1. Add Hooks beside Settings in the visible ConsoleControlBar, with an enabled
+   pending count and access to current permissions. Use one native review modal
+   with expandable exact definitions and a canonical Settings Hooks deep-link.
+   Hook configuration uses Settings' staged Save/Revert contract.
+2. Require explicit consent for every enabled user hook, including existing
+   definitions. Automatic review happens before next manual Send/queue acceptance,
+   preserving drafts on cancellation. No immediate discovery popup or grandfathered
+   execution. Background submissions require the same consent without opening UI.
+3. Scope each grant to the effective user config file, hook identity, and a
+   versioned fingerprint of event, ordered argv, matcher, and timeout. Add optional
+   stable IDs and per-hook enable flags while preserving legacy config parsing.
+   IDs and enable switches never confer authority. Legacy identity is definition
+   plus duplicate occurrence, never raw array position.
+4. Store observed metadata and current grants in a small private, atomic local
+   JSON file owned by the shared runtime, separate from user TOML and MCP tool
+   profiles. Protect its canonical live path with the existing sensitive-path
+   exclusions. Missing/corrupt state or persistence failure cannot permit execution.
+   Settings retains the existing config writer and stale-snapshot checks.
+5. Enforce consent at shared admission and immediately before every hook process
+   launch. Pending guard definitions must not become silent permission bypasses.
+   Revocation fences future launches and queued notifications; already launched
+   processes retain existing timeout/shutdown ownership.
+6. Preserve ADR-148's six-event, argv-only, user-scope, deny-only protocol and its
+   execution-error semantics. Consent is an earlier admission requirement, not a
+   tool permission grant or executable-content signature. Project instructions
+   cannot approve hooks. Managed plugins and v2 effects remain governed by
+   [ADR-162](162-managed-agent-plugins.md) and
+   [ADR-163](163-expanded-console-hook-runtime.md), outside this implementation.
+
+## Alternatives
+
+| Alternative | Reason not chosen |
+| --- | --- |
+| Settings editor alone | Leaves configured commands running without the requested review. |
+| Approval in the screen only | Direct, queued, recovered, and background execution could bypass it. |
+| Popup immediately when definitions change | Interrupts work; the user explicitly chose next Send. |
+| Approval flags in TOML or array-index grants | Configuration edits/reordering could manufacture or misapply authority. |
+| Store hooks as synthetic MCP tools | Hooks execute at lifecycle events and have distinct scope and protocol. |
+| Reuse the full managed-plugin trust system | Adds package authentication/lifecycle machinery to standalone user commands. |
+| Sign script contents or kill active hooks on revoke | Expands this configuration-consent feature into executable integrity and process cancellation. |
+
+## Consequences
+
+Existing enabled hooks pause until their one-time review; reviewed unchanged
+definitions remain approved across restarts. Invalid rows stay visible for repair.
+Changes discovered during a run are checked again before launch, with guards
+remaining restrictive and observers reporting skipped execution.
+
+The grant store and config writer have separate atomic commits. Interruption can
+require review again but cannot broaden permission. No database migration or new
+dependency is required. This feature consents to exact command definitions;
+same-path script/environment changes remain outside its detection boundary.
+
+The linked spec defines modal actions, legacy identity migration, draft custody,
+revocation limits, concurrency, and verification. ADR-148 remains authoritative
+for hook execution after consent; its accepted text is not rewritten.
