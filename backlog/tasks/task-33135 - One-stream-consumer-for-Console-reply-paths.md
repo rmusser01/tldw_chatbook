@@ -1,5 +1,5 @@
 ---
-id: TASK-33090
+id: TASK-33135
 title: One stream consumer for Console reply paths
 status: To Do
 assignee: []
@@ -23,3 +23,7 @@ The Console runs two complete reply pipelines: _run_direct_provider_reply in the
 - [ ] #4 Prefill and character-mode behavior is unchanged, covered by tests.
 - [ ] #5 Cancel, stop, and usage outcomes are covered by tests for both paths.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33090. origin/dev minted its own task-33090 before this branch merged, so per the landed-keeps-id rule this task moved to task-33135; every inbound reference moved with it.

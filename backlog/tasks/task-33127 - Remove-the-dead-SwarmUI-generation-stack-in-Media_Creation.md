@@ -1,5 +1,5 @@
 ---
-id: TASK-33082
+id: TASK-33127
 title: Remove the dead SwarmUI generation stack in Media_Creation
 status: To Do
 assignee: []
@@ -27,3 +27,7 @@ Superseded in part by upstream cleanup: dev already deleted Event_Handlers/Media
 ## Revision provenance
 
 Filed 2026-09-27 against a stale branch audit that called this a zero-risk ~1k LOC deletion (including the events package). Re-verified against origin/dev the same day: the events package is already gone upstream, and the remaining modules are entangled with TASK-32628 backup/recovery test coverage. Description and ACs rewritten to the dev-verified scope; priority lowered from high to medium accordingly.
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33082. origin/dev minted its own task-33082 before this branch merged, so per the landed-keeps-id rule this task moved to task-33127; every inbound reference moved with it.

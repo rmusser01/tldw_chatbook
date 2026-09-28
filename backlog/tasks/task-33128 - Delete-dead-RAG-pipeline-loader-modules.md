@@ -1,5 +1,5 @@
 ---
-id: TASK-33083
+id: TASK-33128
 title: Delete dead RAG pipeline loader modules
 status: Done
 assignee: []
@@ -42,3 +42,7 @@ REFUTED on origin/dev — closed with no production change. The filing premise (
 - A prior cleanup pass (f8d2889a53, TASK-17365/17600) already pruned this namespace and consciously kept the loader and its guards.
 - Deleting the module would mean rewriting TASK-32628's admission test onto another subject and removing a guard the project explicitly values — a reversal of intentional recent work, not dead-code removal. ACs are withdrawn.
 
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33083. origin/dev minted its own task-33083 before this branch merged, so per the landed-keeps-id rule this task moved to task-33128; every inbound reference moved with it.

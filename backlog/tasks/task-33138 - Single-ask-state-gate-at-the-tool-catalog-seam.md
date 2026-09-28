@@ -1,5 +1,5 @@
 ---
-id: TASK-33093
+id: TASK-33138
 title: Single ask-state gate at the tool catalog seam
 status: To Do
 assignee: []
@@ -23,3 +23,7 @@ The pending-gate, stamp, and approval engine is implemented five times — local
 - [ ] #4 Batch decisions and revoke flows are behavior-identical across all providers.
 - [ ] #5 Dedicated test coverage exists for the unified gate itself.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33093. origin/dev minted its own task-33093 before this branch merged, so per the landed-keeps-id rule this task moved to task-33138; every inbound reference moved with it.

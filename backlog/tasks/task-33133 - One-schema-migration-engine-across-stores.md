@@ -1,12 +1,12 @@
 ---
-id: TASK-33088
+id: TASK-33133
 title: One schema migration engine across stores
 status: To Do
 assignee: []
 created_date: '2026-09-27 19:46'
 labels: [refactor, db]
 dependencies:
-  - TASK-33087
+  - TASK-33132
 priority: medium
 ---
 
@@ -23,3 +23,7 @@ Roughly 14 ad-hoc migration runners are split across two version-storage mechani
 - [ ] #3 Every store migrated to the engine reaches an identical resulting schema version, verified against pre-migration baselines.
 - [ ] #4 The migration scaffolding LOC removed is recorded in Implementation Notes.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33088. origin/dev minted its own task-33088 before this branch merged, so per the landed-keeps-id rule this task moved to task-33133; every inbound reference moved with it.

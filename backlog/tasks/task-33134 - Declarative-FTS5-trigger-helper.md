@@ -1,5 +1,5 @@
 ---
-id: TASK-33089
+id: TASK-33134
 title: Declarative FTS5 trigger helper
 status: To Do
 assignee: []
@@ -22,3 +22,7 @@ Six hand-rolled FTS5 trigger farms (ChaChaNotes, Evals, Subscriptions, Client_Me
 - [ ] #3 Backfill is covered by the helper instead of the bespoke single-store module.
 - [ ] #4 FTS behavior on every touched store is unchanged, verified by targeted tests.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33089. origin/dev minted its own task-33089 before this branch merged, so per the landed-keeps-id rule this task moved to task-33134; every inbound reference moved with it.

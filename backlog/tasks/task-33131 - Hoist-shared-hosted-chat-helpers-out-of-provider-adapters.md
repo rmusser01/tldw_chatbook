@@ -1,5 +1,5 @@
 ---
-id: TASK-33086
+id: TASK-33131
 title: Hoist shared hosted-chat helpers out of provider adapters
 status: To Do
 assignee: []
@@ -21,3 +21,7 @@ hosted_chat.py is the intended shared framework for hosted OpenAI-shaped provide
 - [ ] #2 Each hoisted helper exists exactly once repo-wide.
 - [ ] #3 Targeted adapter tests pass with no behavioral change.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33086. origin/dev minted its own task-33086 before this branch merged, so per the landed-keeps-id rule this task moved to task-33131; every inbound reference moved with it.
