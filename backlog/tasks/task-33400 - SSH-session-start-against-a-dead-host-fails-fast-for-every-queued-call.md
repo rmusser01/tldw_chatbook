@@ -1,9 +1,11 @@
 ---
 id: TASK-33400
 title: SSH session start against a dead host fails fast for every queued call
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-28 20:30'
+updated_date: '2026-09-28 16:30'
 labels:
   - console
   - workspaces
@@ -19,8 +21,12 @@ When a host dies or blackholes, concurrent tool calls queued behind one failing 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Callers queued behind a session start that fails transport-class all get that failure without starting another session
-- [ ] #2 A call arriving after such a failure still tries a fresh session (no sticky failure)
-- [ ] #3 A session handshake never outlives the call's budget plus grace, and a stalled handshake is classified exactly like the one-shot path
-- [ ] #4 Any session start failure leaves no ssh process running and no open pipe on the laptop
+- [x] #1 Callers queued behind a session start that fails transport-class all get that failure without starting another session
+- [x] #2 A call arriving after such a failure still tries a fresh session (no sticky failure)
+- [x] #3 A session handshake never outlives the call's budget plus grace, and a stalled handshake is classified exactly like the one-shot path
+- [x] #4 Any session start failure leaves no ssh process running and no open pipe on the laptop
 <!-- AC:END -->
+
+## Implementation Notes
+
+Registry fan-out is blocked via `_start_failures` dict recording transport errors before queued callers re-acquire (entry-time gate). Worker handshake is capped by `budget + grace` (30 s max). Cleanup uses new `_abandon_start()` to reap ssh and close pipes on any start failure. All changes in `remote_session_registry.py`, `remote_session_worker.py`, `remote_workspace_executor.py` with TDD coverage (19 registry tests, 36 worker tests pass).

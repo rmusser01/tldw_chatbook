@@ -1,9 +1,11 @@
 ---
 id: TASK-33404
 title: Host fork failure fails one SSH session request, not the whole session
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-28 20:30'
+updated_date: '2026-09-28 16:44'
 labels:
   - console
   - workspaces
@@ -19,7 +21,11 @@ When the host cannot fork (process limit, EAGAIN) or open a pipe for a request, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A request the host cannot start fails alone with a typed, status-preserving error; other requests on the session complete
-- [ ] #2 The session keeps serving new requests after such a failure
-- [ ] #3 The regenerated worker bundle matches a fresh build
+- [x] #1 A request the host cannot start fails alone with a typed, status-preserving error; other requests on the session complete
+- [x] #2 The session keeps serving new requests after such a failure
+- [x] #3 The regenerated worker bundle matches a fresh build
 <!-- AC:END -->
+
+## Implementation Notes
+
+Added `HOST_SPAWN_FAILED = 71` constant in `remote_session_frames.py`. Serve's `start()` catches fork/pipe OSError and appends STATUS(71) without exiting. Worker's `_result()` maps non-admitted STATUS(71) to REMOTE_OP_FAILED (status-preserving). Bundle regenerated and verified with `--check`. All 108 tests passing.

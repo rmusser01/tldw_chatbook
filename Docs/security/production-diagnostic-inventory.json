@@ -2549,8 +2549,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "8ad34c1968f03db885c8",
+      "call_count": 5,
+      "diagnostic_digest": "93adca632aeec0d17d27",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/remote_session_registry.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
