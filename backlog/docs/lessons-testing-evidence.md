@@ -16826,6 +16826,12 @@ would have ranked it as noise.
 `TLDW_TEST_CSS_CACHE=0`. The private-profile wrapper passes the variable
 through to its child. Also wrap `Stylesheet.reparse` and check that it runs
 at production cost before you rank anything else.
+
+**Update (TASK-33120).** Production now keeps its own per-theme parse cache
+(`TieAwareStylesheet`, last 4 themes), so a *revisited* theme reparses in
+~1 ms in production too; a first visit still pays ~400 ms. The probe advice
+stands: without `TLDW_TEST_CSS_CACHE=0` the test cache hides first-visit cost.
+
 ## 2026-09-20 — Admission retries need the caller's real lifecycle (TASK-32881)
 
 The connected clone HTTP test reused one request object and proved a stable

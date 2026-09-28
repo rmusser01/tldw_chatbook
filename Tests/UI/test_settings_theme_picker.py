@@ -1,8 +1,9 @@
+import types
 from types import SimpleNamespace
 
 import pytest
 from textual import on
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.content import Content
 from textual.theme import Theme
 from textual.widgets import Button, Input, OptionList
@@ -28,7 +29,10 @@ def _app(*widgets):
     def compose() -> ComposeResult:
         yield from widgets
 
-    return IsolatedWidgetTestApp(compose)
+    app = IsolatedWidgetTestApp(compose)
+    # TASK-33121: Use writes the launch default in an app worker.
+    app.run_worker = types.MethodType(App.run_worker, app)
+    return app
 
 
 @pytest.mark.asyncio
@@ -118,6 +122,7 @@ async def test_filter_narrows_and_enter_uses(request, config_writes):
         await pilot.pause()
         assert app.focused.id == "settings-theme-list"
         await pilot.press("enter")          # Use
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert app.theme == picker.highlighted_id
         assert config_writes[-1] == {"general": {"default_theme": app.theme}}
@@ -306,6 +311,7 @@ async def test_use_toast_when_persist_fails(request, monkeypatch, config_writes)
     async with app.run_test(size=(160, 45)) as pilot:
         picker.query_one("#settings-theme-list").focus()
         await pilot.press("down", "enter")
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any("launch default was not saved" in n for n in notes)
 
@@ -323,6 +329,7 @@ async def test_use_toast_warns_when_cache_reload_fails(request, monkeypatch, con
     async with app.run_test(size=(160, 45)) as pilot:
         picker.query_one("#settings-theme-list").focus()
         await pilot.press("down", "enter")  # Use (persisted, cache reload fails)
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any(
             "is now your theme" in message
@@ -407,6 +414,7 @@ async def test_revert_label_names_the_launch_default_when_it_differs(request, co
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         revert = picker.query_one("#settings-theme-revert", Button)
         assert str(revert.label) == (
@@ -428,6 +436,7 @@ async def test_revert_leaves_a_missing_launch_default_alone(request, config_writ
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         revert = picker.query_one("#settings-theme-revert", Button)
         assert str(revert.label) == f"Revert to {tc.display_name('textual-dark')} (launch unchanged)"
@@ -454,6 +463,7 @@ async def test_revert_chip_hides_when_it_would_change_nothing(request, config_wr
         assert not revert.display
         picker.highlighted_id = "apricot"
         picker.use_highlighted()  # persisted: launch default -> apricot
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert revert.display
         app.theme = "textual-dark"  # active matches, launch default still differs
@@ -809,12 +819,13 @@ async def test_revert_and_apply_failure_toasts_show_a_markup_name_literally(requ
         def boom(*_args, **_kwargs):
             raise ValueError("theme 'x[/]' is gone")
 
-        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.revert_theme", boom)
+        monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.start_revert", boom)
         picker.query_one("#settings-theme-revert", Button).press()
         await pilot.pause()
         assert "Could not revert the theme: theme 'x[/]' is gone" in notes
         monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.use_theme", boom)
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any(n.endswith(": theme 'x[/]' is gone") and n.startswith("Could not apply") for n in notes)
 
@@ -995,6 +1006,7 @@ async def test_revert_label_strips_control_characters_from_the_launch_default(
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         label = str(picker.query_one("#settings-theme-revert", Button).label)
         # TASK-33061: a launch default that is no registered theme is never
@@ -1481,3 +1493,30 @@ def test_row_tail_gives_way_before_the_name(width):
     assert fitted.cell_len <= width, fitted.plain
     assert fitted.plain.startswith("Textual D"), fitted.plain
     assert "active" in fitted.plain
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_dropped_status_names_only_what_the_row_lost(request):
+    """TASK-33122: the line under the list spells out launch/overrides when
+    the fitted row dropped either, and stays blank otherwise."""
+    from tldw_chatbook.Widgets.settings_theme_picker import _dropped_status, _row
+
+    def entry(**flags):
+        return tc.ThemeEntry(
+            id="textual-dark",
+            display_name="Textual Dark",
+            origin="yours",
+            dark=True,
+            colours=tuple((key, "#112233") for key in tc.STRIP_KEYS),
+            **flags,
+        )
+
+    both = entry(is_active=True, is_launch_default=True, overrides="textual")
+    assert _dropped_status(both, None) == ""
+    assert _dropped_status(both, 200) == ""
+    for width in (40, 32, 26):  # "overrides built-in" shortened, dropped, then "launch" too
+        assert _dropped_status(both, width) == "launch default · overrides built-in", width
+    assert "launch" not in _row(both, 26).plain
+    assert _dropped_status(entry(is_active=True, is_launch_default=False), 26) == ""
+    assert _dropped_status(entry(is_active=False, is_launch_default=True), 200) == ""

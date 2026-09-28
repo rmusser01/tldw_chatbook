@@ -205,6 +205,8 @@ def _isolated_editor_app_with_real_screens(
     app = _isolated_editor_app(editor)
     app.push_screen = types.MethodType(App.push_screen, app)
     app.pop_screen = types.MethodType(App.pop_screen, app)
+    # TASK-33078: file actions run as app workers.
+    app.run_worker = types.MethodType(App.run_worker, app)
     return app
 
 
@@ -219,7 +221,7 @@ async def test_settings_theme_editor_delete_blocks_builtin_themes(request, tmp_p
 
         for theme_name in ("textual-dark", "textual-light"):
             app.notify.reset_mock()
-            editor.request_delete(theme_name)
+            await editor.request_delete(theme_name)
             await pilot.pause()
 
             message = app.notify.call_args.args[0]
@@ -239,7 +241,7 @@ async def test_settings_theme_editor_delete_blocks_shipped_themes(request, tmp_p
         await pilot.pause()
 
         shipped_name = next(t.name for t in ALL_THEMES if hasattr(t, "name"))
-        editor.request_delete(shipped_name)
+        await editor.request_delete(shipped_name)
         await pilot.pause()
 
         message = app.notify.call_args.args[0]
@@ -273,7 +275,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(request, tmp_pa
 
         # Loaded in the editor, so the delete also resets the editor.
         editor.current_theme_name = "my_custom_theme"
-        editor.request_delete("my_custom_theme")
+        await editor.request_delete("my_custom_theme")
         await pilot.pause()
 
         # Confirmation dialog is up and NOTHING was deleted yet.
@@ -289,7 +291,7 @@ async def test_settings_theme_editor_delete_removes_custom_theme(request, tmp_pa
         assert "my_custom_theme" in editor.list_user_theme_names()
 
         # Re-invoke and confirm: only now is the file unlinked.
-        editor.request_delete("my_custom_theme")
+        await editor.request_delete("my_custom_theme")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         await pilot.click("#confirm-button")
@@ -320,7 +322,7 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(
         assert shipped_name in editor.list_user_theme_names()
 
         editor.current_theme_name = shipped_name
-        editor.request_delete(shipped_name)
+        await editor.request_delete(shipped_name)
         await pilot.pause()
 
         # Same confirmation guard as any user file: nothing is deleted
@@ -348,7 +350,7 @@ async def test_settings_theme_editor_delete_missing_custom_theme_warns(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        editor.request_delete("never_saved_theme")
+        await editor.request_delete("never_saved_theme")
         await pilot.pause()
 
         message = app.notify.call_args.args[0]
@@ -545,7 +547,7 @@ async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(
         await pilot.pause()
         assert app.notify.call_args.args[0] == "Theme 'ocean' applied"
 
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert (tmp_path / "ocean.toml").exists()
         assert editor.current_theme_name == "ocean"
@@ -554,7 +556,7 @@ async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(
         await pilot.pause()
         assert name_input.value == "ocean"
 
-        editor.request_delete("ocean")
+        await editor.request_delete("ocean")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         assert "ocean" in app.screen.message
@@ -600,7 +602,7 @@ async def test_settings_theme_editor_delete_keeps_app_theme(request, tmp_path):
         app.theme = "textual-light"
         editor.load_user_theme("my_custom_theme")
         await pilot.pause()
-        editor.request_delete("my_custom_theme")
+        await editor.request_delete("my_custom_theme")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -621,7 +623,7 @@ async def test_settings_theme_editor_save_registers_theme_with_app(request, tmp_
         await pilot.pause()
         editor.query_one("#settings-theme-name", Input).value = "ocean"
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert "ocean" in app.available_themes
 
@@ -781,7 +783,7 @@ async def test_settings_theme_editor_save_confirms_before_overwriting_another_th
         await pilot.pause()
         editor.query_one("#settings-theme-name", Input).value = "ocean"
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         assert app.screen.confirm_label == "Overwrite"
@@ -806,7 +808,7 @@ async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(
         await pilot.pause()
         editor.color_inputs["primary"].value = "#123456"
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert not isinstance(app.screen, ConfirmationDialog)
         assert "#123456" in (tmp_path / "ocean.toml").read_text()
@@ -832,7 +834,7 @@ async def test_settings_theme_editor_export_confirms_before_overwriting(
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        editor.export_theme("ocean")
+        await editor.export_theme("ocean")
         await pilot.pause()
         # TASK-33076: the destination prompt comes first, prefilled.
         await pilot.click("#settings-rag-profile-name-confirm")
@@ -1029,7 +1031,7 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
 
         editor.load_user_theme("ocean")
         await pilot.pause()
-        editor.request_delete("ocean")
+        await editor.request_delete("ocean")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1038,7 +1040,7 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
 
         editor.load_user_theme(shipped.name)
         await pilot.pause()
-        editor.request_delete(shipped.name)
+        await editor.request_delete(shipped.name)
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1075,7 +1077,7 @@ async def test_settings_theme_editor_clone_save_reload_keeps_shipped_variables(
         await pilot.pause()
         editor.on_clone_theme()
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
 
         [saved] = [t for t in load_user_themes(tmp_path) if t.name == "apricot_copy"]
@@ -1231,7 +1233,7 @@ async def test_settings_theme_editor_palette_edit_drops_carried_variables(
         editor.load_theme("modern_dark_dracula")
         editor.on_clone_theme()
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert "text-muted" in _saved_variables(tmp_path, "modern_dark_dracula_copy")
 
@@ -1242,7 +1244,7 @@ async def test_settings_theme_editor_palette_edit_drops_carried_variables(
         editor.color_inputs["background"].value = "#FFFFFF"
         editor.query_one("#settings-theme-dark-mode", Checkbox).value = False
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert "text-muted" not in _saved_variables(tmp_path, "dracula_light")
         assert "text-muted" not in app.available_themes["dracula_light"].variables
@@ -1266,7 +1268,7 @@ async def test_settings_theme_editor_clone_keeps_hand_set_status_hue(
         editor.load_theme("pastel_dreams")
         editor.on_clone_theme()
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         saved = _saved_variables(tmp_path, "pastel_dreams_copy")
         assert saved.get("text-error") == "#87575e"
@@ -1290,10 +1292,10 @@ async def test_settings_theme_editor_delete_user_file_shadowing_builtin_restores
         editor.load_theme("nord")
         editor.color_inputs["primary"].value = "#123456"
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert (tmp_path / "nord.toml").exists()
-        editor.request_delete("nord")
+        await editor.request_delete("nord")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1318,10 +1320,10 @@ async def test_settings_theme_editor_saved_theme_listing_tracks_save_and_delete(
         editor.query_one("#settings-theme-name", Input).value = "mine"
         editor.current_theme_name = "mine"
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert editor.list_user_theme_names() == {"mine"}
-        editor.request_delete("mine")
+        await editor.request_delete("mine")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1356,7 +1358,7 @@ async def test_settings_theme_editor_save_as_confirms_overwrite_and_keeps_source
         await pilot.pause()
         editor.color_inputs["primary"].value = "#123456"
         await pilot.pause()
-        editor.save_as("sea")
+        await editor.save_as("sea")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         assert app.screen.confirm_label == "Overwrite"
@@ -1364,7 +1366,7 @@ async def test_settings_theme_editor_save_as_confirms_overwrite_and_keeps_source
         await pilot.pause()
         assert target.read_bytes() == target_bytes and saved == []
 
-        editor.save_as("sea")
+        await editor.save_as("sea")
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -1392,14 +1394,14 @@ async def test_settings_theme_editor_save_as_own_name_still_confirms(request, tm
         await pilot.pause()
         editor.color_inputs["primary"].value = "#123456"
         await pilot.pause()
-        editor.save_as("ocean")
+        await editor.save_as("ocean")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         await pilot.click("#cancel-button")
         await pilot.pause()
         assert source.read_bytes() == source_bytes
 
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert not isinstance(app.screen, ConfirmationDialog)
         assert "#123456" in source.read_text(encoding="utf-8")

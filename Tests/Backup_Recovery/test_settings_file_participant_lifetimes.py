@@ -373,7 +373,7 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
             raise OSError("write failed")
 
         monkeypatch.setattr(themes.toml, "dump", fail)
-        editor.on_save_theme()
+        await editor.save_theme()
         assert editor.is_modified
         assert "mine" not in editor.list_user_theme_names()
         assert not (editor.custom_themes_path / "mine.toml").exists()
@@ -381,12 +381,12 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
         monkeypatch.setattr(themes.toml, "dump", original)
         pause = storage._begin_local_pause()
         try:
-            editor.on_save_theme()
+            await editor.save_theme()
             assert editor.is_modified
             assert not (editor.custom_themes_path / "mine.toml").exists()
         finally:
             pause.resume()
-        editor.on_save_theme()
+        await editor.save_theme()
         assert not editor.is_modified
         assert "mine" in editor.list_user_theme_names()
         assert (editor.custom_themes_path / "mine.toml").exists()

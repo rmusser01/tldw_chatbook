@@ -644,7 +644,11 @@ on one line: when the list is too narrow (e.g. at 80x24), the row keeps at
 least ten cells of the name and gives up the rest in this order — "overrides
 built-in" shortens to "overrides", then that marker goes, then the strip drops
 to three colours, then **launch** goes; **active** always stays. Only then is
-the name cut short with "…". Moving the
+the name cut short with "…". Whatever the highlighted row had to shorten or
+drop is spelled out on the line under the list — e.g. "launch default ·
+overrides built-in" — so it stays visible even when the preview card is
+scrolled out of view; the line is blank when the row already shows it all.
+Moving the
 highlight (mouse, **↑**/**↓** or **j**/**k**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
 dark/light · yours/shipped/built-in", the origin named once even for a
@@ -695,9 +699,16 @@ longer a registered theme (the "Launch default missing" case), Revert does not
 write it back: the label reads "Revert to \<theme\> (launch unchanged)" and
 the saved launch default stays as it is. The Revert button hides whenever
 pressing it would change nothing — its theme is already the one running and
-the launch default would not change (e.g. you switched back by hand). Toasts name what happened: Try says
+the launch default would not change (e.g. you switched back by hand). Switching back to a
+theme you used recently in this session (Revert, or returning to an earlier row) is
+faster than the first switch to it: the app keeps the styling it built for your last
+four themes. Toasts name what happened: Try says
 "Trying \<name\> for this
-session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
+session"; Use switches at once and saves the launch default in the
+background, then says "\<name\> is now your theme (was: \<previous\>)" (quitting
+waits for that save to finish; a Revert or palette switch right after Use
+drops that toast, since it no longer holds — and Revert, too, saves in the
+background and always lands after Use's save); if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
 crashes and Revert stays available. If the save lands but the in-process
@@ -719,6 +730,20 @@ group shows a disabled "(none yet)" row instead. The themes folder is read in
 the background: the first time the picker opens, YOUR THEMES shows a disabled
 "Loading your themes…" row until the read finishes, and after a file action
 or Back from the editor the previous list stays up until the new one arrives.
+File actions (Save, Save as…, Rename, Delete, Import…, Export) also read and
+write in the background, so the screen stays responsive with many saved
+themes; they run one at a time, and a second one started meanwhile waits for
+the first — even one started after you left Theme and came back. Leaving
+Theme or quitting mid-action does not cut it short — including an action
+you confirmed in its dialog. Quitting waits up to five seconds in all for
+running file actions and the launch-default save together, and starts no new
+file action ("Theme file action not started: the app is quitting"). An action finishes only its own file once you have moved on
+(Back, or opened another theme): it does not change what the editor now shows,
+and if it would have needed a confirmation it skips it and says so ("Did not
+delete '\<name\>': the theme editor changed meanwhile. Delete it again.").
+Leaving the editor while a Save is still running does not ask about unsaved
+changes: Back and leaving wait for the Save, and stay in the editor, edits
+kept, if it fails (its toast says why) or asks to overwrite.
 **Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
 `_copy`. **Rename** and **Delete** ask first, and every theme dialog names

@@ -1812,7 +1812,7 @@ async def test_try_then_save_under_a_new_name_applies_the_saved_theme(request, h
         settings, _original = await _try_edited_clone(host, pilot)
         editor = settings.query_one("#settings-theme-editor")
         if how == "save_as":
-            editor.save_as("brandnew")
+            await editor.save_as("brandnew")
         else:
             editor.query_one("#settings-theme-name", Input).value = "brandnew"
             await pilot.pause(0.1)
@@ -2287,3 +2287,40 @@ async def test_import_refusal_shows_error_in_dialog_and_keeps_path(request, tmp_
         await host.workers.wait_for_complete()
         assert not isinstance(host.screen, RagProfileNameModal)
         assert (themes / "bad.toml").exists()
+
+
+
+def _painted_lines(host):
+    """What the compositor actually painted (post-clip, post-scroll)."""
+    return ["".join(seg.text for seg in strip) for strip in host.screen._compositor.render_strips()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (211, 44), (235, 52)])
+@private_profile_test
+async def test_highlighted_launch_and_override_status_is_on_screen(request, size):
+    """TASK-33122: at 80x24 the row drops "overrides" (and can drop "launch")
+    to stay one line, and the card is scrolled off under the list. A line
+    under the list then names what the row dropped; when the row shows
+    everything, the line stays blank rather than repeat it."""
+    host = _host()
+    _saved_theme(host, "textual-dark")  # yours, overrides the built-in, launch default
+    async with host.run_test(size=size) as pilot:
+        await _highlight(host, pilot, "textual-dark")
+        await host.workers.wait_for_complete()
+        await pilot.pause(0.2)
+        lst = host.screen.query_one("#settings-theme-list")
+        status = host.screen.query_one("#settings-theme-row-status")
+        painted = "\n".join(_painted_lines(host))
+        row = str(lst.get_option_at_index(lst.highlighted).prompt)
+        assert "\n" not in row and len(row) <= lst.row_width(), row
+        assert "launch" in painted and "overrides built-in" in painted, (size, painted)
+        text = str(status.render())
+        if size == (80, 24):
+            assert "overrides built-in" not in row
+        if row.endswith("active · launch · overrides built-in"):
+            assert text == ""
+        else:
+            assert text == "launch default · overrides built-in"
+            assert _visible(host, status).height == 1
+            assert _visible(host, lst).height >= 5

@@ -5484,6 +5484,12 @@ StatCard:hover {
     max-height: $ds-size-9;
 }
 
+#settings-theme-row-status {
+    height: $ds-size-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 #settings-theme-card-column .settings-action-row {
     height: auto;
 }

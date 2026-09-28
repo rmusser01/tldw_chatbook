@@ -26,13 +26,16 @@ from ..config import get_user_themes_dir
 from ..css.Themes.theme_catalog import (
     CACHE_REFRESH_FAILED,
     ORIGIN_LABELS,
+    QueuedLaunchDefault,
     ThemeChange,
     ThemeEntry,
     build_catalog,
     current_launch_default,
     display_name,
     launch_default_restorable,
-    revert_theme,
+    queue_launch_default,
+    settle_launch_default,
+    start_revert,
     use_theme,
     use_theme_toast,
     user_theme_names,
@@ -104,6 +107,23 @@ def _row(entry: ThemeEntry, width: int | None = None) -> Text:
     tail = next((t for t in built if t.cell_len + need <= width), built[-1])
     name.truncate(max(width - tail.cell_len, 1), overflow="ellipsis")
     return name + tail
+
+
+def _dropped_status(entry: ThemeEntry, width: int | None) -> str:
+    """Spell out the launch/overrides markers the row dropped at ``width`` (TASK-33122).
+
+    Returns:
+        e.g. "launch default · overrides built-in" when the fitted row lost
+        any of them ("active" always stays), else "". Fixed vocabulary only.
+    """
+    launch = ["launch"] if entry.is_launch_default else []
+    overrides = [f"overrides {ORIGIN_LABELS[entry.overrides]}"] if entry.overrides else []
+    if not (launch or overrides) or width is None:
+        return ""
+    full = " · ".join((["active"] if entry.is_active else []) + launch + overrides)
+    if _row(entry, width).plain.endswith(full):
+        return ""
+    return " · ".join((["launch default"] if launch else []) + overrides)
 
 
 class ThemeFilterInput(Input):
@@ -326,6 +346,8 @@ class ThemePicker(Vertical):
                     "", id="settings-theme-launch-missing", classes="settings-help-copy", markup=False
                 )
                 yield ThemeOptionList(id="settings-theme-list")
+                # TASK-33122: one reserved line, so the list never jumps.
+                yield Static("", id="settings-theme-row-status", classes="settings-help-copy", markup=False)
                 yield Static("", id="settings-theme-empty", classes="settings-help-copy", markup=False)
                 # Spec §9: a no-match filter offers a way back.
                 with Horizontal(id="settings-theme-clear-filter-row", classes="settings-action-row"):
@@ -521,6 +543,16 @@ class ThemePicker(Vertical):
             entry = by_id.get(lst.get_option_at_index(index).id)
             if entry is not None:
                 lst.replace_option_prompt_at_index(index, _row(entry, width))
+        self._sync_dropped_status()
+
+    def _sync_dropped_status(self) -> None:
+        """TASK-33122: what the highlighted row dropped goes on the line under
+        the list -- at 80x24 the card is scrolled off below it. (Not the
+        list's border subtitle: the focus outline paints over it.)"""
+        lst = self.query_one("#settings-theme-list", ThemeOptionList)
+        entry = self._highlighted_entry()
+        text = _dropped_status(entry, lst.row_width()) if entry is not None else ""
+        self.query_one("#settings-theme-row-status", Static).update(text)
 
     def _show(self, theme_id: str | None) -> None:
         self.highlighted_id = theme_id
@@ -532,6 +564,7 @@ class ThemePicker(Vertical):
         self.query_one("#settings-theme-export-result").display = False
         self.query_one("#settings-theme-copy-path", Button).display = False
         entry = self._highlighted_entry()
+        self._sync_dropped_status()
         error = entry.error if entry is not None else None
         # Tooltips parse markup; the error quotes untrusted file content.
         unreadable_tip = f"This theme file can't be read: {escape_markup(error)}" if error else None
@@ -708,17 +741,35 @@ class ThemePicker(Vertical):
             return
         change, self._revert = self._revert, None
         try:
-            restored, caches_reloaded = revert_theme(self.app, change)
+            write = start_revert(self.app, change)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Theme revert failed: {exc}")
             self.app.notify(f"Could not revert the theme: {escape_markup(exc)}", severity="error")
         else:
-            if not restored:
-                self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
-            elif not caches_reloaded:
-                self.app.notify(f"Reverted the theme; {CACHE_REFRESH_FAILED}", severity="warning")
+            if write is not None:
+                # Review #4: the write queues behind a pending Use's (so it
+                # wins) and is awaited off the UI thread.
+                self.app.run_worker(self._report_revert(write), group="settings-theme-use", exit_on_error=False)
         self._sync_revert_chip()
         self.refresh_catalog(rescan=False)
+
+    async def _report_revert(self, write: QueuedLaunchDefault) -> None:
+        """Await Revert's launch-default write, then warn if it did not land.
+
+        Args:
+            write: The queued write restoring the previous launch default.
+        """
+        try:
+            restored, caches_reloaded, latest = await settle_launch_default(self.app, write)
+        except Exception as exc:  # noqa: BLE001 - reported as "not restored" below
+            logger.warning(f"Restoring the launch default {printable(write.name)!r} failed: {type(exc).__name__}")
+            restored, caches_reloaded, latest = False, False, True
+        if not latest:
+            return
+        if not restored:
+            self.app.notify("Reverted the theme; the launch default was not restored", severity="warning")
+        elif not caches_reloaded:
+            self.app.notify(f"Reverted the theme; {CACHE_REFRESH_FAILED}", severity="warning")
 
     # -- actions -------------------------------------------------------
     def use_highlighted(self) -> None:
@@ -793,11 +844,17 @@ class ThemePicker(Vertical):
         if theme_id is None or not self._highlighted_readable():
             return
         try:
-            change = use_theme(self.app, theme_id, persist=persist)
+            # TASK-33121: the switch shows now; Use's launch-default write
+            # (~140 ms) runs off the UI thread in _persist_use.
+            change = use_theme(self.app, theme_id, persist=False)
         except Exception as exc:  # noqa: BLE001 - stale entry / unregistered theme
             self.app.notify(f"Could not apply {escape_markup(display_name(theme_id))}: {escape_markup(exc)}", severity="error")
             self.refresh_catalog()
             return
+        if persist:
+            # Revert counts on the write landing: its own write queues behind
+            # this one (theme_catalog's one writer thread), so it still wins.
+            change = replace(change, persisted=True)
         if change.previous_active.startswith("custom_"):
             # Review I-1/P6: an editor Try's custom_* registration is never a
             # row; Revert targets the listed theme behind it, else the launch
@@ -810,9 +867,35 @@ class ThemePicker(Vertical):
         if not persist:
             self.app.notify(f"Trying {escape_markup(display_name(theme_id))} for this session", severity="information")
         else:
-            message, severity = use_theme_toast(theme_id, change)
-            self.app.notify(message, severity=severity)
+            # Review #2: queued now, so a Revert pressed before the worker
+            # runs still queues after it. App-owned: leaving Settings
+            # mid-write must not drop the report.
+            write = queue_launch_default(theme_id)
+            self.app.run_worker(self._persist_use(change, write), group="settings-theme-use", exit_on_error=False)
         self.refresh_catalog(highlight=theme_id, rescan=False)
+
+    async def _persist_use(self, change: ThemeChange, write: QueuedLaunchDefault) -> None:
+        """Await Use's launch-default write off the UI thread, then say how it went.
+
+        Args:
+            change: The switch, for the toast's "was:" name.
+            write: The queued write of the theme Use switched to.
+        """
+        theme_id = write.name
+        try:
+            persisted, caches_reloaded, latest = await settle_launch_default(self.app, write)
+        except Exception as exc:  # noqa: BLE001 - reported as "not saved" below
+            logger.warning(f"Saving the launch default {printable(theme_id)!r} failed: {type(exc).__name__}")
+            persisted, caches_reloaded, latest = False, False, True
+        if not latest:
+            # Review M-1: a Revert or palette switch asked for a later write
+            # meanwhile; it reports, and this Use's toast would be stale.
+            return
+        outcome = replace(change, persisted=persisted, caches_reloaded=caches_reloaded)
+        message, severity = use_theme_toast(theme_id, outcome)
+        self.app.notify(message, severity=severity)
+        if self.is_attached:
+            self.refresh_catalog(rescan=False)  # the launch marker moves now
 
 
 class ThemePane(ContentSwitcher):
@@ -881,7 +964,8 @@ class ThemePane(ContentSwitcher):
         return set(files), unreadable
 
     def show_picker(self) -> None:
-        self._editor().discard_try()  # review I-1: every Back undoes an unsaved Try
+        # Review I-1: every Back undoes an unsaved Try and ends the session.
+        self._editor().end_session()
         self.current = "settings-theme-picker"
         picker = self.query_one(ThemePicker)
         picker.refresh_catalog()
@@ -916,12 +1000,14 @@ class ThemePane(ContentSwitcher):
     @on(ThemePicker.DeleteRequested)
     def _delete_requested(self, event: ThemePicker.DeleteRequested) -> None:
         event.stop()
-        self._editor().request_delete(event.theme_id)
+        editor = self._editor()
+        editor.run_file_action(editor.request_delete(event.theme_id))
 
     @on(ThemePicker.ExportRequested)
     def _export_requested(self, event: ThemePicker.ExportRequested) -> None:
         event.stop()
-        self._editor().export_theme(event.theme_id)
+        editor = self._editor()
+        editor.run_file_action(editor.export_theme(event.theme_id))
 
     @on(SettingsThemeEditor.Saved)
     def _saved(self, event: SettingsThemeEditor.Saved) -> None:
