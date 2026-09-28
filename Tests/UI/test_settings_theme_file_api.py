@@ -469,7 +469,7 @@ async def test_listing_reports_unreadable_files_with_short_errors(request, tmp_p
         readable, unreadable = editor.user_theme_listing()
         assert readable == {"mine": tmp_path / "mine.toml"}
         assert unreadable == {
-            "a": "not valid TOML",
+            "a": "not valid TOML (line 1, column 9)",
             "b": "missing [colors].primary",
             "c": "bogus is not a theme colour",
             "d": "variables is not a theme colour",

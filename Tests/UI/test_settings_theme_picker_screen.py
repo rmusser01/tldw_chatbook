@@ -983,7 +983,7 @@ async def test_delete_of_an_unreadable_file_removes_it(request):
         await _highlight(host, pilot, "unreadable:nord")
         picker = host.screen.query_one("#settings-theme-picker")
         entry = next(e for e in picker.entries if e.id == "unreadable:nord")
-        assert entry.origin == "yours" and entry.error == "not valid TOML"
+        assert entry.origin == "yours" and entry.error == "not valid TOML (line 1, column 9)"
         assert entry.display_name == "Nord (unreadable)"
         # R40(b): the pane lists through ONE scan per refresh.
         editor = host.screen.query_one("#settings-theme-editor")

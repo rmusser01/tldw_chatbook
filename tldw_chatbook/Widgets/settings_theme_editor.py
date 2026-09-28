@@ -61,6 +61,17 @@ IMPORT_MAX_BYTES = 64 * 1024
 ThemeLeaveChoice = Literal["save", "discard", "cancel"]
 
 
+def _toml_position(exc: Exception) -> str:
+    """TASK-33068: `` (line N, column M)`` from a TOML parse error, else "".
+
+    Built from the decoder's numbers only -- never ``str(exc)``, which can
+    quote file bytes -- so the reason stays path-free (R16) and printable.
+    """
+    if isinstance(exc, toml.TomlDecodeError) and exc.lineno and exc.colno:
+        return f" (line {int(exc.lineno)}, column {int(exc.colno)})"
+    return ""
+
+
 class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
     """Ask before leaving Theme with unsaved edits (TASK-32941).
 
@@ -546,7 +557,7 @@ class SettingsThemeEditor(Vertical):
     def _theme_file_error(cls, exc: Exception, data: Any) -> str:
         """A short, path-free, printable (R39) reason a theme file can't be read."""
         if data is None and isinstance(exc, (toml.TomlDecodeError, UnicodeDecodeError)):
-            return "not valid TOML"
+            return f"not valid TOML{_toml_position(exc)}"
         message = str(exc)
         if isinstance(exc, TypeError) and "'primary'" in message and "missing" in message:
             colors = data.get("colors") if isinstance(data, dict) else None
@@ -1729,8 +1740,8 @@ class SettingsThemeEditor(Vertical):
             return "Theme file is larger than 64 KB"
         try:
             raw_data = toml.loads(content.decode("utf-8"))
-        except Exception:  # noqa: BLE001 - any parser failure is "not TOML"
-            return "File is not valid TOML"
+        except Exception as exc:  # noqa: BLE001 - any parser failure is "not TOML"
+            return f"File is not valid TOML{_toml_position(exc)}"
         meta = raw_data.get("theme", {})
         if not isinstance(meta, dict):
             return "[theme] must be a table"

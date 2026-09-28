@@ -120,7 +120,7 @@ async def test_import_sanitises_variables(request, tmp_path, src):
 HOSTILE = [
     ("notes.txt", GOOD, "Import needs a .toml file"),
     ("big.toml", GOOD + "# " + "x" * (64 * 1024) + "\n", "Theme file is larger than 64 KB"),
-    ("broken.toml", "[[[ not toml", "File is not valid TOML"),
+    ("broken.toml", "[[[ not toml", "File is not valid TOML (line 1, column 1)"),
     ("noprimary.toml", '[colors]\nbackground = "#000000"\n', "Missing [colors].primary"),
     ("nocolors.toml", '[theme]\nname = "x"\n', "Missing [colors].primary"),
     (
