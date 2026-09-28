@@ -1,5 +1,5 @@
 ---
-id: TASK-33130
+id: TASK-33245
 title: Collapse per-provider summarizers into one shared routine
 status: To Do
 assignee: []
@@ -26,4 +26,6 @@ Nineteen near-identical summarize_with_* functions across LLM_Calls/Summarizatio
 
 ## Renumbering provenance
 
-Filed 2026-09-27 as task-33085. origin/dev minted its own task-33085 before this branch merged, so per the landed-keeps-id rule this task moved to task-33130; every inbound reference moved with it.
+Filed 2026-09-27 as task-33085. origin/dev minted its own task-33085 before this branch merged, so per the landed-keeps-id rule this task moved to task-33245; every inbound reference moved with it.
+
+Second renumber: dev minted its own task-33130 (second move: dev minted its own task-33130 before merge); per landed-keeps-id this task moved to task-33245 as the last commit before push.
