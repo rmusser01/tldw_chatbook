@@ -532,9 +532,12 @@ class LlamaCppSetupView(Vertical):
             )
         except (TypeError, ValueError):
             self.owner.invalidate("invalid_endpoint")
-            self.query_one("#llamacpp-connection-status", Static).update(
-                "Enter a valid HTTP(S) endpoint without credentials, query, or fragment."
-            )
+            try:
+                self.query_one("#llamacpp-connection-status", Static).update(
+                    "Enter a valid HTTP(S) endpoint without credentials, query, or fragment."
+                )
+            except QueryError:
+                pass
             return
         self._departing = None
         self.refresh_state()
@@ -565,6 +568,17 @@ class LlamaCppSetupView(Vertical):
                 await asyncio.sleep(1)
 
     def refresh_state(self) -> None:
+        # TASK-32800.1 posture: async workers reach here from finally
+        # blocks, outside their own guarded try -- on a slow machine the
+        # subtree can already be gone, and an escaping NoMatches would
+        # fail the worker (observed on the macos GGUF lane). There is
+        # nothing left to refresh in that case.
+        try:
+            self._refresh_state_locked()
+        except QueryError:
+            return
+
+    def _refresh_state_locked(self) -> None:
         if not self.is_mounted:
             return
         active = self._active()
