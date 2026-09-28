@@ -131,9 +131,11 @@ target is a warm call of about one round trip.
   serialized exclusions, and two-tier watchdog (Timer exit 75 +
   `signal.alarm`), armed from that request's own remaining budget. Only the
   spawner changes, from `sshd` to the per-session parent. Children get
-  stdin from `/dev/null` and close every other inherited descriptor, so a
-  lingering child can neither hold the channel open nor write unframed
-  bytes into it. The run's tool executor and its AGENTS.md reader share the
+  stdin from `/dev/null`, stdout on a private pipe back to the parent, and
+  keep fd 2 (the channel's stderr, where the watchdog marker goes); every
+  other inherited descriptor is closed, so a lingering child can neither
+  hold the channel's stdin/stdout open nor write unframed bytes into the
+  framed stream. The run's tool executor and its AGENTS.md reader share the
   one session; sessions are never shared across bindings, runs, or hosts.
 - **What the parent holds.** The drift-guarded bundle and the run's request
   frames. It never executes request logic, caps its live children, and
@@ -158,9 +160,10 @@ target is a warm call of about one round trip.
   the loader verifies its sha256, writes it atomically (temp file +
   `os.replace`, 0600), and deletes other entries in that directory. With no
   usable private runtime directory (e.g. macOS hosts) nothing is cached —
-  never a fallback to `/tmp` or `~/.cache`. The loader then checks the
-  bundle's own stamp (`READY <stamp>`) against the laptop's expected stamp
-  and refuses a mismatch.
+  never a fallback to `/tmp` or `~/.cache`. The loader then reports the
+  bundle's own stamp (`READY <stamp>`); the **laptop** compares it against
+  its expected stamp and refuses a mismatch (a protocol-class start
+  failure).
 - **Cache threat model, stated honestly.** The checks protect against
   corruption, partial writes, and stale versions. They do **not** defend
   against another process running as the same user: such a process can
