@@ -579,6 +579,14 @@ This page's **Custom endpoints** section manages them. Each row reads
 | **Edit** | Rewrites **Endpoint**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
 | **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. |
 
+An entry can also be your saved default provider. Settings then names it by
+its display name, and its readiness is the family's readiness plus the
+entry's own `api_key_env` rule. If the entry the default names no longer
+exists (for example, it was removed from `config.toml` by hand), Overview
+reads **Not ready: Endpoint not found** and Providers & Models reads
+**Not ready · endpoint not found; choose another provider**. Pick another
+provider, or recreate the endpoint.
+
 The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are
 listed below the entries once they have a configured endpoint, each with a
 one-way **Convert to named endpoint** action: it creates a registry entry

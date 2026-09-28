@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 from unicodedata import category as unicode_category
 
@@ -178,6 +178,8 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Missing workspace URL": ("incomplete", "endpoint_missing"),
     "Invalid provider settings": ("incomplete", "invalid_settings"),
     "Unknown provider": ("incomplete", "invalid_settings"),
+    # ADR-146: a ``custom-ep:<slug>`` id whose registry entry is gone.
+    "Endpoint not found": ("incomplete", "endpoint_missing"),
 }
 _PERSISTED_CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment"})
 
@@ -569,6 +571,74 @@ def resolve_provider_credential(
     return env_key, f"env:{env_var}", env_var
 
 
+def _custom_endpoint_readiness(
+    provider_name: str,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str],
+    background_credentials: bool,
+) -> ProviderReadiness | None:
+    """Resolve an ADR-146 ``custom-ep:<slug>`` id through its registry entry.
+
+    A registry id is not an ``api_settings`` key: canonicalized, it becomes
+    ``custom_ep:<slug>``, which no readiness record can carry (TASK-33002.12:
+    opening Settings on such a default killed the app). Readiness is the
+    entry family's readiness plus the entry's own API-key rule, as Console
+    decides it; the family record's credential is dropped, since it belongs
+    to the family's slot table and never to the entry (the send path resolves
+    the entry's own credential).
+
+    Args:
+        provider_name: Stripped provider id from the caller.
+        app_config: Loaded app configuration holding the registry.
+        environ: Environment mapping for credential resolution.
+        background_credentials: Forwarded to the family readiness check.
+
+    Returns:
+        The entry's readiness, an "Endpoint not found" state for a dangling
+        slug, or None when ``provider_name`` is not a registry id.
+    """
+    # Lazy: the registry imports console_session_settings, which imports this module.
+    from .console_session_settings import _custom_endpoint_missing_key_readiness
+    from .custom_endpoint_registry import (
+        canonical_custom_endpoint_id,
+        entry_for,
+        family_execution_key,
+    )
+
+    registry_id = canonical_custom_endpoint_id(provider_name)
+    if registry_id is None:
+        return None
+    entry = entry_for(app_config, registry_id)
+    if entry is None:
+        return ProviderReadiness(
+            provider=registry_id,
+            provider_key="custom",
+            requires_api_key=False,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Endpoint not found",
+            recovery=(
+                "No custom endpoint with that id is saved. Choose another "
+                "provider, or recreate the endpoint under Custom endpoints."
+            ),
+        )
+    family_key = family_execution_key(entry.family)
+    family = get_provider_readiness(
+        family_key,
+        app_config,
+        environ=environ,
+        background_credentials=background_credentials,
+    )
+    if family.ready:
+        missing_key = _custom_endpoint_missing_key_readiness(entry, family_key, environ)
+        if missing_key is not None:
+            return missing_key
+        family = replace(family, api_key=None, api_key_source=None)
+    return replace(family, provider=entry.display_name)
+
+
 def get_provider_readiness(
     provider: str | None,
     app_config: Mapping[str, object],
@@ -592,6 +662,12 @@ def get_provider_readiness(
     provider_name = (provider or "").strip()
     provider_key = provider_config_key(provider_name)
     env = environ if environ is not None else os.environ
+
+    registry_readiness = _custom_endpoint_readiness(
+        provider_name, app_config, env, background_credentials
+    )
+    if registry_readiness is not None:
+        return registry_readiness
 
     if not provider_name:
         return ProviderReadiness(

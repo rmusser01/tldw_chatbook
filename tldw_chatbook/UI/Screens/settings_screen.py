@@ -13846,6 +13846,8 @@ class SettingsScreen(BaseAppScreen):
             return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
+        if readiness.reason == "Endpoint not found":
+            return "Not ready · endpoint not found; choose another provider"
         if self._provider_saved_api_key_present(provider):
             return "API key source: local config key saved"
         if readiness.api_key_source and readiness.api_key_source.startswith("env:"):
@@ -14683,6 +14685,8 @@ class SettingsScreen(BaseAppScreen):
             return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
             return "Provider settings invalid; repair in Advanced Config or config.toml"
+        if readiness.reason == "Endpoint not found":
+            return "Not ready · endpoint not found; choose another provider"
         if readiness.api_key_source:
             return f"API key: {readiness.api_key_source}"
         if not readiness.requires_api_key:
