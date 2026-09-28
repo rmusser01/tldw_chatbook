@@ -51,8 +51,7 @@ so `nightly-deep.yml` and its contract tests are untouched.
 - **Why:** 0 of 8 complete runs, while using about 22% of the account's runner-minutes and 64% of
   its macOS minutes.
 - **Restoring it:** `gh workflow enable nightly-deep.yml`, once CI throughput sub-project 3 makes
-  a run able to finish and report. The ADR-103 amendment for this cadence change ships in that
-  spec's rollout step 3.
+  a run able to finish and report. The ADR-103 amendment for this cadence change shipped in #2860.
 
 ## Standing state (as of 2026-09-12; strict superseded above)
 

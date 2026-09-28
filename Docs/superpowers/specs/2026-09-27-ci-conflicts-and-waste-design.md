@@ -1,9 +1,26 @@
 # CI throughput, sub-project 1: merge-conflict hotspots and wasted runner work
 
 **Date:** 2026-09-27
-**Status:** Draft, revision 2 (after an independent adversarial review the same day). Awaiting
-owner review.
+**Status:** Approved 2026-09-27; implemented via #2853, #2860, #2866, #2867 (close-out: this PR).
 **Scope:** `rmusser01/tldw_chatbook` only. This is sub-project 1 of 5; see "Program context".
+
+## Outcome (2026-09-27)
+
+- **No GGUF census additions.** Both `Tests/UI/test_model_installed_view.py` and
+  `Tests/UI/test_llm_gguf_source_modes.py` are red on the fast lane's minimal dependency set (11
+  failures total, all `RecoveryRequired: raw_source_selection_changed`), so neither was added to
+  `scripts/ui_pr_gate_census.txt`. The "Coverage after this change" bullet stating GGUF screens
+  are "covered on Linux in the PR gate through C2's census additions" did not happen.
+- **GGUF trigger partial-restore, a deviation from C2.** Post-Qodo review on PR #2860,
+  `pyproject.toml` and the shared test-harness paths (`Tests/conftest.py`, `Tests/UI/conftest.py`,
+  `Tests/UI/app_factory.py`, `Tests/private_profile.py`, `Tests/UI/consolidated_css.py`) were
+  restored to both GGUF workflows' triggers; `app.py`, `config.py` and `css/**` stay excluded.
+  This keeps roughly 244 of the original 30-day trigger volume removed rather than the full C2 list.
+- **Lessons-file conflicts deferred.** The design's replay found `backlog/docs/lessons-*.md` among
+  the top conflict sources; no change here reduces that -- it is not addressed by this rollout.
+- **Nightly disabled.** `nightly-deep.yml` was disabled with `gh workflow disable` on 2026-09-27
+  (0 complete runs in 8 nights; see the ADR-103 amendment and `backlog/docs/branch-protection-baseline.md`).
+- **2-week review:** tracked as task-33160.
 
 ## Why
 
