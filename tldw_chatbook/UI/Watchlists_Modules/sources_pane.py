@@ -502,8 +502,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             # border and nothing else -- no search box, no filters, no
             # `New source` -- and a new user had no way to add a source at
             # all. Widths are pinned alongside it in features/_watchlists.tcss
-            # (they have to be in the bundle to beat the global
-            # `Select { width: 100% }` in features/_conversations.tcss).
+            # (in the bundle, which outranks any widget DEFAULT_CSS).
             with Horizontal(classes="destination-filter-strip"):
                 yield Input(
                     placeholder="Search sources...",

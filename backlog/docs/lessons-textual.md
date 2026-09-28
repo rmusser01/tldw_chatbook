@@ -1279,3 +1279,23 @@ for keyword-only APIs, and give test doubles the real keyword-only
 signatures. Any awaited off-loop work inserted into a swap/compose chain
 also needs helpers to WAIT for the swap's settle flag rather than assume a
 single pause covers it.
+
+## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
+
+**TASK-33003.1, Chat settings disclosures, 2026-09-28.** A collapsed Chat
+settings section measured `margin (0, 0, 1, 0)` even though its own class,
+`.console-settings-modal-section { margin: 1 0 0 0; }`, asks for a top
+margin. The winner was the leaked `Collapsible.-collapsed { margin-bottom: 1; }`
+from the retired evals sheet: at (0,1,1) it outranks the (0,1,0) class, and
+Textual stores `margin-bottom` as a full `margin` spacing whose other edges
+are 0. It does not merge per edge the way browser CSS does. A toy app
+confirmed it: `.sec { margin: 1 0 0 0 }` plus `Static.x { margin-bottom: 2 }`
+gives `(0, 0, 2, 0)`. Expanding the section switched the section's spacing
+from below to above, because only then did the class rule win.
+
+**What to do.** Read a one-edge `margin-*`/`padding-*` declaration as
+"margin: 0 ... <edge> ...". A higher-specificity rule that means to adjust
+one edge silently zeroes the other three that a lower rule set. Restate every
+edge you need in the winning rule, and measure `styles.margin` rather than
+reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
+to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).

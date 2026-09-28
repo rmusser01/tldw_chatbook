@@ -1,8 +1,9 @@
 """Bundle-CSS regression guard for the enhanced file picker's action bar.
 
 TASK-16478: the app bundle's bare ``Select { width: 100%; }`` rule
-(``css/features/_conversations.tcss``) outranks any widget ``DEFAULT_CSS``,
-so with the bundle loaded every *filtered* ``EnhancedFileDialog`` rendered
+(``css/features/_conversations.tcss``, retired in TASK-33003.1) outranked any
+widget ``DEFAULT_CSS``, so with the bundle loaded every *filtered*
+``EnhancedFileDialog`` rendered
 its file-type Select at full width: the filename Input was crushed to a
 few columns and the Select/Cancel buttons were laid out past the dialog's
 right edge, clipped out of view. ``css/components/_dialogs.tcss`` now pins
@@ -133,7 +134,7 @@ async def test_filter_select_is_pinned_not_full_width(tmp_path):
         dialog_region = dialog.query_one(_DIALOG_ID).region
         # Pinned (24) plus chrome slack -- never a share of the whole row.
         assert select_region.width <= 30, (
-            f"filter Select is {select_region.width} wide; the bare "
-            "`Select {{ width: 100% }}` bundle rule is beating the pin again"
+            f"filter Select is {select_region.width} wide; an app-tier "
+            "Select rule is beating the pin again"
         )
         assert select_region.width < dialog_region.width

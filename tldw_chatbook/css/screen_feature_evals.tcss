@@ -856,8 +856,9 @@ $ds-conversation-menu-width: 30;
 
 /* task-1710 T2: the per-cell continuation opt-in.
 
-   `_conversations.tcss` carries a bare, unscoped `Checkbox { width:
-   100%; height: 2; }` type selector that reaches every `Checkbox` app-
+   `_conversations.tcss` carried a bare, unscoped `Checkbox { width:
+   100%; height: 2; }` type selector (retired in TASK-18960) that reached
+   every `Checkbox` app-
    wide (the SAME rule `_agentic_terminal.tcss`'s own `.settings-imagegen-
    backend-row Checkbox` comment already documents overriding, for the
    identical reason) -- confirmed live that it still won over this

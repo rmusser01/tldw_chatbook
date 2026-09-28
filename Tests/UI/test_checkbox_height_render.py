@@ -7,9 +7,9 @@ focus-outline family 17961 fixed (see that task's own
 `test_compact_checkbox_focused_frame_shows_its_label` docstring, which
 carves this exact widget out of its scope for that reason).
 
-Root cause: `features/_conversations.tcss` carries a bare, unscoped
+Root cause: `features/_conversations.tcss` carried a bare, unscoped
 `Checkbox { width: 100%; margin-bottom: 0; height: 2; }` type selector that
-reaches every `Checkbox` app-wide. `ToggleButton` (the base class behind
+reached every `Checkbox` app-wide (retired by this task). `ToggleButton` (the base class behind
 `Checkbox`/`RadioButton`) pins `border: tall` in its own DEFAULT_CSS -- two
 rows of chrome, present even while blurred, unrelated to focus. `height: 2`
 gives the whole widget only two rows total, so the border consumes both and

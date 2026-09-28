@@ -44,6 +44,17 @@
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
+/* TASK-33003.1 (spec §6 "a closed disclosure costs 1 row"): drop the global
+   components/_widgets.tcss Collapsible frame (round border, min-height 3,
+   $surface band) and Textual's padding-bottom inside Chat settings, so a
+   collapsed section is its 1-row title plus the section margin above. */
+ConsoleSettingsModal Collapsible {
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
 #console-settings-provider-model-section,
 #console-settings-connection {
     width: $ds-width-full;

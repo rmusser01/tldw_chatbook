@@ -579,11 +579,11 @@ async def test_collect_arguments_sends_null_for_blank_required_nullable_field():
 # -- Task 6 (PR-T3, task-2272 item 1): the boolean field must be READABLE ----
 # The harness above loads no stylesheet, which is exactly why this shipped
 # broken: under the production bundle, `css/features/_conversations.tcss`'s
-# unscoped `Checkbox { width: 100%; height: 2; }` type selector fixes every
-# checkbox app-wide at two rows -- both of which the widget's own border
-# consumes, leaving ZERO content rows. `search_rag`'s `use_semantic` painted
+# unscoped `Checkbox { width: 100%; height: 2; }` type selector (retired in
+# TASK-18960) fixed every checkbox app-wide at two rows -- both of which the
+# widget's own border consumed, leaving ZERO content rows. `search_rag`'s `use_semantic` painted
 # as an empty box: no toggle glyph, no label, state impossible to read.
-# These tests mount with the real bundle so that rule is in play.
+# These tests mount with the real bundle so any such rule is in play.
 
 BOOLEAN_SCHEMA = {
     "type": "object",

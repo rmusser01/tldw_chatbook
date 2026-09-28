@@ -1288,17 +1288,15 @@ Button.mcp-callout {
 }
 
 /* Defect 1 fix (QA round mcp-hub-phase3-2026-07): kept in lockstep with the
-   baseline copy in MCPToolsMode.DEFAULT_CSS (mcp_tools_mode.py), but here
-   it's load-bearing, not just defensive. Textual's cascade always treats
-   every CSS_PATH-sourced rule (this bundle) as higher priority than any
-   widget's own DEFAULT_CSS, regardless of selector specificity -- so
-   _conversations.tcss's global, unscoped `Select { width: 100%; }` rule
-   (intended for a completely different screen's sidebar forms) was
-   silently winning over MCPToolsMode's own, far more specific override,
-   collapsing the filter-server Select to a 0x0 region against its
-   `width: auto` slot parent (the sibling filter Input already claims the
-   full bar at `width: 1fr`). This copy must live in the bundle itself,
-   with equal-or-higher specificity than that bare rule, to actually win. */
+   baseline copy in MCPToolsMode.DEFAULT_CSS (mcp_tools_mode.py). Textual's
+   cascade always treats every CSS_PATH-sourced rule (this bundle) as higher
+   priority than any widget's own DEFAULT_CSS, regardless of selector
+   specificity. The rule it originally beat -- _conversations.tcss's bare
+   `Select { width: 100%; }`, which collapsed this Select to 0x0 against its
+   `width: auto` slot parent -- was retired in TASK-33003.1; this bundle
+   copy stays as the app-tier pin for the slot's fixed width: Select's own
+   default `1fr` inside a `width: auto` slot measured the whole bar's width
+   in a probe, pushing the control past the bar's right edge. */
 #mcp-tools-filter-server-slot Select {
     width: $ds-size-28;
 }
@@ -1396,8 +1394,9 @@ Button.mcp-callout {
    check).
 
    Cause, measured in a test app with this bundle loaded: `css/features/
-   _conversations.tcss` ships an unscoped `Checkbox { width: 100%; height:
-   2; }` type selector that reaches every checkbox app-wide (the SAME rule
+   _conversations.tcss` shipped an unscoped `Checkbox { width: 100%; height:
+   2; }` type selector (retired in TASK-18960) that reached every checkbox
+   app-wide (the SAME rule
    `.settings-imagegen-backend-row Checkbox`, `LibraryIngestCanvas .type-
    group-contents Checkbox` and `#evals-bench-capture-continuations` each
    already carry their own escape from). Checkbox's own border takes both of
@@ -1452,7 +1451,8 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 }
 
 /* Audit filters share a full-width column. Explicit app-tier widths keep
-   global Input/Select rules from restoring the old narrow fixed slots. */
+   widget-default Input/Select widths from restoring the old narrow fixed
+   slots. */
 #mcp-audit-filter-text,
 #mcp-audit-filter-decision,
 #mcp-audit-filter-initiator {
@@ -1496,12 +1496,10 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    tool/server header, or an args summary up to 80 chars) can't hog the
    row and squeeze the decision Select out of view. `.approval-row-
    decision` (the class selector on the row's Select) gets an explicit
-   fixed width -- a CLASS selector already outranks the bare `Select {
-   width: 100%; }` type selector on specificity alone, so (unlike the two
-   MCP Select fixes above) no id-scoped selector is needed here for it to
-   win; without this rule the Select would otherwise claim the row's FULL
-   width instead of its own bounded share, overlapping/clipping behind the
-   header and args text laid out before it. */
+   fixed width -- it was written to beat the bare `Select { width: 100%; }`
+   type selector (retired in TASK-33003.1) that made the Select claim the
+   row's FULL width, overlapping/clipping behind the header and args text
+   laid out before it; it now pins the bounded share outright. */
 #approval-batch-rows {
     height: auto;
     min-height: $ds-size-0;
@@ -1718,9 +1716,10 @@ ImageGenSettingsPanel Checkbox.-on > .toggle--button {
     color: $success;
 }
 
-/* task-2012: css/features/_conversations.tcss ships an UNSCOPED
-   `Checkbox { width: 100%; height: 2; }` that clips the ingest option
-   panel's checkbox content row to a border-only husk (same escape family
+/* task-2012: css/features/_conversations.tcss shipped an UNSCOPED
+   `Checkbox { width: 100%; height: 2; }` (retired in TASK-18960) that
+   clipped the ingest option panel's checkbox content row to a border-only
+   husk (same escape family
    as the per-ID escapes other screens carry against that rule). The
    container rule kills the panel's trailing phantom height; the label
    rule styles the value-field labels added beside it. */
@@ -1808,10 +1807,11 @@ LibraryIngestCanvas CollapsibleTitle:focus {
    stock CollapsibleTitle is width:auto, so the PARENT clips it before its
    own text-overflow can engage -- constrain the width and pin one line so
    the ellipsis actually renders. */
-/* Child combinator for specificity: css/features/_conversations.tcss ships
-   an unscoped `Collapsible > CollapsibleTitle { height: 3; }` LATER in the
-   bundle -- at equal specificity it won, re-adding two filler rows inside
-   every panel title (task-2043). */
+/* Child combinator for specificity: css/features/_conversations.tcss
+   shipped an unscoped `Collapsible > CollapsibleTitle { height: 3; }` LATER
+   in the bundle that re-added two filler rows inside every panel title
+   (task-2043); it was retired in TASK-33003.1, and the one-line pin below
+   now serves only the ellipsis. */
 LibraryIngestCanvas Collapsible > CollapsibleTitle {
     width: $ds-width-fill;
     height: $ds-size-1;
