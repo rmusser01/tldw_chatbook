@@ -125,6 +125,33 @@ must also complete the normal recovery review before writes can run.
 Cancellation or timeout can return before an already-started database write
 finishes. Check the character roster before retrying.
 
+### Character reads and the long-field guard
+
+`character_search` and `character_get` — the same read tools the Console uses —
+are off for external clients by default: `[mcp] expose_character_tools = false`.
+Set it to `true` and restart the client to publish them. The switch is
+independent of `[mcp] expose_local_tools` (no workspace, web, or Watchlists
+tool comes with it) and of the Console's `[tools] character_tools_enabled`.
+The reads use the local source's permission rows (the ones Tools mode lists),
+so an explicit Allow on each read is needed; Ask is refused as for every
+external local tool. `character_save` is never published externally: external
+writes are `create_character` and `update_character` above.
+
+While these reads are exposed, `update_character` will not replace a field
+that `character_get`'s whole-card view cuts short (about 1,000 characters)
+until that field has been read in full. Page it with `character_get` using `field` and `offset` from 0 until no
+`next_offset` comes back; otherwise the call returns
+`error_code: "read_full_field_first"` and the card is untouched. The record of
+what was read lasts for one server process (one client session) and one card
+version, so read again after each saved edit. With `expose_character_tools`
+off there is no external read tool to satisfy the guard, so it does not apply
+and `update_character` works as described above for every field.
+
+While Chatbook's runtime source is `server`, the standalone server's
+`create_character` and `update_character` return `error_code: "unsupported"` and the reads return
+`status: "unsupported"`, with the Console's message: character editing is
+local-only.
+
 ### Standalone behavior and controls
 
 `use_semantic` remains a boolean compatibility switch: `false` forces media
@@ -810,3 +837,9 @@ character_tools_enabled` is off), and `character_save` is the one tool an
 explicit Allow does not un-floor (`permission_store.ALWAYS_ASK_TOOLS`); its
 card offers only Approve once / Deny, and Tool Pack exports now carry the
 character tools' rules instead of listing them as omitted.*
+
+*Docs pass 2026-09-27 (task-32955, against code and tests, not a live
+screen): "Character reads and the long-field guard" documents `[mcp]
+expose_character_tools`, the external character reads, and the
+`update_character` long-field guard (only while the reads are exposed) and
+server-mode refusal.*

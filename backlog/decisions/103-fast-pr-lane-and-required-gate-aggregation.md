@@ -1,6 +1,6 @@
 # ADR-103: Fast PR lane and required gate aggregation
 
-Status: Accepted (amended 2026-08-30 for admin/current-base enforcement)
+Status: Accepted (amended 2026-08-30 for admin/current-base enforcement); amended 2026-09-27 (nightly disabled, guards removed, GGUF evidence narrowed)
 Date: 2026-08-29
 Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-25705](../tasks/task-25705%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 Supersedes: N/A
@@ -12,6 +12,9 @@ result is aggregated by the existing required `Derived artifacts reproduce from
 their sources` context; comprehensive test coverage runs on `main`, manual
 events, and a dedicated default-branch-owned nightly workflow instead of every
 pull-request update.
+
+   (Clarified 2026-09-27: since TASK-32908 the fast test runs as two parallel jobs,
+   PR Fast Lane and UI Fast Lane; see Consequences.)
 
 ## Amendment (2026-08-30, TASK-25705) — adopted
 
@@ -98,14 +101,14 @@ cron entry on `dev`.
 
 - The existing required job name remains unchanged, so branch protection needs
   no migration and existing PRs are not stranded.
-- The fast-test job and derived-artifact job remain separate. The required job
-  declares the fast lane as a prerequisite, runs with `always()`, and fails
-  explicitly on pull requests unless the prerequisite result is `success`.
-- The required workflow consumes at most one runner at a time: the fast lane
-  runs first, followed by the install-free derived checks. Together with the
+- The fast-test jobs and derived-artifact job remain separate. The required job
+  declares both fast lanes as prerequisites, runs with `always()`, and fails
+  explicitly on pull requests unless both prerequisite results are `success`.
+- The required workflow runs its two fast lanes in parallel (at most two
+  runners at a time), then the install-free derived-artifact checks. With
   one routine path-scoped guard (perf-guard), an ordinary unlabeled, non-GGUF PR has a
-  peak of at most two runners instead of approximately thirteen.
-- That two-runner figure is not a global maximum. The two path-scoped GGUF
+  peak of at most three runners instead of approximately thirteen.
+- That three-runner figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
   suites retain their explicit contracts.

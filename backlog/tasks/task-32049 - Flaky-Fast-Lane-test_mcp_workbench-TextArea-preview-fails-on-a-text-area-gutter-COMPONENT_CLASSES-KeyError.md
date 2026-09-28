@@ -3,10 +3,10 @@ id: TASK-32049
 title: >-
   Flaky Fast Lane: test_mcp_workbench TextArea preview fails on a
   text-area--gutter COMPONENT_CLASSES KeyError
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-08 18:01'
-updated_date: '2026-09-27 23:28'
+updated_date: '2026-09-28 02:09'
 labels:
   - mcp
   - tests
@@ -26,8 +26,8 @@ Root-cause fix (TASK-33115): `tldw_chatbook/Widgets/detach_safe_text_area.py` ad
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every TextArea construction site under tldw_chatbook/UI/MCP_Modules/ is detach-safe (TASK-33115), so no test in the Fast Lane suite that removes a mounted MCP-module TextArea can raise the text-area--gutter KeyError
-- [ ] #2 The mechanism is understood and documented: it is a detach race (a queued repaint reaching render_lines after Textual clears the widget's component styles on teardown), not a mount-order/COMPONENT_CLASSES-registration race as originally filed
+- [x] #1 Every TextArea construction site under tldw_chatbook/UI/MCP_Modules/ is detach-safe (TASK-33115), so no test in the Fast Lane suite that removes a mounted MCP-module TextArea can raise the text-area--gutter KeyError
+- [x] #2 The mechanism is understood and documented: it is a detach race (a queued repaint reaching render_lines after Textual clears the widget's component styles on teardown), not a mount-order/COMPONENT_CLASSES-registration race as originally filed
 - [ ] #3 Tests/UI/test_mcp_workbench.py passes reliably across repeated Fast Lane runs with no intermittent text-area--gutter KeyError
 <!-- AC:END -->
 
@@ -45,5 +45,7 @@ Evidence:
 - Full-suite comparison with the dev `.venv`: `Tests/UI/test_mcp_workbench.py` + `Tests/UI/test_mcp_tools_mode.py` was 408 passed / 0 failed / 0 errored on both this branch and an `origin/dev` base worktree -- identical (empty) FAILED/ERROR sets, no regressions.
 - The 10x10 before/after loop of `Tests/UI/test_mcp_workbench.py` on the fast-lane minimal venv was inconclusive: 0 `text-area--gutter` failures in 10 runs on both `origin/dev` (before) and the fix branch (after) -- it did not reproduce the timing-dependent flake in this run, so the deterministic negative-control test above is the evidence that carries this task, not the loop.
 
-See PR #2866 and TASK-33115 for the full change and additional detail. Status left as To Do for the controller to set Done after merge.
+See PR #2866 and TASK-33115 for the full change and additional detail. Status is In Progress: the remaining reliability criterion is measured by the 2-week review (task-33160).
+
+AC #3 ("passes reliably across repeated Fast Lane runs") stays unchecked: the 10x10 loop was inconclusive (0/0 on both origin/dev and the fix branch), so it proved nothing either way. This task stays In Progress -- it is closed by task-33160 (CI throughput sub-project 1: 2-week success review), which measures 0 fast-lane failures carrying text-area--gutter since #2866 merged.
 <!-- SECTION:NOTES:END -->

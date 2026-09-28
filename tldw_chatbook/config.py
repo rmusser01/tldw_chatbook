@@ -20,6 +20,7 @@ import sys
 from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -503,9 +504,28 @@ CLI_APP_CLIENT_ID = installation_client_id()
 DEFAULT_CONFIG_PATH = profile_paths.default_config_path()
 
 
+@lru_cache(maxsize=16)
+def _resolve_effective_config_path(
+    override: str | None,
+    home: str | None,
+    userprofile: str | None,
+    cwd: str | None,
+) -> Path:
+    """Cache lexical selection for one environment and relative-path base."""
+    del home, userprofile, cwd  # Key the environment read by expanduser/abspath.
+    return profile_paths.lexical_path(override or DEFAULT_CONFIG_PATH)
+
+
 def _get_effective_config_path() -> Path:
     """Return the lexical active CLI config path."""
-    return profile_paths.effective_config_path(DEFAULT_CONFIG_PATH)
+    override = os.environ.get("TLDW_CONFIG_PATH")
+    cwd = os.getcwd() if override and not os.path.isabs(override) else None
+    return _resolve_effective_config_path(
+        override,
+        os.environ.get("HOME"),
+        os.environ.get("USERPROFILE"),
+        cwd,
+    )
 
 
 def get_cli_config_path() -> Path:
@@ -2200,10 +2220,11 @@ def _load_settings_uncached(
     final_mcp_settings_cli = copy.deepcopy(get_toml_section("mcp"))
     if not isinstance(final_mcp_settings_cli, dict):
         final_mcp_settings_cli = {}
-    final_mcp_settings_cli["expose_local_tools"] = coerce_bool_setting(
-        final_mcp_settings_cli.get("expose_local_tools", False),
-        False,
-    )
+    for mcp_switch in ("expose_local_tools", "expose_character_tools"):
+        final_mcp_settings_cli[mcp_switch] = coerce_bool_setting(
+            final_mcp_settings_cli.get(mcp_switch, False),
+            False,
+        )
 
     # --- Application Mode ---
     single_user_mode_str = os.getenv(
@@ -5737,6 +5758,7 @@ max_concurrent_requests = 10  # Max concurrent requests
 # approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
 
 # expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
+# expose_character_tools = false   # expose character_search and character_get to external MCP clients (independent of expose_local_tools and [tools] character_tools_enabled); each tool remains permission-gated
 
 # Tool-specific settings
 [mcp.tools]

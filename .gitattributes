@@ -15,3 +15,7 @@ tldw_chatbook/Canvas/static/runtime-manifest.json -text
 # Built-in skills are SHA-256 pinned (Skills_Interop/builtin_skills.py); a CRLF
 # checkout would block them as builtin_modified.
 tldw_chatbook/assets/skills/** -text
+
+# The offline tokenizer manifest verifies exact upstream bytes (ADR-093).
+# Line-ending conversion would invalidate every BPE table on Windows.
+tldw_chatbook/assets/tiktoken_cache/** -text

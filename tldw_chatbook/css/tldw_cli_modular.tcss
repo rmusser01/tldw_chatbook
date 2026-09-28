@@ -5459,6 +5459,11 @@ StatCard:hover {
     color: $ds-surface-panel;
     text-style: bold;
 }
+
+#settings-theme-list > .option-list--option-disabled {
+    color: $ds-text-muted;
+    text-style: bold;
+}
 #settings-workbench.settings-workbench-compact #settings-theme-list {
     max-height: $ds-size-9;
 }
