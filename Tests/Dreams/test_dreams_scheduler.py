@@ -241,3 +241,30 @@ async def test_track_handler_dispatches_run_track_check(monkeypatch):
     await asyncio.gather(*dream_track_handler._SPAWNED_TRACK_CHECKS)
     assert calls == [(deps, 9)]
     dream_track_handler._SPAWNED_TRACK_CHECKS.clear()
+
+
+async def test_track_handler_shutdown_cancels_inflight_and_is_idempotent():
+    """Fix round 1, ruling P9: the seam ``app.on_unmount`` calls is real.
+
+    Cancels a parked in-flight check, settles it, returns the cancelled
+    count, and is a safe no-op (returning 0) with nothing in flight --
+    the contract the deferred-import call in ``on_unmount`` relies on.
+    """
+    dream_track_handler._SPAWNED_TRACK_CHECKS.clear()
+    assert await dream_track_handler.shutdown() == 0
+
+    async def _parked():
+        await asyncio.sleep(60)
+
+    task = asyncio.create_task(_parked(), name="dream_track_test")
+    dream_track_handler._SPAWNED_TRACK_CHECKS.add(task)
+    task.add_done_callback(
+        dream_track_handler._SPAWNED_TRACK_CHECKS.discard)
+
+    cancelled = await dream_track_handler.shutdown(timeout=1.0)
+
+    assert cancelled == 1
+    assert task.cancelled()
+    assert not dream_track_handler._SPAWNED_TRACK_CHECKS
+    # Idempotent after settling.
+    assert await dream_track_handler.shutdown() == 0

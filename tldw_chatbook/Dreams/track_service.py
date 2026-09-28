@@ -674,10 +674,17 @@ async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
         return {"status": "skipped", "notified": False}
 
     # Question synthesis uses NO LLM: the template IS the query.
+    # ``date_range=None`` deliberately overrides ``run_queries``'s cycle
+    # default of ``"m"`` (ruling P8): a track check compares a watch's
+    # CURRENT result set against its anchor, and a long-lived watch whose
+    # engine results fall outside a one-month recency window would return
+    # empty forever -- perpetual ``withheld``, never anchored, never
+    # notified. Change detection must see the unfiltered result set.
     query = _render_query(query_template)
     results, _searches_used = await discovery.run_queries(
         deps.perform_search, engine=str(dreams_setting("search_engine")),
-        queries=[query], result_count=_TRACK_CHECK_RESULT_COUNT)
+        queries=[query], result_count=_TRACK_CHECK_RESULT_COUNT,
+        date_range=None)
     await asyncio.to_thread(
         dreams_db.usage_bump, local_date, searches=1)
 
