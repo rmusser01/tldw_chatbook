@@ -149,6 +149,11 @@ class ArtifactsScreen(BaseAppScreen):
         # holding the Artifacts list's Dreams rows (full `dream_stories`
         # rows shaped by Dreams.dreams_view.list_recent_dreams).
         self._dreams: list[dict[str, Any]] = []
+        # Phase 2 Task 5: the Tracked group's rows (shaped by
+        # Dreams.dreams_view.list_tracked_updates), read in the SAME worker
+        # hop as _dreams -- one extra read, no new worker/trio, and the same
+        # generation guard applies.
+        self._dreams_tracked: list[dict[str, Any]] = []
         self._dreams_generation = 0
         self._dreams_worker: Worker[Any] | None = None
         # TASK-21514: the previewed Daily Report (a full `briefings` row via
@@ -362,35 +367,50 @@ class ArtifactsScreen(BaseAppScreen):
         # drop-while-refreshing behavior is preserved -- but an
         # unconditional recompose on every mount/resume of a screen whose
         # Dreams slot is EMPTY churns the whole list pane for nothing.
-        if self._dreams:
+        if self._dreams or self._dreams_tracked:
             self.refresh(recompose=True)
         self._dreams_worker = self._refresh_dreams(self._dreams_generation)
 
     @work(exclusive=True, thread=True, group="artifacts-dreams")
     def _refresh_dreams(self, generation: int) -> None:
-        from ...Dreams.dreams_view import list_recent_dreams
+        from ...Dreams.dreams_view import list_recent_dreams, list_tracked_updates
 
         db = self._dreams_db()
         rows: list[dict[str, Any]] = []
+        tracked: list[dict[str, Any]] = []
         if db is not None:
             try:
                 rows = list_recent_dreams(db)
             except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
                 rows = []
-        self.app.call_from_thread(self._apply_dreams, generation, rows)
+            # Phase 2 Task 5: the Tracked group rides the SAME thread hop --
+            # one extra read, no new worker -- and its failure degrades to
+            # "no tracked rows" without taking the stories down with it.
+            try:
+                tracked = list_tracked_updates(db)
+            except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
+                tracked = []
+        self.app.call_from_thread(self._apply_dreams, generation, rows, tracked)
 
-    def _apply_dreams(self, generation: int, rows: list[dict[str, Any]]) -> None:
+    def _apply_dreams(
+        self,
+        generation: int,
+        rows: list[dict[str, Any]],
+        tracked: list[dict[str, Any]] | None = None,
+    ) -> None:
         if not self.is_attached or generation != self._dreams_generation:
             # Same guard as _apply_daily_reports: superseded by a newer
             # refresh, or the screen went away -- never recompose.
             return
-        if self._dreams == rows:
+        tracked_rows = tracked or []
+        if self._dreams == rows and self._dreams_tracked == tracked_rows:
             # An unchanged payload (the empty steady state) must not
             # recompose: a late no-op apply landing between another slot's
             # refresh and its repaint would tear the list's widgets down
             # mid-query. Only a real change repaints.
             return
         self._dreams = rows
+        self._dreams_tracked = tracked_rows
         self.refresh(recompose=True)
 
     # --- Dreams Phase 1 (Task 7): row click / Enter opens the story modal ---
@@ -438,6 +458,18 @@ class ArtifactsScreen(BaseAppScreen):
         """The app's local watchlists service (the Dreams track seam), or None."""
         return getattr(self.app_instance, "local_watchlists_service", None)
 
+    def _dreams_scheduling_db(self) -> Any:
+        """The app's scheduled-tasks DB (the Dreams event-reminder seam).
+
+        The ``SchedulingService`` owns the ``ScheduledTasksDB`` and is built
+        mid-app-init, so this resolves lazily and tolerates a missing
+        service or a missing ``db`` attribute (wiring order): ``None`` means
+        ``promote_to_reminder`` degrades to no reminder -- tracking itself
+        still succeeds.
+        """
+        service = getattr(self.app_instance, "scheduling_service", None)
+        return getattr(service, "db", None)
+
     def _open_dreams_story_row(self, widget_id: str) -> None:
         """Push the story modal for one dreams row (story or synthetic).
 
@@ -473,6 +505,11 @@ class ArtifactsScreen(BaseAppScreen):
                 # local watchlists service, resolved lazily so a runtime
                 # without it degrades the action to a notice.
                 subs_service_getter=self._dreams_track_service,
+                # Phase 2 Task 5: the event-reminder seam -- the app's
+                # scheduled-tasks DB, resolved lazily the same way so an
+                # event-dated track promotes a reminder when the scheduler
+                # exists and silently skips it when it does not.
+                scheduling_db_getter=self._dreams_scheduling_db,
                 on_changed=self._start_dreams_refresh,
             )
         )
@@ -1173,14 +1210,37 @@ class ArtifactsScreen(BaseAppScreen):
                             id="artifacts-daily-report-demo",
                             tooltip=DAILY_REPORT_DEMO_TOOLTIP,
                         )
+                    # Phase 2 Task 5: the Tracked group composes BEFORE the
+                    # Dreams rows -- a tracked update (a changed check, an
+                    # approaching event) outranks the story stream it came
+                    # from. Same bare-Static idiom and focusable-Static
+                    # pre-yield mutation as the Dreams rows below, so no
+                    # new classes or literals (ADR-150 governance stays
+                    # green). A disabled feature renders no tracked group
+                    # at all (its rows are never read while disabled).
+                    from ...Dreams.dreams_view import (
+                        format_dream_row,
+                        format_tracked_row,
+                    )
+
+                    if self._dreams_enabled and self._dreams_tracked:
+                        for update in self._dreams_tracked:
+                            track_row = Static(
+                                self._literal_text(format_tracked_row(update)),
+                                id=f"artifacts-dream-track-row-{update['id']}",
+                            )
+                            track_row.can_focus = True
+                            yield track_row
+                    elif self._dreams_enabled:
+                        yield Static(
+                            "> Tracked: none", id="artifacts-list-dreams-tracked"
+                        )
                     # Dreams rows reuse the Report rows' exact widget idiom
                     # (bare Statics, `artifacts-<type>-row-{id}` ids, no new
                     # classes or literals), so the ADR-150 governance test
                     # stays green untouched. A disabled feature renders its
                     # disabled copy even when rows exist; an enabled one with
                     # no rows (or no DB handle yet) renders "none yet".
-                    from ...Dreams.dreams_view import format_dream_row
-
                     if self._dreams_enabled and self._dreams:
                         for story in self._dreams:
                             row_id = story.get("id")

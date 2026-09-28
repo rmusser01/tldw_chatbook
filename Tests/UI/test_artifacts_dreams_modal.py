@@ -1032,3 +1032,115 @@ async def test_dream_row_ingest_uses_app_capture_scope(tmp_path, monkeypatch):
         assert request.submitted_url == "https://example.com/flights"
         assert request.freeform_note.startswith("via Dreams")
         assert _feedback_kinds(app.dreams_db, 1) == ["ingested"]
+
+
+# --- Tracked badge + event reminder plumbing (Phase 2 Task 5) --------------------
+
+
+def _seed_event_story_db(tmp_path) -> DreamsDB:
+    """One http story pinned to an event date (the reminder trigger)."""
+    db = DreamsDB(tmp_path / "dreams-event.sqlite", "dreams-modal")
+    collection = db.create_collection("2026-09-22", "scheduled", "digest")
+    db.insert_story(
+        collection,
+        title="Opera night at Fuji",
+        url="https://example.com/opera",
+        snippet="Tickets on sale soon",
+        body="A story about tickets.",
+        status="complete",
+        source="web",
+        kind="event",
+        event_date="2026-10-01",
+        location="Japan",
+        matched_topics=["visit japan"],
+        query="opera tickets japan",
+    )
+    return db
+
+
+@pytest.mark.asyncio
+async def test_track_with_event_date_promotes_reminder(tmp_path, monkeypatch):
+    """The modal's scheduling getter flows into the track service's reminder.
+
+    Task 5's seam: the Artifacts screen passes ``scheduling_db_getter`` (the
+    app's ScheduledTasksDB); tracking an event-dated story must land one
+    one-time reminder linked to the tracked item.
+    """
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+
+    db = _seed_event_story_db(tmp_path)
+    story = _story_row(db)
+    _, service = _subs_stack(tmp_path)
+    scheduling = ScheduledTasksDB(tmp_path / "scheduled.db", "dreams-modal")
+    monkeypatch.setattr(
+        "tldw_chatbook.DB.Subscriptions_DB.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    try:
+        app = App()
+        async with app.run_test(size=(120, 40)) as pilot:
+            modal = DreamsStoryModal(
+                story,
+                dreams_db_getter=lambda: db,
+                capture_backend_getter=lambda: None,
+                subs_service_getter=lambda: service,
+                scheduling_db_getter=lambda: scheduling,
+                on_changed=lambda: None,
+            )
+            await app.push_screen(modal)
+            await pilot.pause()
+
+            await pilot.press("t")
+            await pilot.pause()
+
+            (task,) = scheduling.list_reminder_tasks()
+            assert task["run_at"].startswith("2026-09-24"), (
+                "the reminder fires a week before the event"
+            )
+            assert task["link_type"] == "dream_tracked_item"
+            (tracked_item,) = db.list_tracked_items()
+            assert task["link_id"] == str(tracked_item["id"])
+    finally:
+        scheduling.close()
+
+
+@pytest.mark.asyncio
+async def test_tracked_story_detail_renders_tracked_badge(tmp_path):
+    """An ACTIVE tracked origin badges the story's detail header ``· tracked``."""
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert story["tracked"] is False
+        assert "· tracked" not in _visible_text(modal)
+
+    db.create_tracked_item(
+        mechanism="page", intent="deal", origin_story_id=story["id"],
+        cadence_seconds=3600)
+    tracked_story = _story_row(db)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            tracked_story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert tracked_story["tracked"] is True
+        assert "· tracked" in _visible_text(modal)

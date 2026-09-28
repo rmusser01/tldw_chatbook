@@ -28,6 +28,7 @@ from tldw_chatbook.Dreams.discovery import normalize_url
 from tldw_chatbook.Dreams.track_service import (
     TrackCapReached,
     TrackSourceDisabled,
+    promote_to_reminder,
     rebaseline_track,
     run_track_check,
     track_page,
@@ -38,6 +39,7 @@ from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     NotificationDispatchService,
 )
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
     WatchlistBundleService,
@@ -104,6 +106,14 @@ def subs_stack(tmp_path):
     finally:
         db.close()
         store.close()
+
+
+@pytest.fixture()
+def scheduling_db(tmp_path):
+    """A real ScheduledTasksDB: the reminder seam Task 5 promotes into."""
+    db = ScheduledTasksDB(tmp_path / "scheduled.db", "track-test")
+    yield db
+    db.close()
 
 
 def _count_rows(db, table: str, where: str = "1=1", params: tuple = ()) -> int:
@@ -1039,3 +1049,89 @@ def test_rebaseline_track_without_baseline_is_noop(dreams_db):
     assert rebaseline_track(dreams_db, item_id) is None
     assert [run["status"] for run in
             dreams_db.list_recent_track_runs(item_id)] == ["skipped"]
+
+
+# --- event reminders (Phase 2 Task 5) -------------------------------------------
+#
+# ``promote_to_reminder`` is called by both track paths after the wrapper row
+# exists; every test here drives it through those paths (the way production
+# reaches it) against a real ``ScheduledTasksDB`` on tmp_path.
+
+
+@pytest.mark.asyncio
+async def test_track_page_with_event_date_promotes_reminder(
+        dreams_db, settings, subs_stack, scheduling_db):
+    service = subs_stack[1]
+
+    result = await track_page(
+        service, dreams_db, url=_URL, title="Cheap flights", intent="deal",
+        event_date="2026-10-01",
+        scheduling_db_getter=lambda: scheduling_db)
+
+    (task,) = scheduling_db.list_reminder_tasks(owner_id="local")
+    assert task["schedule_kind"] == "one_time"
+    assert task["run_at"].startswith("2026-09-24"), (
+        "run_at is the event date minus the 7-day lead"
+    )
+    assert task["next_run_at"] == task["run_at"]
+    assert task["link_type"] == "dream_tracked_item"
+    assert task["link_id"] == str(result["tracked_item_id"]), (
+        "the reminder links back to the tracked item"
+    )
+    assert task["title"] == "Dreams: tracked event", (
+        "a page item carries no query template"
+    )
+    assert task["body"] == "Tracked Dreams event on 2026-10-01"
+
+
+@pytest.mark.asyncio
+async def test_track_question_with_event_date_promotes_reminder(
+        dreams_db, settings, scheduling_db):
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal",
+        event_date="2026-10-01",
+        scheduling_db_getter=lambda: scheduling_db)
+
+    (task,) = scheduling_db.list_reminder_tasks(owner_id="local")
+    assert task["link_id"] == str(item_id)
+    assert task["title"] == f"Dreams: {_TEMPLATE}"
+    assert task["run_at"].startswith("2026-09-24")
+
+
+@pytest.mark.asyncio
+async def test_track_without_event_date_promotes_no_reminder(
+        dreams_db, settings, scheduling_db):
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="topic",
+        scheduling_db_getter=lambda: scheduling_db)
+
+    assert scheduling_db.list_reminder_tasks() == []
+    # Directly: no event_date means nothing to promote; a None scheduling DB
+    # (wiring order) degrades the same silent way.
+    assert await promote_to_reminder(
+        lambda: scheduling_db,
+        {"id": item_id, "query_template": _TEMPLATE, "event_date": None},
+    ) is None
+    assert await promote_to_reminder(
+        lambda: None,
+        {"id": item_id, "query_template": _TEMPLATE, "event_date": "2026-10-01"},
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_track_reminder_failure_never_fails_tracking(
+        dreams_db, settings, subs_stack):
+    service = subs_stack[1]
+
+    def _broken_getter():
+        raise RuntimeError("scheduled-tasks DB unavailable")
+
+    result = await track_page(
+        service, dreams_db, url=_URL, title="Cheap flights", intent="deal",
+        event_date="2026-10-01",
+        scheduling_db_getter=_broken_getter)
+
+    assert result["outcome"] == "created", (
+        "a reminder failure must leave the tracking result unchanged"
+    )
+    assert dreams_db.get_tracked_item(result["tracked_item_id"]) is not None

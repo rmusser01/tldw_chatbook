@@ -188,6 +188,10 @@ def _detail_renderable(story: Mapping[str, Any]) -> RenderableType:
     """Header + body for one story (literal `Text`, hyperlink-free Markdown)."""
     header = Text()
     header.append(str(story.get("title") or "Untitled dream story"), style="bold")
+    if story.get("tracked"):
+        # Same badge idiom as the list rows' " · kept": an ACTIVE tracked
+        # item names this story as its origin (Phase 2 Task 5).
+        header.append(" · tracked", style="dim")
     header.append("\n")
     header.append(str(story.get("url") or "no source URL"), style="dim")
     header.append("\n")
@@ -251,6 +255,12 @@ class DreamsStoryModal(ModalScreen[None]):
             ``Dreams.track_service.track_page``) degrades to a notice rather
             than crashing a runtime without the watchlists service. ``None``
             (the default) keeps older constructors working.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or ``None`` (Phase 2 Task 5); the track
+            action promotes one one-time reminder a week before the story's
+            ``event_date`` when it is set, degrading silently when the
+            scheduler is unavailable. ``None`` (the default) keeps older
+            constructors working.
         on_changed: Zero-arg callback fired after every mutating action;
             the Artifacts screen re-reads its Dreams rows.
     """
@@ -290,6 +300,7 @@ class DreamsStoryModal(ModalScreen[None]):
         capture_backend_getter: Callable[[], Any],
         on_changed: Callable[[], None],
         subs_service_getter: Callable[[], Any] | None = None,
+        scheduling_db_getter: Callable[[], Any] | None = None,
     ) -> None:
         super().__init__()
         self._story = dict(story)
@@ -297,6 +308,7 @@ class DreamsStoryModal(ModalScreen[None]):
         self._dreams_db_getter = dreams_db_getter
         self._capture_backend_getter = capture_backend_getter
         self._subs_service_getter = subs_service_getter
+        self._scheduling_db_getter = scheduling_db_getter
         self._on_changed = on_changed
         self._ingest_in_flight = False
         self._track_in_flight = False
@@ -688,6 +700,12 @@ class DreamsStoryModal(ModalScreen[None]):
                 intent=intent,
                 event_date=self._story.get("event_date") or None,
                 origin_story_id=story_id,
+                # Phase 2 Task 5: the reminder seam rides the same call --
+                # ``promote_to_reminder`` degrades (logs, returns None)
+                # whenever the scheduler is missing, so passing the getter
+                # straight through (it may itself be None) never changes
+                # the outcome word below.
+                scheduling_db_getter=self._scheduling_db_getter,
             )
         except TrackCapReached:
             self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
