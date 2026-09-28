@@ -197,6 +197,16 @@ importlib.import_module("tldw_chatbook.RAG_Search.config_profiles")
 # files did, whenever run on their own. Import it here, as production does.
 importlib.import_module("tldw_chatbook.css.Themes.themes")
 
+# tasks-32951/32953 (trace-surface port): the ModelCapabilities singleton
+# initializes on FIRST CALL, not import -- when that first call happens inside
+# a raw-participant scope under the per-test sandbox (is_vision_capable from
+# the Console turn-configuration snapshot), the bound config selection no
+# longer matches and admission fails closed with
+# RecoveryRequired("raw_source_selection_changed"). Same class as the Chunking
+# import above: initialize the singleton here, after the bootstrap env, so the
+# first per-test call reads an already-bound snapshot.
+importlib.import_module("tldw_chatbook.model_capabilities").get_model_capabilities()
+
 
 # Hypothesis: no per-example deadline (TASK-1260).
 #

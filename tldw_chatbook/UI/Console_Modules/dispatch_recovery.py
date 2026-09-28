@@ -102,18 +102,18 @@ class ConsoleDispatchRecoveryRegion(Widget):
         recovery: ConsoleDispatchRecoveryState | None = None,
         *,
         session_id: str = "",
-        on_action: Callable[[str, str, str, Callable[[], None]], None] | None = None,
+        on_action: Callable[[str, str, str], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._session_id = session_id
+        self._recovery_snapshot = recovery
         self._presentation = derive_dispatch_recovery_presentation(recovery)
         self._on_action = on_action
         self._assistant_message_id = (
             recovery.assistant_message_id if recovery is not None else ""
         )
-        self._model_in_flight = recovery.in_flight if recovery is not None else False
-        self._pending_intent: object | None = None
+        self._intent_in_flight = recovery.in_flight if recovery is not None else False
         self.set_class(self._presentation.visible, "-visible")
 
     def compose(self) -> ComposeResult:
@@ -150,12 +150,15 @@ class ConsoleDispatchRecoveryRegion(Widget):
         assistant_message_id = (
             recovery.assistant_message_id if recovery is not None else ""
         )
-        if (
-            session_id != self._session_id
-            or assistant_message_id != self._assistant_message_id
-        ):
-            self._pending_intent = None
-        self._model_in_flight = recovery.in_flight if recovery is not None else False
+        if session_id != self._session_id or recovery is not self._recovery_snapshot:
+            # A claim and refusal can finish between paints, yielding the same
+            # labels in a new immutable store snapshot. Acknowledge that result
+            # even without recomposition; polling the original snapshot must
+            # still suppress duplicate clicks before the controller claims it.
+            self._intent_in_flight = (
+                recovery.in_flight if recovery is not None else False
+            )
+            self._recovery_snapshot = recovery
         if (
             session_id == self._session_id
             and assistant_message_id == self._assistant_message_id
@@ -175,11 +178,7 @@ class ConsoleDispatchRecoveryRegion(Widget):
 
         prefix = "console-dispatch-recovery-"
         button_id = event.button.id or ""
-        if (
-            self._model_in_flight
-            or self._pending_intent is not None
-            or not button_id.startswith(prefix)
-        ):
+        if self._intent_in_flight or not button_id.startswith(prefix):
             return
         action_id = button_id.removeprefix(prefix)
         action = next(
@@ -193,24 +192,13 @@ class ConsoleDispatchRecoveryRegion(Widget):
         if action is None:
             return
         event.stop()
+        self._intent_in_flight = True
         if self._on_action is not None:
-            token = self._pending_intent = object()
-
-            def complete() -> None:
-                # A stale worker must not release a newer owner's/click's claim.
-                if self._pending_intent is token:
-                    self._pending_intent = None
-
-            try:
-                self._on_action(
-                    self._session_id,
-                    self._assistant_message_id,
-                    action_id,
-                    complete,
-                )
-            except Exception:
-                complete()
-                raise
+            self._on_action(
+                self._session_id,
+                self._assistant_message_id,
+                action_id,
+            )
 
 
 __all__ = [

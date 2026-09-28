@@ -39,6 +39,12 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_context_window import (
+    ContextWindowCache,
+    ContextWindowResolution,
+    ContextWindowTarget,
+    resolve_context_window,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
@@ -104,6 +110,7 @@ from tldw_chatbook.Chat.console_trace_custom_pii import (
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
     TraceCallPersistenceError,
+    TraceSurfaceChangeRefused,
 )
 
 # ADR-097 boot ratchet: console_trace_settlement (which pulls the semantic-
@@ -3311,9 +3318,15 @@ class ConsoleProviderGateway:
         boundary: object,
         signals: object = None,
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_ON,
-    ) -> None:
-        """Prove an owned reservation or consume first-call Capture Off proof."""
-        if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+    ) -> object | None:
+        """Return an owned boundary, or consume proof of a first-call refusal."""
+        if (
+            capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF
+            or (
+                type(boundary) is TraceCallPersistenceError
+                and boundary.reservation_status == "not_established"
+            )
+        ):
             scope = self._trace_preparation_scope(signals)
             if (
                 scope is not None
@@ -3323,8 +3336,9 @@ class ConsoleProviderGateway:
             ):
                 # The first factory invocation failed before returning a boundary.
                 # Its reservation outcome may be unknown, but this live gateway
-                # has not entered the adapter. Consume that exact proof once;
-                # it does not authorize Capture On or a cold/foreign replay.
+                # has not entered the adapter. Capture On additionally needs
+                # proof no reservation exists; unknown outcomes only authorize
+                # explicit Capture Off. Neither permits cold/foreign replay.
                 scope.construction_failure = None
                 return
         if (
@@ -3338,6 +3352,7 @@ class ConsoleProviderGateway:
         if not callable(verify):
             raise TraceCallPersistenceError(boundary=boundary)
         verify(boundary, owner)
+        return boundary
 
     def _trace_recovery_route_identity(self, signals: object) -> tuple[str, str] | None:
         """Restore an owned primary run before the bridge allocates new IDs."""
@@ -3423,7 +3438,13 @@ class ConsoleProviderGateway:
             raise
         except Exception as exc:  # noqa: BLE001 - preserve content-free trace failure contract
             record_send_stage("trace_reservation", "failed", error=exc)
-            failure = TraceCallPersistenceError(reservation_status="unknown")
+            failure = TraceCallPersistenceError(
+                reservation_status=(
+                    "not_established"
+                    if type(exc) is TraceSurfaceChangeRefused and boundary is None
+                    else "unknown"
+                )
+            )
             if first_call and boundary is None:
                 scope.construction_failure = failure
             raise failure from None
@@ -5749,8 +5770,6 @@ class ConsoleProviderGateway:
                 returned native tool-calls, the final item is a
                 ``ProviderToolCalls`` instead of a str.
             signals: Optional out-of-band stream provenance signals.
-            emission_observer: Optional internal callback receiving the exact
-                synthetic flag immediately before each yielded item.
 
         Yields:
             Assistant-visible content chunks, and -- only when ``tools`` was
