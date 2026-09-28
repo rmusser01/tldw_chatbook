@@ -669,7 +669,6 @@ def test_closed_singleton_part_1_app_exit(
             connect_timeout_s=3,
         ),
     )
-    monkeypatch.setattr(transport, "_MASTER_MANAGER", None)
 
     transport.get_master_manager().close_all()
     assert transport.get_master_manager()._closed
