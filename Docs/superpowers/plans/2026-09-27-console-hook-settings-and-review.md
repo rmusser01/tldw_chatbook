@@ -193,7 +193,7 @@ Task 1 evidence: 129 targeted checks passed, including existing hook execution a
 - Execution methods are `targets(event: str, tool_name: str | None) -> tuple[HookTarget, ...]`, `notification_targets(event: str, tool_name: str | None) -> tuple[HookTarget, ...]`, `launch_guard(target: HookTarget, *, tool_name: str | None) -> ContextManager[None]`, and `close() -> None`. `targets` refreshes off-thread; `notification_targets` pins the latest published immutable inventory without disk I/O on the emitting UI thread. Launch always revalidates authoritative state, including current pending/malformed guards affecting that event and tool.
 - `HookReviewConflict` reports a stale file/definition/store decision without raw values. `ConsoleRuntime.ensure_hook_permissions() -> HookPermissions` owns the singleton.
 
-- [ ] **Step 1: Add restart and legacy-duplicate regressions.** Define this shared fixture in `Tests/Agents/test_hook_permissions.py`; UI/runtime tests can import it explicitly.
+- [x] **Step 1: Add restart and legacy-duplicate regressions.** Define this shared fixture in `Tests/Agents/test_hook_permissions.py`; UI/runtime tests can import it explicitly.
 
 ```python
 import sys
@@ -236,7 +236,7 @@ def test_deleting_an_approved_legacy_duplicate_does_not_transfer_grant(hook_file
     assert not owner.snapshot().ready
 ```
 
-- [ ] **Step 2: Run the red checks, then add the private store and reconciliation.**
+- [x] **Step 2: Run the red checks, then add the private store and reconciliation.**
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_permissions.py -q
@@ -258,7 +258,7 @@ Use `open_private_binary`, `atomic_private_write_text` and `PrivateFileWritePrec
 
 The existing direct-child sensitive-path rule already covers grant, lock and hidden temporary files. Add behavior tests using the actual accessor, `.hook_permissions.json.<random>.tmp`, overrides, and filesystem/context/Git exclusions. Add an explicit dynamic-file entry only if these checks expose a real gap; do not duplicate the directory rule. Verify POSIX ownership/modes and retain existing platform-specific private-path behavior.
 
-- [ ] **Step 3: Wire engine authority and a real command positive control.** Update constructor callers to pass `target_provider`, `notification_targets`, and keyword-only `launch_guard`; production obtains all three from the same runtime owner. Existing protocol-only test engines may use an explicit `nullcontext` launch guard and inventory-derived test targets; never ship an implicit allow default.
+- [x] **Step 3: Wire engine authority and a real command positive control.** Update constructor callers to pass `target_provider`, `notification_targets`, and keyword-only `launch_guard`; production obtains all three from the same runtime owner. Existing protocol-only test engines may use an explicit `nullcontext` launch guard and inventory-derived test targets; never ship an implicit allow default.
 
 ```python
 import asyncio
@@ -299,7 +299,7 @@ Retain the existing constructor's cwd provider and pool bounds; change its first
 
 `notify()` captures immutable targets from `notification_targets` when the event is admitted, then queues their bounded descriptors with the already-frozen payload. The worker never selects new targets for an old event. Add controlled barriers around actual process creation: revoke-before-launch prevents start; launch-before-revoke owns one already-running process; revoke/reapprove cannot resurrect queued work. Use spawned-process marker checks and real `fire_async`, not a nested event-loop failure that happens to deny.
 
-- [ ] **Step 4: Test persistence failures and singleton lifecycle, then commit.** Inject writer failure before replace and after visible replacement, stale approve after revoke, two store owners and subprocessed independent instances, config/data-root retarget, malformed enabled guard, no hooks/master false with corrupt store, and queued observer definition changes. Seal before revoke/disable writes; do not hold locks until child completion. Runtime disposal closes owner and engine; optional view attachment cannot change authority.
+- [x] **Step 4: Test persistence failures and singleton lifecycle, then commit.** Inject writer failure before replace and after visible replacement, stale approve after revoke, two store owners and subprocessed independent instances, config/data-root retarget, malformed enabled guard, no hooks/master false with corrupt store, and queued observer definition changes. Seal before revoke/disable writes; do not hold locks until child completion. Runtime disposal closes owner and engine; optional view attachment cannot change authority.
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_permissions.py Tests/Agents/test_run_hooks.py Tests/Chat/test_console_run_hooks_regressions.py Tests/Chat/test_run_hooks_metadata.py Tests/Utils/test_sensitive_paths.py Tests/Tools/test_local_tool_sensitive_paths.py Tests/Tools/test_git_tool_sensitive_paths.py -q
@@ -307,6 +307,8 @@ git diff --check
 git add tldw_chatbook/Agents/hook_permissions.py tldw_chatbook/Agents/run_hooks.py tldw_chatbook/Chat/console_runtime.py Tests/Agents/test_hook_permissions.py Tests/Agents/test_run_hooks.py Tests/Utils/test_sensitive_paths.py Tests/Tools/test_local_tool_sensitive_paths.py Tests/Tools/test_git_tool_sensitive_paths.py
 git commit -m "feat: enforce persistent hook consent at process launch"
 ```
+
+Task 2 evidence: 239 consent/executor/metadata/sensitive-path checks passed, including real-process launch/revoke controls and an independent Python reader. Runtime singleton/disposal checks use saved configuration. The existing session-close regression exposed an unbound variable; grants now retire after close-ticket validation. Two baseline viewless-wake tests call the removed singular delivery API and are recorded separately.
 
 ## Task 3: Shared Send admission and draft custody
 

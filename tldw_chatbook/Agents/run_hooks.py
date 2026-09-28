@@ -21,7 +21,8 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from contextlib import AbstractContextManager, ExitStack
+from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
@@ -84,6 +85,26 @@ class HookSpec:
         if self.matcher is None:
             return True
         return fnmatch.fnmatchcase(tool_name, self.matcher)
+
+
+@dataclass(frozen=True, slots=True)
+class HookTarget:
+    """An exact definition and grant epoch captured for one firing."""
+
+    config_scope: str
+    key: str
+    fingerprint: str
+    spec: HookSpec = field(repr=False)
+    approval_token: str | None
+
+
+class HookLaunchRefused(Exception):
+    """Consent refusal, distinct from an execution error that may fail open."""
+
+    def __init__(self, reason: str, skip: bool = False) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.skip = skip
 
 
 @dataclass(frozen=True)
@@ -425,8 +446,12 @@ def _kill_process_group(pid: int) -> None:
 
 
 async def _capture_hook(
-    spec: HookSpec, payload: dict[str, Any], closed: threading.Event | None
+    target: HookTarget,
+    payload: dict[str, Any],
+    closed: threading.Event | None,
+    launch_guard: Callable[..., AbstractContextManager[None]],
 ) -> tuple[int, _HookProtocol, bool]:
+    spec = target.spec
     protocol = _HookProtocol()
     transport = None
     timed_out = False
@@ -436,12 +461,23 @@ async def _capture_hook(
         cwd = str(validate_existing_absolute_directory(payload["cwd"]))
         payload = dict(payload, cwd=cwd)
         stdin = json.dumps(payload).encode("utf-8")
-        transport, _ = await asyncio.get_running_loop().subprocess_exec(
-            lambda: protocol,
-            *spec.command,
-            cwd=cwd,
-            start_new_session=(sys.platform != "win32"),
-        )
+        data = payload.get("data", {})
+        tool_name = data.get("tool_name") if isinstance(data, dict) else None
+        with ExitStack() as authority:
+            try:
+                authority.enter_context(launch_guard(target, tool_name=tool_name))
+            except HookLaunchRefused:
+                raise
+            except Exception:  # noqa: BLE001 - authority failure cannot fail open
+                raise HookLaunchRefused(
+                    "Hook authority unavailable at launch."
+                ) from None
+            transport, _ = await asyncio.get_running_loop().subprocess_exec(
+                lambda: protocol,
+                *spec.command,
+                cwd=cwd,
+                start_new_session=(sys.platform != "win32"),
+            )
         writer = transport.get_pipe_transport(0)
         writer.write(stdin)
         writer.close()
@@ -478,9 +514,13 @@ async def _capture_hook(
 
 
 def _run_hook(
-    spec: HookSpec, payload: dict[str, Any], closed: threading.Event | None = None
+    target: HookTarget,
+    payload: dict[str, Any],
+    closed: threading.Event | None,
+    launch_guard: Callable[..., AbstractContextManager[None]],
 ) -> tuple[HookSpec, _Decision | None]:
     """Execute one hook with bounded output and content-free log attribution."""
+    spec = target.spec
     fingerprint = hashlib.sha256(json.dumps(spec.command).encode("utf-8")).hexdigest()[
         :12
     ]
@@ -495,7 +535,14 @@ def _run_hook(
         hook_id=fingerprint,
     ):
         try:
-            return _execute_hook(spec, payload, closed, identity)
+            return _execute_hook(target, payload, closed, identity, launch_guard)
+        except HookLaunchRefused as refusal:
+            logger.warning("run-hooks: {} consent refused", identity)
+            return spec, (
+                _Decision(denied=True, reason=refusal.reason)
+                if spec.event in BLOCKING_EVENTS and not refusal.skip
+                else None
+            )
         except Exception as exc:  # noqa: BLE001 - process owner cleans up first
             logger.warning(
                 "run-hooks: {} hook failed (exception_type={})",
@@ -508,13 +555,17 @@ def _run_hook(
 
 
 def _execute_hook(
-    spec: HookSpec,
+    target: HookTarget,
     payload: dict[str, Any],
     closed: threading.Event | None,
     identity: str,
+    launch_guard: Callable[..., AbstractContextManager[None]],
 ) -> tuple[HookSpec, _Decision | None]:
+    spec = target.spec
     started = time.monotonic()
-    returncode, capture, timed_out = asyncio.run(_capture_hook(spec, payload, closed))
+    returncode, capture, timed_out = asyncio.run(
+        _capture_hook(target, payload, closed, launch_guard)
+    )
     stdout, stderr = capture.text(1), capture.text(2)
     if timed_out:
         logger.warning("run-hooks: {} timeout; process reaped", identity)
@@ -653,13 +704,18 @@ class RunHooksEngine:
 
     def __init__(
         self,
-        config_provider: Callable[[], RunHooksConfig],
+        target_provider: Callable[[str, str | None], tuple[HookTarget, ...]],
         cwd_provider: Callable[[], str],
+        *,
+        notification_targets: Callable[[str, str | None], tuple[HookTarget, ...]],
+        launch_guard: Callable[..., AbstractContextManager[None]],
     ) -> None:
         self._closed = threading.Event()
         self._admission_lock = threading.Lock()
         self._notify_slots = threading.BoundedSemaphore(HOOK_NOTIFY_CAPACITY)
-        self._config_provider = config_provider
+        self._target_provider = target_provider
+        self._notification_targets = notification_targets
+        self._launch_guard = launch_guard
         self._cwd_provider = cwd_provider
         # Blocking-event pool only (ruling R14); never shared with notify work.
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="run-hook")
@@ -670,21 +726,20 @@ class RunHooksEngine:
             max_workers=4, thread_name_prefix="run-hook-observe"
         )
 
-    def _matching(self, event: str, tool_name: str | None) -> list[HookSpec]:
-        cfg = self._config_provider()
-        if not cfg.enabled:
-            return []
-        matched: list[HookSpec] = []
-        for hook in cfg.hooks:
-            if hook.event != event:
-                continue
-            # Matcher-less hooks match everything; matcher hooks need a tool
-            # name to test against and are skipped when none was provided.
-            if hook.matcher is None or (
-                tool_name is not None and hook.matches_tool(tool_name)
+    def _matching(self, event: str, tool_name: str | None) -> tuple[HookTarget, ...]:
+        try:
+            targets = self._target_provider(event, tool_name)
+            if not isinstance(targets, tuple) or not all(
+                isinstance(target, HookTarget) for target in targets
             ):
-                matched.append(hook)
-        return matched
+                raise HookLaunchRefused("Hook authority returned invalid targets.")
+            return targets
+        except HookLaunchRefused:
+            raise
+        except Exception:  # noqa: BLE001 - authority cannot inherit fail-open
+            raise HookLaunchRefused(
+                "Hook authority unavailable; review before continuing."
+            ) from None
 
     def _payload(
         self,
@@ -736,6 +791,14 @@ class RunHooksEngine:
             return self._fire(
                 event, session_id=session_id, run_id=run_id, data=data, cwd=cwd
             )
+        except HookLaunchRefused as refusal:
+            logger.warning("run-hooks: event={} consent refused", event)
+            return HookOutcome(
+                blocked=event in BLOCKING_EVENTS and not refusal.skip,
+                reason=refusal.reason
+                if event in BLOCKING_EVENTS and not refusal.skip
+                else "",
+            )
         except Exception as exc:  # noqa: BLE001 - engine must never raise to callers
             logger.warning(
                 "run-hooks: event={} session_id={} run_id={} hook=unavailable "
@@ -759,14 +822,15 @@ class RunHooksEngine:
         run_id: str | None,
         data: dict[str, Any] | None,
         cwd: str | None = None,
+        targets: tuple[HookTarget, ...] | None = None,
     ) -> HookOutcome:
         tool_name: str | None = None
         if isinstance(data, dict):
             candidate = data.get("tool_name")
             if isinstance(candidate, str):
                 tool_name = candidate
-        specs = self._matching(event, tool_name)
-        if not specs:
+        targets = self._matching(event, tool_name) if targets is None else targets
+        if not targets:
             return HookOutcome()
         payload = self._payload(
             event, session_id, run_id, data if isinstance(data, dict) else {}, cwd
@@ -776,8 +840,10 @@ class RunHooksEngine:
                 raise RuntimeError("engine closed")
             pool = self._pool if event in BLOCKING_EVENTS else self._notification_pool
             futures = {
-                pool.submit(_run_hook, spec, payload, self._closed): spec
-                for spec in specs
+                pool.submit(
+                    _run_hook, target, payload, self._closed, self._launch_guard
+                ): target.spec
+                for target in targets
             }
         results = self._results_from_futures(futures)
         return self._reduce(results)
@@ -870,12 +936,25 @@ class RunHooksEngine:
                     return
                 chunks.append(chunk)
             frozen = json.loads("".join(chunks))
+            data = frozen.get("data")
+            tool_name = data.get("tool_name") if isinstance(data, dict) else None
+            targets = self._notification_targets(event, tool_name)
+            if not targets:
+                return
             with self._admission_lock:
                 if self._closed.is_set():
                     logger.warning("run-hooks: notify dropped (closed)")
                     return
-                future = self._notify_worker.submit(self.fire, event, **frozen)
-                future.add_done_callback(lambda _future: self._notify_slots.release())
+                future = self._notify_worker.submit(
+                    self._fire,
+                    event,
+                    session_id=frozen["session_id"],
+                    run_id=frozen.get("run_id"),
+                    data=frozen.get("data"),
+                    cwd=frozen.get("cwd"),
+                    targets=targets,
+                )
+                future.add_done_callback(self._notification_done)
                 submitted = True
         except Exception as exc:  # noqa: BLE001 - notifications never propagate
             logger.warning(
@@ -884,6 +963,16 @@ class RunHooksEngine:
         finally:
             if not submitted:
                 self._notify_slots.release()
+
+    def _notification_done(self, future: Any) -> None:
+        self._notify_slots.release()
+        if not future.cancelled():
+            error = future.exception()
+            if error is not None:
+                logger.warning(
+                    "run-hooks: notification omitted (exception_type={})",
+                    type(error).__name__,
+                )
 
     def close(self) -> None:
         """Seal admission and cancel queued work without blocking the application.

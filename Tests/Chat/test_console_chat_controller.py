@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Agents.hook_test_utils import trusted_hook_engine
+
 from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Agents.agent_models import (
     normalize_tool_review,
@@ -11952,7 +11954,7 @@ class TestUserPromptSubmitHooks:
                 }
             }
         )
-        return RunHooksEngine(
+        return trusted_hook_engine(
             config_provider=lambda: config,
             cwd_provider=lambda: str(tmp_path),
         )

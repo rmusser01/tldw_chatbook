@@ -14,6 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Agents.hook_test_utils import trusted_hook_engine
+
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
@@ -1779,7 +1781,7 @@ def _deny_fs_tools_engine(tmp_path):
 
     from tldw_chatbook.Agents.run_hooks import HookSpec, RunHooksConfig, RunHooksEngine
 
-    return RunHooksEngine(
+    return trusted_hook_engine(
         lambda: RunHooksConfig(
             enabled=True,
             hooks=(
