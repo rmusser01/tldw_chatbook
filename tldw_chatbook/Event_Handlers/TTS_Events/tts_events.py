@@ -7,7 +7,7 @@ import inspect
 import re
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from functools import partial, wraps
 from typing import Dict, Literal, Optional, TypeVar
 from pathlib import Path
@@ -59,7 +59,7 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.default_profile_request_resolver import (
     resolve_default_profile,
 )
-from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
+from tldw_chatbook.TTS.pcm_stream import PcmStreamError, SinkPlan, sink_plan
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
     TTSDefaultProfileSelection,
@@ -96,6 +96,27 @@ _GLOBAL_OVERRIDE_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 # correctness -- only saves the memory/CPU of accumulating (and then
 # copying) a body this large just to discover that.
 _MAX_WAV_SINK_UPGRADE_BYTES = 16 * 1024 * 1024
+# Sentence-chunked live speech. A long Console utterance is synthesized as
+# several short provider requests instead of one long one, and each piece is
+# fed to the streaming sink as soon as it is complete -- so playback starts
+# after the FIRST piece rather than after the whole message. That is the
+# whole point: on a locally-hosted TTS server that generates roughly in real
+# time (measured ~27 chars/s on this project's Qwen3-TTS setup), a
+# 500-character reply is ~19s of silence before the old single-request path
+# made a sound, and the app's own 60s HTTP timeout (`base_backends.
+# APITTSBackend`) makes anything past ~1,500 characters fail outright.
+#
+# `TextChunker`'s budget is an estimated token count (`words * 1.3`), not a
+# real tokenizer, so 35 tokens is roughly 27 words -- about 150 characters,
+# a few seconds of speech at a normal pace. Small enough that the first
+# piece lands quickly; large enough that per-request overhead stays a small
+# fraction of generation, and that the sink never starves (the next piece
+# generates in less time than the current piece takes to play).
+_SPEECH_PIECE_MAX_TOKENS = 35
+# One piece's WAV body is bounded like the single-response sink upgrade is
+# (`_MAX_WAV_SINK_UPGRADE_BYTES`): a piece this large is already far past
+# anything the sink could play from its own bounded buffer.
+_MAX_SPEECH_PIECE_BYTES = 16 * 1024 * 1024
 # Task-4 review F2: `_play_legacy_clip_and_await_completion` polls
 # `SimpleAudioPlayer.get_state()`/`get_current_file()` (off the event loop)
 # until a just-started legacy clip stops being the player's current one,
@@ -2024,6 +2045,15 @@ class TTSEventHandler:
 
             primary_error: BaseException | None = None
             try:
+                authorization_kwargs = (
+                    {"admission_authorizer": admission_authorizer}
+                    if admission_authorizer is not None
+                    else {}
+                )
+                character_profile_selection: (
+                    TTSCharacterProfileSelection | None
+                ) = None
+                default_profile_selection: TTSDefaultProfileSelection | None = None
                 if exact_request is not None:
                     assert resolution is not None
                     assert resolution.repository_generation is not None
@@ -2040,48 +2070,90 @@ class TTSEventHandler:
                         speed=exact_request.speed,
                         provider_options=exact_request.options,
                     )
-                    authorization_kwargs = (
-                        {"admission_authorizer": admission_authorizer}
-                        if admission_authorizer is not None
-                        else {}
-                    )
                     if resolution.source == "assigned":
-                        (
-                            response,
-                            effective_selection,
-                        ) = await service.synthesize_effective(
-                            text=text,
-                            character_profile=TTSCharacterProfileSelection(
-                                selection=exact_selection,
-                                repository_generation=(
-                                    resolution.repository_generation
-                                ),
-                                profile_revision=resolution.profile_revision,
-                                profile_id=resolution.profile_id,
-                                reference=resolution.reference,
+                        character_profile_selection = TTSCharacterProfileSelection(
+                            selection=exact_selection,
+                            repository_generation=(
+                                resolution.repository_generation
                             ),
-                            progress_sink=progress_sink,
-                            **authorization_kwargs,
+                            profile_revision=resolution.profile_revision,
+                            profile_id=resolution.profile_id,
+                            reference=resolution.reference,
                         )
                     else:
                         assert resolution.source == "default_profile"
-                        (
-                            response,
-                            effective_selection,
-                        ) = await service.synthesize_effective(
-                            text=text,
-                            default_profile=TTSDefaultProfileSelection(
-                                selection=exact_selection,
-                                repository_generation=(
-                                    resolution.repository_generation
-                                ),
-                                profile_revision=resolution.profile_revision,
-                                profile_id=resolution.profile_id,
-                                reference=resolution.reference,
+                        default_profile_selection = TTSDefaultProfileSelection(
+                            selection=exact_selection,
+                            repository_generation=(
+                                resolution.repository_generation
                             ),
+                            profile_revision=resolution.profile_revision,
+                            profile_id=resolution.profile_id,
+                            reference=resolution.reference,
+                        )
+
+                async def request_piece(piece_text: str):
+                    """Issue ONE provider request for exactly `piece_text`.
+
+                    Returns `(response, effective_selection_or_None)`. The
+                    selection and authorization rules live here, hoisted out
+                    of the single call they used to be inlined at, so the
+                    sentence-chunked path below can issue several requests
+                    through the SAME rules rather than a second copy of
+                    them. Retires nothing else: the ordinary whole-utterance
+                    request is now just this function called once with the
+                    full text.
+                    """
+                    if exact_request is not None:
+                        if character_profile_selection is not None:
+                            return await service.synthesize_effective(
+                                text=piece_text,
+                                character_profile=character_profile_selection,
+                                progress_sink=progress_sink,
+                                **authorization_kwargs,
+                            )
+                        return await service.synthesize_effective(
+                            text=piece_text,
+                            default_profile=default_profile_selection,
                             progress_sink=progress_sink,
                             **authorization_kwargs,
                         )
+                    return (
+                        await service.synthesize_default(
+                            text=piece_text,
+                            voice_override=voice,
+                            response_format_override=response_format_override,
+                            progress_sink=progress_sink,
+                            **authorization_kwargs,
+                        ),
+                        None,
+                    )
+
+                # --- sentence-chunked live speech ---------------------------
+                # Runs strictly BEFORE the whole-utterance request below, so
+                # a chunked utterance never pays for a long generation it is
+                # about to discard. `None` means "not applicable, or the
+                # sink could not be opened before any audio played" -- both
+                # fall through to the untouched single-response path below.
+                streamed_pieces_code = await self._stream_text_pieces_if_applicable(
+                    text=text,
+                    request_piece=request_piece,
+                    requested_format=(
+                        exact_request.response_format
+                        if exact_request is not None
+                        else (response_format_override or candidate_format)
+                    ),
+                    message_id=normalized_message_id,
+                    on_finished=on_finished,
+                    playback_lifecycle=playback_lifecycle,
+                )
+                if streamed_pieces_code is not None:
+                    outcome_code = streamed_pieces_code
+                    return
+
+                response, effective_selection = await request_piece(text)
+                if exact_request is not None:
+                    assert effective_selection is not None
                     requested_selection = TTSRequestedSelectionSnapshot(
                         provider_id=effective_selection.provider_id,
                         model_id=effective_selection.model_id,
@@ -2096,19 +2168,6 @@ class TTSEventHandler:
                     self._validate_exact_selection(
                         exact_request,
                         requested_selection,
-                    )
-                else:
-                    authorization_kwargs = (
-                        {"admission_authorizer": admission_authorizer}
-                        if admission_authorizer is not None
-                        else {}
-                    )
-                    response = await service.synthesize_default(
-                        text=text,
-                        voice_override=voice,
-                        response_format_override=response_format_override,
-                        progress_sink=progress_sink,
-                        **authorization_kwargs,
                     )
                 if (
                     not isinstance(response.provider_id, str)
@@ -2544,6 +2603,210 @@ class TTSEventHandler:
                     )
                 except Exception:
                     logger.debug("TTS metric publication failed")
+
+    async def _stream_text_pieces_if_applicable(
+        self,
+        *,
+        text: str,
+        request_piece: Callable[[str], Awaitable[Any]],
+        requested_format: str | None,
+        message_id: str,
+        on_finished: Callable[[bool], None] | None = None,
+        playback_lifecycle: TTSPlaybackLifecycle | None = None,
+    ) -> str | None:
+        """Play one utterance live, one sentence-sized piece at a time.
+
+        The latency this exists to remove: `_generate_tts` requests the WHOLE
+        text in one provider call, and the streaming sink can only start
+        playing a WAV response once its complete body has arrived (`sink_plan`
+        validates the whole body -- see `TTS/pcm_stream.py`). So on a locally
+        hosted server that generates at roughly speaking pace, time-to-first-
+        sound equals total generation time: a 500-character reply is ~19s of
+        silence before anything is audible, and any utterance past ~1,500
+        characters exceeds the backend's own 60s HTTP timeout and fails
+        outright.
+
+        This splits the same text on sentence boundaries instead, synthesizes
+        the pieces in order through ONE provider request each, and strips each
+        piece's WAV header so the sink receives a single continuous PCM
+        stream. Audio therefore starts after the FIRST piece (a few seconds)
+        rather than after the last, while the remaining pieces generate during
+        playback.
+
+        Scope, deliberately narrow: only Console speech that is already bound
+        for WAV (`requested_format == "wav"`), only on a machine whose sink is
+        usable, and only when the text actually splits into 2+ pieces. Every
+        other utterance -- and every utterance short enough to be one piece --
+        keeps the single-request path byte-identical.
+
+        Args:
+            text: The utterance's full normalized text.
+            request_piece: The one provider-call seam, called once per piece
+                (see `_generate_tts`'s own `request_piece`). Returns
+                `(response, effective_selection_or_None)`.
+            requested_format: The format this request asked for, from the
+                resolved selection. Compared against `"wav"` -- the only
+                format whose pieces can be header-stripped and joined into one
+                stream; anything else (a compressed format) has no such
+                in-stream join and is left to the untouched path.
+            message_id: The generation's message id, for the posted events.
+            on_finished: Threaded straight through to
+                `_stream_response_via_sink`.
+            playback_lifecycle: Threaded straight through; also consulted
+                before generating anything, so a superseded request does no
+                work.
+
+        Returns:
+            The metrics `outcome_code` from `_stream_response_via_sink` when
+            the utterance played piecewise -- `"success"`, `"interrupted"`,
+            `"superseded"`, `"delivery_rejected"`, or `"streaming_failed"`
+            (the last one honest rather than silent: by then some audio has
+            already been heard, so falling back would replay it). `None` when
+            this path does not apply, or when the sink failed to OPEN before
+            any audio played -- in which case the caller's ordinary
+            whole-utterance path still runs, unchanged.
+        """
+        if requested_format != "wav" or not sink_available():
+            return None
+
+        # Function-local (PR #2638 CI): `text_processing` is only reachable
+        # from this branch, so keeping it out of module scope keeps it off the
+        # UI-ready import census the same way `playback_capability` is kept.
+        from tldw_chatbook.TTS.text_processing import TextChunker
+
+        pieces = [
+            chunk.text.strip()
+            for chunk in TextChunker(max_tokens=_SPEECH_PIECE_MAX_TOKENS).chunk_text(
+                text
+            )
+            if chunk.text.strip()
+        ]
+        if len(pieces) < 2:
+            return None
+
+        if playback_lifecycle is not None and not playback_lifecycle.is_current():
+            return "superseded"
+
+        # The first piece is generated BEFORE the sink is opened, because its
+        # validated header is what tells the sink which rate/channels to open
+        # at. That costs one piece's generation before any sound (the same
+        # wait the single-request path pays in full), and it is what lets a
+        # piece that is not sink-consumable -- a provider that ignored the
+        # requested format, say -- return `None` here, before the sink is
+        # open and before any audio has played, so the caller can still fall
+        # back to the ordinary path with nothing to replay.
+        first_body = await self._collect_speech_piece(request_piece, pieces[0])
+        if first_body is None:
+            return None
+        first_plan = sink_plan("wav", None, first_body)
+        if first_plan is None or first_plan.data_bytes is None:
+            return None
+
+        return await self._stream_response_via_sink(
+            # A raw-PCM plan over the already header-stripped stream: the
+            # pieces are joined HERE, so the sink sees one continuous stream
+            # and `pump` has no per-piece header to skip.
+            SinkPlan(
+                sample_rate=first_plan.sample_rate,
+                channels=first_plan.channels,
+                skip_bytes=0,
+                data_bytes=None,
+            ),
+            self._iter_speech_pieces_pcm(
+                pieces,
+                request_piece,
+                first_body=first_body,
+                first_plan=first_plan,
+            ),
+            message_id=message_id,
+            # False: a mid-stream failure must NOT fall back to replaying the
+            # whole utterance from the top (audio has already been heard).
+            fallback_on_failure=False,
+            on_finished=on_finished,
+            playback_lifecycle=playback_lifecycle,
+        )
+
+    async def _collect_speech_piece(
+        self,
+        request_piece: Callable[[str], Awaitable[Any]],
+        piece_text: str,
+    ) -> bytes | None:
+        """Synthesize one piece and return its complete WAV body.
+
+        Returns `None` when the piece's response is not a WAV body the sink
+        can consume, so the caller can still choose its ordinary path.
+
+        The response lease is released here, on both the success and the
+        failure path -- the same obligation `_generate_tts`'s own `finally`
+        carries for the single-response flow, and the reason this cannot
+        simply be an `async with`.
+
+        Raises:
+            _TTSResponseContractError: The response violates the provider
+                contract (no provider id, an unknown format name), or one
+                piece's body exceeded `_MAX_SPEECH_PIECE_BYTES`.
+        """
+        response, _effective = await request_piece(piece_text)
+        body = bytearray()
+        try:
+            if not isinstance(getattr(response, "provider_id", None), str) or not (
+                response.provider_id
+            ):
+                raise _TTSResponseContractError
+            if self._response_audio_format(response.audio_format) != "wav":
+                return None
+            async for chunk in response.byte_stream:
+                body.extend(chunk)
+                if len(body) > _MAX_SPEECH_PIECE_BYTES:
+                    raise _TTSResponseContractError
+        finally:
+            try:
+                await response.aclose()
+            except BaseException:
+                logger.warning("TTS piece response close failed")
+        return bytes(body)
+
+    async def _iter_speech_pieces_pcm(
+        self,
+        pieces: Sequence[str],
+        request_piece: Callable[[str], Awaitable[Any]],
+        *,
+        first_body: bytes,
+        first_plan: SinkPlan,
+    ) -> AsyncIterator[bytes]:
+        """Yield raw PCM16 for every piece, synthesizing each one on demand.
+
+        The first piece is already in hand (the caller generated it to learn
+        the stream's rate/channels); each later piece is requested only after
+        the previous one has been handed to the sink, which is what makes the
+        pipeline overlap -- the next piece is generated while the sink is
+        still playing the audio it already has.
+
+        Raises:
+            PcmStreamError: A later piece is not sink-consumable, or its
+                rate/channels differ from the first piece's. `pump` converts
+                a raising source into a `"source_error"` outcome, so this
+                surfaces as an honest playback failure rather than as audio
+                played at the wrong pitch.
+        """
+        for index, piece_text in enumerate(pieces):
+            if index == 0:
+                body, plan = first_body, first_plan
+            else:
+                body = await self._collect_speech_piece(request_piece, piece_text)
+                if body is None:
+                    raise PcmStreamError("invalid_audio_stream")
+                plan = sink_plan("wav", None, body)
+                if plan is None or plan.data_bytes is None:
+                    raise PcmStreamError("invalid_audio_stream")
+                if (plan.sample_rate, plan.channels) != (
+                    first_plan.sample_rate,
+                    first_plan.channels,
+                ):
+                    raise PcmStreamError("invalid_audio_stream")
+            if plan.data_bytes is None:  # narrowed for the type checker
+                raise PcmStreamError("invalid_audio_stream")
+            yield body[plan.skip_bytes : plan.skip_bytes + plan.data_bytes]
 
     async def _stream_response_via_sink(
         self,
