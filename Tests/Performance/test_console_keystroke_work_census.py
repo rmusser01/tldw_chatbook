@@ -28,10 +28,13 @@ degraded linearly with conversation length: 1.31 ms/key empty, 13.46 ms/key at
 from __future__ import annotations
 
 import asyncio
+import inspect
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
+from Tests.private_profile import private_profile_test
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -44,7 +47,7 @@ SEEDED_MESSAGES = 200
 
 
 def _scratch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point every config/data seam at a scratch tree with setup completed.
+    """Seed the private-profile child's selected config with setup completed.
 
     A probe that skips this reads (and can write) the developer's real
     config; a probe that skips the API key lands Console in the SETUP state,
@@ -54,27 +57,22 @@ def _scratch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch: pytest fixture used to set the environment.
         tmp_path: pytest fixture; the scratch tree's root.
     """
-    home = tmp_path / "home"
-    data = tmp_path / "data"
-    config = tmp_path / "config"
-    for sub in (home, data, config):
-        sub.mkdir(parents=True, exist_ok=True)
-    config_file = config / "tldw_cli" / "config.toml"
+    del tmp_path  # The private-profile wrapper owns the selected scratch tree.
+    config_file = Path(os.environ["TLDW_CONFIG_PATH"])
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(
-        "[general]\nusers_name = \"census\"\n\n"
+        '[general]\nusers_name = "census"\n\n'
         "[first_run]\nsetup_completed = true\n\n"
         "[_first_run]\nsetup_completed = true\n\n"
         "[splash_screen]\nenabled = false\n\n"
         "[api_settings.openai]\n"
-        "api_key = \"sk-census-000000000000000000000000000000000000\"\n"
+        'api_key = "sk-census-000000000000000000000000000000000000"\n'
     )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
     monkeypatch.setenv("TLDW_TEST_MODE", "1")
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "console_keystroke_census")
+    from tldw_chatbook.config import load_settings
+
+    load_settings(force_reload=True)
 
 
 async def _settle(pilot: Any, passes: int = 30) -> None:
@@ -99,10 +97,29 @@ async def _census(
     """
     _scratch_env(monkeypatch, tmp_path)
 
+    from textual.pilot import Pilot
+
+    real_wait_for_screen = Pilot._wait_for_screen
+
+    async def wait_for_screen(self: Any, timeout: float = 120.0) -> bool:
+        # On the review Windows host the second full app's storage and
+        # widget admission can exceed Textual's 30s default before typing
+        # starts. This changes only the watchdog, never the work census.
+        return await real_wait_for_screen(self, timeout=max(timeout, 120.0))
+
+    monkeypatch.setattr(Pilot, "_wait_for_screen", wait_for_screen)
+
     from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.UI.Console_Modules import session as session_module
+    from tldw_chatbook.UI.Console_Modules import (
+        console_spend_projection as spend_module,
+    )
+    from tldw_chatbook.UI.Screens import chat_screen as screen_module
 
     from tldw_chatbook.Chat import console_session_settings as settings_module
 
@@ -111,6 +128,11 @@ async def _census(
         "snapshots": 0,
         "settings_readiness_builds": 0,
         "template_default_builds": 0,
+        "snapshot_rows": 0,
+        "spend_history_rows": 0,
+        "cost_rows": 0,
+        "context_rows": 0,
+        "context_estimate_max_rows": 0,
     }
     counting = {"on": False}
 
@@ -123,10 +145,60 @@ async def _census(
         if counting["on"]:
             counts["messages_for_session"] += 1
             counts["snapshots"] += len(result)
+            caller = inspect.currentframe().f_back
+            if caller is not None:
+                site = f"{Path(caller.f_code.co_filename).name}:{caller.f_lineno}"
+                key = f"snapshot_caller:{site}"
+                counts[key] = counts.get(key, 0) + 1
         return result
 
     monkeypatch.setattr(
         ConsoleChatStore, "messages_for_session", counted_messages_for_session
+    )
+
+    real_snapshot = ConsoleChatStore._snapshot
+
+    def counted_snapshot(message: Any) -> Any:
+        if counting["on"]:
+            counts["snapshot_rows"] += 1
+        return real_snapshot(message)
+
+    monkeypatch.setattr(ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot))
+
+    def _count_projected_rows(module: Any, name: str, key: str) -> None:
+        real = getattr(module, name)
+
+        def counted(messages: Any, *args: Any, **kwargs: Any) -> Any:
+            if counting["on"]:
+                counts[key] += len(messages)
+            return real(messages, *args, **kwargs)
+
+        monkeypatch.setattr(module, name, counted)
+
+    _count_projected_rows(
+        spend_module, "build_console_spend_history_projection", "spend_history_rows"
+    )
+    _count_projected_rows(
+        spend_module, "build_console_current_cost_messages", "cost_rows"
+    )
+    _count_projected_rows(
+        spend_module, "build_console_context_messages", "context_rows"
+    )
+    real_context_estimate = screen_module.build_console_context_estimate
+
+    def counted_context_estimate(messages: Any, *args: Any, **kwargs: Any) -> Any:
+        if counting["on"]:
+            # Textual may coalesce a different number of one-row draft
+            # repaint calls in each mounted app. The largest input to any
+            # call is the deterministic O(N) signal: 400 means the whole
+            # transcript returned to the typing path.
+            counts["context_estimate_max_rows"] = max(
+                counts["context_estimate_max_rows"], len(messages)
+            )
+        return real_context_estimate(messages, *args, **kwargs)
+
+    monkeypatch.setattr(
+        screen_module, "build_console_context_estimate", counted_context_estimate
     )
 
     def _count_calls(module: Any, name: str, key: str) -> None:
@@ -160,17 +232,32 @@ async def _census(
         store = pilot.app.screen._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
         session = store.ensure_session(title="census", workspace_id=workspace_id)
-        for index in range(seeded_messages):
-            store.append_message(
-                session.id,
-                role=(
-                    ConsoleMessageRole.USER
-                    if index % 2 == 0
-                    else ConsoleMessageRole.ASSISTANT
-                ),
-                content=f"census message {index} " + ("lorem ipsum " * 6),
-            )
+        # Restore the linear fixture in one pass. Appending 400 rows one at a
+        # time repeatedly rebuilt the entire tree and made Windows setup
+        # exceed the watchdog before the first measured keystroke.
+        store._ingest_linear_messages(
+            session.id,
+            (
+                ConsoleChatMessage(
+                    role=(
+                        ConsoleMessageRole.USER
+                        if index % 2 == 0
+                        else ConsoleMessageRole.ASSISTANT
+                    ),
+                    content=f"census message {index} " + ("lorem ipsum " * 6),
+                )
+                for index in range(seeded_messages)
+            ),
+        )
+        assert store.message_count(session.id) == seeded_messages
         await _settle(pilot, passes=10)
+
+        # The fixture itself changed the transcript. Pay the legitimate cold
+        # projection rebuild before the measured unchanged typing burst; a
+        # real restored conversation also paints context and cost before input.
+        screen = pilot.app.screen
+        screen._active_console_settings_context_estimate()
+        screen._build_console_cost_state()
 
         # The composer is the DEFAULT focus at rest; never call focus() here.
         # The first Input in walk order is a settings field, and a probe that
@@ -190,8 +277,9 @@ async def _census(
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_typing_never_snapshots_the_transcript(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """No keystroke materialises a transcript snapshot (TASK-24300).
 
@@ -208,7 +296,8 @@ async def test_typing_never_snapshots_the_transcript(
 
     assert counts["messages_for_session"] == 0, (
         f"{counts['messages_for_session']} messages_for_session calls across "
-        f"{KEYSTROKES} keystrokes ({counts['snapshots']} message snapshots "
+        f"{KEYSTROKES} keystrokes ({counts['snapshots']} message snapshots; "
+        f"callers={{{', '.join(f'{key}={value}' for key, value in counts.items() if key.startswith('snapshot_caller:'))}}} "
         "allocated). That call deep-copies the whole transcript, so any use "
         "of it on the keystroke path prices typing at O(conversation length) "
         "-- the TASK-24300 defect, which cost 12 ms per key at 400 messages. "
@@ -219,8 +308,28 @@ async def test_typing_never_snapshots_the_transcript(
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
+async def test_settled_400_message_typing_traverses_no_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Count actual mounted projection rows during unchanged long-chat typing."""
+    counts = await _census(monkeypatch, tmp_path, seeded_messages=400)
+    for key in (
+        "messages_for_session",
+        "snapshot_rows",
+        "spend_history_rows",
+        "cost_rows",
+        "context_rows",
+    ):
+        assert counts[key] == 0, f"unchanged typing traversed {counts[key]} {key}"
+    assert counts["context_estimate_max_rows"] <= 1
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+@private_profile_test
 async def test_keystroke_work_does_not_scale_with_transcript_length(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Typing costs the same whether the conversation is empty or long.
 
@@ -244,6 +353,17 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
         "slower to type in than new ones."
     )
 
+    for key in (
+        "snapshot_rows",
+        "spend_history_rows",
+        "cost_rows",
+        "context_rows",
+    ):
+        assert (
+            loaded[key] == 0
+        ), f"typing traversed settled transcript in {key}: {loaded[key]} rows"
+    assert loaded["context_estimate_max_rows"] <= 1
+
 
 #: Per-keystroke ceilings for the Console state derivation (TASK-24301),
 #: measured on dev `3a3383123e` before/after. Template defaults reach ZERO
@@ -256,8 +376,9 @@ MAX_TEMPLATE_DEFAULT_BUILDS_PER_KEY = 0
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_typing_does_not_rebuild_the_provider_derivation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """A keystroke re-derives the provider graph at most a bounded number of times.
 

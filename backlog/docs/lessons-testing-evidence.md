@@ -16743,3 +16743,9 @@ so test both. Drive the explicit case through the Hub's own write path
 (`service.set_tool_state(..., tool=row)`), then through the Console provider's
 own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
 built-ins and inherited defaults, not an explicit override.
+
+### Count transcript work separately from coalesced draft repaints (PR #2196 / TASK-24300)
+
+**What happened.** The mounted empty-versus-400-message census counted zero transcript snapshots and zero history/context/spend row traversals in both arms after settled projection caching. It still failed exact equality because the total one-row draft estimate count was 19 versus 17: Textual coalesced a different number of repaint calls. That was not a transcript-size term. Recording the largest message input to any estimate kept the exact comparison deterministic and failed on a full-history estimate while admitting the one-row live draft. A separate one-app 400-message census pinned all full-history traversal totals to zero.
+
+**What to do.** Keep zero-work counters for settled transcript walks and measure the maximum input size for draft-only estimators. Do not interpret a different number of coalesced one-row UI calls as evidence of O(N) transcript work, or weaken the mounted gate by dropping the projection paths from the census.

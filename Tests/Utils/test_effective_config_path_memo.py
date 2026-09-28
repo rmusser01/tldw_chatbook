@@ -9,6 +9,7 @@ part of the cache key.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -59,11 +60,11 @@ def test_a_changed_override_is_observed(
 def test_a_changed_home_is_observed_for_a_tilde_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """HOME is part of the key because `expanduser` reads it at call time.
+    """The platform home variable invalidates tilde expansion.
 
     Keying the memo on the override alone would return the first HOME's
     expansion forever. Tests move HOME routinely, so this is the failure the
-    key's second component exists to prevent.
+    key exists to prevent.
     """
     first_home = tmp_path / "home-one"
     second_home = tmp_path / "home-two"
@@ -71,10 +72,11 @@ def test_a_changed_home_is_observed_for_a_tilde_override(
         home.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("TLDW_CONFIG_PATH", "~/config.toml")
-    monkeypatch.setenv("HOME", str(first_home))
+    home_key = "USERPROFILE" if os.name == "nt" else "HOME"
+    monkeypatch.setenv(home_key, str(first_home))
     first = _get_effective_config_path()
 
-    monkeypatch.setenv("HOME", str(second_home))
+    monkeypatch.setenv(home_key, str(second_home))
     second = _get_effective_config_path()
 
     assert first != second, (
@@ -84,6 +86,25 @@ def test_a_changed_home_is_observed_for_a_tilde_override(
     assert second.parent == second_home.resolve() or str(second).startswith(
         str(second_home)
     )
+
+
+def test_relative_override_tracks_current_working_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A relative override must resolve again after the process changes cwd."""
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", "config.toml")
+
+    monkeypatch.chdir(first_dir)
+    first = _get_effective_config_path()
+    monkeypatch.chdir(second_dir)
+    second = _get_effective_config_path()
+
+    assert first == first_dir / "config.toml"
+    assert second == second_dir / "config.toml"
 
 
 def test_public_accessor_agrees_with_the_private_one(

@@ -14,6 +14,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
 def _session(store: ConsoleChatStore):
@@ -70,7 +71,9 @@ def test_iter_messages_newest_first_reverses_the_projection():
             content=f"message {index}",
         )
 
-    walked = [message.content for message in store.iter_messages_newest_first(session.id)]
+    walked = [
+        message.content for message in store.iter_messages_newest_first(session.id)
+    ]
     projected = [message.content for message in store.messages_for_session(session.id)]
 
     assert walked == list(reversed(projected))
@@ -131,3 +134,48 @@ def test_streaming_text_is_visible_to_the_lazy_walk():
 
     assert newest.content == "streamed body"
     assert newest.content == store.messages_for_session(session.id)[-1].content
+
+
+def test_display_projection_revision_tracks_stream_and_late_terminal_usage():
+    """A terminal usage update invalidates settled display totals without a payload edit."""
+    store = ConsoleChatStore()
+    session = _session(store)
+    answer = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    before_stream = store.display_projection_revision(session.id)
+    store.append_stream_chunk(answer.id, "reply")
+    assert store.display_projection_revision(session.id) != before_stream
+
+    store.mark_message_complete(answer.id)
+    before_usage = store.display_projection_revision(session.id)
+    payload_before_usage = store.payload_revision(session.id)
+    store.set_message_usage(
+        answer.id,
+        ProviderUsage(
+            uncached_input=100,
+            output=25,
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+        ),
+    )
+    assert store.payload_revision(session.id) == payload_before_usage
+    assert store.display_projection_revision(session.id) != before_usage
+    settled_revision = store.display_projection_revision(session.id)
+    store.messages_for_session(session.id)
+    store.read_only_messages_for_session(session.id)
+    assert store.display_projection_revision(session.id) == settled_revision
+
+
+def test_display_projection_revision_tracks_active_path_and_content_edits():
+    store = ConsoleChatStore()
+    session = _session(store)
+    first = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="one"
+    )
+    before_edit = store.display_projection_revision(session.id)
+    store.update_message_content(first.id, "two")
+    assert store.display_projection_revision(session.id) != before_edit
+    before_path = store.display_projection_revision(session.id)
+    store.set_active_leaf(session.id, None)
+    assert store.display_projection_revision(session.id) != before_path

@@ -2049,6 +2049,9 @@ class ConsoleChatStore:
         # mutations, so the cost chip knows when its cache-break fingerprint
         # needs recomputing. Process-local, like the speech revisions above.
         self._payload_revisions: dict[str, int] = {}
+        # Screen-only display invalidation also observes streaming and usage,
+        # neither of which is necessarily a provider-payload mutation.
+        self._display_projection_revisions: dict[str, int] = {}
         # Prompt-queue context safety: a narrower process-local token than
         # `_payload_revisions`. Ordinary linear turn growth and streaming do
         # not move it; out-of-band changes to the effective active provider
@@ -11860,6 +11863,24 @@ class ConsoleChatStore:
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]
 
+    def message_count(self, session_id: str) -> int:
+        """Return the active transcript length without materializing messages."""
+        self._session_or_raise(session_id)
+        return len(self._messages_by_session[session_id])
+
+    def has_messages(self, session_id: str) -> bool:
+        """Return whether the active transcript contains any messages."""
+        return self.message_count(session_id) > 0
+
+    def iter_messages_newest_first(
+        self, session_id: str
+    ) -> Iterator[ConsoleChatMessage]:
+        """Yield newest transcript snapshots lazily, including streaming text."""
+        self._session_or_raise(session_id)
+        for message in reversed(self._messages_by_session[session_id]):
+            self._materialize_stream_buffer(message)
+            yield self._snapshot(message)
+
     def all_messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
         """Return snapshots of every conversation-tree node owned by a session.
 
@@ -15182,6 +15203,9 @@ class ConsoleChatStore:
             # original answer priced by the abandoned regeneration.
             return self._snapshot(message)
         message.usage = usage
+        self._bump_display_projection_revision(
+            self._message_session_index[message.id]
+        )
         if message.status not in {"pending", "streaming"}:
             self._persist_usage_only(message)
         return self._snapshot(message)
@@ -21601,6 +21625,19 @@ class ConsoleChatStore:
     def _bump_message_speech_revision(self, message_id: str) -> None:
         """Advance one registered node's process-local speech fence."""
         self._message_speech_revisions[message_id] += 1
+        session_id = self._message_session_index.get(message_id)
+        if session_id is not None:
+            self._bump_display_projection_revision(session_id)
+
+    def _bump_display_projection_revision(self, session_id: str) -> None:
+        self._display_projection_revisions[session_id] = (
+            self._display_projection_revisions.get(session_id, 0) + 1
+        )
+
+    def display_projection_revision(self, session_id: str) -> int:
+        """Return a constant-time invalidation token for screen projections."""
+        self._session_or_raise(session_id)
+        return self._display_projection_revisions.get(session_id, 0)
 
     def _bump_payload_revision(self, session_id: str) -> None:
         """Mark the session's provider payload as changed (cost-ticker PR3).
@@ -21613,6 +21650,7 @@ class ConsoleChatStore:
         self._payload_revisions[session_id] = (
             self._payload_revisions.get(session_id, 0) + 1
         )
+        self._bump_display_projection_revision(session_id)
         self._record_owned_counter_increment(session_id, "payload")
 
     def _bump_settings_revision(self, session_id: str) -> None:
@@ -22015,6 +22053,7 @@ class ConsoleChatStore:
         self._messages_by_session[session_id] = self._with_tool_markers(
             session_id, path
         )
+        self._bump_display_projection_revision(session_id)
 
     def _with_tool_markers(
         self, session_id: str, path: list[ConsoleChatMessage]

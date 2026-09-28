@@ -5,6 +5,7 @@
 import re
 import threading
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from typing import List, Dict, Any, Union, Optional, Tuple
 
 #
@@ -31,22 +32,19 @@ except ImportError:
 #
 # Functions:
 
-import importlib.util
-
-from tldw_chatbook.Utils.tiktoken_runtime import ensure_tiktoken_runtime
-
 # TASK-24305: detect tiktoken WITHOUT importing it. This module is in the
 # app-import closure, so the old `try: import tiktoken` here made every cold
 # start pay ~20-29 ms for a library most sessions never tokenise with.
-# `find_spec` answers the same question (is it installed?) without executing
-# it; the real import happens in `get_tiktoken_encoding`, right after
-# `ensure_tiktoken_runtime()` arms the bundled offline tables.
+# Distribution metadata answers the same question without executing it or
+# consuming the package's one-shot tiktoken import finder. The real import
+# happens in `get_tiktoken_encoding`, where that finder arms the bundle.
 #
 # `TIKTOKEN_AVAILABLE` keeps its name and meaning -- several tests monkeypatch
 # it to force the character-estimate tier.
 try:
-    TIKTOKEN_AVAILABLE = importlib.util.find_spec("tiktoken") is not None
-except (AttributeError, ImportError, ValueError):
+    version("tiktoken")
+    TIKTOKEN_AVAILABLE = True
+except PackageNotFoundError:
     TIKTOKEN_AVAILABLE = False
 if not TIKTOKEN_AVAILABLE:
     logger.warning(
@@ -380,7 +378,6 @@ def get_tiktoken_encoding(model: str) -> Optional[Any]:
     if not TIKTOKEN_AVAILABLE:
         return None
 
-    ensure_tiktoken_runtime()  # TASK-24305: bundled offline tables
     import tiktoken  # deferred: see TIKTOKEN_AVAILABLE above
 
     try:

@@ -24,7 +24,7 @@ from tldw_chatbook.UI.Console_Modules import session as session_module
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 
 
-class _Recorder:
+class Recorder:
     """Counts calls to the pure defaults builder the controller delegates to."""
 
     def __init__(self) -> None:
@@ -59,7 +59,7 @@ def test_repeated_derivation_with_unchanged_inputs_builds_once(
     controller: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The keystroke case: same config, same provider/model, one build."""
-    recorder = _Recorder()
+    recorder = Recorder()
     monkeypatch.setattr(session_module, "default_console_session_settings", recorder)
 
     first = controller._default_console_session_settings()
@@ -83,7 +83,7 @@ def test_a_reloaded_config_object_invalidates_the_memo(
     reload signal. Dropping the config leg of the key would serve pre-save
     defaults forever -- the task-177 shape of bug.
     """
-    recorder = _Recorder()
+    recorder = Recorder()
     monkeypatch.setattr(session_module, "default_console_session_settings", recorder)
 
     controller._default_console_session_settings()
@@ -105,7 +105,7 @@ def test_an_equal_but_distinct_config_object_still_invalidates(
     slower and, for a nested mapping, unreliable; re-deriving on a fresh
     object that happens to be equal costs one build and can never be stale.
     """
-    recorder = _Recorder()
+    recorder = Recorder()
     monkeypatch.setattr(session_module, "default_console_session_settings", recorder)
 
     controller._default_console_session_settings()
@@ -119,7 +119,7 @@ def test_a_changed_provider_invalidates_the_memo(
     controller: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Switching provider must re-derive, or the control bar shows the old one."""
-    recorder = _Recorder()
+    recorder = Recorder()
     monkeypatch.setattr(session_module, "default_console_session_settings", recorder)
 
     controller._default_console_session_settings()
@@ -134,7 +134,7 @@ def test_a_changed_model_invalidates_the_memo(
     controller: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Switching model must re-derive."""
-    recorder = _Recorder()
+    recorder = Recorder()
     monkeypatch.setattr(session_module, "default_console_session_settings", recorder)
 
     controller._default_console_session_settings()
@@ -149,7 +149,7 @@ def test_blank_provider_and_model_normalise_to_none(
     controller: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Whitespace-only selections are None, and do not thrash the memo."""
-    recorder = _Recorder()
+    recorder = Recorder()
     monkeypatch.setattr(session_module, "default_console_session_settings", recorder)
 
     controller._provider_model = ("   ", "")
