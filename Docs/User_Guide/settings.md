@@ -677,7 +677,8 @@ four themes. Toasts name what happened: Try says
 "Trying \<name\> for this
 session"; Use switches at once and saves the launch default in the
 background, then says "\<name\> is now your theme (was: \<previous\>)" (quitting
-waits for that save to finish); if saving
+waits for that save to finish; a Revert or palette switch right after Use
+drops that toast, since it no longer holds); if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
 crashes and Revert stays available. If the save lands but the in-process
@@ -702,7 +703,15 @@ or Back from the editor the previous list stays up until the new one arrives.
 File actions (Save, Save as…, Rename, Delete, Import…, Export) also read and
 write in the background, so the screen stays responsive with many saved
 themes; they run one at a time, and a second one started meanwhile waits for
-the first. Leaving Theme mid-action does not cut it short.
+the first — even one started after you left Theme and came back. Leaving
+Theme or quitting mid-action does not cut it short (quitting waits up to five
+seconds for it). An action finishes only its own file once you have moved on
+(Back, or opened another theme): it does not change what the editor now shows,
+and if it would have needed a confirmation it skips it and says so ("Did not
+delete '\<name\>': the theme editor changed meanwhile. Delete it again.").
+Leaving the editor while a Save is still running does not ask about unsaved
+changes: Back and leaving wait for the Save, and stay in the editor, edits
+kept, if it fails (its toast says why) or asks to overwrite.
 **Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
 `_copy`. **Rename** and **Delete** ask first, and every theme dialog names

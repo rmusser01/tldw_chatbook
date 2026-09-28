@@ -24380,6 +24380,12 @@ class SettingsScreen(BaseAppScreen):
             return True
         if not editor.is_modified:
             return True
+        if editor.save_in_flight:
+            # Review M-4: these edits are being saved -- wait for that, not a
+            # prompt. A refused or failed Save (it said why) or one waiting
+            # on its overwrite confirmation keeps them: stay.
+            await editor.save_settled()
+            return not editor.is_modified
         if self._theme_leave_in_progress or isinstance(self.app.screen, ThemeLeaveModal):
             # One prompt at a time: a category-leave (or earlier navigation)
             # prompt is already asking about these edits; stay put.
@@ -24429,6 +24435,10 @@ class SettingsScreen(BaseAppScreen):
         if not editor.is_modified:
             pane.show_picker()
             return
+        if editor.save_in_flight:
+            # Review M-4: the Save returns to the picker itself once written,
+            # or says why not and keeps the edits.
+            return
         self.run_worker(
             self._confirm_theme_back(pane, editor),
             group="settings-theme-back",
@@ -24461,7 +24471,17 @@ class SettingsScreen(BaseAppScreen):
         """Save / Discard / Stay before an edited theme is remounted away (TASK-32941)."""
 
         try:
-            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+            try:
+                saving = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+            except QueryError:
+                saving = None
+            if saving is not None and saving.save_in_flight:
+                # Review M-4: wait for the Save, not a prompt; stay if it did
+                # not write (it said why).
+                await saving.save_settled()
+                choice = "cancel" if saving.is_modified else "discard"
+            else:
+                choice = await self.app.push_screen_wait(ThemeLeaveModal())
             if choice == "cancel":
                 return
             try:

@@ -19602,8 +19602,8 @@ class TldwCli(
 
     def _run_blocking_quit_persistence(self) -> None:
         """Run timed joins and configuration persistence off the app loop."""
-        from .css.Themes.theme_catalog import wait_for_launch_default_writes
-        wait_for_launch_default_writes(timeout=5.0)  # TASK-33121: a Use's write lands first
+        from .css.Themes.theme_catalog import wait_for_theme_quit_work
+        wait_for_theme_quit_work(self, timeout=5.0)  # TASK-33121/review M-2: theme actions+writes land first
         try:
             save_thread = threading.Thread(
                 target=self._save_shutdown_caches_with_timeout,

@@ -859,10 +859,14 @@ class ThemePicker(Vertical):
             change: The switch, for the toast's "was:" name.
         """
         try:
-            persisted, caches_reloaded = await persist_launch_default_async(self.app, theme_id)
+            persisted, caches_reloaded, latest = await persist_launch_default_async(self.app, theme_id)
         except Exception as exc:  # noqa: BLE001 - reported as "not saved" below
             logger.warning(f"Saving the launch default failed: {type(exc).__name__}")
-            persisted, caches_reloaded = False, False
+            persisted, caches_reloaded, latest = False, False, True
+        if not latest:
+            # Review M-1: a Revert or palette switch asked for a later write
+            # meanwhile; it reports, and this Use's toast would be stale.
+            return
         outcome = replace(change, persisted=persisted, caches_reloaded=caches_reloaded)
         message, severity = use_theme_toast(theme_id, outcome)
         self.app.notify(message, severity=severity)
@@ -936,7 +940,8 @@ class ThemePane(ContentSwitcher):
         return set(files), unreadable
 
     def show_picker(self) -> None:
-        self._editor().discard_try()  # review I-1: every Back undoes an unsaved Try
+        # Review I-1: every Back undoes an unsaved Try and ends the session.
+        self._editor().end_session()
         self.current = "settings-theme-picker"
         picker = self.query_one(ThemePicker)
         picker.refresh_catalog()

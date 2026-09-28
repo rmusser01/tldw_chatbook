@@ -9,6 +9,7 @@ active or which one loads at launch.
 from __future__ import annotations
 
 import asyncio
+import itertools
 from collections import Counter
 from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -277,8 +278,21 @@ def _apply_config_mutation(mutation: dict) -> Any:
 _LAUNCH_DEFAULT_WRITER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="theme-launch-default")
 
 
+#: Review M-1: numbers each launch-default write as it is asked for; only
+#: the latest one records its outcome (``app_config``, Use's toast).
+_LAUNCH_DEFAULT_SEQUENCE = itertools.count(1)
+_latest_launch_default_write = 0
+
+
 def _write_launch_default(name: str) -> Any:
     return _apply_config_mutation({"general": {"default_theme": name}})
+
+
+def _submit_launch_default(name: str) -> tuple[int, Any]:
+    """Queue ``name``'s write; return ``(its number, its future)``."""
+    global _latest_launch_default_write
+    number = _latest_launch_default_write = next(_LAUNCH_DEFAULT_SEQUENCE)
+    return number, _LAUNCH_DEFAULT_WRITER.submit(_write_launch_default, name)
 
 
 def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
@@ -287,10 +301,11 @@ def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
     Blocks the caller; queued behind any write still pending off the UI
     thread, so writes land in the order they were asked for.
     """
-    return _record_launch_default(app, name, _LAUNCH_DEFAULT_WRITER.submit(_write_launch_default, name).result())
+    _, future = _submit_launch_default(name)
+    return _record_launch_default(app, name, future.result())
 
 
-async def persist_launch_default_async(app: Any, name: str) -> tuple[bool, bool]:
+async def persist_launch_default_async(app: Any, name: str) -> tuple[bool, bool, bool]:
     """``persist_launch_default`` with the config write off the UI thread.
 
     TASK-33121: the write is ~140 ms. It is queued at once and runs to the
@@ -298,14 +313,19 @@ async def persist_launch_default_async(app: Any, name: str) -> tuple[bool, bool]
     writes`` lets the quit path wait for it.
 
     Returns:
-        ``(file_replaced, caches_reloaded)``.
+        ``(file_replaced, caches_reloaded, latest)``. ``latest`` is False
+        when another launch-default write was asked for after this one
+        (review M-1: a Revert or palette switch in the ~140 ms window); that
+        later write owns ``app_config`` and the report, so this one left
+        ``app_config`` alone and its caller should say nothing.
 
     Raises:
         Exception: whatever the config write raised.
     """
-    future = _LAUNCH_DEFAULT_WRITER.submit(_write_launch_default, name)
+    number, future = _submit_launch_default(name)
     result = await asyncio.shield(asyncio.wrap_future(future))
-    return _record_launch_default(app, name, result)
+    latest = number == _latest_launch_default_write
+    return (*_record_launch_default(app, name, result, latest=latest), latest)
 
 
 def wait_for_launch_default_writes(timeout: float | None = None) -> bool:
@@ -328,11 +348,49 @@ def wait_for_launch_default_writes(timeout: float | None = None) -> bool:
     return True
 
 
-def _record_launch_default(app: Any, name: str, result: Any) -> tuple[bool, bool]:
+#: The worker group of the Settings theme editor's file actions (Save,
+#: Save as, Rename, Delete, Import, Export).
+THEME_FILE_ACTION_GROUP = "settings-theme-file-action"
+
+
+async def wait_for_theme_file_actions(app: Any, timeout: float) -> bool:
+    """Wait, on the app loop, for the theme file actions still running.
+
+    Review M-2: an action is several steps (Rename: write new, move the
+    launch default, remove old); the exit's worker cancel must not cut one
+    between them.
+
+    Returns:
+        False when the timeout passed first.
+    """
+    workers = [worker for worker in app.workers if worker.group == THEME_FILE_ACTION_GROUP]
+    if not workers:  # an empty list would wait for every worker
+        return True
+    try:
+        await asyncio.wait_for(asyncio.gather(*(w.wait() for w in workers), return_exceptions=True), timeout)
+    except TimeoutError:
+        logger.warning("Theme file action still running at quit")
+        return False
+    return True
+
+
+def wait_for_theme_quit_work(app: Any, timeout: float = 5.0) -> None:
+    """The quit path's theme step, off the app loop: let running theme file
+    actions finish (they may queue a launch-default write), then the
+    queued launch-default writes (TASK-33121)."""
+    if callable(getattr(app, "call_from_thread", None)):
+        try:
+            app.call_from_thread(wait_for_theme_file_actions, app, timeout)
+        except Exception as exc:  # noqa: BLE001 - the quit goes on regardless
+            logger.warning(f"Could not wait for theme file actions at quit: {type(exc).__name__}")
+    wait_for_launch_default_writes(timeout)
+
+
+def _record_launch_default(app: Any, name: str, result: Any, *, latest: bool = True) -> tuple[bool, bool]:
     file_replaced = bool(getattr(result, "file_replaced", False))
     caches_reloaded = bool(getattr(result, "caches_reloaded", False))
-    if not file_replaced:
-        return False, caches_reloaded
+    if not file_replaced or not latest:
+        return file_replaced, caches_reloaded
     # The in-memory copy Settings reads (was handle_theme_launch_default_changed).
     config = getattr(app, "app_config", None)
     if isinstance(config, dict):

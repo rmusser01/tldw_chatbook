@@ -189,7 +189,7 @@ async def test_file_actions_keep_the_ui_thread_free_with_fifty_themes(request, m
 
         prompts = []
         real_prompt = SettingsThemeEditor._prompt_export
-        monkeypatch.setattr(SettingsThemeEditor, "_prompt_export", lambda self, *a: prompts.append(a))
+        monkeypatch.setattr(SettingsThemeEditor, "_prompt_export", lambda self, *a, **k: prompts.append(a))
         await _quiet(host, pilot)
         with _StallMeter() as meter:
             editor.run_file_action(editor.export_theme("mine13"))
@@ -308,11 +308,42 @@ async def test_action_racing_the_picker_scan_lands_the_newest_listing(request, m
         assert "gone" not in {e.id for e in picker.entries}
 
 
+def _gate(monkeypatch, step: str) -> tuple[threading.Event, threading.Event]:
+    """Hold the editor's first ``step`` call on its worker thread.
+
+    Returns ``(entered, release)``: set when the step is reached; set it to
+    let the step run.
+    """
+    entered, release = threading.Event(), threading.Event()
+    real = getattr(SettingsThemeEditor, step)
+    held = {"left": 1}
+
+    def gated(self, *args):
+        if held["left"]:
+            held["left"] -= 1
+            entered.set()
+            assert release.wait(10), f"{step} gate never released"
+        return real(self, *args)
+
+    monkeypatch.setattr(SettingsThemeEditor, step, gated)
+    return entered, release
+
+
+async def _until(pilot, condition, what: str) -> None:
+    for _ in range(200):
+        if condition():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_leaving_settings_mid_action_still_finishes_it(request, monkeypatch):
-    """The user leaves Theme while a Rename is writing: the rename still
-    completes (new file registered, old file removed), without errors."""
+    """The user leaves Theme while a Rename is between its steps (new file
+    written, old file not yet removed): tearing the editor down does not
+    cut it there -- the rename still completes (new file registered, old
+    file removed). An editor-owned worker would be cancelled at unmount."""
     from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
 
     host = _host()
@@ -322,17 +353,239 @@ async def test_leaving_settings_mid_action_still_finishes_it(request, monkeypatc
         await _settle(host, pilot)
         settings = host.screen
         editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
-        _record_io_threads(monkeypatch, delay=0.2)
+        entered, release = _gate(monkeypatch, "_unlink")
         worker = editor.run_file_action(editor.rename_user_theme("leaving", "left"))
-        await pilot.pause(0.05)
+        await _until(pilot, entered.is_set, "the rename to reach its unlink")
+        # Mid-sequence: both files exist, the action is still running.
+        assert (_themes_dir() / "left.toml").exists() and (_themes_dir() / "leaving.toml").exists()
         settings._select_category(SettingsCategoryId.APPEARANCE.value)
-        await pilot.pause(0.1)
+        await pilot.pause(0.2)
         assert not editor.is_attached
+        release.set()
         await worker.wait()
         await _settle(host, pilot)
         assert worker.result is True
         assert (_themes_dir() / "left.toml").exists() and not (_themes_dir() / "leaving.toml").exists()
         assert "left" in host.available_themes and "leaving" not in host.available_themes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_save_landing_in_a_later_session_changes_only_its_own_file(request, monkeypatch):
+    """Review I-1: Save alpha (slow scan) -> Back -> Edit beta -> edit ->
+    alpha's save lands. It writes alpha's palette to alpha.toml and nothing
+    else: no overwrite dialog over beta, no rename of the editor to alpha,
+    no jump back to the picker. The leave prompt's Save then writes beta's
+    edit to beta.toml -- not over alpha."""
+    from textual.widgets import Input
+
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    real_scan = SettingsThemeEditor._scan_theme_files
+    slow = {"on": False}
+
+    def scan(self):
+        if slow["on"]:
+            time.sleep(0.8)
+        return real_scan(self)
+
+    monkeypatch.setattr(SettingsThemeEditor, "_scan_theme_files", scan)
+    host = _host()
+    _saved_theme(host, "alpha")
+    _saved_theme(host, "beta")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "alpha")
+        await _settle(host, pilot)
+        settings = host.screen
+        pane = settings.query_one("#settings-theme-pane")
+        editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
+        pane.open_editor("alpha", "edit")
+        await _settle(host, pilot)
+        slow["on"] = True
+        save = editor.run_file_action(editor.save_theme())  # alpha, unmodified, in flight
+        await pilot.pause(0.05)
+        pane.show_picker()  # Back: nothing modified, so no prompt
+        await pilot.pause(0.05)
+        slow["on"] = False
+        pane.open_editor("beta", "edit")
+        await pilot.pause(0.05)
+        editor.query_one("#settings-theme-color-primary", Input).value = "#BADBAD"
+        await pilot.pause(0.1)
+        await save.wait()  # alpha's save lands in beta's session
+        await pilot.pause(0.3)
+        assert not isinstance(host.screen, ConfirmationDialog)
+        assert pane.current == "settings-theme-editor-view"
+        assert (editor.current_theme_name, editor._loaded_user_theme) == ("beta", "beta")
+        assert editor.query_one("#settings-theme-name", Input).value == "beta"
+        assert editor.is_modified
+        await editor.save_theme()  # the leave prompt's Save
+        await _settle(host, pilot)
+        assert 'primary = "#0099FF"' in (_themes_dir() / "alpha.toml").read_text()
+        assert 'primary = "#BADBAD"' in (_themes_dir() / "beta.toml").read_text()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_stale_file_action_shows_no_dialog_in_the_new_session(request, monkeypatch):
+    """Review I-1: a Delete whose scan lands after the editor opened on
+    another theme does not push its confirmation there; it says why."""
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    for name in ("doomed", "other"):
+        _saved_theme(host, name)
+    notes = []
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "doomed")
+        await _settle(host, pilot)
+        settings = host.screen
+        pane = settings.query_one("#settings-theme-pane")
+        editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
+        entered, release = _gate(monkeypatch, "_scan_theme_files")
+        worker = editor.run_file_action(editor.request_delete("doomed"))
+        await _until(pilot, entered.is_set, "the delete's scan")
+        pane.open_editor("other", "edit")
+        host.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+        release.set()
+        await worker.wait()
+        await pilot.pause(0.2)
+        assert not isinstance(host.screen, ConfirmationDialog)
+        assert (_themes_dir() / "doomed.toml").exists()
+        assert any("Did not delete 'doomed'" in message for message, _ in notes)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_file_actions_of_two_editor_instances_run_one_at_a_time(request, monkeypatch):
+    """Review M-3: leave Theme and come back mid-Rename -- the new editor's
+    action still waits for the old editor's (one lock per app)."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    for name in ("first", "second"):
+        _saved_theme(host, name)
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "first")
+        await _settle(host, pilot)
+        settings = host.screen
+        old_editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
+        entered, release = _gate(monkeypatch, "_write_toml")
+        writes = []
+        gated_write = SettingsThemeEditor._write_toml
+
+        def counted(self, path, data):
+            writes.append(path.stem)
+            return gated_write(self, path, data)
+
+        monkeypatch.setattr(SettingsThemeEditor, "_write_toml", counted)
+        first = old_editor.run_file_action(old_editor.rename_user_theme("first", "first_b"))
+        await _until(pilot, entered.is_set, "the first rename's write")
+        # Not _settle: that waits for every worker, the held rename too.
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.5)
+        settings._select_category(SettingsCategoryId.THEME.value)
+        await pilot.pause(0.5)
+        new_editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
+        assert new_editor is not old_editor and not old_editor.is_attached
+        second = new_editor.run_file_action(new_editor.rename_user_theme("second", "second_b"))
+        await pilot.pause(0.4)
+        assert writes == ["first_b"]  # the second rename is still queued
+        release.set()
+        await first.wait()
+        await second.wait()
+        await _settle(host, pilot)
+        assert writes == ["first_b", "second_b"]
+        assert first.result is True and second.result is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_waits_for_a_file_action_between_its_steps(request, monkeypatch):
+    """Review M-2: quitting while a Rename is between writing the new file
+    and removing the old one lets it finish before the exit (which cancels
+    every worker) -- no two files for one theme."""
+    import tldw_chatbook.app as app_module
+
+    host = _host()
+    _saved_theme(host, "quitter")
+    order = []
+    monkeypatch.setattr(
+        app_module,
+        "persist_cli_config_for_shutdown",
+        lambda: order.append(("config", (_themes_dir() / "quitter.toml").exists())) or True,
+    )
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "quitter")
+        await _settle(host, pilot)
+        editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
+        entered, release = _gate(monkeypatch, "_unlink")
+        worker = editor.run_file_action(editor.rename_user_theme("quitter", "quitted"))
+        await _until(pilot, entered.is_set, "the rename's unlink")
+        threading.Timer(0.3, release.set).start()
+        host._save_shutdown_caches_with_timeout = lambda: None
+        await asyncio.to_thread(app_module.TldwCli._run_blocking_quit_persistence, host)
+        assert order == [("config", False)]  # the old file was gone before the quit went on
+        assert worker.is_finished and worker.result is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_leaving_during_a_save_waits_for_it_instead_of_prompting(request, monkeypatch):
+    """Review M-4: Back or leaving Settings while the edits are being saved
+    does not ask about "unsaved changes"; it waits for the Save. A Save that
+    fails keeps the edits dirty, says so, and the leave stays put."""
+    from textual.widgets import Input
+
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    _saved_theme(host, "busy")
+    notes = []
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "busy")
+        await _settle(host, pilot)
+        settings = host.screen
+        pane = settings.query_one("#settings-theme-pane")
+        editor = settings.query_one("#settings-theme-editor", SettingsThemeEditor)
+        pane.open_editor("busy", "edit")
+        await _settle(host, pilot)
+        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+        await pilot.pause(0.1)
+        assert editor.is_modified
+
+        # Back mid-save: no prompt; the Save lands and returns to the picker.
+        entered, release = _gate(monkeypatch, "_scan_theme_files")
+        editor.on_save_theme()
+        await _until(pilot, entered.is_set, "the save's scan")
+        settings.query_one("#settings-theme-back").press()
+        await pilot.pause(0.3)
+        assert not isinstance(host.screen, ThemeLeaveModal)
+        release.set()
+        await _settle(host, pilot)
+        assert 'primary = "#123456"' in (_themes_dir() / "busy.toml").read_text()
+        assert pane.current == "settings-theme-picker" and not editor.is_modified
+
+        # Leaving Settings mid-save that then fails: no prompt, stay, dirty.
+        pane.open_editor("busy", "edit")
+        await _settle(host, pilot)
+        editor.query_one("#settings-theme-color-primary", Input).value = "#654321"
+        await pilot.pause(0.1)
+        entered, release = _gate(monkeypatch, "_scan_theme_files")
+
+        def failing_write(self, path, data):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(SettingsThemeEditor, "_write_toml", failing_write)
+        host.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+        editor.on_save_theme()
+        await _until(pilot, entered.is_set, "the save's scan")
+        leaving = asyncio.ensure_future(settings.confirm_navigation())
+        await pilot.pause(0.3)
+        assert not isinstance(host.screen, ThemeLeaveModal) and not leaving.done()
+        release.set()
+        assert await leaving is False
+        assert editor.is_modified
+        assert any("Failed to save theme" in message for message, _ in notes)
 
 
 # -- TASK-33121: the launch-default writer ------------------------------------
@@ -360,7 +613,8 @@ async def test_launch_default_writes_land_in_order_off_the_ui_thread(monkeypatch
         tc.persist_launch_default_async(app, "first"),
         tc.persist_launch_default_async(app, "second"),
     )
-    assert results == [(True, True), (True, True)]
+    # Review M-1: only the latest write records its outcome.
+    assert results == [(True, True, False), (True, True, True)]
     assert [name for name, _ in written] == ["first", "second"]  # the last Use wins
     assert all(thread is not threading.main_thread() for _, thread in written)
     assert app.app_config["general"]["default_theme"] == "second"
@@ -412,3 +666,40 @@ async def test_use_reports_a_write_that_raised(request, monkeypatch):
         await _settle(host, pilot)
         assert host.theme == "nord"
         assert ("Nord applied; the launch default was not saved", "warning") in notes
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_launch_default_write_leaves_app_config_to_the_later_one(monkeypatch):
+    """Review M-1: Use's async write, then a blocking write (Revert, the
+    palette) in its ~140 ms window: the later write owns app_config, and
+    the earlier reports itself as not the latest (so Use says nothing)."""
+    _slow_config(monkeypatch, delay=0.1)
+    app = SimpleNamespace(app_config={"general": {}})
+    use = asyncio.ensure_future(tc.persist_launch_default_async(app, "A"))
+    await asyncio.sleep(0)
+    assert tc._persist_launch_default(app, "prev") == (True, True)
+    assert await use == (True, True, False)
+    assert app.app_config["general"]["default_theme"] == "prev"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_use_then_quick_revert_shows_no_stale_use_toast(request, monkeypatch):
+    """Review M-1 through the picker: Revert within Use's write window --
+    the Use toast does not arrive after the Revert."""
+    from textual.widgets import Button
+
+    _slow_config(monkeypatch, delay=0.2)
+    host = _host()
+    notes = []
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _highlight(host, pilot, "nord")
+        picker = host.screen.query_one("#settings-theme-picker")
+        before = str(host.theme)
+        host.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
+        picker.use_highlighted()
+        await pilot.pause(0.02)
+        picker.query_one("#settings-theme-revert", Button).press()
+        await _settle(host, pilot)
+        assert str(host.theme) == before
+        assert not any("is now your theme" in message for message, _ in notes)

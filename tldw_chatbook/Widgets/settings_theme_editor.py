@@ -6,6 +6,7 @@ import asyncio
 import os
 import re
 import stat
+import weakref
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -32,6 +33,7 @@ from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..Backup_Recovery.settings_file_participants import NOT_REGULAR
 from ..css.Themes.theme_catalog import (
     CACHE_REFRESH_FAILED,
+    THEME_FILE_ACTION_GROUP,
     UNREADABLE_ID_PREFIX,
     display_name,
     is_catalog_theme,
@@ -66,6 +68,10 @@ ThemeLeaveChoice = Literal["save", "discard", "cancel"]
 
 #: One themes-folder scan: ``(name -> path, stem -> (path, short error))``.
 _Scan = tuple[dict[str, Path], dict[str, tuple[Path, str]]]
+
+#: Review M-3: the file-action lock, one per app -- not per editor, so an
+#: unmounted editor's action still queues against the next editor's.
+_FILE_ACTION_LOCKS: weakref.WeakKeyDictionary[Any, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 
 def _dialog_label(name: str, file_name: str) -> str:
@@ -276,9 +282,16 @@ class SettingsThemeEditor(Vertical):
         # applied last); Discard restores the first while the app still
         # runs the second.
         self._try_undo: tuple[str, str] | None = None
-        # TASK-33078: file actions do their I/O on a worker thread, one
-        # action at a time, so one action's scan-then-write stays whole.
-        self._file_lock = asyncio.Lock()
+        # Review I-1: the editing session, bumped on every load, Clone, New,
+        # open and close. A file action started in one session changes no
+        # editor state (name, loaded file, Try, dirty flag) once it lands
+        # in another, and shows no dialog there.
+        self._session = 0
+        # Review M-4: Saves still running, so a leave waits for their
+        # outcome instead of asking about edits that are being saved.
+        self._saves_in_flight = 0
+        self._save_idle = asyncio.Event()
+        self._save_idle.set()
         # The last folder scan (or the pause it hit), for the Rename/Import
         # dialogs' inline checks; the action itself scans again.
         self._last_scan: _Scan | RecoveryRequired | None = None
@@ -414,7 +427,7 @@ class SettingsThemeEditor(Vertical):
     def on_unmount(self) -> None:
         # Review I-1: a category switch or leaving Settings tears the editor
         # down; an unsaved Try goes with it.
-        self.discard_try()
+        self.end_session()
 
     def _initialize_editor(self) -> None:
         """Bind composed controls and load the active theme."""
@@ -457,7 +470,45 @@ class SettingsThemeEditor(Vertical):
         """
         self._editing_context = (source, mode)
         self._try_undo = None
+        self._session += 1
         self._render_header()
+
+    def end_session(self) -> None:
+        """Back or teardown: undo an unsaved Try (``discard_try``) and end
+        the session, so a file action still running changes nothing here."""
+        self.discard_try()
+        self._session += 1
+
+    def _stale(self, session: int) -> bool:
+        """Review I-1: True once the editor left the session ``session``."""
+        return session != self._session
+
+    def _dialog_if_current(self, session: int, dialog: ModalScreen[Any], skipped: str, callback: Any = None) -> None:
+        """Push an action's dialog only in the session that started it.
+
+        Review I-1: in a later session the dialog would ask about a palette
+        or file the user is no longer looking at; say ``skipped`` instead.
+        """
+        if self._stale(session):
+            self.app.notify(skipped, severity="warning")
+            return
+        self.app.push_screen(dialog, callback)
+
+    @property
+    def save_in_flight(self) -> bool:
+        """Review M-4: a Save / Save as has not settled yet."""
+        return self._saves_in_flight > 0
+
+    async def save_settled(self) -> None:
+        """Wait until no Save / Save as is running (written, refused, failed,
+        or waiting on its overwrite confirmation)."""
+        await self._save_idle.wait()
+
+    @property
+    def _file_lock(self) -> asyncio.Lock:
+        """TASK-33078: one file action at a time, so its scan-then-write
+        stays whole -- per app (review M-3)."""
+        return _FILE_ACTION_LOCKS.setdefault(self.app, asyncio.Lock())
 
     def watch_current_theme_name(self) -> None:
         """Re-render the header when the edited theme's name changes."""
@@ -517,7 +568,7 @@ class SettingsThemeEditor(Vertical):
         Returns:
             The worker.
         """
-        return self.app.run_worker(action, group="settings-theme-file-action", exit_on_error=False)
+        return self.app.run_worker(action, group=THEME_FILE_ACTION_GROUP, exit_on_error=False)
 
     def _read_theme_folder(self) -> _Scan:
         """One pass over the themes directory: readable and unreadable files.
@@ -647,6 +698,7 @@ class SettingsThemeEditor(Vertical):
 
     def load_theme(self, theme_name: str) -> None:
         """Load a theme for editing."""
+        self._session += 1
         self.current_theme_name = theme_name
         self._loaded_user_theme = None
         self._loaded_catalog_theme = None
@@ -723,6 +775,7 @@ class SettingsThemeEditor(Vertical):
                 # scan's copy -- the file can change in between.
                 theme_from_file_data(theme_data, theme_path.stem, theme_path.name)
 
+                self._session += 1
                 self.current_theme_name = theme_name
                 self.current_theme_data = dict(theme_data.get("colors", {}))
                 self._theme_variables = sanitize_theme_variables(
@@ -1002,40 +1055,54 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Invalid theme name: {RESERVED_NAME_RULE}", severity="warning")
             return
 
+        # Review I-1: what is saved, and whether it overwrites, is decided
+        # by the session Save was pressed in, not the one it lands in.
+        session, loaded = self._session, self._loaded_user_theme
         theme_data = self._theme_file_data(theme_name)
-        async with self._file_lock:
-            # R12: a saved theme named ``theme_name`` may live in another file
-            # (a.toml holding name "b"); write back to it, never a second file
-            # claiming the same name.
-            theme_path = await self._resolve_write_target(theme_name)
-            if theme_path is None:
-                return
-            # TASK-31258: writing over another saved theme is one keypress from
-            # destroying it; re-saving the theme loaded from that very file is an
-            # update and needs no dialog (Save as always asks, R21).
-            if not (theme_path.exists() and (always_confirm or self._loaded_user_theme != theme_name)):
-                await self._write_theme_file(theme_name, theme_path, theme_data)
-                return
-
-        async def _confirmed_overwrite() -> None:
+        theme_dict = self._theme_dict()
+        self._saves_in_flight += 1
+        self._save_idle.clear()
+        try:
             async with self._file_lock:
-                # Qodo 4109320416: the file may have moved while asking.
-                target = await self._resolve_write_target(theme_name)
-                if target is not None:
-                    await self._write_theme_file(theme_name, target, theme_data)
+                # R12: a saved theme named ``theme_name`` may live in another file
+                # (a.toml holding name "b"); write back to it, never a second file
+                # claiming the same name.
+                theme_path = await self._resolve_write_target(theme_name)
+                if theme_path is None:
+                    return
+                # TASK-31258: writing over another saved theme is one keypress from
+                # destroying it; re-saving the theme loaded from that very file is an
+                # update and needs no dialog (Save as always asks, R21).
+                if not (theme_path.exists() and (always_confirm or loaded != theme_name)):
+                    await self._write_theme_file(theme_name, theme_path, theme_data, theme_dict, session)
+                    return
 
-        self.app.push_screen(
-            ConfirmationDialog(
-                title="Overwrite theme",
-                message=(
-                    f"A saved theme {_dialog_label(theme_name, theme_path.name)} already exists. "
-                    "Replace it with the current palette?"
+            async def _confirmed_overwrite() -> None:
+                async with self._file_lock:
+                    # Qodo 4109320416: the file may have moved while asking.
+                    target = await self._resolve_write_target(theme_name)
+                    if target is not None:
+                        await self._write_theme_file(theme_name, target, theme_data, theme_dict, session)
+
+            self._dialog_if_current(
+                session,
+                ConfirmationDialog(
+                    title="Overwrite theme",
+                    message=(
+                        f"A saved theme {_dialog_label(theme_name, theme_path.name)} already exists. "
+                        "Replace it with the current palette?"
+                    ),
+                    confirm_label="Overwrite",
+                    cancel_label="Keep existing",
+                    confirm_callback=_confirmed_overwrite,
                 ),
-                confirm_label="Overwrite",
-                cancel_label="Keep existing",
-                confirm_callback=_confirmed_overwrite,
+                f"Theme '{escape_markup(theme_name)}' was not saved: a saved theme already has that name. "
+                "Save it again from the editor to replace it.",
             )
-        )
+        finally:
+            self._saves_in_flight -= 1
+            if not self._saves_in_flight:
+                self._save_idle.set()
 
     async def _resolve_write_target(self, theme_name: str) -> Path | None:
         """The file a write of ``theme_name`` goes to, re-read now (R12).
@@ -1059,11 +1126,20 @@ class SettingsThemeEditor(Vertical):
         return self._link_refusal(theme_path.stem, unreadable) or theme_path
 
     async def _write_theme_file(
-        self, theme_name: str, theme_path: Path, theme_data: dict[str, Any]
+        self,
+        theme_name: str,
+        theme_path: Path,
+        theme_data: dict[str, Any],
+        theme_dict: dict[str, Any],
+        session: int,
     ) -> None:
-        """Write the theme TOML and register it; post ``Saved`` on success."""
+        """Write the theme TOML and register it; post ``Saved`` on success.
+
+        ``theme_data`` / ``theme_dict`` are the palette as it was when Save
+        was pressed in ``session``; landing in a later session only reports
+        the file (review I-1).
+        """
         try:
-            theme_dict = self._theme_dict()
             await asyncio.to_thread(self._write_toml, theme_path, theme_data)
 
             # TASK-31250: register at once so Appearance and the palette can
@@ -1071,6 +1147,15 @@ class SettingsThemeEditor(Vertical):
             self.app.register_theme(create_theme_from_dict(theme_name, theme_dict))
 
             self.app.notify(f"Theme '{escape_markup(theme_name)}' saved", severity="success")
+            if self._stale(session):
+                # Review I-1: the editor moved on (Back, Edit, New, left
+                # Settings): its name, file, Try and dirty flag now belong to
+                # that session. The theme on screen still follows its file
+                # -- but never a Try of that session (custom_<name>).
+                if str(self.app.theme) == theme_name:
+                    self._reapply_if_active(theme_name)
+                self.post_message(self.ThemesChanged())
+                return
             # An edit made while the file was being written is still unsaved.
             if self._theme_file_data(theme_name) == theme_data:
                 self.is_modified = False
@@ -1337,6 +1422,7 @@ class SettingsThemeEditor(Vertical):
             "warning": "#FFD700",
             "error": "#FF0000",
         }
+        self._session += 1
         self.current_theme_name = "new_theme"
         self._loaded_user_theme = None
         self.current_theme_data = dict(self.current_theme_data) or defaults
@@ -1357,6 +1443,7 @@ class SettingsThemeEditor(Vertical):
     def on_clone_theme(self) -> None:
         """Clone the current theme."""
         new_name = f"{self.current_theme_name}_copy"
+        self._session += 1
 
         name_input = self.query_one("#settings-theme-name", Input)
         name_input.value = new_name
@@ -1373,6 +1460,7 @@ class SettingsThemeEditor(Vertical):
         """Confirm, then delete the saved theme ``name`` (see ``_delete_user_theme``)."""
         built_in_names = set(BUILTIN_THEMES)
         shipped_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
+        session = self._session
         async with self._file_lock:
             scan = await self._scan_off_thread()
         if isinstance(scan, RecoveryRequired):
@@ -1422,12 +1510,13 @@ class SettingsThemeEditor(Vertical):
 
         async def _confirmed_delete() -> None:
             async with self._file_lock:
-                await self._delete_user_theme(theme_path, theme_name, registered=readable)
+                await self._delete_user_theme(theme_path, theme_name, registered=readable, session=session)
 
         # TASK-33073: the list's name with the file it removes.
         label = _dialog_label(theme_name, theme_path.name) if readable else f"'{theme_name}'"
         consequence = self._delete_consequence(theme_name) if readable else ""
-        self.app.push_screen(
+        self._dialog_if_current(
+            session,
             ConfirmationDialog(
                 title="Delete theme",
                 message=(
@@ -1438,7 +1527,8 @@ class SettingsThemeEditor(Vertical):
                 confirm_label="Delete theme",
                 cancel_label="Keep theme",
                 confirm_callback=_confirmed_delete,
-            )
+            ),
+            f"Did not delete '{escape_markup(theme_name)}': the theme editor changed meanwhile. Delete it again.",
         )
 
     def _delete_consequence(self, name: str) -> str:
@@ -1463,14 +1553,17 @@ class SettingsThemeEditor(Vertical):
         return ""
 
     async def _delete_user_theme(
-        self, theme_path: Path, theme_name: str, *, registered: bool = True
+        self, theme_path: Path, theme_name: str, *, registered: bool = True, session: int | None = None
     ) -> None:
         """Unlink a user theme file and reset the editor (post-confirmation).
 
         ``registered=False`` (an unreadable file, R41): nothing was registered
         under ``theme_name`` -- a readable theme may be literally named
         ``b.toml`` -- so no registration, pending revert or default moves.
+        ``session``: the editing session the Delete started in (review I-1);
+        the editor is reset only while that session lasts.
         """
+        session = self._session if session is None else session
         try:
             await asyncio.to_thread(self._unlink, theme_path)
 
@@ -1486,7 +1579,7 @@ class SettingsThemeEditor(Vertical):
             # The editor must not keep offering the deleted file as loaded;
             # a delete of some other theme (from the picker) keeps its edits.
             # An unreadable file was never loaded under ``theme_name``.
-            if registered and self.current_theme_name == theme_name and self.is_attached:
+            if registered and not self._stale(session) and self.current_theme_name == theme_name and self.is_attached:
                 self.load_theme("textual-dark")
         except Exception as e:
             logger.error(f"Failed to delete theme '{theme_name}': {e}")
@@ -1563,7 +1656,8 @@ class SettingsThemeEditor(Vertical):
         """TASK-33121: the launch-default write, off the UI thread; a raised
         write counts as not saved (the callers report that)."""
         try:
-            return await persist_launch_default_async(self.app, name)
+            persisted, caches_reloaded, _latest = await persist_launch_default_async(self.app, name)
+            return persisted, caches_reloaded
         except Exception as exc:  # noqa: BLE001 - reported by the caller
             logger.error(f"Saving the launch default failed: {type(exc).__name__}")
             return False, False
@@ -1592,10 +1686,11 @@ class SettingsThemeEditor(Vertical):
             missing source, a pause, or a launch default that could not be
             moved (the new file is then removed again).
         """
+        session = self._session  # review I-1: the session it started in
         async with self._file_lock:
-            return await self._rename(old, new)
+            return await self._rename(old, new, session)
 
-    async def _rename(self, old: str, new: str) -> bool:
+    async def _rename(self, old: str, new: str, session: int) -> bool:
         """``rename_user_theme`` under the file-action lock."""
         from ..css.Themes.theme_catalog import (
             current_launch_default,
@@ -1672,7 +1767,7 @@ class SettingsThemeEditor(Vertical):
             self.post_message(self.ThemesChanged(highlight=new))
             return True
 
-        if old in (self._loaded_user_theme, self.current_theme_name):
+        if not self._stale(session) and old in (self._loaded_user_theme, self.current_theme_name):
             # R13: the editor follows the file, so Save writes new.toml
             # instead of recreating old.toml. current_theme_name first, so
             # the Name box's Changed echo is a no-op.
@@ -1768,6 +1863,7 @@ class SettingsThemeEditor(Vertical):
         with ``~/Downloads/<name>_theme.toml``); ``_export_target`` checks
         the answer inside the dialog and again before writing.
         """
+        session = self._session  # review I-1: its prompt shows only in this session
         try:
             validate_filename(name)  # it names the default export file
             async with self._file_lock:
@@ -1790,9 +1886,12 @@ class SettingsThemeEditor(Vertical):
                 severity="error",
             )
             return
-        self._prompt_export(name, theme_path.name, theme_data)
+        self._prompt_export(name, theme_path.name, theme_data, session=session)
 
-    def _prompt_export(self, name: str, file_name: str, theme_data: dict[str, Any]) -> None:
+    def _prompt_export(
+        self, name: str, file_name: str, theme_data: dict[str, Any], *, session: int | None = None
+    ) -> None:
+        session = self._session if session is None else session
         # Lazy: the Settings screen module imports this one.
         from ..UI.Screens.settings_screen import RagProfileNameModal
 
@@ -1807,15 +1906,17 @@ class SettingsThemeEditor(Vertical):
             if isinstance(target, str):
                 self.app.notify(escape_markup(target), severity="error")
                 return
-            self.run_file_action(self._export(target, theme_data))
+            self.run_file_action(self._export(target, theme_data, session=session))
 
-        self.app.push_screen(
+        self._dialog_if_current(
+            session,
             RagProfileNameModal(
                 title=f"Export theme {escape_markup(_dialog_label(name, file_name))} to",
                 initial=str(self._default_export_dir() / f"{name}_theme.toml"),
                 confirm_label="Export",
                 validate=refusal,
             ),
+            f"Did not export '{escape_markup(name)}': the theme editor changed meanwhile. Export it again.",
             chosen,
         )
 
@@ -1857,13 +1958,14 @@ class SettingsThemeEditor(Vertical):
             return "Export needs a file name, not a folder or link"
         return path
 
-    async def _export(self, export_path: Path, theme_data: dict[str, Any]) -> None:
+    async def _export(self, export_path: Path, theme_data: dict[str, Any], *, session: int | None = None) -> None:
         """Write ``theme_data`` to ``export_path``, confirming an overwrite.
 
         The file seen here is the only one an export may replace: absent, the
         write creates it exclusively; present, the confirmed write replaces
         only that same file (Qodo 4118068777).
         """
+        session = self._session if session is None else session
         try:
             info = os.lstat(export_path)
         except FileNotFoundError:
@@ -1882,14 +1984,16 @@ class SettingsThemeEditor(Vertical):
             async with self._file_lock:
                 await self._write_export(export_path, theme_data, observed)
 
-        self.app.push_screen(
+        self._dialog_if_current(
+            session,
             ConfirmationDialog(
                 title="Overwrite export",
                 message=f"{export_path} already exists. Replace it?",
                 confirm_label="Overwrite",
                 cancel_label="Keep existing",
                 confirm_callback=_confirmed_export,
-            )
+            ),
+            f"Did not export to {escape_markup(export_path)}: the theme editor changed meanwhile. Export again.",
         )
 
     async def _write_export(
@@ -1950,10 +2054,11 @@ class SettingsThemeEditor(Vertical):
             source: The path the user gave; validated with
                 ``path_validation.validate_browsing_path`` before any read.
         """
+        session = self._session  # review I-1: its dialog shows only in this session
         async with self._file_lock:
-            return await self._import(source)
+            return await self._import(source, session)
 
-    async def _import(self, source: str) -> str | None:
+    async def _import(self, source: str, session: int) -> str | None:
         """``import_theme`` under the file-action lock."""
         scan = await self._scan_off_thread()
         if isinstance(scan, RecoveryRequired):
@@ -1982,7 +2087,8 @@ class SettingsThemeEditor(Vertical):
                     if current is not None:
                         await self._write_import(name, current, data, theme)
 
-            self.app.push_screen(
+            self._dialog_if_current(
+                session,
                 ConfirmationDialog(
                     title="Replace theme",
                     # A markup-free dialog (TASK-33073: list name + file).
@@ -1990,7 +2096,8 @@ class SettingsThemeEditor(Vertical):
                     confirm_label="Replace",
                     cancel_label="Keep existing",
                     confirm_callback=_confirmed_replace,
-                )
+                ),
+                f"Did not import '{escape_markup(name)}': the theme editor changed meanwhile. Import it again.",
             )
             return None
         return name if await self._write_import(name, target, data, theme) else None
