@@ -133,18 +133,19 @@ async def test_restored_recovery_can_discard_after_refusal(tmp_path, first_actio
             assert db.get_message_by_id("assistant-1")[
                 "assistant_generation_state"
             ] == ("discarded")
-            assert (
-                db.get_connection()
-                .execute("SELECT COUNT(*) FROM messages")
-                .fetchone()[0]
-                == 2
-            )
-            assert (
-                db.get_connection()
-                .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
-                .fetchone()[0]
-                == 0
-            )
+            # Qodo round: read through the transaction() context manager --
+            # raw get_connection().execute() bypasses the DB contract.
+            with db.transaction() as _conn:
+                assert (
+                    _conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+                    == 2
+                )
+                assert (
+                    _conn.execute(
+                        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+                    ).fetchone()[0]
+                    == 0
+                )
             assert gateway.provider_states == []
             assert region.display is False
             send = composer.query_one("#console-send-message", Button)
