@@ -22,6 +22,8 @@ if TYPE_CHECKING:
         UnifiedMCPControlPlaneService,
     )
 
+FIXTURE_PROFILE_ID = "execution-review"
+
 
 async def _save_fixture_profile(
     service: UnifiedMCPControlPlaneService, repo: Path, evidence: Path
@@ -39,11 +41,11 @@ async def _save_fixture_profile(
     Raises:
         ValueError: The fixture ID belongs to an existing profile.
     """
-    if service.local_service.store.get_profile("execution-review") is not None:
-        raise ValueError("Native fixture profile execution-review already exists")
+    if service.local_service.store.get_profile(FIXTURE_PROFILE_ID) is not None:
+        raise ValueError(f"Native fixture profile {FIXTURE_PROFILE_ID} already exists")
     await service.save_local_profile(
         {
-            "profile_id": "execution-review",
+            "profile_id": FIXTURE_PROFILE_ID,
             "command": sys.executable,
             "args": [
                 str(repo / "Tests/MCP/fixtures/stdio_tool_result_server.py"),
@@ -55,7 +57,7 @@ async def _save_fixture_profile(
             "env_literals": {},
         }
     )
-    return "execution-review"
+    return FIXTURE_PROFILE_ID
 
 
 def main(*, size: tuple[int, int] = (170, 48)) -> None:
@@ -286,8 +288,8 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
             state.write_text(json.dumps({"content": []}))
             client = service.local_service._get_client()
             fixture_id = await _save_fixture_profile(service, repo, evidence)
-            await service.connect_local_profile("execution-review")
-            process = client.sessions["execution-review"].process
+            await service.connect_local_profile(fixture_id)
+            process = client.sessions[fixture_id].process
             result["fixture_pid"] = process.pid
             names = {
                 type(app).__module__,
@@ -359,7 +361,7 @@ def main(*, size: tuple[int, int] = (170, 48)) -> None:
                 summary = inspector.query_one("#mcp-inspector-test-result", Static)
                 text = str(summary.renderable)
                 assert text.startswith("OK"), text
-                assert client.sessions["execution-review"].process is process
+                assert client.sessions[fixture_id].process is process
                 assert process.returncode is None
                 audit = service.execution_log.read_recent(1)[0]
                 assert audit["ok"] and audit["status"] == "success"
