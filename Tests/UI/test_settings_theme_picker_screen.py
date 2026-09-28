@@ -1812,7 +1812,7 @@ async def test_try_then_save_under_a_new_name_applies_the_saved_theme(request, h
         settings, _original = await _try_edited_clone(host, pilot)
         editor = settings.query_one("#settings-theme-editor")
         if how == "save_as":
-            editor.save_as("brandnew")
+            await editor.save_as("brandnew")
         else:
             editor.query_one("#settings-theme-name", Input).value = "brandnew"
             await pilot.pause(0.1)

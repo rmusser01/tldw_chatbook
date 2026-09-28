@@ -1,8 +1,9 @@
+import types
 from types import SimpleNamespace
 
 import pytest
 from textual import on
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.content import Content
 from textual.theme import Theme
 from textual.widgets import Button, Input, OptionList
@@ -28,7 +29,10 @@ def _app(*widgets):
     def compose() -> ComposeResult:
         yield from widgets
 
-    return IsolatedWidgetTestApp(compose)
+    app = IsolatedWidgetTestApp(compose)
+    # TASK-33121: Use writes the launch default in an app worker.
+    app.run_worker = types.MethodType(App.run_worker, app)
+    return app
 
 
 @pytest.mark.asyncio
@@ -118,6 +122,7 @@ async def test_filter_narrows_and_enter_uses(request, config_writes):
         await pilot.pause()
         assert app.focused.id == "settings-theme-list"
         await pilot.press("enter")          # Use
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert app.theme == picker.highlighted_id
         assert config_writes[-1] == {"general": {"default_theme": app.theme}}
@@ -306,6 +311,7 @@ async def test_use_toast_when_persist_fails(request, monkeypatch, config_writes)
     async with app.run_test(size=(160, 45)) as pilot:
         picker.query_one("#settings-theme-list").focus()
         await pilot.press("down", "enter")
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any("launch default was not saved" in n for n in notes)
 
@@ -323,6 +329,7 @@ async def test_use_toast_warns_when_cache_reload_fails(request, monkeypatch, con
     async with app.run_test(size=(160, 45)) as pilot:
         picker.query_one("#settings-theme-list").focus()
         await pilot.press("down", "enter")  # Use (persisted, cache reload fails)
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any(
             "is now your theme" in message
@@ -407,6 +414,7 @@ async def test_revert_label_names_the_launch_default_when_it_differs(request, co
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         revert = picker.query_one("#settings-theme-revert", Button)
         assert str(revert.label) == (
@@ -428,6 +436,7 @@ async def test_revert_leaves_a_missing_launch_default_alone(request, config_writ
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         revert = picker.query_one("#settings-theme-revert", Button)
         assert str(revert.label) == f"Revert to {tc.display_name('textual-dark')} (launch unchanged)"
@@ -454,6 +463,7 @@ async def test_revert_chip_hides_when_it_would_change_nothing(request, config_wr
         assert not revert.display
         picker.highlighted_id = "apricot"
         picker.use_highlighted()  # persisted: launch default -> apricot
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert revert.display
         app.theme = "textual-dark"  # active matches, launch default still differs
@@ -815,6 +825,7 @@ async def test_revert_and_apply_failure_toasts_show_a_markup_name_literally(requ
         assert "Could not revert the theme: theme 'x[/]' is gone" in notes
         monkeypatch.setattr("tldw_chatbook.Widgets.settings_theme_picker.use_theme", boom)
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         assert any(n.endswith(": theme 'x[/]' is gone") and n.startswith("Could not apply") for n in notes)
 
@@ -995,6 +1006,7 @@ async def test_revert_label_strips_control_characters_from_the_launch_default(
         await pilot.pause()
         picker.highlighted_id = "apricot"
         picker.use_highlighted()
+        await app.workers.wait_for_complete()  # TASK-33121: the write is a worker
         await pilot.pause()
         label = str(picker.query_one("#settings-theme-revert", Button).label)
         # TASK-33061: a launch default that is no registered theme is never

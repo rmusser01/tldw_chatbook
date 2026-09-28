@@ -8,12 +8,15 @@ active or which one loads at launch.
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from collections.abc import Collection, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from loguru import logger
 from textual.color import Color
 from textual.theme import BUILTIN_THEMES, Theme
 
@@ -269,9 +272,63 @@ def _apply_config_mutation(mutation: dict) -> Any:
     return apply_settings_mutation_to_cli_config(mutation)
 
 
+#: TASK-33121: every launch-default write runs on this one thread, in the
+#: order asked, so the last Use wins and the quit path can wait for them.
+_LAUNCH_DEFAULT_WRITER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="theme-launch-default")
+
+
+def _write_launch_default(name: str) -> Any:
+    return _apply_config_mutation({"general": {"default_theme": name}})
+
+
 def _persist_launch_default(app: Any, name: str) -> tuple[bool, bool]:
-    """Write the launch default; return ``(file_replaced, caches_reloaded)``."""
-    result = _apply_config_mutation({"general": {"default_theme": name}})
+    """Write the launch default; return ``(file_replaced, caches_reloaded)``.
+
+    Blocks the caller; queued behind any write still pending off the UI
+    thread, so writes land in the order they were asked for.
+    """
+    return _record_launch_default(app, name, _LAUNCH_DEFAULT_WRITER.submit(_write_launch_default, name).result())
+
+
+async def persist_launch_default_async(app: Any, name: str) -> tuple[bool, bool]:
+    """``persist_launch_default`` with the config write off the UI thread.
+
+    TASK-33121: the write is ~140 ms. It is queued at once and runs to the
+    end even if the awaiting worker is cancelled; ``wait_for_launch_default_
+    writes`` lets the quit path wait for it.
+
+    Returns:
+        ``(file_replaced, caches_reloaded)``.
+
+    Raises:
+        Exception: whatever the config write raised.
+    """
+    future = _LAUNCH_DEFAULT_WRITER.submit(_write_launch_default, name)
+    result = await asyncio.shield(asyncio.wrap_future(future))
+    return _record_launch_default(app, name, result)
+
+
+def wait_for_launch_default_writes(timeout: float | None = None) -> bool:
+    """Block until every launch-default write queued so far has run.
+
+    For the quit path, off the UI thread: the launch default a Use chose
+    must be on disk before the app exits.
+
+    Args:
+        timeout: Seconds to wait at most; None waits for as long as it takes.
+
+    Returns:
+        False when the timeout passed first.
+    """
+    try:
+        _LAUNCH_DEFAULT_WRITER.submit(lambda: None).result(timeout)
+    except TimeoutError:
+        logger.warning("Theme launch default write still running at quit")
+        return False
+    return True
+
+
+def _record_launch_default(app: Any, name: str, result: Any) -> tuple[bool, bool]:
     file_replaced = bool(getattr(result, "file_replaced", False))
     caches_reloaded = bool(getattr(result, "caches_reloaded", False))
     if not file_replaced:
