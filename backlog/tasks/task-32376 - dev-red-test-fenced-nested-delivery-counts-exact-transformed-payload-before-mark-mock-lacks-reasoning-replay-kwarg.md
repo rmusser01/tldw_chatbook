@@ -1,6 +1,6 @@
 ---
 id: TASK-32376
-title: dev red: test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark mock lacks reasoning_replay kwarg
+title: "dev red: test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark mock lacks reasoning_replay kwarg"
 status: To Do
 assignee: []
 created_date: '2026-09-11 01:55'

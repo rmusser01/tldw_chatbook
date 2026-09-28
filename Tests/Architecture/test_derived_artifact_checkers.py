@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from scripts import check_backlog_task_files as backlog_files
 from scripts import check_backlog_task_ids as backlog_ids
 from scripts import check_persistent_diagnostic_inventory as inventory
 
@@ -551,6 +553,224 @@ def test_unique_task_ids_pass(tmp_path):
     (tmp_path / "task-2 - B.md").write_text("id: TASK-2\n", encoding="utf-8")
     assert backlog_ids.duplicate_ids(tmp_path) == ({}, {})
     assert backlog_ids.main(["--tasks-dir", str(tmp_path)]) == 0
+
+
+def _task_file(directory, name: str, body: str):
+    """Write one task file into `directory`, creating it if needed."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+UNQUOTED_COLON_TITLE = """---
+id: TASK-1
+title: Console transcript: skip move_child for rows already in position
+status: To Do
+---
+
+x
+"""
+
+APOSTROPHE_TITLE = """---
+id: TASK-2
+title: 'Impersonate drafts the user's next reply'
+status: To Do
+---
+
+x
+"""
+
+UNTERMINATED_SECTION = """---
+id: TASK-3
+title: Fine
+status: To Do
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Body that never closes.
+"""
+
+WRAPPED_QUOTED_TITLE = """---
+id: TASK-4
+title: 'Fix character avatar rendering: Console rail 0x0 collapse + Roleplay thumb
+  fold stripes'
+status: Done
+labels:
+  - ui
+assignee: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Body.
+<!-- SECTION:DESCRIPTION:END -->
+
+<!-- SECTION:NOTES:END -->
+"""
+
+
+def test_unreadable_task_files_catch_the_shapes_that_broke_dev(tmp_path):
+    """The three shapes behind the 32 files PR #1954 repaired."""
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-1 - Colon.md", UNQUOTED_COLON_TITLE)
+    _task_file(tasks, "task-2 - Apostrophe.md", APOSTROPHE_TITLE)
+    _task_file(tasks, "task-3 - Unterminated.md", UNTERMINATED_SECTION)
+
+    unreadable = backlog_files.unreadable_task_files(tasks)
+
+    assert set(unreadable) == {
+        (tasks / "task-1 - Colon.md").resolve().as_posix(),
+        (tasks / "task-2 - Apostrophe.md").resolve().as_posix(),
+        (tasks / "task-3 - Unterminated.md").resolve().as_posix(),
+    }
+    assert backlog_files.main(["--tasks-dir", str(tasks)]) == 1
+
+
+RESERVED_SEQUENCE_ITEM = """---
+id: TASK-5
+title: Fine
+status: Done
+assignee:
+  - @zcode
+labels:
+  - console
+---
+
+x
+"""
+
+
+def test_a_bare_at_sign_in_a_list_is_caught(tmp_path):
+    """`- @zcode` stops the whole file loading; every other file quotes it.
+
+    Three task files on dev were written this way and were invisible to every
+    reader until the real parser was asked. The first version of this checker
+    passed them, which is why it now judges sequence items too.
+    """
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-5 - Reserved.md", RESERVED_SEQUENCE_ITEM)
+
+    unreadable = backlog_files.unreadable_task_files(tasks)
+
+    assert list(unreadable) == [(tasks / "task-5 - Reserved.md").resolve().as_posix()]
+    assert (
+        "reserved character"
+        in unreadable[(tasks / "task-5 - Reserved.md").resolve().as_posix()][0]
+    )
+
+
+def test_readable_task_file_shapes_are_not_flagged(tmp_path):
+    """No false positives on the shapes dev actually carries.
+
+    A wrapped quoted title, a key introducing a block sequence, an empty flow
+    sequence, and a stray `:END` are all things the real parser accepts; each
+    one broke an earlier draft of this checker.
+    """
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-4 - Wrapped.md", WRAPPED_QUOTED_TITLE)
+
+    assert backlog_files.unreadable_task_files(tasks) == {}
+    assert backlog_files.main(["--tasks-dir", str(tasks)]) == 0
+
+
+@pytest.mark.parametrize("invalid_kind", ["nul", "file", "missing"])
+def test_custom_task_directory_is_validated_before_any_scan(
+    tmp_path, capsys, invalid_kind
+):
+    """An invalid explicit root must not be silently skipped beside a valid one."""
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-4 - Wrapped.md", WRAPPED_QUOTED_TITLE)
+    selected_file = tmp_path / "not-a-directory.md"
+    selected_file.write_text("not a task folder", encoding="utf-8")
+    invalid = {
+        "nul": str(tmp_path) + "\x00suffix",
+        "file": str(selected_file),
+        "missing": str(tmp_path / "absent"),
+    }[invalid_kind]
+
+    assert backlog_files.main(["--tasks-dir", str(tasks), "--tasks-dir", invalid]) == 1
+    captured = capsys.readouterr()
+    assert "::error::invalid --tasks-dir:" in captured.out
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_custom_task_directory_keeps_relative_and_external_roots(tmp_path, monkeypatch):
+    """A user-selected local directory need not live in the repository."""
+    tasks = tmp_path / "tasks & notes"
+    _task_file(tasks, "task-4 - Wrapped.md", WRAPPED_QUOTED_TITLE)
+    monkeypatch.chdir(tmp_path)
+
+    assert backlog_files.main(["--tasks-dir", "tasks & notes"]) == 0
+
+
+def test_task_readability_cli_validates_roots_without_site_packages(tmp_path):
+    """The central CI job installs nothing; exercise real validation under -S."""
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-4 - Wrapped.md", WRAPPED_QUOTED_TITLE)
+    script = backlog_files.REPO_ROOT / "scripts" / "check_backlog_task_files.py"
+    command = [sys.executable, "-S", str(script), "--tasks-dir", str(tasks)]
+    valid = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert valid.returncode == 0, valid.stdout + valid.stderr
+    assert "All 1 task files" in valid.stdout
+
+    selected_file = tasks / "task-4 - Wrapped.md"
+    invalid = subprocess.run(
+        [*command, "--tasks-dir", str(selected_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert invalid.returncode == 1, invalid.stdout + invalid.stderr
+    assert "::error::invalid --tasks-dir:" in invalid.stdout
+    assert "Traceback" not in invalid.stdout + invalid.stderr
+
+
+def test_quoted_scalar_can_close_on_an_unindented_quote_line(tmp_path):
+    """A standalone closing quote is valid YAML and must not fail CI."""
+    tasks = tmp_path / "tasks"
+    _task_file(
+        tasks,
+        "task-10 - Wrapped date.md",
+        """---
+id: TASK-10
+title: Fine
+updated_date: '2026-09-12 01:00
+'
+---
+
+Body.
+""",
+    )
+
+    assert backlog_files.unreadable_task_files(tasks) == {}
+
+
+def test_a_file_that_is_not_utf8_is_reported_not_raised(tmp_path):
+    """A decode error must name the file, not fail the required check with a traceback."""
+    tasks = tmp_path / "tasks"
+    tasks.mkdir(parents=True)
+    (tasks / "task-9 - Bad.md").write_bytes(b"\xff\xfe not utf8\n")
+
+    unreadable = backlog_files.unreadable_task_files(tasks)
+
+    assert list(unreadable) == [(tasks / "task-9 - Bad.md").resolve().as_posix()]
+    assert (
+        "codec can't decode"
+        in unreadable[(tasks / "task-9 - Bad.md").resolve().as_posix()][0]
+    )
+    assert backlog_files.main(["--tasks-dir", str(tasks)]) == 1
+
+
+def test_task_file_scope_is_every_bucket_the_cli_resolves():
+    """The readability check must cover the same buckets as the id check."""
+    assert {
+        path.relative_to(backlog_files.REPO_ROOT).as_posix()
+        for path in backlog_files.TASK_DIRS
+    } == {"backlog/tasks", "backlog/completed", "backlog/archive/tasks"}
 
 
 def test_repo_relative_accepts_a_relative_path_inside_the_repo():
