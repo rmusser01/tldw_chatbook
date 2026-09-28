@@ -107,8 +107,8 @@ so this probe did not raise `StopIteration`. The original interrupted run's
 traceback remains unavailable; its exact exception is unconfirmed. The test
 now rebinds only the smoke module's `time` name to a private clock and asserts
 the global clock identity is stable.
-The exact node passed in the [eight-lane Ubuntu/macOS Python 3.11-3.14 run](https://github.com/rmusser01/tldw_chatbook/actions/runs/36349152184).
-TASK-602's [five native Python 3.12 lanes](https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617)
+The exact node passed in the [eight-lane Ubuntu/macOS Python 3.11-3.14 run](https://github.com/rmusser01/tldw_chatbook/actions/runs/36353404769).
+TASK-602's [five native Python 3.12 lanes](https://github.com/rmusser01/tldw_chatbook/actions/runs/36353430360)
 also passed on one reviewed executable commit; the validated aggregate is in
 `Docs/STT_Evaluation/task-602/platform-evidence.json`. The original inventory
 count remains historical evidence of the interrupted run.

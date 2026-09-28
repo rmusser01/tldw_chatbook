@@ -368,9 +368,11 @@ gate, passes; all eight exact-node Ubuntu/macOS Python lanes are in the pass buc
 
 - [ ] **Step 5: Freeze the reviewed executable commit**
 
-Record the PR head SHA after all executable review fixes and rebases. No Python,
-test, smoke, normalizer, dependency, or workflow change may follow without
-starting a brand-new native evidence run.
+Record the reviewed PR head SHA after executable fixes and rebases. No change
+to the task-owned tests, smoke, normalizer, native runtime/artifact inputs,
+dependencies, or evidence workflows may follow without a brand-new native run.
+If unrelated dev work requires a later rebase, verify those executable inputs
+are unchanged and keep the evidence's original tested-commit identity intact.
 
 ### Task 5: Refresh governed five-platform native evidence
 
@@ -593,11 +595,14 @@ platform results, native run identity, modified files, ADR decision, and the
 lesson. Check all acceptance criteria and set `status: Done` only after every
 gate above passes.
 
-Do not call `backlog task edit 19642.4`: the repository's recorded Backlog CLI
-bug for five-digit IDs can create `task-task- - .md` instead of editing the
-target. Edit the source-of-truth task file directly, then verify it exactly:
+An earlier Backlog CLI created malformed files for five-digit IDs. The pinned
+1.53.0 CLI now resolves this exact task correctly. Verify its read result names
+the expected task file before editing, then verify the source file and absence
+of malformed artifacts after the status change:
 
 ```bash
+npx --yes backlog.md@1.53.0 task 19642.4 --plain
+npx --yes backlog.md@1.53.0 task edit 19642.4 -s Done
 rg -n '^status: Done$|^- \[x\] #' \
   'backlog/tasks/task-19642.4 - Diagnose-the-task-602-STT-platform-smoke-error.md'
 test "$(rg -c '^status: Done$' \

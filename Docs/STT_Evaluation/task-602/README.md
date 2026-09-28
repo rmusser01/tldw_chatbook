@@ -8,10 +8,10 @@ machine-readable result is
 
 ## Passing run
 
-- Tested commit: `1b29c393e60487e73d5935ddad79be8fd5ced9f0`
-- Workflow run: [36349931617](https://github.com/rmusser01/tldw_chatbook/actions/runs/36349931617)
+- Tested commit: `f0d8ade47e593d8b4617337359fd9fd675b4c4eb`
+- Workflow run: [36353430360](https://github.com/rmusser01/tldw_chatbook/actions/runs/36353430360)
 - Run attempt: `1`
-- Trigger: manual rerun on PR #1991's reviewed executable commit
+- Trigger: label-triggered rerun after PR #1991's latest-dev rebase
 - Python: 3.12 on every lane
 
 | Evidence lane | Native host | ONNX Runtime | Result |
@@ -60,6 +60,10 @@ The aggregate requires exactly the five expected platforms, the same tested
 commit, workflow run, attempt, canonical URL, and passed status. It excludes
 local paths, commands, transcripts, exceptions, environment values, PIDs,
 handles, credentials, and temporary names.
+
+A later integration rebase changed no task-owned executable, native STT,
+artifact, or dependency input. The aggregate retains the exact tested commit
+above; it does not substitute the rebased branch SHA for that source identity.
 
 ## Fixture attribution
 
