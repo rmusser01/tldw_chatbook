@@ -2056,3 +2056,28 @@ async def test_probe_in_flight_at_revert_cannot_settle_onto_the_saved_identity(
             _provider_test_result_text(screen)
             == SettingsScreen._PROVIDER_TEST_STALE_COPY
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_test_result_grid_stays_selectable_and_copyable(request):
+    """The label/value grid render made Widget.get_selection return None,
+    so the Test result could no longer be selected or copied; the plain
+    Static had returned its text (TASK-33002.2)."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        tested = await _test_reachable_llama_cpp(screen, pilot)
+        result = screen.query_one("#settings-provider-test-result", Static)
+
+        result.text_select_all()
+        await pilot.pause()
+        assert result.screen.get_selected_text() == tested
+
+        result.screen.action_copy_text()
+        assert pilot.app.clipboard == tested

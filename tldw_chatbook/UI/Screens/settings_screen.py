@@ -33,6 +33,7 @@ from textual.events import DescendantFocus, Key, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.selection import Selection
 from textual.strip import Strip
 from textual.suggester import SuggestFromList
 from textual.validation import ValidationResult, Validator
@@ -1012,6 +1013,13 @@ class _ProviderTestResult(Static):
                 Text(line[_PROVIDER_TEST_LABEL_CELLS:]),
             )
         return grid
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Select and copy the plain rows; the grid paint is not a text visual."""
+        content = self.content
+        if not isinstance(content, str):
+            return super().get_selection(selection)
+        return selection.extract(content), "\n"
 
 
 class _SettingsWorkspaceAssistantResult(Static):
