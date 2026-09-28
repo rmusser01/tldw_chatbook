@@ -2,7 +2,7 @@
 
 Date: 2026-09-17
 
-Status: Proposed — design choices approved in conversation; written specification awaiting user review.
+Status: Accepted — the user approved the written specification and review corrections before implementation planning.
 
 Review revision: 2026-09-19 — chronology and concurrency separated; event-date matching, runtime admission, continuation and replay contracts tightened.
 
@@ -11,6 +11,8 @@ Amends: [ADR-030](030-local-library-agent-tool-boundary.md) and [ADR-079](079-co
 Task: [TASK-32772](../tasks/task-32772%20-%20Design-agent-assisted-archived-conversation-recovery.md)
 
 Spec: [Agent archive recovery design](../../Docs/superpowers/specs/2026-09-17-agent-archive-recovery-design.md)
+
+Plan: [Agent archive recovery implementation](../../Docs/superpowers/plans/2026-09-27-agent-archive-recovery.md)
 
 ## Context
 
@@ -47,4 +49,4 @@ General Library tools follow a Direct-versus-RAG selector and share descriptors 
 
 Implementation spans two schema migrations (including a workspace archive revision), a narrow Console tool capability, a shared recovery coordinator and structured result/confirmation UI. It must preserve existing local-only archive sync semantics and ADR-079's authenticated authority, including queued-turn and destination behavior. Search/filter query qualification, lifecycle race tests, mounted interaction tests and a disposable-data live recovery check are required; the full test suite is not authorized by this design.
 
-The written spec defines limits, tool arguments, lifecycle choices and error outcomes. It must be reviewed before implementation planning. Existing ADRs remain unchanged while this amendment is proposed; acceptance should add supersession/amendment metadata identifying only the affected clauses, without rewriting their original decisions.
+The approved written spec defines limits, tool arguments, lifecycle choices and error outcomes. The linked plan specifies delivery and verification. ADR-030/079 identify this narrow amendment in metadata; their original decision bodies remain unchanged.
