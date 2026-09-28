@@ -5,6 +5,7 @@ through ThemePane. Every test runs in a private profile (the editor writes the
 profile's themes/ directory) and mocks the config write.
 """
 
+import asyncio
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -131,6 +132,22 @@ async def test_list_user_themes_raises_through_on_pause(request, tmp_path, monke
             editor.list_user_theme_names()
 
 
+async def _until_settled(pilot, app, timeout: float = 5.0) -> None:
+    """TASK-33078 moved file actions into a worker: wait until no worker is
+    running, or until a confirmation dialog is up (a worker may be waiting on
+    it). One ``pilot.pause()`` is not enough under parallel load."""
+    from textual.worker import WorkerState
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        await pilot.pause(0.05)
+        if isinstance(app.screen, ConfirmationDialog):
+            return
+        if not any(w.state in (WorkerState.PENDING, WorkerState.RUNNING) for w in app.workers):
+            return
+
+
 async def _accept_export(pilot, app, path=None):
     """TASK-33076: Export asks where; accept the prefilled Downloads path
     (or type ``path``). Returns the prompt's prefilled value."""
@@ -143,7 +160,7 @@ async def _accept_export(pilot, app, path=None):
     if path is not None:
         field.value = str(path)
     await pilot.click("#settings-rag-profile-name-confirm")
-    await pilot.pause()
+    await _until_settled(pilot, app)
     return prefilled
 
 
@@ -154,7 +171,7 @@ async def _confirm_delete(pilot, app, editor, name):
     assert app.screen.confirm_label == "Delete theme"
     message = app.screen.message
     await pilot.click("#confirm-button")
-    await pilot.pause()
+    await _until_settled(pilot, app)
     return message
 
 
@@ -624,7 +641,7 @@ async def test_broken_file_named_like_a_shipped_theme_is_deleted_by_its_own_id(
         await pilot.pause()
         assert app.screen.message.startswith("Delete the saved theme 'nord.toml'?")
         await pilot.click("#confirm-button")
-        await pilot.pause()
+        await _until_settled(pilot, app)
         assert not path.exists()
         assert "nord" in app.available_themes  # the built-in stays registered
         assert app.notify.call_args.args[0] == "Deleted theme 'nord.toml'"
@@ -985,7 +1002,7 @@ async def test_confirmed_replace_and_overwrite_re_resolve_the_target(request, tm
         assert isinstance(app.screen, ConfirmationDialog)
         (tmp_path / "mine.toml").rename(tmp_path / "moved.toml")
         await pilot.click("#confirm-button")
-        await pilot.pause()
+        await _until_settled(pilot, app)
         assert not (tmp_path / "mine.toml").exists()
         assert toml.load(tmp_path / "moved.toml")["colors"]["primary"] == "#445566"
 
@@ -994,7 +1011,7 @@ async def test_confirmed_replace_and_overwrite_re_resolve_the_target(request, tm
         assert isinstance(app.screen, ConfirmationDialog)
         (tmp_path / "moved.toml").rename(tmp_path / "moved_again.toml")
         await pilot.click("#confirm-button")
-        await pilot.pause()
+        await _until_settled(pilot, app)
         assert sorted(p.name for p in tmp_path.glob("*.toml")) == ["moved_again.toml"]
 
 
@@ -1283,7 +1300,7 @@ async def test_confirmed_overwrite_replaces_only_the_confirmed_file(
         await _accept_export(pilot, app, existing)
         assert app.screen.confirm_label == "Overwrite"
         await pilot.click("#confirm-button")
-        await pilot.pause()
+        await _until_settled(pilot, app)
         assert toml.load(existing)["colors"] == MINE
 
         # A different file swapped in while the dialog is open: kept.
@@ -1295,7 +1312,7 @@ async def test_confirmed_overwrite_replaces_only_the_confirmed_file(
         newer.replace(existing)
         app.notify.reset_mock()
         await pilot.click("#confirm-button")
-        await pilot.pause()
+        await _until_settled(pilot, app)
         assert "nothing was replaced" in _export_notices(app)
         assert existing.read_text(encoding="utf-8") == "newer"
         assert sorted(p.name for p in out.iterdir()) == ["keep.toml"]
