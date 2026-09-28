@@ -61,6 +61,23 @@ IMPORT_MAX_BYTES = 64 * 1024
 ThemeLeaveChoice = Literal["save", "discard", "cancel"]
 
 
+def _dialog_label(name: str, file_name: str) -> str:
+    """TASK-33073: ``'Display Name' (file.toml)`` -- the name the picker lists
+    with the file a dialog acts on. Plain printable text (R39), no markup."""
+    return f"'{printable(display_name(name))}' ({printable(file_name)})"
+
+
+def _toml_position(exc: Exception) -> str:
+    """TASK-33068: `` (line N, column M)`` from a TOML parse error, else "".
+
+    Built from the decoder's numbers only -- never ``str(exc)``, which can
+    quote file bytes -- so the reason stays path-free (R16) and printable.
+    """
+    if isinstance(exc, toml.TomlDecodeError) and exc.lineno and exc.colno:
+        return f" (line {int(exc.lineno)}, column {int(exc.colno)})"
+    return ""
+
+
 class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
     """Ask before leaving Theme with unsaved edits (TASK-32941).
 
@@ -533,20 +550,24 @@ class SettingsThemeEditor(Vertical):
         Returns:
             True, after a notice, when the file is a link; False otherwise.
         """
-        if unreadable.get(stem, (None, ""))[1] != NOT_REGULAR:
+        reason = self._link_refusal(stem, unreadable)
+        if reason is None:
             return False
-        self.app.notify(
-            f"'{escape_markup(printable(stem))}.toml' is a link, not a regular file; "
-            "remove it outside the app",
-            severity="warning",
-        )
+        self.app.notify(escape_markup(reason), severity="warning")
         return True
+
+    @staticmethod
+    def _link_refusal(stem: str, unreadable: dict[str, tuple[Path, str]]) -> str | None:
+        """``_refuse_link``'s reason as plain text, or None when not a link."""
+        if unreadable.get(stem, (None, ""))[1] != NOT_REGULAR:
+            return None
+        return f"'{printable(stem)}.toml' is a link, not a regular file; remove it outside the app"
 
     @classmethod
     def _theme_file_error(cls, exc: Exception, data: Any) -> str:
         """A short, path-free, printable (R39) reason a theme file can't be read."""
         if data is None and isinstance(exc, (toml.TomlDecodeError, UnicodeDecodeError)):
-            return "not valid TOML"
+            return f"not valid TOML{_toml_position(exc)}"
         message = str(exc)
         if isinstance(exc, TypeError) and "'primary'" in message and "missing" in message:
             colors = data.get("colors") if isinstance(data, dict) else None
@@ -946,7 +967,7 @@ class SettingsThemeEditor(Vertical):
                 ConfirmationDialog(
                     title="Overwrite theme",
                     message=(
-                        f"A saved theme named '{theme_name}' already exists. "
+                        f"A saved theme {_dialog_label(theme_name, theme_path.name)} already exists. "
                         "Replace it with the current palette?"
                     ),
                     confirm_label="Overwrite",
@@ -965,15 +986,20 @@ class SettingsThemeEditor(Vertical):
         a notice) while backup/recovery holds the files, or when that
         ``<name>.toml`` is a link (``_refuse_link``).
         """
+        target = self._write_target(theme_name)
+        if isinstance(target, str):
+            self.app.notify(escape_markup(target), severity="warning")
+            return None
+        return target
+
+    def _write_target(self, theme_name: str) -> Path | str:
+        """``_resolve_write_target`` without the notice: the path, or why not."""
         try:
             files, unreadable = self._scan_theme_files()
         except RecoveryRequired:
-            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
-            return None
+            return THEMES_UNAVAILABLE_LABEL
         theme_path = files.get(theme_name) or self.custom_themes_path / f"{theme_name}.toml"
-        if self._refuse_link(theme_path.stem, unreadable):
-            return None
-        return theme_path
+        return self._link_refusal(theme_path.stem, unreadable) or theme_path
 
     def _write_theme_file(
         self, theme_name: str, theme_path: Path, theme_data: dict[str, Any]
@@ -1304,18 +1330,43 @@ class SettingsThemeEditor(Vertical):
         async def _confirmed_delete() -> None:
             self._delete_user_theme(theme_path, theme_name, registered=readable)
 
+        # TASK-33073: the list's name with the file it removes.
+        label = _dialog_label(theme_name, theme_path.name) if readable else f"'{theme_name}'"
+        consequence = self._delete_consequence(theme_name) if readable else ""
         self.app.push_screen(
             ConfirmationDialog(
                 title="Delete theme",
                 message=(
-                    f"Delete the saved theme '{theme_name}'?\n"
+                    f"Delete the saved theme {label}?\n"
                     "This removes the theme file and cannot be undone."
+                    f"{consequence}"
                 ),
                 confirm_label="Delete theme",
                 cancel_label="Keep theme",
                 confirm_callback=_confirmed_delete,
             )
         )
+
+    def _delete_consequence(self, name: str) -> str:
+        """TASK-33071: what deleting ``name`` does to the running theme and
+        launch default -- the same three branches as
+        ``_fall_back_after_delete`` -- as a leading-newline line, or ""."""
+        from ..css.Themes.theme_catalog import current_launch_default
+
+        launch = current_launch_default()
+        was_active = str(self.app.theme) in (name, f"custom_{name}")
+        if launch == name and was_active:
+            return "\nIt is your current and launch theme; the app will switch to Textual Dark and launch with it."
+        if launch == name:
+            return "\nIt is your launch theme; the app will launch with Textual Dark from now on."
+        if was_active and launch in self.app.available_themes:
+            return (
+                "\nIt is your current theme; the app will switch to your launch theme, "
+                f"{printable(display_name(launch))}."
+            )
+        if was_active:
+            return "\nIt is your current theme; the app will switch to Textual Dark."
+        return ""
 
     def _delete_user_theme(
         self, theme_path: Path, theme_name: str, *, registered: bool = True
@@ -1451,47 +1502,15 @@ class SettingsThemeEditor(Vertical):
             use_theme,
         )
 
-        try:
-            validate_filename(new)
-        except ValueError as exc:
-            self.app.notify(f"Invalid theme name: {escape_markup(exc)}", severity="error")
+        checked = self._rename_check(old, new)
+        if isinstance(checked, tuple):
+            # notify parses markup; names and errors are untrusted file text.
+            self.app.notify(escape_markup(checked[0]), severity=checked[1])
             return False
-        if is_reserved_theme_name(new):
-            self.app.notify(f"Invalid theme name: {RESERVED_NAME_RULE}", severity="error")
-            return False
-        if new == old:
+        if checked is None:
             return True
-        try:
-            files, unreadable = self._scan_theme_files()
-        except RecoveryRequired:
-            self.app.notify(THEMES_UNAVAILABLE_LABEL, severity="warning")
-            return False
-        old_path = files.get(old)
-        stem = old.removeprefix(UNREADABLE_ID_PREFIX)
-        if old_path is None and stem in unreadable:
-            self.app.notify(
-                # notify parses markup; name and error are untrusted file text.
-                f"Can't rename '{escape_markup(printable(stem))}': this theme file can't be read: "
-                f"{escape_markup(unreadable[stem][1])}",
-                severity="error",
-            )
-            return False
-        if old_path is None:
-            self.app.notify(f"No saved custom theme named '{escape_markup(printable(old))}'", severity="warning")
-            return False
-        shipped_names = {getattr(t, "name", None) for t in ALL_THEMES}
+        old_path = checked
         new_path = self.custom_themes_path / f"{new}.toml"
-        if self._refuse_link(new_path.stem, unreadable):
-            return False
-        if (
-            new in BUILTIN_THEMES
-            or new in shipped_names
-            or new in files
-            or new_path.exists()
-            or new in self.app.available_themes
-        ):
-            self.app.notify(f"Name taken: '{escape_markup(new)}'", severity="warning")
-            return False
 
         try:
             with (
@@ -1577,10 +1596,86 @@ class SettingsThemeEditor(Vertical):
         self._notify_saved(f"Renamed '{escape_markup(old)}' to '{escape_markup(new)}'", caches_reloaded)
         return True
 
-    def export_theme(self, name: str) -> None:
-        """Export the saved theme file ``name`` (not the editor's palette)."""
+    def dialog_label(self, name: str) -> str:
+        """``_dialog_label`` for the saved theme ``name``, resolved through
+        the one scan (R12: its file may be named otherwise).
+
+        Args:
+            name: The saved theme's name (untrusted file text).
+
+        Returns:
+            The markup-free dialog label naming the theme and its file;
+            ``<name>.toml`` when no scanned file claims the name or the
+            themes folder is unavailable.
+        """
         try:
-            validate_filename(name)  # it names the file in ~/Downloads
+            path = self._user_theme_files().get(name)
+        except RecoveryRequired:
+            path = None
+        return _dialog_label(name, path.name if path else f"{name}.toml")
+
+    def rename_refusal(self, old: str, new: str) -> str | None:
+        """TASK-33070: why Rename would refuse ``new`` (the dialog shows it
+        inline). The same checks ``rename_user_theme`` repeats.
+
+        Args:
+            old: The saved theme being renamed.
+            new: The name typed in the Rename dialog.
+
+        Returns:
+            A plain, path-free reason when Rename would refuse ``new``;
+            None when it would proceed (or ``new == old``, a no-op).
+        """
+        checked = self._rename_check(old, new)
+        return checked[0] if isinstance(checked, tuple) else None
+
+    def _rename_check(self, old: str, new: str) -> Path | tuple[str, str] | None:
+        """``old``'s file when ``new`` is free; ``(plain reason, severity)``
+        when refused; None when ``new == old`` (nothing to do)."""
+        try:
+            validate_filename(new)
+        except ValueError as exc:
+            return f"Invalid theme name: {exc}", "error"
+        if is_reserved_theme_name(new):
+            return f"Invalid theme name: {RESERVED_NAME_RULE}", "error"
+        if new == old:
+            return None
+        try:
+            files, unreadable = self._scan_theme_files()
+        except RecoveryRequired:
+            return THEMES_UNAVAILABLE_LABEL, "warning"
+        old_path = files.get(old)
+        stem = old.removeprefix(UNREADABLE_ID_PREFIX)
+        if old_path is None and stem in unreadable:
+            return (
+                f"Can't rename '{printable(stem)}': this theme file can't be read: {unreadable[stem][1]}",
+                "error",
+            )
+        if old_path is None:
+            return f"No saved custom theme named '{printable(old)}'", "warning"
+        shipped_names = {getattr(t, "name", None) for t in ALL_THEMES}
+        new_path = self.custom_themes_path / f"{new}.toml"
+        if link := self._link_refusal(new_path.stem, unreadable):
+            return link, "warning"
+        if (
+            new in BUILTIN_THEMES
+            or new in shipped_names
+            or new in files
+            or new_path.exists()
+            or new in self.app.available_themes
+        ):
+            return f"Name taken: '{new}'", "warning"
+        return old_path
+
+    def export_theme(self, name: str) -> None:
+        """Export the saved theme file ``name`` (not the editor's palette).
+
+        TASK-33076: reads the file, then asks where to write it (prefilled
+        with ``~/Downloads/<name>_theme.toml``); ``_export_target`` checks
+        the answer inside the dialog and again before writing.
+        """
+        try:
+            validate_filename(name)  # it names the default export file
             theme_path = self._user_theme_files().get(name)
             if theme_path is None:
                 self.app.notify(f"No saved custom theme named '{escape_markup(printable(name))}'", severity="warning")
@@ -1601,32 +1696,117 @@ class SettingsThemeEditor(Vertical):
                 severity="error",
             )
             return
-        self._export(name, theme_data)
+        self._prompt_export(name, theme_path.name, theme_data)
 
-    def _export(self, name: str, theme_data: dict[str, Any]) -> None:
-        """Write ``theme_data`` to ~/Downloads, confirming an overwrite."""
-        export_path = Path.home() / "Downloads" / f"{name}_theme.toml"
+    def _prompt_export(self, name: str, file_name: str, theme_data: dict[str, Any]) -> None:
+        # Lazy: the Settings screen module imports this one.
+        from ..UI.Screens.settings_screen import RagProfileNameModal
 
-        if export_path.exists():
-            # TASK-31258: never silently replace an earlier export.
-            async def _confirmed_export() -> None:
-                self._write_export(export_path, theme_data)
+        def refusal(text: str) -> str | None:
+            target = self._export_target(text)
+            return target if isinstance(target, str) else None
 
-            self.app.push_screen(
-                ConfirmationDialog(
-                    title="Overwrite export",
-                    message=f"{export_path} already exists. Replace it?",
-                    confirm_label="Overwrite",
-                    cancel_label="Keep existing",
-                    confirm_callback=_confirmed_export,
-                )
+        def chosen(text: str | None) -> None:
+            if not text:
+                return
+            target = self._export_target(text)  # re-checked: time has passed
+            if isinstance(target, str):
+                self.app.notify(escape_markup(target), severity="error")
+                return
+            self._export(target, theme_data)
+
+        self.app.push_screen(
+            RagProfileNameModal(
+                title=f"Export theme {escape_markup(_dialog_label(name, file_name))} to",
+                initial=str(self._default_export_dir() / f"{name}_theme.toml"),
+                confirm_label="Export",
+                validate=refusal,
+            ),
+            chosen,
+        )
+
+    @staticmethod
+    def _default_export_dir() -> Path:
+        return Path.home() / "Downloads"
+
+    def _export_target(self, text: str) -> Path | str:
+        """The export file the user typed, or a path-free reason it is refused.
+
+        The path must be absolute (``path_validation``), end in ``.toml``,
+        sit in a folder that exists (only the default Downloads folder is
+        created), outside the themes folder, and not name a folder, link or
+        other non-regular file. An existing regular file is allowed here;
+        ``_export`` confirms before replacing it.
+        """
+        path = self._typed_path(text)
+        if path is None:
+            return "Export needs the full path to a .toml file"
+        if path.suffix.lower() != ".toml":
+            return "Export needs a file name ending in .toml"
+        if path.parent != self._default_export_dir() and not path.parent.is_dir():
+            return "That folder does not exist"
+        # Same folder, not same spelling: `..`, a symlinked config dir or a
+        # case-only difference must not route an export into the themes folder.
+        try:
+            into_themes = os.path.samefile(path.parent, self.custom_themes_path)
+        except OSError:  # either folder missing: they cannot be the same one
+            into_themes = False
+        if into_themes:
+            return "Export to a folder other than the themes folder (Save as adds a theme)"
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return path
+        except OSError as exc:
+            return f"Could not check the file: {self._failure_reason(exc)}"
+        if not stat.S_ISREG(info.st_mode):
+            return "Export needs a file name, not a folder or link"
+        return path
+
+    def _export(self, export_path: Path, theme_data: dict[str, Any]) -> None:
+        """Write ``theme_data`` to ``export_path``, confirming an overwrite.
+
+        The file seen here is the only one an export may replace: absent, the
+        write creates it exclusively; present, the confirmed write replaces
+        only that same file (Qodo 4118068777).
+        """
+        try:
+            info = os.lstat(export_path)
+        except FileNotFoundError:
+            self._write_export(export_path, theme_data, None)
+            return
+        except OSError as exc:
+            self.app.notify(
+                f"Failed to export theme: {escape_markup(self._failure_reason(exc))}", severity="error"
             )
             return
+        observed = (info.st_dev, info.st_ino)
 
-        self._write_export(export_path, theme_data)
+        # TASK-31258: never silently replace an earlier export.
+        async def _confirmed_export() -> None:
+            self._write_export(export_path, theme_data, observed)
 
-    def _write_export(self, export_path: Path, theme_data: dict[str, Any]) -> None:
-        """Write the export TOML and report the path."""
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Overwrite export",
+                message=f"{export_path} already exists. Replace it?",
+                confirm_label="Overwrite",
+                cancel_label="Keep existing",
+                confirm_callback=_confirmed_export,
+            )
+        )
+
+    def _write_export(
+        self, export_path: Path, theme_data: dict[str, Any], expected: tuple[int, int] | None
+    ) -> None:
+        """Write the export TOML and report the path.
+
+        Args:
+            export_path: The validated destination.
+            theme_data: The theme TOML to write.
+            expected: None to create a file that must still be absent, or
+                the ``(st_dev, st_ino)`` of the file the user agreed to replace.
+        """
         try:
             with raw._scope(self, "theme_export", writing=True, selected_read=export_path) as operation:
                 raw._mkdirs(operation)
@@ -1634,12 +1814,20 @@ class SettingsThemeEditor(Vertical):
                 try:
                     with raw._file(operation, temporary, "w") as f:
                         toml.dump(theme_data, f)
-                    raw._replace(operation, temporary, export_path)
+                    raw._replace(operation, temporary, export_path, expected=expected)
                 finally:
                     raw._remove_temporary(operation, temporary)
 
             self.app.notify(f"Theme exported to: {escape_markup(export_path)}", severity="success")
             self.post_message(self.Exported(export_path))
+        except FileExistsError:
+            # The file changed after it was checked: keep it, never replace
+            # something the user did not confirm.
+            self.app.notify(
+                f"{escape_markup(export_path)} changed before the export was written; "
+                "nothing was replaced. Export again to choose.",
+                severity="error",
+            )
         except Exception as e:
             logger.error(f"Failed to export theme: {e}")
             self.app.notify(f"Failed to export theme: {escape_markup(self._failure_reason(e))}", severity="error")
@@ -1684,7 +1872,8 @@ class SettingsThemeEditor(Vertical):
             self.app.push_screen(
                 ConfirmationDialog(
                     title="Replace theme",
-                    message=f"Replace the saved theme '{escape_markup(name)}'?",
+                    # A markup-free dialog (TASK-33073: list name + file).
+                    message=f"Replace the saved theme {self.dialog_label(name)}?",
                     confirm_label="Replace",
                     cancel_label="Keep existing",
                     confirm_callback=_confirmed_replace,
@@ -1693,8 +1882,28 @@ class SettingsThemeEditor(Vertical):
             return None
         return name if self._write_import(name, target, data, theme) else None
 
-    def _parse_import(self, source: str) -> tuple[str, dict[str, Any], Theme] | str:
-        """``(name, normalised file data, theme)``, or a path-free refusal reason."""
+    def import_refusal(self, source: str) -> str | None:
+        """TASK-33070: why Import would refuse ``source`` (the dialog shows it
+        inline). The same checks ``import_theme`` repeats; a name that is
+        already saved is not a refusal (Import asks to Replace).
+
+        Args:
+            source: The typed, pasted or dropped path to the theme file.
+
+        Returns:
+            A printable, path-free reason when Import would refuse
+            ``source``; None when it would import or ask to Replace.
+        """
+        parsed = self._parse_import(source)
+        if isinstance(parsed, str):
+            return printable(parsed)  # R16/R39: path-free, printable
+        target = self._write_target(parsed[0])
+        return target if isinstance(target, str) else None
+
+    @staticmethod
+    def _typed_path(source: str) -> Path | None:
+        """A typed, pasted or dropped path, validated (``path_validation``);
+        None when it is not an absolute path."""
         text = source.strip()
         if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
             text = text[1:-1]  # a terminal drop can paste a quoted path
@@ -1703,8 +1912,14 @@ class SettingsThemeEditor(Vertical):
             # backslash-escaping any shell-special character: `\X` -> `X`.
             text = re.sub(r"\\(.)", r"\1", text)
         try:
-            path = validate_browsing_path(os.path.expanduser(text))
+            return validate_browsing_path(os.path.expanduser(text))
         except ValueError:
+            return None
+
+    def _parse_import(self, source: str) -> tuple[str, dict[str, Any], Theme] | str:
+        """``(name, normalised file data, theme)``, or a path-free refusal reason."""
+        path = self._typed_path(source)
+        if path is None:
             return "Import needs the full path to a .toml file"
         if path.suffix.lower() != ".toml":
             return "Import needs a .toml file"
@@ -1729,8 +1944,8 @@ class SettingsThemeEditor(Vertical):
             return "Theme file is larger than 64 KB"
         try:
             raw_data = toml.loads(content.decode("utf-8"))
-        except Exception:  # noqa: BLE001 - any parser failure is "not TOML"
-            return "File is not valid TOML"
+        except Exception as exc:  # noqa: BLE001 - any parser failure is "not TOML"
+            return f"File is not valid TOML{_toml_position(exc)}"
         meta = raw_data.get("theme", {})
         if not isinstance(meta, dict):
             return "[theme] must be a table"

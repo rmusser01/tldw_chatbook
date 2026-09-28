@@ -16785,3 +16785,20 @@ that the test is meant to detect.
 ### PR #2196: Windows checkout must preserve tokenizer table bytes
 
 During the 2026-09-27 final offline verification, `git ls-files --eol` showed LF index blobs but CRLF working files in `assets/tiktoken_cache`; the unchanged manifest rejected GPT-2 vocabulary SHA-256 (`84809de...` instead of `1ce1664...`) and encoding construction failed. Mark the immutable cache inventory `-text`, as with Canvas and built-in skills, instead of changing reviewed hashes or normalizing inside the reader. Restoring exact Git blobs and applying the attribute made all 31 affected cases pass, including an upstream-fetch refusal and all five encoding constructors. Metadata-only dependency probes establish installation; test actual blocked imports through their public fallback, not an eager-import-era availability flag.
+
+### Under pytest, a stylesheet reparse costs ~2 ms; in production it costs ~430 ms (TASK-33075, 2026-09-27)
+
+**What happened.** Profiling a theme switch in a `run_test` harness, the first
+pass showed `Stylesheet.reparse` at ~750 ms per switch, and a second pass over
+the same themes showed ~1.5 ms, with Textual's `parse` never called. The root
+conftest installs `Tests/UI/css_cache.py`, a process-global parse cache keyed
+on the stylesheet's variables. Production has no such cache: Textual's
+`reparse` builds a fresh `Stylesheet` with an empty per-instance cache, so
+every theme switch re-parses the whole ~830 KB bundle. That reparse turned
+out to be the largest single cost of the switch (40-60%). A warm-cache profile
+would have ranked it as noise.
+
+**What to do.** Run any CSS/theme performance probe with
+`TLDW_TEST_CSS_CACHE=0`. The private-profile wrapper passes the variable
+through to its child. Also wrap `Stylesheet.reparse` and check that it runs
+at production cost before you rank anything else.
