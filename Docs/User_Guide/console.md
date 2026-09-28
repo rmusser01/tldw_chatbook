@@ -598,17 +598,20 @@ DATABRICKS_TOKEN=… DATABRICKS_HOST=… .venv/bin/python -m pytest -q \
 
 The default test suite makes no paid request.
 
-#### Inference clouds (Together, Fireworks, Cerebras) in Console
+#### Inference clouds in Console
 
-**Together**, **Fireworks**, and **Cerebras** run on the ordinary streaming
-Console path — set the provider's API key (`TOGETHER_API_KEY`,
-`FIREWORKS_API_KEY`, or `CEREBRAS_API_KEY`) in Settings and pick a model.
+**Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** run
+on the ordinary streaming Console path — set the provider's API key (for
+example `TOGETHER_API_KEY` or `NVIDIA_API_KEY`) in Settings and pick a model.
 Chatbook function tools use the standard approval and execution loop for the
 models that support them, and **Discover models** reuses the chat credential
 (authenticated `GET {base}/models`) to fill the provider's empty model list.
 Fireworks keeps R1-family reasoning private — reasoning never appears in the
-transcript, which is provider behavior, not dropped output. Setup details
-live in [Settings — Inference clouds](settings.md#inference-clouds-together-fireworks-cerebras).
+transcript, which is provider behavior, not dropped output. Streamed NVIDIA
+NIM replies carry no token counts (NVIDIA does not report streamed usage).
+Setup details, env vars, and per-provider notes live in
+[Settings — Inference clouds](settings.md#inference-clouds).
 
 ### Leaving Console during a run
 
