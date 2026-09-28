@@ -1,5 +1,5 @@
 ---
-id: TASK-33091
+id: TASK-33136
 title: Register pending decision kinds as data in the round registry
 status: To Do
 assignee: []
@@ -22,3 +22,7 @@ Six pending-decision kinds (approval, skill_install, skill_script, chat_create, 
 - [ ] #3 A test demonstrates that adding a new kind requires only a descriptor.
 - [ ] #4 Approval flow and pending-round tests pass.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33091. origin/dev minted its own task-33091 before this branch merged, so per the landed-keeps-id rule this task moved to task-33136; every inbound reference moved with it.

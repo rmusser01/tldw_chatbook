@@ -1,5 +1,5 @@
 ---
-id: TASK-33094
+id: TASK-33139
 title: Revise SSH bindings spec around a filesystem endpoint abstraction
 status: To Do
 assignee: []
@@ -22,3 +22,7 @@ The SSH remote workspace bindings spec and 21-task plan (Docs/superpowers/specs 
 - [ ] #3 The split-authority posture (client fingerprint check versus server pin) is preserved and documented as an endpoint contract.
 - [ ] #4 The plan's task count and file structure are updated to match the revised design before any phase 3 task executes.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33094. origin/dev minted its own task-33094 before this branch merged, so per the landed-keeps-id rule this task moved to task-33139; every inbound reference moved with it.

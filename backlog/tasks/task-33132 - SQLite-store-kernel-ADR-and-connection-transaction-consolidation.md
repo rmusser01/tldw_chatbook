@@ -1,5 +1,5 @@
 ---
-id: TASK-33087
+id: TASK-33132
 title: SQLite store kernel ADR and connection-transaction consolidation
 status: To Do
 assignee: []
@@ -23,3 +23,7 @@ The DB layer carries 21 independent transaction() context managers and 9 verbati
 - [ ] #4 No store retains a private copy of the consolidated machinery.
 - [ ] #5 Targeted DB test suites for every touched store pass.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33087. origin/dev minted its own task-33087 before this branch merged, so per the landed-keeps-id rule this task moved to task-33132; every inbound reference moved with it.

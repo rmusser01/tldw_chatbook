@@ -1,5 +1,5 @@
 ---
-id: TASK-33092
+id: TASK-33137
 title: Finish the shared settings vocabulary beyond sampling params
 status: To Do
 assignee: []
@@ -23,3 +23,7 @@ ADR-147's Chat/sampling_params.py already unified the sampling keys, bounds, and
 - [ ] #4 Per-family curated enum lists and model_capabilities version-floor predicates either consume the shared table or document why they cannot.
 - [ ] #5 Targeted settings tests pass.
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33092. origin/dev minted its own task-33092 before this branch merged, so per the landed-keeps-id rule this task moved to task-33137; every inbound reference moved with it.
