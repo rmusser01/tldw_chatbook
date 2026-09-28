@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import select
+import selectors
 import signal
 import subprocess
 import threading
@@ -97,7 +97,21 @@ class _HandshakeFailed(Exception):
 
 
 class _WriteStalled(Exception):
-    """Internal: a write could not complete by its deadline."""
+    """Internal: a write stalled MID-FRAME; the stream is unusable."""
+
+
+class _NotSent(Exception):
+    """Internal: the write lock stayed busy until the deadline; nothing was
+    written and the stream is intact."""
+
+
+def _wait_fd(fd: int, events: int, timeout: float) -> bool:
+    """Wait for one fd (``selectors``: no FD_SETSIZE limit, unlike ``select.select``)."""
+    if timeout <= 0:
+        return False
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, events)
+        return bool(selector.select(timeout))
 
 
 @dataclass
@@ -229,7 +243,7 @@ class RemoteSessionWorker:
                 encode_frame(HELLO, 0, hello.encode()),
                 time.monotonic() + self._transport.grace_seconds,
             )
-        except (OSError, _WriteStalled):
+        except (OSError, _WriteStalled, _NotSent):
             self._kill_and_reap()
             raise SessionStartError(False, None, "session closed before HELLO") from None
         with self._lock:
@@ -254,7 +268,7 @@ class RemoteSessionWorker:
             self._write(data, deadline)
         except OSError:
             pass  # the process died; the read below sees EOF and classifies it
-        except _WriteStalled:
+        except (_WriteStalled, _NotSent):
             self._kill_and_reap()
             raise SessionStartError(False, None, "handshake write stalled") from None
 
@@ -271,7 +285,7 @@ class RemoteSessionWorker:
         buf = bytearray()
         while True:
             remaining = deadline - time.monotonic()
-            if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            if not _wait_fd(fd, selectors.EVENT_READ, remaining):
                 raise _HandshakeFailed(stalled=True)
             byte = os.read(fd, 1)  # byte-wise: frames after READY must stay unread
             if not byte:
@@ -317,19 +331,23 @@ class RemoteSessionWorker:
         """Write ``data`` whole under the write lock, by ``deadline``.
 
         Raises:
-            _WriteStalled: The lock or the pipe did not free up in time.
-                A stall mid-frame leaves the stream unusable, so callers
-                treat any stall as a self-inflicted session death.
+            _NotSent: The lock stayed busy (another caller's slow upload)
+                until the deadline: nothing written, the stream is intact.
+            _WriteStalled: Holding the lock, the pipe stopped draining
+                before the frame was out: the host is not reading (and a
+                partial frame corrupts the stream), so the session must die.
             OSError: The pipe broke (the process is gone).
         """
         fd = self._proc.stdin.fileno()  # type: ignore[union-attr]
         if not self._write_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
-            raise _WriteStalled()
+            raise _NotSent()
         try:
             view = memoryview(data)
             while view:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+                if not _wait_fd(fd, selectors.EVENT_WRITE, deadline - time.monotonic()):
+                    # Holding the lock, the pipe took nothing (or stopped
+                    # mid-frame) for the whole deadline: the host is not
+                    # reading, so this is a stuck parent either way.
                     raise _WriteStalled()
                 try:
                     view = view[os.write(fd, view) :]
@@ -392,10 +410,16 @@ class RemoteSessionWorker:
                     code = proc.wait(timeout=self._transport.grace_seconds)
                 except subprocess.TimeoutExpired:
                     self._kill()
-                    code = proc.wait()
+                    try:
+                        code = proc.wait(timeout=self._transport.grace_seconds)
+                    except subprocess.TimeoutExpired:
+                        code = -signal.SIGKILL
             else:
                 self._kill()
-                code = proc.wait()
+                try:
+                    code = proc.wait(timeout=self._transport.grace_seconds)
+                except subprocess.TimeoutExpired:
+                    code = -signal.SIGKILL  # unreapable for now; give up quietly
         with self._lock:
             if self._death_code is None:
                 self._death_code = code
@@ -423,6 +447,7 @@ class RemoteSessionWorker:
         grace = self._transport.grace_seconds
         sent_at = time.monotonic()
         killed = False
+        not_sent = False
         try:
             self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
             while not pending.done.is_set():
@@ -434,6 +459,12 @@ class RemoteSessionWorker:
                         self._die(natural=False)  # parent stuck: laptop kills the session
                     break
                 pending.done.wait(min(remaining, 0.5))
+        except _NotSent:
+            # The lock stayed busy (another caller's slow upload): our
+            # REQUEST or CANCEL never reached the wire, the stream is intact,
+            # and the session stays up. Popping
+            # the pending entry below makes any late frames "abandoned".
+            not_sent = True
         except _WriteStalled:
             self._die(natural=False)
         except (OSError, ValueError):  # broken pipe / stdin closed by close()
@@ -443,10 +474,25 @@ class RemoteSessionWorker:
                 self._pending.pop(request_id, None)
                 if not self._pending:
                     self._idle_since = time.monotonic()
+        if not_sent and self._alive and pending.terminal is None and pending.status is None:
+            # R8 (session alive, never admitted or never cancelled): an op timeout.
+            return RemoteCallResult(
+                pending.admitted_at is not None,
+                None,
+                TransportFailure(TransportFailureKind.OP_TIMEOUT, None, "operation timed out"),
+            )
         return self._result(pending, budget, killed=killed)
 
     def _dead_session_result(self) -> RemoteCallResult:
         """R9: a natural death classifies by the real ssh exit code; a laptop end is REMOTE_OP_FAILED."""
+        if self._proc is None:  # never started
+            return RemoteCallResult(
+                False,
+                None,
+                TransportFailure(
+                    TransportFailureKind.WORKER_FAILED_TO_START, None, "session not running"
+                ),
+            )
         if self._death_natural:
             self._settled.wait(self._transport.grace_seconds + _CLOSE_WAIT_S)
             code = self._death_code if self._death_code is not None else 255
@@ -511,8 +557,11 @@ class RemoteSessionWorker:
         try:
             if os.getpgid(proc.pid) == proc.pid:
                 os.killpg(proc.pid, signal.SIGKILL)
-            else:
-                proc.kill()
+                return
+        except OSError:
+            pass  # fall back to the process itself
+        try:
+            proc.kill()
         except OSError:
             pass
 

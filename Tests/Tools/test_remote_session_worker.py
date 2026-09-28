@@ -350,20 +350,80 @@ def test_call_after_close_is_remote_op_failed(worker_factory, workspace):
     assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
 
 
-def test_stalled_writer_cannot_wedge_other_callers(worker_factory, workspace):
+def test_mid_frame_stall_kills_the_session(worker_factory, workspace):
     worker, spawns = worker_factory()
     worker.start()
     os.kill(spawns[0].pid, signal.SIGSTOP)
-    big = b"x" * (8 << 20)  # far past the pipe buffer: the write stalls
+    big = b"x" * (8 << 20)  # far past the pipe buffer: the write stalls mid-frame
     started = time.monotonic()
     with ThreadPoolExecutor(2) as pool:
         stuck = pool.submit(worker.call, big, budget=1)
         time.sleep(0.2)
-        small = pool.submit(worker.call, read_request(workspace, "a.txt"), budget=1)
+        # B's own deadline outlives A's stall, so B sees the laptop-ended session.
+        small = pool.submit(worker.call, read_request(workspace, "a.txt"), budget=5)
         results = [stuck.result(15), small.result(15)]
     assert time.monotonic() - started < 10
     assert not worker.alive
     assert all(r.failure.kind is TransportFailureKind.REMOTE_OP_FAILED for r in results)
+
+
+def _dry_run_write_request(root: Path, size: int) -> bytes:
+    request = _session_request(
+        {"op": "fs_write", "path": "b.txt", "content": "x" * size, "dry_run": True},
+        capture_directory_chain(root),
+    )
+    request["intent"] = "write"
+    return _encode_request(request)
+
+
+def test_lock_wait_timeout_fails_only_that_call(worker_factory, workspace):
+    """A short-budget call stuck behind a slow upload times out alone; A completes."""
+    worker, spawns = worker_factory()
+    worker.start()
+    os.kill(spawns[0].pid, signal.SIGSTOP)  # the host reads slowly (not at all, for now)
+    with ThreadPoolExecutor(1) as pool:
+        upload = pool.submit(worker.call, _dry_run_write_request(workspace, 1 << 20), budget=15)
+        time.sleep(0.3)  # A holds the write lock with the pipe full
+        short = worker.call(read_request(workspace, "a.txt"), budget=0.5)
+        assert not short.admitted
+        assert short.failure.kind is TransportFailureKind.OP_TIMEOUT
+        assert worker.alive
+        os.kill(spawns[0].pid, signal.SIGCONT)
+        first = upload.result(30)
+    assert first.failure is None and first.admitted
+    assert json.loads(first.response)["outcome"] == "success"
+    assert worker.call(read_request(workspace, "a.txt"), budget=10).failure is None
+
+
+def test_session_works_with_fds_above_fd_setsize(worker_factory, workspace):
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft < 1200:
+        target = 1200 if hard == resource.RLIM_INFINITY else min(1200, hard)
+        if target < 1200:
+            pytest.skip("RLIMIT_NOFILE hard limit too low")
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    held: list[int] = []
+    try:
+        while not held or held[-1] < 1030:
+            held.append(os.open(os.devnull, os.O_RDONLY))
+        worker, spawns = worker_factory()
+        worker.start()
+        assert spawns[0].stdout.fileno() >= 1024 and spawns[0].stdin.fileno() >= 1024
+        result = worker.call(read_request(workspace, "a.txt"), budget=10)
+        assert result.failure is None and result.admitted
+    finally:
+        for fd in held:
+            os.close(fd)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
+def test_call_before_start_is_worker_failed_to_start(worker_factory, workspace):
+    worker, spawns = worker_factory()
+    result = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not result.admitted and not spawns
+    assert result.failure.kind is TransportFailureKind.WORKER_FAILED_TO_START
 
 
 def test_close_is_idempotent_and_never_raises(worker_factory):
