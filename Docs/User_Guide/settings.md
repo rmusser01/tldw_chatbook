@@ -675,7 +675,9 @@ theme you used recently in this session (Revert, or returning to an earlier row)
 faster than the first switch to it: the app keeps the styling it built for your last
 four themes. Toasts name what happened: Try says
 "Trying \<name\> for this
-session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
+session"; Use switches at once and saves the launch default in the
+background, then says "\<name\> is now your theme (was: \<previous\>)" (quitting
+waits for that save to finish); if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
 crashes and Revert stays available. If the save lands but the in-process
@@ -697,6 +699,10 @@ group shows a disabled "(none yet)" row instead. The themes folder is read in
 the background: the first time the picker opens, YOUR THEMES shows a disabled
 "Loading your themes…" row until the read finishes, and after a file action
 or Back from the editor the previous list stays up until the new one arrives.
+File actions (Save, Save as…, Rename, Delete, Import…, Export) also read and
+write in the background, so the screen stays responsive with many saved
+themes; they run one at a time, and a second one started meanwhile waits for
+the first. Leaving Theme mid-action does not cut it short.
 **Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
 `_copy`. **Rename** and **Delete** ask first, and every theme dialog names

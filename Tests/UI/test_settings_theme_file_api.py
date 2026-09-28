@@ -58,6 +58,8 @@ class _App(IsolatedWidgetTestApp):
         # The real screen stack, so the confirmation dialog mounts.
         self.push_screen = types.MethodType(App.push_screen, self)
         self.pop_screen = types.MethodType(App.pop_screen, self)
+        # TASK-33078: file actions run as app workers.
+        self.run_worker = types.MethodType(App.run_worker, self)
 
     @on(SettingsThemeEditor.ThemesChanged)
     def _count(self) -> None:
@@ -146,7 +148,7 @@ async def _accept_export(pilot, app, path=None):
 
 
 async def _confirm_delete(pilot, app, editor, name):
-    editor.request_delete(name)
+    await editor.request_delete(name)
     await pilot.pause()
     assert isinstance(app.screen, ConfirmationDialog)
     assert app.screen.confirm_label == "Delete theme"
@@ -250,7 +252,7 @@ async def test_rename_moves_file_registration_active_and_launch_default(
         app.register_theme(create_theme_from_dict("mine", {**MINE, "dark": True}))
         app.theme = "mine"
 
-        assert editor.rename_user_theme("mine", "ours") is True
+        assert await editor.rename_user_theme("mine", "ours") is True
         await pilot.pause()
 
         assert (tmp_path / "ours.toml").exists()
@@ -272,7 +274,7 @@ async def test_rename_to_taken_name_changes_nothing(request, tmp_path, config_wr
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         app.notify.reset_mock()
-        assert editor.rename_user_theme("mine", "ours") is False
+        assert await editor.rename_user_theme("mine", "ours") is False
         assert "Name taken" in app.notify.call_args.args[0]
         assert mine.exists() and ours.exists()
         assert toml.load(ours)["theme"]["name"] == "ours"
@@ -288,7 +290,7 @@ async def test_rename_rejects_invalid_name(request, tmp_path, config_writes):
         await _mounted(pilot, app, editor, tmp_path)
         app.notify.reset_mock()
         before = sorted(p.name for p in tmp_path.iterdir())
-        assert editor.rename_user_theme("mine", "../evil") is False
+        assert await editor.rename_user_theme("mine", "../evil") is False
         assert app.notify.called
         assert mine.exists()
         assert sorted(p.name for p in tmp_path.iterdir()) == before
@@ -308,7 +310,7 @@ async def test_rename_override_restores_catalog_theme(
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         app.register_theme(create_theme_from_dict("apricot", {**MINE, "dark": True}))
-        assert editor.rename_user_theme("apricot", "apricot_mine") is True
+        assert await editor.rename_user_theme("apricot", "apricot_mine") is True
         assert app.available_themes["apricot"] is shipped
         assert "apricot_mine" in app.available_themes
 
@@ -324,7 +326,7 @@ async def test_export_theme_writes_saved_file_data(request, tmp_path, monkeypatc
         await _mounted(pilot, app, editor, tmp_path)
         editor.load_theme("nord")  # a different palette in the editor
         await pilot.pause()
-        editor.export_theme("mine")
+        await editor.export_theme("mine")
         prefilled = await _accept_export(pilot, app)
         assert prefilled == str(tmp_path / "Downloads" / "mine_theme.toml")
         exported = toml.load(tmp_path / "Downloads" / "mine_theme.toml")
@@ -351,7 +353,7 @@ async def test_rename_unconstructible_file_writes_nothing(request, tmp_path, con
         await _mounted(pilot, app, editor, tmp_path)
         app.notify.reset_mock()
         before = app.themes_changed
-        assert editor.rename_user_theme("broken", "fixed") is False
+        assert await editor.rename_user_theme("broken", "fixed") is False
         await pilot.pause()
         assert path.exists()
         assert not (tmp_path / "fixed.toml").exists()
@@ -373,7 +375,7 @@ async def test_delete_and_export_resolve_by_theme_name_not_stem(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.export_theme("b")
+        await editor.export_theme("b")
         await _accept_export(pilot, app)
         assert toml.load(tmp_path / "Downloads" / "b_theme.toml")["colors"] == MINE
 
@@ -395,7 +397,7 @@ async def test_rename_resolves_by_theme_name_not_stem(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.rename_user_theme("b", "c") is True
+        assert await editor.rename_user_theme("b", "c") is True
         assert not path.exists()
         assert toml.load(tmp_path / "c.toml")["theme"]["name"] == "c"
         assert editor.list_user_theme_names() == {"c"}
@@ -418,7 +420,7 @@ async def test_rename_of_loaded_theme_moves_the_editor_too(
         await _mounted(pilot, app, editor, tmp_path)
         editor.load_user_theme("mine")
         await pilot.pause()
-        assert editor.rename_user_theme("mine", "ours") is True
+        assert await editor.rename_user_theme("mine", "ours") is True
         await pilot.pause()
         assert editor.current_theme_name == "ours"
         assert editor.query_one("#settings-theme-name", Input).value == "ours"
@@ -426,7 +428,7 @@ async def test_rename_of_loaded_theme_moves_the_editor_too(
 
         editor.color_inputs["primary"].value = "#445566"
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         assert not isinstance(app.screen, ConfirmationDialog)
         assert not (tmp_path / "mine.toml").exists()
@@ -477,7 +479,7 @@ async def test_file_errors_do_not_leak_paths_into_notices(
             lambda: editor.export_theme("mine"),
         ):
             app.notify.reset_mock()
-            action()
+            await action()
             await pilot.pause()
             message = app.notify.call_args.args[0]
             assert str(tmp_path) not in message, message
@@ -557,7 +559,7 @@ async def test_rename_of_unreadable_file_notice_escapes_file_content(request, tm
         await _mounted(pilot, app, editor, tmp_path)
         assert editor.user_theme_listing()[1] == {"broken": "[/mismatched] is not a theme colour"}
         app.notify.reset_mock()
-        assert editor.rename_user_theme("unreadable:broken", "fixed") is False
+        assert await editor.rename_user_theme("unreadable:broken", "fixed") is False
         message = app.notify.call_args.args[0]
         assert "[/mismatched] is not a theme colour" in Content.from_markup(message).plain
         assert path.exists() and not (tmp_path / "fixed.toml").exists()
@@ -596,7 +598,7 @@ async def test_listing_errors_and_notices_carry_no_control_characters(request, t
             assert all(ch.isprintable() for ch in _terminal_text(escape_markup(error)))
         # The rename refusal quotes the card error.
         app.notify.reset_mock()
-        assert editor.rename_user_theme("unreadable:osckey", "fixed") is False
+        assert await editor.rename_user_theme("unreadable:osckey", "fixed") is False
         assert all(ch.isprintable() for ch in _terminal_text(app.notify.call_args.args[0]))
         assert not (tmp_path / "fixed.toml").exists()
 
@@ -614,11 +616,11 @@ async def test_broken_file_named_like_a_shipped_theme_is_deleted_by_its_own_id(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.request_delete("nord")
+        await editor.request_delete("nord")
         await pilot.pause()
         assert not isinstance(app.screen, ConfirmationDialog)
         assert "built-in" in app.notify.call_args.args[0]
-        editor.request_delete("unreadable:nord")
+        await editor.request_delete("unreadable:nord")
         await pilot.pause()
         assert app.screen.message.startswith("Delete the saved theme 'nord.toml'?")
         await pilot.click("#confirm-button")
@@ -717,7 +719,7 @@ async def test_stale_unreadable_id_notice_is_printable(request, tmp_path, config
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.request_delete(f"unreadable:x{_OSC_VALUE}")
+        await editor.request_delete(f"unreadable:x{_OSC_VALUE}")
         await pilot.pause()
         text = _terminal_text(app.notify.call_args.args[0])
         assert text.startswith("No saved custom theme named")
@@ -741,7 +743,7 @@ async def test_clone_of_translucent_shipped_theme_saves_a_readable_file(request,
         await pilot.pause()
         editor.on_clone_theme()
         await pilot.pause()
-        editor.on_save_theme()
+        await editor.save_theme()
         await pilot.pause()
         path = tmp_path / "deep_dive_cyberspace_copy.toml"
         data = toml.loads(path.read_text(encoding="utf-8"))
@@ -810,7 +812,7 @@ async def test_export_stale_name_notice_is_printable(request, tmp_path, monkeypa
         # BEL-terminated OSC passes validate_filename -> "No saved custom theme";
         # the ESC-backslash form fails it -> "Failed to export theme".
         for name in ("x\x1b]52;c;eA==\x07", f"x{_OSC_VALUE}"):
-            editor.export_theme(name)
+            await editor.export_theme(name)
             await pilot.pause()
             text = _terminal_text(app.notify.call_args.args[0])
             assert text.isprintable(), repr(text)
@@ -903,14 +905,14 @@ async def test_reserved_name_prefixes_are_refused_everywhere(request, tmp_path, 
         assert unreadable == {"custom_old": "reserved name"}
         for name in ("custom_ocean", "unreadable:x"):
             app.notify.reset_mock()
-            editor.save_as(name)
+            await editor.save_as(name)
             await pilot.pause()
             assert "reserved" in app.notify.call_args.args[0]
             app.notify.reset_mock()
-            assert editor.rename_user_theme("mine", name) is False
+            assert await editor.rename_user_theme("mine", name) is False
             assert "reserved" in app.notify.call_args.args[0]
         app.notify.reset_mock()
-        assert editor.import_theme(str(source)) is None
+        assert await editor.import_theme(str(source)) is None
         assert "reserved" in app.notify.call_args.args[0]
         assert sorted(p.name for p in tmp_path.glob("*.toml")) == ["custom_old.toml", "mine.toml"]
 
@@ -932,7 +934,7 @@ async def test_rename_rolls_back_when_the_launch_default_cannot_be_saved(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.rename_user_theme("mine", "ours") is False
+        assert await editor.rename_user_theme("mine", "ours") is False
         await pilot.pause()
         assert (tmp_path / "mine.toml").exists()
         assert not (tmp_path / "ours.toml").exists()
@@ -956,7 +958,7 @@ async def test_rename_and_delete_warn_when_the_config_refresh_fails(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.rename_user_theme("mine", "ours") is True
+        assert await editor.rename_user_theme("mine", "ours") is True
         await pilot.pause()
         assert "configuration refresh failed" in app.notify.call_args.args[0]
         assert app.notify.call_args.kwargs.get("severity") == "warning"
@@ -978,7 +980,7 @@ async def test_confirmed_replace_and_overwrite_re_resolve_the_target(request, tm
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(str(source)) is None
+        assert await editor.import_theme(str(source)) is None
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         (tmp_path / "mine.toml").rename(tmp_path / "moved.toml")
@@ -987,7 +989,7 @@ async def test_confirmed_replace_and_overwrite_re_resolve_the_target(request, tm
         assert not (tmp_path / "mine.toml").exists()
         assert toml.load(tmp_path / "moved.toml")["colors"]["primary"] == "#445566"
 
-        editor.save_as("mine")
+        await editor.save_as("mine")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         (tmp_path / "moved.toml").rename(tmp_path / "moved_again.toml")
@@ -1016,7 +1018,7 @@ async def test_non_regular_theme_file_is_one_unreadable_entry(request, tmp_path)
         assert unreadable == {"hard": "not a regular file", "linked": "not a regular file"}
         # Delete is refused with a reason (the backup layer never unlinks
         # through a link) and no dialog.
-        editor.request_delete("unreadable:linked")
+        await editor.request_delete("unreadable:linked")
         await pilot.pause()
         assert "not a regular file" in app.notify.call_args.args[0]
         assert not isinstance(app.screen, ConfirmationDialog)
@@ -1058,7 +1060,7 @@ async def test_save_save_as_import_and_rename_refuse_a_linked_target(request, tm
         assert unreadable == {"gone": "not a regular file", "linked": "not a regular file"}
         for name in ("linked", "gone"):
             app.notify.reset_mock()
-            editor.save_as(name)
+            await editor.save_as(name)
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmationDialog)
             assert "not a regular file" in app.notify.call_args.args[0]
@@ -1066,19 +1068,19 @@ async def test_save_save_as_import_and_rename_refuse_a_linked_target(request, tm
             app.notify.reset_mock()
             editor.query_one("#settings-theme-name", Input).value = name
             await pilot.pause()
-            editor.on_save_theme()
+            await editor.save_theme()
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmationDialog)
             assert "not a regular file" in app.notify.call_args.args[0]
 
             app.notify.reset_mock()
-            assert editor.rename_user_theme("mine", name) is False
+            assert await editor.rename_user_theme("mine", name) is False
             assert "not a regular file" in app.notify.call_args.args[0]
 
             source = tmp_path.parent / f"import_{name}.toml"
             source.write_text(toml.dumps({"theme": {"name": name}, "colors": MINE}), encoding="utf-8")
             app.notify.reset_mock()
-            assert editor.import_theme(str(source)) is None
+            assert await editor.import_theme(str(source)) is None
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmationDialog)
             assert "not a regular file" in app.notify.call_args.args[0]
@@ -1100,7 +1102,7 @@ async def test_export_writes_to_the_chosen_destination_only(request, tmp_path, m
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.export_theme("mine")
+        await editor.export_theme("mine")
         prefilled = await _accept_export(pilot, app, elsewhere / "picked.toml")
         assert prefilled == str(home / "Downloads" / "mine_theme.toml")
         assert toml.load(elsewhere / "picked.toml")["colors"] == MINE
@@ -1125,7 +1127,7 @@ async def test_export_refusals_show_in_the_prompt_and_write_nothing(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.export_theme("mine")
+        await editor.export_theme("mine")
         await pilot.pause()
         field = app.screen.query_one("#settings-rag-profile-name-input", Input)
         cases = [
@@ -1168,7 +1170,7 @@ async def test_export_to_an_existing_file_still_confirms(request, tmp_path, monk
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.export_theme("mine")
+        await editor.export_theme("mine")
         await _accept_export(pilot, app, existing)
         assert isinstance(app.screen, ConfirmationDialog)
         assert app.screen.confirm_label == "Overwrite"
@@ -1220,7 +1222,7 @@ async def test_export_write_refuses_a_folder_swapped_for_the_themes_folder(
             (out / "a").symlink_to(tmp_path.parent, target_is_directory=True)
         assert target.parent.samefile(tmp_path)
         app.notify.reset_mock()
-        editor._export(target, {"colors": MINE})
+        await editor._export(target, {"colors": MINE})
         await pilot.pause()
         assert "Failed to export theme" in _export_notices(app)
         assert not (tmp_path / "x.toml").exists()
@@ -1251,7 +1253,7 @@ async def test_export_refuses_a_file_that_appears_before_the_write(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.export_theme("mine")
+        await editor.export_theme("mine")
         await _accept_export(pilot, app, target)
         assert not isinstance(app.screen, ConfirmationDialog)
         assert "nothing was replaced" in _export_notices(app)
@@ -1277,7 +1279,7 @@ async def test_confirmed_overwrite_replaces_only_the_confirmed_file(
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         # The unchanged file: a confirmed overwrite still replaces it.
-        editor.export_theme("mine")
+        await editor.export_theme("mine")
         await _accept_export(pilot, app, existing)
         assert app.screen.confirm_label == "Overwrite"
         await pilot.click("#confirm-button")
@@ -1285,7 +1287,7 @@ async def test_confirmed_overwrite_replaces_only_the_confirmed_file(
         assert toml.load(existing)["colors"] == MINE
 
         # A different file swapped in while the dialog is open: kept.
-        editor.export_theme("mine")
+        await editor.export_theme("mine")
         await _accept_export(pilot, app, existing)
         assert app.screen.confirm_label == "Overwrite"
         newer = out / "newer"

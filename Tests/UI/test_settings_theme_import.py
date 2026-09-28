@@ -52,6 +52,8 @@ class _App(IsolatedWidgetTestApp):
         self.themes_changed = 0
         self.push_screen = types.MethodType(App.push_screen, self)
         self.pop_screen = types.MethodType(App.pop_screen, self)
+        # TASK-33078: file actions run as app workers.
+        self.run_worker = types.MethodType(App.run_worker, self)
 
     @on(SettingsThemeEditor.ThemesChanged)
     def _count(self) -> None:
@@ -85,7 +87,7 @@ async def test_valid_import_lands_registers_and_announces(request, tmp_path, src
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(str(source)) == "sunny"
+        assert await editor.import_theme(str(source)) == "sunny"
         await pilot.pause()
         written = toml.loads((tmp_path / "sunny.toml").read_text(encoding="utf-8"))
         assert written["theme"] == {"name": "sunny", "dark": False}
@@ -112,7 +114,7 @@ async def test_import_sanitises_variables(request, tmp_path, src):
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(str(source)) == "vars"
+        assert await editor.import_theme(str(source)) == "vars"
         written = toml.loads((tmp_path / "vars.toml").read_text(encoding="utf-8"))
         assert written["variables"] == {"text-muted": "#AABBCC"}
 
@@ -205,7 +207,7 @@ async def test_hostile_or_broken_file_is_refused_and_writes_nothing(
         await _mounted(pilot, app, editor, tmp_path)
         before = _snapshot(tmp_path)
         themes_before = set(app.available_themes)
-        assert editor.import_theme(str(source)) is None
+        assert await editor.import_theme(str(source)) is None
         await pilot.pause()
         assert _snapshot(tmp_path) == before
         assert set(app.available_themes) == themes_before
@@ -242,7 +244,7 @@ async def test_missing_and_directory_sources_are_refused_without_path(request, t
         before = _snapshot(tmp_path)
         for source in (src / "gone.toml", folder):
             app.notify.reset_mock()
-            assert editor.import_theme(str(source)) is None
+            assert await editor.import_theme(str(source)) is None
             message = app.notify.call_args.args[0]
             assert app.notify.call_args.kwargs["severity"] == "error"
             assert str(src) not in message
@@ -259,7 +261,7 @@ async def test_quoted_pasted_path_imports(request, tmp_path, src, quote):
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(f"  {quote}{source}{quote}\n") == "sunny"
+        assert await editor.import_theme(f"  {quote}{source}{quote}\n") == "sunny"
         assert (tmp_path / "sunny.toml").exists()
 
 
@@ -272,7 +274,7 @@ async def test_tilde_path_expands(request, tmp_path, src, monkeypatch):
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme("~/home.toml") == "sunny"
+        assert await editor.import_theme("~/home.toml") == "sunny"
         assert (tmp_path / "sunny.toml").exists()
 
 
@@ -286,7 +288,7 @@ async def test_relative_path_is_refused(request, tmp_path, src, monkeypatch):
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         before = _snapshot(tmp_path)
-        assert editor.import_theme("rel.toml") is None
+        assert await editor.import_theme("rel.toml") is None
         assert app.notify.call_args.kwargs["severity"] == "error"
         assert "full path" in app.notify.call_args.args[0]
         assert _snapshot(tmp_path) == before
@@ -304,7 +306,7 @@ async def test_import_onto_existing_name_confirms_and_cancel_keeps_file(request,
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(str(source)) is None  # pending confirmation
+        assert await editor.import_theme(str(source)) is None  # pending confirmation
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         # TASK-33073: the list's name with its file.
@@ -315,7 +317,7 @@ async def test_import_onto_existing_name_confirms_and_cancel_keeps_file(request,
         assert existing.read_bytes() == original
         assert app.themes_changed == 0
 
-        editor.import_theme(str(source))
+        await editor.import_theme(str(source))
         await pilot.pause()
         await pilot.click("#confirm-button")
         await pilot.pause()
@@ -336,7 +338,7 @@ async def test_import_replaces_the_file_that_claims_the_name(request, tmp_path, 
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.import_theme(str(source))
+        await editor.import_theme(str(source))
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         await pilot.click("#confirm-button")
@@ -360,7 +362,7 @@ async def test_import_during_pause_writes_nothing(request, tmp_path, src, monkey
             raise RecoveryRequired("x")
 
         monkeypatch.setattr(raw_participants, "_scope", paused)
-        assert editor.import_theme(str(source)) is None
+        assert await editor.import_theme(str(source)) is None
         await pilot.pause()
         assert app.notify.call_args.args[0] == THEMES_UNAVAILABLE_LABEL
         assert _snapshot(tmp_path) == before
@@ -385,7 +387,7 @@ async def test_replace_dialog_and_toast_escape_the_name(request, tmp_path, src, 
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        editor.import_theme(str(source))
+        await editor.import_theme(str(source))
         await pilot.pause()
         assert app.screen.message == "Replace the saved theme 'Sunny' (sunny.toml)?"
         await pilot.click("#confirm-button")
@@ -419,7 +421,7 @@ async def test_source_is_checked_and_read_through_one_nonblocking_descriptor(
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(str(source)) == "sunny"
+        assert await editor.import_theme(str(source)) == "sunny"
     assert opened and all(
         flags & os.O_NONBLOCK and not flags & (os.O_WRONLY | os.O_RDWR) for flags in opened
     ), opened
@@ -445,7 +447,7 @@ async def test_backslash_escaped_drop_path_imports(request, tmp_path, src, typed
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(f"{src}/{typed}") == "sunny"
+        assert await editor.import_theme(f"{src}/{typed}") == "sunny"
 
 
 def _special_sources(src: Path) -> list[tuple[str, str]]:
@@ -473,7 +475,7 @@ async def test_special_file_sources_are_refused(request, tmp_path, src):
         before = _snapshot(tmp_path)
         for typed, reason in _special_sources(src):
             app.notify.reset_mock()
-            assert editor.import_theme(typed) is None, typed
+            assert await editor.import_theme(typed) is None, typed
             assert reason in app.notify.call_args.args[0], typed
             assert str(src) not in app.notify.call_args.args[0]
         assert _snapshot(tmp_path) == before
@@ -492,7 +494,7 @@ async def test_fifo_source_is_refused_without_blocking(request, tmp_path, src):
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         before = _snapshot(tmp_path)
-        assert editor.import_theme(str(fifo)) is None
+        assert await editor.import_theme(str(fifo)) is None
         assert "Import needs a regular file" in app.notify.call_args.args[0]
         assert _snapshot(tmp_path) == before
 
@@ -505,7 +507,7 @@ async def test_uppercase_suffix_imports(request, tmp_path, src):
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(str(src / "THEME.TOML")) == "sunny"
+        assert await editor.import_theme(str(src / "THEME.TOML")) == "sunny"
 
 
 @pytest.mark.asyncio
@@ -518,7 +520,7 @@ async def test_import_coerces_a_string_dark_flag(request, tmp_path, src):
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
-        assert editor.import_theme(str(source)) == "sunny"
+        assert await editor.import_theme(str(source)) == "sunny"
         written = toml.loads((tmp_path / "sunny.toml").read_text(encoding="utf-8"))
         assert written["theme"]["dark"] is False
         assert app.available_themes["sunny"].dark is False

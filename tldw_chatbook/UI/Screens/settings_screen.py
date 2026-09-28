@@ -24392,7 +24392,7 @@ class SettingsScreen(BaseAppScreen):
         if choice == "cancel":
             return False
         if choice == "save":
-            editor.on_save_theme()
+            await editor.save_theme()
             return not editor.is_modified
         # TASK-33060: Discard undoes the Try before the leave/quit proceeds;
         # a clean leave relies on the editor's unmount (review I-1).
@@ -24443,7 +24443,7 @@ class SettingsScreen(BaseAppScreen):
         if choice == "cancel":
             return
         if choice == "save":
-            editor.on_save_theme()
+            await editor.save_theme()
             if editor.is_modified:
                 return  # refused name or pending overwrite confirmation: stay
         else:
@@ -24471,7 +24471,7 @@ class SettingsScreen(BaseAppScreen):
                     return
                 editor = None
             if choice == "save":
-                editor.on_save_theme()
+                await editor.save_theme()
                 if editor.is_modified:
                     # Save refused (bad name) or is waiting on its overwrite
                     # confirmation: stay so the edit is not lost.
@@ -24959,7 +24959,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return  # R38: the pane was torn down while the prompt was up
         # The editor's ThemesChanged(highlight=new) refreshes the picker.
-        editor.rename_user_theme(old, new)
+        editor.run_file_action(editor.rename_user_theme(old, new))
 
     @on(ThemePicker.ImportRequested)
     def handle_theme_import_requested(self, event: ThemePicker.ImportRequested) -> None:
@@ -24985,7 +24985,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         # R37: the editor's ThemesChanged(highlight=) refreshes the picker.
-        editor.import_theme(source)
+        editor.run_file_action(editor.import_theme(source))
 
     @on(SettingsThemeEditor.SaveAsRequested)
     def handle_theme_save_as_requested(
@@ -25009,7 +25009,7 @@ class SettingsScreen(BaseAppScreen):
             editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
         except QueryError:
             return
-        editor.save_as(new)
+        editor.run_file_action(editor.save_as(new))
 
     @on(SettingsThemeEditor.LaunchDefaultChanged)
     def handle_theme_launch_default_changed(

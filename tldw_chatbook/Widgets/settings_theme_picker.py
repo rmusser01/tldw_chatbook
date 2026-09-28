@@ -32,6 +32,7 @@ from ..css.Themes.theme_catalog import (
     current_launch_default,
     display_name,
     launch_default_restorable,
+    persist_launch_default_async,
     revert_theme,
     use_theme,
     use_theme_toast,
@@ -823,11 +824,17 @@ class ThemePicker(Vertical):
         if theme_id is None or not self._highlighted_readable():
             return
         try:
-            change = use_theme(self.app, theme_id, persist=persist)
+            # TASK-33121: the switch shows now; Use's launch-default write
+            # (~140 ms) runs off the UI thread in _persist_use.
+            change = use_theme(self.app, theme_id, persist=False)
         except Exception as exc:  # noqa: BLE001 - stale entry / unregistered theme
             self.app.notify(f"Could not apply {escape_markup(display_name(theme_id))}: {escape_markup(exc)}", severity="error")
             self.refresh_catalog()
             return
+        if persist:
+            # Revert counts on the write landing: its own write queues behind
+            # this one (theme_catalog's one writer thread), so it still wins.
+            change = replace(change, persisted=True)
         if change.previous_active.startswith("custom_"):
             # Review I-1/P6: an editor Try's custom_* registration is never a
             # row; Revert targets the listed theme behind it, else the launch
@@ -840,9 +847,27 @@ class ThemePicker(Vertical):
         if not persist:
             self.app.notify(f"Trying {escape_markup(display_name(theme_id))} for this session", severity="information")
         else:
-            message, severity = use_theme_toast(theme_id, change)
-            self.app.notify(message, severity=severity)
+            # App-owned: leaving Settings mid-write must not drop the report.
+            self.app.run_worker(self._persist_use(theme_id, change), group="settings-theme-use", exit_on_error=False)
         self.refresh_catalog(highlight=theme_id, rescan=False)
+
+    async def _persist_use(self, theme_id: str, change: ThemeChange) -> None:
+        """Write Use's launch default off the UI thread, then say how it went.
+
+        Args:
+            theme_id: The theme Use switched to.
+            change: The switch, for the toast's "was:" name.
+        """
+        try:
+            persisted, caches_reloaded = await persist_launch_default_async(self.app, theme_id)
+        except Exception as exc:  # noqa: BLE001 - reported as "not saved" below
+            logger.warning(f"Saving the launch default failed: {type(exc).__name__}")
+            persisted, caches_reloaded = False, False
+        outcome = replace(change, persisted=persisted, caches_reloaded=caches_reloaded)
+        message, severity = use_theme_toast(theme_id, outcome)
+        self.app.notify(message, severity=severity)
+        if self.is_attached:
+            self.refresh_catalog(rescan=False)  # the launch marker moves now
 
 
 class ThemePane(ContentSwitcher):
@@ -946,12 +971,14 @@ class ThemePane(ContentSwitcher):
     @on(ThemePicker.DeleteRequested)
     def _delete_requested(self, event: ThemePicker.DeleteRequested) -> None:
         event.stop()
-        self._editor().request_delete(event.theme_id)
+        editor = self._editor()
+        editor.run_file_action(editor.request_delete(event.theme_id))
 
     @on(ThemePicker.ExportRequested)
     def _export_requested(self, event: ThemePicker.ExportRequested) -> None:
         event.stop()
-        self._editor().export_theme(event.theme_id)
+        editor = self._editor()
+        editor.run_file_action(editor.export_theme(event.theme_id))
 
     @on(SettingsThemeEditor.Saved)
     def _saved(self, event: SettingsThemeEditor.Saved) -> None:
