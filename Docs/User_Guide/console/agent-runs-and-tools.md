@@ -535,9 +535,32 @@ stdout. Typical uses: a `PreToolUse` guard that denies risky tool calls, a
 notification script that reacts to an approval waiting or a run finishing,
 or a `UserPromptSubmit` hook that injects extra context into a turn.
 
-v1 is **config-file only** — there is no Settings UI for hooks yet; a
-dedicated settings sub-screen lands in the next PR, and the `config.toml`
-schema below is the contract it will edit.
+Open the **Hooks icon beside Settings** on Console to inspect saved commands
+and current permissions. Its count includes enabled definitions needing review
+and errors needing attention. **Needs review** lists outstanding items; **All
+hooks** also shows approved and disabled definitions. Expand **Details** to see
+the exact JSON argument array, event, matcher, and timeout.
+
+The next actual **Send** pauses for one-time review of existing, new, or changed
+enabled hooks before accepting your draft. Select definitions and choose
+**Allow selected**, or choose **Allow all**. Partial approval leaves review open.
+**Not now**, Escape, or **Manage in Settings** cancels that Send and keeps the
+draft. Approval is remembered for the exact definition across restarts; saving
+a hook does not approve it. Revoke and **Disable now** apply immediately to
+future launches. Revocation does not terminate a process already running.
+
+Use **F9 Settings → Expert → Hooks** to add, edit, enable, disable, or remove
+hooks. Edits are staged until **Save**; **Revert** reloads the current saved
+configuration under the usual discard confirmation. **Review saved hooks**
+keeps unsaved edits and reviews saved definitions. New hooks start disabled.
+The command editor accepts a JSON array of arguments, never a shell string.
+Invalid originals and unknown configuration fields are retained. A malformed
+section or list can be repaired explicitly in Advanced Config.
+
+If a save or permission write fails, review reports the failure. A saved file
+with failed runtime publication reports **refresh pending**; **Retry refresh**
+refreshes that file instead of replaying the write. Resetting invalid permission
+state requires confirmation and removes all grants.
 
 **The six events.** Each firing delivers one JSON document: a common
 envelope — `hook_event`, `session_id`, `run_id`, `timestamp`, `cwd` — plus
@@ -561,9 +584,8 @@ carries `run_id` null — the run-state seam it fires from has no run
 identity — so correlate a `Stop` with its run through the same session's
 earlier `PostToolUse`/`SubagentStop` firings. Another: the envelope's
 `cwd` — and the working directory the hook process itself runs in — is
-always the global `[console] workspace_root` (or the app's working
-directory when unset); the per-session cwd override arrives with the
-settings sub-screen PR.
+supplied by the firing runtime when it has a bound run workspace; otherwise
+it falls back to `[console] workspace_root` or the app's working directory.
 
 **Configuring hooks** in `config.toml`:
 
@@ -572,23 +594,32 @@ settings sub-screen PR.
 enabled = true          # master switch; false disables every firing
 
 [[hooks.hook]]
+id = "my-guard"        # optional stable identity; guided saves assign opaque IDs
+enabled = true         # optional per-hook switch; default true
 event = "PreToolUse"    # one of the six names; unknown = validation error
 matcher = "fs_*"        # optional, tool-name glob
 command = ["/usr/local/bin/guard.sh", "--strict"]   # argv; required, non-empty
 timeout_s = 10          # optional, default 10
 ```
 
-Validation is fail-loud: an unknown event name, a `matcher` on a non-tool
-event, an empty or non-list `command`, or a non-positive `timeout_s` each
-disable that one hook with a logged warning — never a silent no-op. Hook
-config is re-validated from the app's loaded configuration on every fire:
-edits land when settings are reloaded/saved (F9 Settings) or the app
-restarts, and flipping `enabled = false` and reloading stops every hook on
-the next fire. Non-boolean `enabled` values disable hooks. Matching: `matcher` is a glob against the tool name
-(`fs_*`, `mcp__github__*`); no matcher means the hook fires for every
-call. It is only valid on `PreToolUse` / `PostToolUse` — the other events
-have no tool name to match, and configuring one there is a validation
-error.
+Invalid enabled definitions remain visible and block the next Send until repaired
+or explicitly disabled. A malformed master switch also requires attention.
+Disabled malformed rows remain visible without execution authority. Saved
+configuration and private local consent are rechecked at admission and immediately
+before process creation, so a changed or revoked command cannot use a captured
+old approval. Matching remains a case-sensitive glob against the tool name
+(`fs_*`, `mcp__github__*`); no matcher matches every tool. It is valid only for
+`PreToolUse` and `PostToolUse`.
+
+Consent is held in private local `hook_permissions.json`, scoped to the canonical
+config path and exact event, ordered arguments, matcher, and normalized timeout.
+Portable backups exclude this consent and its lock; restored configurations
+require fresh local review.
+Identical legacy rows have separate occurrences; removing an occurrence retires
+the group's approvals. Guided saves preserve consent only for complete unchanged
+groups when assigning IDs. A supplied ID or an `approved` field grants nothing.
+Editing an executable at the same path is outside this definition review; revoke
+and review it again when its behavior changes.
 
 **Verdict rules — hooks can only deny.** Just two events are blocking
 (`UserPromptSubmit`, `PreToolUse`), and neither can *grant* anything: an
@@ -611,8 +642,9 @@ restrictions, never permissions.
   budget) as context for the turn — disclosed in the transcript as its own
   System row marked as hook-origin, never silently merged into your
   message.
-  This event **fails open**: a broken hook logs a warning and the send
-  proceeds — a misconfigured convenience hook must not brick the composer.
+  After consent succeeds, execution failures for this event **fail open**:
+  a broken hook logs a warning and the send proceeds. Missing or changed consent
+  is a separate refusal and always keeps the Send blocked.
 
 Precedence: stdout that parses as a JSON object with a `decision` key wins
 over the exit code (exit 2 is shorthand for the event's blocking

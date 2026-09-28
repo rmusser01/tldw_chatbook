@@ -8,7 +8,7 @@ import json
 import re
 import threading
 from collections import Counter
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -19,6 +19,7 @@ from loguru import logger
 
 from tldw_chatbook import config
 from tldw_chatbook.Agents.run_hooks import (
+    BLOCKING_EVENTS,
     HOOK_EVENTS,
     HookInventory,
     HookInventoryRow,
@@ -27,6 +28,7 @@ from tldw_chatbook.Agents.run_hooks import (
     fingerprint_hook,
     inspect_hooks_config,
 )
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
     atomic_private_write_text,
@@ -133,26 +135,38 @@ class HookPermissions:
         self._authority_lock = threading.RLock()
         self._cache_lock = threading.Lock()
         self._sealed: set[tuple[str, str, str]] = set()
+        self._refresh_pending: set[tuple[str, str]] = set()
         self._closed = threading.Event()
         self._published: HookReviewSnapshot | None = None
         self._published_targets: tuple[HookTarget, ...] = ()
 
     @contextmanager
     def _store_lock(self, path: Path) -> Iterator[None]:
-        lock_path = path.with_name(path.name + ".lock")
-        try:
-            create_private_text(lock_path, "", application_owned_directory=path.parent)
-        except FileExistsError:
-            pass
-        with open_private_text_append_stream(
-            lock_path,
-            application_owned_directory=path.parent,
-        ) as stream:
-            portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+        from tldw_chatbook.Backup_Recovery import raw_participants
+
+        # Retain config's lease and writer locks while independently admitting
+        # this concrete store; config helpers keep their original narrow scope.
+        with raw_participants._scope(
+            self, "hook_permissions", writing=True, selected_read=path
+        ):
+            lock_path = path.with_name(path.name + ".lock")
             try:
-                yield
+                create_private_text(
+                    lock_path, "", application_owned_directory=path.parent
+                )
+            except FileExistsError:
+                pass
+            stream = open_private_text_append_stream(
+                lock_path, application_owned_directory=path.parent
+            )
+            try:
+                portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+                try:
+                    yield
+                finally:
+                    portalocker.unlock(stream)
             finally:
-                portalocker.unlock(stream)
+                stream.close()
 
     def _read_state(
         self, path: Path
@@ -167,7 +181,14 @@ class HookPermissions:
             return _validate_state(json.loads(encoded)), precondition, None
         except FileNotFoundError:
             return _empty_state(), precondition, None
-        except (OSError, ValueError, TypeError, UnicodeError):
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            UnicodeError,
+            RecursionError,
+            RecoveryRequired,
+        ):
             return (
                 None,
                 precondition,
@@ -254,7 +275,10 @@ class HookPermissions:
 
     def _is_sealed(self, path: Path, scope: str, key: str) -> bool:
         with self._cache_lock:
-            return (str(path), scope, key) in self._sealed
+            return (str(path), scope, key) in self._sealed or (
+                str(path),
+                scope,
+            ) in self._refresh_pending
 
     def _seal(self, expected: HookReviewSnapshot, keys: Collection[str]) -> None:
         with self._cache_lock:
@@ -284,6 +308,10 @@ class HookPermissions:
         )
         rows = []
         blocked = inventory.container_error
+        with self._cache_lock:
+            refresh_pending = (str(path), scope) in self._refresh_pending
+        if refresh_pending and inventory.requires_authority:
+            error = error or "Saved configuration needs runtime refresh; retry refresh."
         if blocked:
             rows.append(HookReviewRow(None, "invalid"))
         if error:
@@ -343,16 +371,19 @@ class HookPermissions:
     @contextmanager
     def _current(
         self,
+        *,
+        reconcile: bool = True,
     ) -> Iterator[tuple[HookReviewSnapshot, dict | None, PrivateFileWritePrecondition]]:
         with (
             config.locked_hooks_config_snapshot() as cfg,
             self._authority_lock,
             ExitStack() as stack,
         ):
-            path = default_hook_permissions_path()
+            path = cfg.config_path.parent / "hook_permissions.json"
             try:
+                path = default_hook_permissions_path()
                 stack.enter_context(self._store_lock(path))
-            except (OSError, ValueError):
+            except (OSError, ValueError, TypeError, RecoveryRequired):
                 yield (
                     self._make_snapshot(
                         cfg, path, None, "Hook permission state unavailable; retry."
@@ -362,11 +393,11 @@ class HookPermissions:
                 )
                 return
             state, precondition, error = self._read_state(path)
-            if state is not None and self._reconcile(state, cfg):
+            if state is not None and reconcile and self._reconcile(state, cfg):
                 try:
                     self._write_state(path, state, precondition)
                     state, precondition, error = self._read_state(path)
-                except (OSError, ValueError):
+                except (OSError, ValueError, RecoveryRequired):
                     state = None
                     error = "Hook permission state could not be saved; retry."
             yield self._make_snapshot(cfg, path, state, error), state, precondition
@@ -376,7 +407,7 @@ class HookPermissions:
         try:
             with self._current() as (snapshot, _state, _precondition):
                 return snapshot
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecoveryRequired):
             with self._cache_lock:
                 previous = self._published
             cfg = config.HookConfigSnapshot(
@@ -428,7 +459,12 @@ class HookPermissions:
             for key in owned_keys:
                 row = entries.get(key)
                 if row is None or (
-                    approve and (row.spec is None or row.enabled is not True)
+                    approve
+                    and (
+                        row.spec is None
+                        or row.enabled is not True
+                        or self._inventory(current.config).master_enabled is not True
+                    )
                 ):
                     raise HookReviewConflict(
                         "Only current enabled valid definitions can be approved."
@@ -443,7 +479,7 @@ class HookPermissions:
             self._seal(current, owned_keys)
             try:
                 self._write_state(current.store_path, state, precondition)
-            except (OSError, ValueError):
+            except (OSError, ValueError, RecoveryRequired):
                 return self._make_snapshot(
                     current.config,
                     current.store_path,
@@ -501,10 +537,114 @@ class HookPermissions:
             notice = "Disable was not saved; hook remains blocked in this app. Reload and retry."
         return replace(current, notice=notice)
 
+    def save_configuration(
+        self,
+        expected: HookReviewSnapshot,
+        replacement: Mapping[str, object],
+        *,
+        legacy_ids: Mapping[str, str] | None = None,
+    ) -> tuple[config.LiteralConfigMutationResult, HookReviewSnapshot]:
+        """Save a staged section; transfer consent only for complete unchanged legacy groups."""
+        with self._current() as (current, state, _precondition):
+            if (
+                expected.config.config_path != current.config.config_path
+                or expected.config.section_stamp != current.config.section_stamp
+                or expected.store_path != current.store_path
+            ):
+                raise HookReviewConflict(
+                    "Hook configuration changed; reload before saving."
+                )
+            pinned_revision = current.store_revision
+            previous = (
+                copy.deepcopy(state["configs"].get(str(current.config.config_path), {}))
+                if state
+                else {}
+            )
+        scope = (str(expected.store_path), str(expected.config.config_path))
+        with self._cache_lock:
+            self._refresh_pending.add(scope)
+        # The canonical writer takes the config lock itself. Never acquire it
+        # while holding the consent lock.
+        result = config.replace_hooks_config_snapshot(expected.config, replacement)
+        if not result.file_replaced:
+            return result, replace(
+                self.snapshot(), notice="Hooks were not saved. Reload before retrying."
+            )
+        with self._current(reconcile=False) as (current, state, precondition):
+            if state is not None:
+                same_owner = (
+                    current.config.config_path == expected.config.config_path
+                    and current.store_path == expected.store_path
+                    and current.store_revision == pinned_revision
+                    and current.config.section == dict(replacement)
+                )
+                changed = self._reconcile(state, current.config)
+                if same_owner and legacy_ids:
+                    old = previous.get("observed", {})
+                    grants = previous.get("grants", {})
+                    old_counts = Counter(
+                        v["fingerprint"]
+                        for k, v in old.items()
+                        if k.startswith("legacy:")
+                    )
+                    entries = {
+                        r.entry.key: r.entry
+                        for r in current.rows
+                        if r.entry and r.entry.spec
+                    }
+                    eligible = {}
+                    for old_key, new_id in legacy_ids.items():
+                        new_key = "id:" + new_id
+                        entry = entries.get(new_key)
+                        if (
+                            old_key.startswith("legacy:")
+                            and old_key in old
+                            and new_key not in old
+                            and new_key not in eligible.values()
+                            and entry
+                            and old[old_key]["fingerprint"]
+                            == fingerprint_hook(entry.spec)
+                        ):
+                            eligible[old_key] = new_key
+                    transferred = Counter(old[k]["fingerprint"] for k in eligible)
+                    record = state["configs"][str(current.config.config_path)]
+                    for old_key, new_key in eligible.items():
+                        fp = old[old_key]["fingerprint"]
+                        if transferred[fp] == old_counts[fp] and old_key in grants:
+                            record["grants"][new_key] = {
+                                "fingerprint": fp,
+                                "token": str(uuid4()),
+                            }
+                            changed = True
+                if changed:
+                    try:
+                        self._write_state(current.store_path, state, precondition)
+                        state, _precondition, _error = self._read_state(
+                            current.store_path
+                        )
+                    except (OSError, ValueError, RecoveryRequired):
+                        state = None
+                if result.caches_reloaded and state is not None:
+                    with self._cache_lock:
+                        self._refresh_pending.discard(scope)
+            notice = (
+                "Hooks saved. Enabled new or changed definitions need review before Send."
+                if result.caches_reloaded and state is not None
+                else "Hooks saved; runtime or permission refresh pending. Retry refresh."
+            )
+            return result, self._make_snapshot(
+                current.config, current.store_path, state, notice=notice
+            )
+
     def recover(self) -> HookReviewSnapshot:
         """Refresh without replaying a failed write or silently undoing a revoke."""
-        config.refresh_runtime_config_from_cli_config()
+        result = config.refresh_runtime_config_from_cli_config()
         with self._current() as (current, state, _precondition):
+            if result.caches_reloaded and state is not None:
+                with self._cache_lock:
+                    self._refresh_pending.discard(
+                        (str(current.store_path), str(current.config.config_path))
+                    )
             inventory = self._inventory(current.config)
             grants = (
                 state["configs"]
@@ -533,6 +673,10 @@ class HookPermissions:
             if state is not None:
                 raise HookReviewConflict(
                     "Permission state is valid; refresh instead of resetting."
+                )
+            if precondition.target_identity is None:
+                raise HookReviewConflict(
+                    "Permission file cannot be safely reset; repair its location and retry."
                 )
             state = _empty_state()
             self._reconcile(state, current.config)
@@ -633,7 +777,7 @@ class HookPermissions:
                 return self._select(snapshot, targets, event, tool_name)
         except HookLaunchRefused:
             raise
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecoveryRequired):
             raise HookLaunchRefused(
                 "Hook authority unavailable; dispatch refused."
             ) from None
@@ -672,7 +816,8 @@ class HookPermissions:
                     current.store_path, target.config_scope, target.key
                 ):
                     raise HookLaunchRefused(
-                        "Captured hook is disabled, changed or unapproved.", skip=True
+                        "Captured hook is disabled, changed or unapproved.",
+                        skip=target.spec.event not in BLOCKING_EVENTS,
                     )
                 entered = True
                 yield

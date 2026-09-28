@@ -6819,11 +6819,14 @@ class ConsoleChatController:
     def _hook_admission_reason(self) -> str | None:
         from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
         from tldw_chatbook.config import read_hooks_config_snapshot
+
         try:
             if self._hook_permissions_accessor is not None:
                 return self._hook_permissions_accessor().snapshot().blocked_reason
             saved = read_hooks_config_snapshot()
-            inventory = inspect_hooks_config({"hooks": saved.section} if saved.section_present else {})
+            inventory = inspect_hooks_config(
+                {"hooks": saved.section} if saved.section_present else {}
+            )
             if not inventory.requires_authority:
                 return None
             return "Hook review required; permission owner unavailable."
@@ -9815,8 +9818,12 @@ class ConsoleChatController:
         reason = await self.hook_admission_reason()
         if reason is not None:
             return ConsoleSubmitResult(
-                False, False, reason, session_id=owner_key,
-                origin=origin, queue_entry_id=queue_entry_id,
+                False,
+                False,
+                reason,
+                session_id=owner_key,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
             )
         active_task = asyncio.current_task()
         with self._capture_quiescence_lock:

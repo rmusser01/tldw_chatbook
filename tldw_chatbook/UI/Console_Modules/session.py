@@ -804,6 +804,7 @@ class ConsoleSessionController:
         workspace_display_name: Callable[[str], str],
         painted_session_accessor: Callable[[], str | None] = lambda: None,
         refresh_manual_read_rows: Callable[[], None] = lambda: None,
+        on_draft_session_changed: Callable[[], None] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -935,6 +936,7 @@ class ConsoleSessionController:
             restore_first_chat_focus: Late-bound restoration of an opaque focus
                 token after the native async projection is synchronized.
         """
+        self._on_draft_session_changed = on_draft_session_changed
         self._screen = screen
         self._painted_session_accessor = painted_session_accessor
         self._refresh_manual_read_rows = refresh_manual_read_rows
@@ -4766,6 +4768,11 @@ class ConsoleSessionController:
         if typed_suffix:
             composer.insert_text(typed_suffix)
         self._sync_console_command_popup()
+        if (
+            self._console_visible_draft_session_id != active_session_id
+            and self._on_draft_session_changed is not None
+        ):
+            self._on_draft_session_changed()
         self._console_visible_draft_session_id = active_session_id
 
     # -- Session identity / state -------------------------------------------

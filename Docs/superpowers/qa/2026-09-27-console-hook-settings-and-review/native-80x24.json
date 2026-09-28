@@ -1,0 +1,21 @@
+{
+  "size": [
+    80,
+    24
+  ],
+  "profile": "/private/tmp/hook-review-native-ru2b1flk",
+  "checks": [
+    "config and data resolved inside the private QA profile",
+    "native Console icon, expanded exact argv, modal action bounds",
+    "pending next Send and Escape retain the draft without hook or provider execution",
+    "explicit approval launches the real hook once and admits the recording gateway; persisted consent reloads",
+    "modal deep link to canonical Hooks Settings",
+    "keyboard staged master switch and guarded Save"
+  ],
+  "actual_size": [
+    80,
+    24
+  ],
+  "stage": "expand review",
+  "initial_settings_dirty_keys": []
+}

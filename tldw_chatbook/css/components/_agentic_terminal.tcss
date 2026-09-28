@@ -2567,3 +2567,9 @@ App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
     width: $ds-percent-85;
     max-width: $ds-size-120;
 }
+
+/* Hook review follows the existing wide modal cap ladder. */
+App.-wide-viewport #console-hooks-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}

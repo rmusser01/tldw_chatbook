@@ -4817,6 +4817,12 @@ class ChatScreen(BaseAppScreen):
             await self._session._create_native_console_session_from_active_context()
         elif action_id == "settings":
             await self._open_console_settings(focus_model=False)
+        elif action_id == "hooks":
+            self.run_worker(
+                self._open_console_hooks_review,
+                group="console-hook-review",
+                exclusive=True,
+            )
         elif action_id == "attach-context":
             available_columns = self._console_rail_available_columns()
             rail_state = self._current_console_rail_state(
@@ -10829,6 +10835,8 @@ class ChatScreen(BaseAppScreen):
 
     @_console_visible_draft_session_id.setter
     def _console_visible_draft_session_id(self, value: str | None) -> None:
+        if self._session._console_visible_draft_session_id != value:
+            self._hooks.cancel_pending()
         self._session._console_visible_draft_session_id = value
 
     @property
@@ -15164,6 +15172,9 @@ class ChatScreen(BaseAppScreen):
             density=self._console_workbench_density(),
             run_active=self._console_run_active(),
             ephemeral=self._console_active_session_is_ephemeral(),
+            hook_attention=getattr(
+                getattr(self, "_console_hook_review_snapshot", None), "pending_count", 0
+            ),
         )
 
     def _console_provider_blocker_copy(
@@ -17123,6 +17134,7 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._hooks.cancel_pending()
         self._release_claimed_conversation_settings_return()
         runtime = self._console_runtime()
         generation = getattr(self, "_console_runtime_attachment_generation", None)
@@ -19272,6 +19284,35 @@ class ChatScreen(BaseAppScreen):
             draft, stash=stash, session_id=session_id
         )
 
+    async def _request_console_hooks_review(self, snapshot, waiting, cancel):
+        from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+            request_hook_review,
+        )
+
+        return await request_hook_review(
+            self,
+            self._console_runtime().ensure_hook_permissions(),
+            snapshot,
+            waiting,
+            cancel,
+        )
+
+    async def _open_console_hooks_review(self) -> None:
+        await self._hooks.review_current()
+
+    async def _refresh_console_hooks(self) -> None:
+        await self._hooks.refresh()
+
+    def _apply_console_hooks_state(self, snapshot) -> None:
+        self._console_hook_review_snapshot = snapshot
+        self._sync_console_control_bar()
+        try:
+            self.query_one("#console-control-hooks", Button).set_class(
+                snapshot.pending_count > 0, "hooks-attention"
+            )
+        except QueryError:
+            pass
+
     async def _dispatch_console_draft_send(
         self,
         draft: str,
@@ -19288,8 +19329,16 @@ class ChatScreen(BaseAppScreen):
         ) as diagnostic:
             if session_id is None:
                 session_id = self._console_visible_send_session_id()
-            result = await self._prompt_queue.dispatch(
-                draft, session_id=session_id, stash=stash
+            if stash is None:
+                composer = self._console_composer_or_none()
+                stash = composer.capture_draft_for_send() if composer else None
+            result = await self._hooks.dispatch(
+                draft,
+                session_id=session_id,
+                stash=stash,
+                dispatch=lambda: self._prompt_queue.dispatch(
+                    draft, session_id=session_id, stash=stash
+                ),
             )
             diagnostic.outcome = result.status.value
             return result.status is not ConsolePromptDispatchStatus.REFUSED
@@ -23632,6 +23681,8 @@ class ChatScreen(BaseAppScreen):
           install is idempotent), and the previews cache -- all correct to
           leave running/installed across a suspend.
         """
+        if not self._hooks.review_open:
+            self._hooks.cancel_pending()
         controller = self._console_chat_controller
         if controller is not None:
             controller.on_console_view_visibility_changed(False)
@@ -23696,6 +23747,13 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
+        self.call_after_refresh(
+            lambda: self.run_worker(
+                self._refresh_console_hooks,
+                group="console-hook-refresh",
+                exclusive=True,
+            )
+        )
         controller = self._console_chat_controller
         if controller is not None:
             controller.on_console_view_visibility_changed(True)

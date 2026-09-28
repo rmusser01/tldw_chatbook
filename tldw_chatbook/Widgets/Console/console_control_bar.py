@@ -20,6 +20,7 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
+    "hooks",
     "attach-context",
     "run-library-rag",
     "help",
@@ -27,6 +28,7 @@ TOP_ACTION_IDS = {
 CONSOLE_CONTROL_ACTION_WIDGET_IDS = {
     "new-tab": "console-control-new-tab",
     "settings": "console-control-settings",
+    "hooks": "console-control-hooks",
     "attach-context": "console-control-attach-context",
     "run-library-rag": "console-control-run-library-rag",
     "help": "console-control-help",
@@ -37,6 +39,7 @@ FALLBACK_ACTIONS = (
         label="Settings",
         tooltip="Configure provider, model, tools, and generation",
     ),
+    WorkbenchAction(id="hooks", label="Hooks", tooltip="Review hook permissions"),
     WorkbenchAction(
         id="attach-context",
         # CN-03 (TASK-2154.13): byte-matches the live action in

@@ -454,7 +454,7 @@ Task 3 evidence: 102 admission/queue checks passed and 38 mounted queue checks p
 - Toolbar Workbench action ID `hooks`, widget ID `console-control-hooks`, placed immediately after `settings`. Add a shared hook glyph with ASCII `H` fallback; counts remain in the action label/tooltip, separate from the tool Approvals chip.
 - Screen delegates `_open_console_hooks_review()` and `_refresh_console_hooks()` route through the controller. `_dispatch_console_draft_send` delegates review then its existing typed queue dispatcher.
 
-- [ ] **Step 1: Add a mounted route/geometry regression, then run it red.** Extend the real ConsoleHarness pattern from `test_console_workbench_contract.py`, not an isolated bar alone.
+- [x] **Step 1: Add a mounted route/geometry regression, then run it red.** Extend the real ConsoleHarness pattern from `test_console_workbench_contract.py`, not an isolated bar alone.
 
 ```python
 import asyncio
@@ -496,7 +496,7 @@ The harness publishes a separate provider mapping; consent must still read `hook
 .venv/bin/python -m pytest Tests/UI/test_console_hooks_review.py -q
 ```
 
-- [ ] **Step 2: Build the modal and literal command formatting.** Header/footer remain reachable; use VerticalScroll for rows and lazy expanded details. Needs review includes invalid/recovery attention with disabled checkboxes and explicit repair/retry guidance. All hooks adds current Approved/Disabled states and revoke. Start selection empty. Allow selected retains unchecked pending rows and does not resume early. Manage in Settings returns `kind="settings"` after cancelling continuation.
+- [x] **Step 2: Build the modal and literal command formatting.** Header/footer remain reachable; use VerticalScroll for rows and lazy expanded details. Needs review includes invalid/recovery attention with disabled checkboxes and explicit repair/retry guidance. All hooks adds current Approved/Disabled states and revoke. Start selection empty. Allow selected retains unchecked pending rows and does not resume early. Manage in Settings returns `kind="settings"` after cancelling continuation.
 
 ```python
 import json
@@ -510,7 +510,7 @@ Render this exact string as literal text with markup disabled. Summaries may sho
 
 Put token-backed modal rules in its `BUNDLED_CSS`, so Settings-first launch works without Console CSS. Use existing control/scroll/focus tokens; no ad-hoc Python `styles.*` values.
 
-- [ ] **Step 3: Wire the actual toolbar and Send route.** Add `hooks` to TOP_ACTION_IDS, widget ID map, fallback and Workbench action state. Bind through `WorkbenchActionRequested`, not a second button message route. Construct the controller only in `wiring.py` with late-binding lambdas. Register a view slot only if a runtime projection needs it, declare it in CONSOLE_VIEW_HOOK_SLOTS in the same change, and test detach behavior; consent itself must never depend on a view slot.
+- [x] **Step 3: Wire the actual toolbar and Send route.** Add `hooks` to TOP_ACTION_IDS, widget ID map, fallback and Workbench action state. Bind through `WorkbenchActionRequested`, not a second button message route. Construct the controller only in `wiring.py` with late-binding lambdas. Register a view slot only if a runtime projection needs it, declare it in CONSOLE_VIEW_HOOK_SLOTS in the same change, and test detach behavior; consent itself must never depend on a view slot.
 
 ```python
 result = await self._hooks.dispatch(
@@ -523,7 +523,7 @@ result = await self._hooks.dispatch(
 
 This is the screen's typed dispatch fragment after command parsing and session checks. Preserve its existing diagnostics and return-value mapping. Refresh counts on mount/activation, review open, config save, Send and owner reconciliation; add no timer polling. Compact secondary toolbar labels if needed to keep the hook icon reachable at 80 columns.
 
-- [ ] **Step 4: Add real interaction/race checks, rebuild CSS, and commit.** Exercise row disclosure, exact long/control-character argv, both tabs, keyboard activation, no-hooks/master-disabled/error states, selective approval, permission revoke and failed writes, cancellation with a composer draft, and late workers after the modal leaves the stack. Add Settings-first modal styling in Task 5's harness. Capture compositor output for wrapped/clipped details; a renderable string alone is insufficient.
+- [x] **Step 4: Add real interaction/race checks, rebuild CSS, and commit.** Exercise row disclosure, exact long/control-character argv, both tabs, keyboard activation, no-hooks/master-disabled/error states, selective approval, permission revoke and failed writes, cancellation with a composer draft, and late workers after the modal leaves the stack. Add Settings-first modal styling in Task 5's harness. Capture compositor output for wrapped/clipped details; a renderable string alone is insufficient.
 
 ```bash
 .venv/bin/python tldw_chatbook/css/build_css.py
@@ -548,7 +548,7 @@ Before that commit, explicitly stage the generated CSS/build-manifest files actu
 - IDs: `settings-hooks-enabled`, `settings-hooks-add`, `settings-hooks-list`, `settings-hooks-event`, `settings-hooks-command`, `settings-hooks-matcher`, `settings-hooks-timeout`, `settings-hooks-toggle`, `settings-hooks-remove`, `settings-hooks-save`, `settings-hooks-revert`, `settings-hooks-review`.
 - A shared modal launched from Settings has `waiting_for_send=False`, the same singleton owner/actions, and no Send continuation.
 
-- [ ] **Step 1: Add mounted category/save tests and run red.** Reuse DestinationHarness from the existing Settings hub tests. Route with the actual navigation context, then verify search/ownership rather than setting the category only in a bare model.
+- [x] **Step 1: Add mounted category/save tests and run red.** Reuse DestinationHarness from the existing Settings hub tests. Route with the actual navigation context, then verify search/ownership rather than setting the category only in a bare model.
 
 ```python
 import pytest
@@ -585,7 +585,7 @@ async def test_hooks_edit_is_staged_until_canonical_save(hook_file):
 .venv/bin/python -m pytest Tests/UI/test_settings_hooks.py -q
 ```
 
-- [ ] **Step 2: Build the focused panel and integrate canonical draft/save/revert.** Show master switch, Add, Review permissions, selectable rows, event Select, JSON argv TextArea, optional matcher and timeout fields, contextual Enable/Disable, Remove, Save and Revert. New rows are disabled, get UUIDs on guided save, and never get implicit permission. Merge edits onto detached original raw tables to preserve unknown fields. Disabled invalid originals may be retained or explicitly disabled; enabled changed definitions must validate before Save. A malformed whole section displays repair guidance to Advanced Config rather than dropping its content.
+- [x] **Step 2: Build the focused panel and integrate canonical draft/save/revert.** Show master switch, Add, Review permissions, selectable rows, event Select, JSON argv TextArea, optional matcher and timeout fields, contextual Enable/Disable, Remove, Save and Revert. New rows are disabled, get UUIDs on guided save, and never get implicit permission. Merge edits onto detached original raw tables to preserve unknown fields. Disabled invalid originals may be retained or explicitly disabled; enabled changed definitions must validate before Save. A malformed whole section displays repair guidance to Advanced Config rather than dropping its content.
 
 ```python
 import json
@@ -601,7 +601,7 @@ def parse_command_argv(text: str) -> list[str]:
 
 Use runtime validation for event/matcher/finite numeric timeout; do not add a second schema with different limits. Stage complete `enabled`/`hook` values in SettingsDraft with deep copies. Capture a submitted draft revision before the worker; successful Save clears only submitted edits, not later typing. Revert confirms before replacing dirty values and reloads authority. On `file_replaced=True, caches_reloaded=False`, display saved-but-refresh-pending and preserve the local execution fence; Retry refresh must not reapply an old replacement.
 
-- [ ] **Step 3: Integrate review/deep links/impact and run focused UI checks.** The impact pane states User config, all Console chats using this file, current saved permission, and execution changes needing review. Unsaved edits are never reviewed as saved definitions; explain Save/Revert before opening permission review without discarding them. Add every guided field to category search and all existing registries. Canonical global `s`/`r` actions and explicit buttons must agree; text-entry focus must keep its existing shortcut rules. The Console modal's Settings action posts `NavigateToScreen(TAB_SETTINGS, screen_context={"category": "hooks"})` after cancelling Send.
+- [x] **Step 3: Integrate review/deep links/impact and run focused UI checks.** The impact pane states User config, all Console chats using this file, current saved permission, and execution changes needing review. Unsaved edits are never reviewed as saved definitions; explain Save/Revert before opening permission review without discarding them. Add every guided field to category search and all existing registries. Canonical global `s`/`r` actions and explicit buttons must agree; text-entry focus must keep its existing shortcut rules. The Console modal's Settings action posts `NavigateToScreen(TAB_SETTINGS, screen_context={"category": "hooks"})` after cancelling Send.
 
 Verify Settings-first modal geometry/style, guided ID transfer, unknown fields, new hook enable/disable/remove, invalid disabled originals, matcher event change, JSON/control characters, stale raw edits, Save with newer typing, confirmed Revert, permission count refresh, and responsive category/detail/impact panes. Keep legacy Settings parallels untouched.
 
@@ -610,7 +610,7 @@ Verify Settings-first modal geometry/style, guided ID transfer, unknown fields, 
 .venv/bin/python -m pytest Tests/UI/test_settings_hooks.py Tests/UI/test_settings_search_index.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_settings_raw_draft.py Tests/UI/test_console_hooks_review.py Tests/UI/test_design_token_governance.py -q
 ```
 
-- [ ] **Step 4: Verify the complete feature with isolated live state and update guidance.** Run the new focused suites plus any still-unrun existing checks named above. Repeat a passed suite only after a relevant change/failure. Run Ruff/format checks on changed Python files using explicit paths. Rebuild CSS and compare outputs; do not edit generated sheets by hand.
+- [x] **Step 4: Verify the complete feature with isolated live state and update guidance.** Run the new focused suites plus any still-unrun existing checks named above. Repeat a passed suite only after a relevant change/failure. Run Ruff/format checks on changed Python files using explicit paths. Rebuild CSS and compare outputs; do not edit generated sheets by hand.
 
 For a live terminal run, create a private temporary config with `[paths] data_dir` pointing to an already-created private temporary directory and a hook using `sys.executable` that writes a temporary marker. Set only `TLDW_CONFIG_PATH` for that process; do not repurpose HOME or the user's config/data. Run `.venv/bin/python -m tldw_chatbook.app` through the repository's terminal verification workflow, keep stderr attached, and verify toolbar/modal/Settings at 80 and 120 columns. Assert config/data resolution before sending, and prove no writes touch the user's real paths.
 
@@ -618,7 +618,7 @@ Record evidence for: pending Send keeps text and creates no marker; explicit app
 
 Update the user guide's existing hooks section with the implemented controls, next-Send behavior, JSON argv format, persistent consent, invalid/recovery guidance, scope and explicit integrity/revocation limits. Record actual commands/outcomes and any baseline failures in the verification record. Keep TASK-33163 In Progress until every acceptance criterion, applicable checks, docs and self-review are complete.
 
-- [ ] **Step 5: Commit the editor/integration closeout and hand off the branch.** Stage only the listed feature files, actual generated outputs, verification record and completed task notes. Use Backlog CLI for AC completion/status after evidence is recorded.
+- [x] **Step 5: Commit the editor/integration closeout and hand off the branch.** Stage only the listed feature files, actual generated outputs, verification record and completed task notes. Use Backlog CLI for AC completion/status after evidence is recorded.
 
 ```bash
 git diff --check
@@ -641,3 +641,70 @@ git commit -m "feat: manage hook configuration in canonical Settings"
 | User documentation and isolated live evidence | 5 closeout record, guide and Backlog AC checks. |
 
 After each task, review its diff against these contracts before proceeding. At final review confirm no grants in TOML, no implicit allow defaults, no hook bodies in metadata/log additions, no direct config writer, and no unrelated checkout changes. Document real unresolved limitations; never mark an unrun runtime scenario as verified.
+
+## Task 6: Feature-only integration onto dev
+
+**Target:** `origin/dev` at `e5ac111967bd7310e6e97dec043a559d07e97d30`,
+on `codex/hook-review-dev`. Preserve the verified `codex/hook-review` branch.
+Carry only `04c7e89783`, `1a09f294b2`, `c49be06916` and the four feature
+commits; exclude unrelated planning history.
+
+**ADR required:** no
+**ADR path:** `backlog/decisions/197-console-hook-configuration-review.md`
+**Reason:** Integrate the accepted feature while retaining dev's newer caller,
+runtime ownership, Settings and design-token contracts.
+
+- [x] Fetch dev, inspect divergence and preflight the feature-only patches in a temporary index.
+- [x] Resolve feature cherry-picks against actual current callers; rebuild generated CSS from source.
+- [x] Admit the concrete hook JSON/lock through ADR-126 raw-file ownership inside the retained config lock; keep config helper scope narrow and test real bound profile lifetimes.
+- [x] Run focused hook/runtime/Settings/governance checks and affected newer contracts; verify the native UI at 80×24 and 120×40 using the private recording profile.
+- [x] Refresh baseline controls, evidence and tracking for this integration tree; preserve genuine unrelated failures.
+- [x] Self-review and commit the ready integration locally. Publishing or merging remains a separate integration action.
+
+## Original inline closeout — historical
+
+The five original units were completed on codex/hook-review. Its 417-case
+run and earlier baseline comparisons belong to that branch, not this integration.
+The branch remains available. The shared modal and editor were committed together.
+
+## Dev integration closeout — 2026-09-28
+
+Completed Task 6 on codex/hook-review-dev from e5ac111967. Preserved dev's
+runtime/Settings callbacks, token compiler and responsive layout. Added the exact
+Hooks JSON/lock participant through retained ADR-126 config admission, and
+excluded device-local consent from portable backup/restore under ADR-197.
+No new ADR is required: these changes implement the accepted ownership policy.
+
+201 distinct feature/metadata checks passed across targeted runs; the latest
+consent owner suite passed all 42 cases. Authored Ruff/format checks are clean.
+Actual native 80×24 and 120×40 checks passed with private profiles, a real harmless
+hook and the recording gateway. Eleven unrelated failures reproduce on the
+untouched dev base; interrupted broader bundles qualify only completed cases.
+
+Current results, native captures, baseline controls, review fixes and limits are
+recorded in [the implementation review](../reviews/2026-09-27-console-hook-settings-and-review.md).
+Self-review and local integration commit complete the plan. No full suite,
+real provider generation, push or merge is part of this closeout.
+
+## Task 7: Carry implementation to current dev
+
+**Target:** origin/dev at 857b3dd7d0 on codex/hook-review-current.
+The hook design, ADR and task already landed on dev. Apply only the four
+implementation commits from codex/hook-review-dev and retain current caller
+contracts. The prior 201-case and native results belong to the earlier
+e5ac111967-based tree; they are historical until this tree is requalified.
+
+ADR required: no
+ADR path: backlog/decisions/197-console-hook-configuration-review.md
+Reason: direct integration of the accepted hook consent design and ADR-126
+raw-file ownership; no new storage or security decision.
+
+- [x] Fetch current dev and inspect the branch and conflict surface.
+- [x] Carry the four implementation commits and resolve documentation against
+  the design documents already on dev.
+- [ ] Rebuild generated CSS from current sources and check the merged runtime,
+  Settings and Console caller contracts.
+- [ ] Run targeted feature, native-width and governance checks on this tree;
+  compare any failures to the current dev base.
+- [ ] Update current-tree evidence, complete TASK-33163 and commit locally.
+  Publishing or merging remains a separate integration decision.

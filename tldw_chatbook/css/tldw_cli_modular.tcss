@@ -4551,6 +4551,12 @@ App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
     max-width: $ds-size-120;
 }
 
+
+App.-wide-viewport #console-hooks-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+
 /* ===== MODULE: components/_workbench.tcss ===== */
 
 
@@ -8559,6 +8565,17 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-0 !important;
 }
 .console-generation-frame { border: round $ds-console-frame !important; }
+
+
+#console-control-hooks {
+    min-width: $ds-size-4; height: $ds-control-height-compact;
+    margin-right: $ds-space-inline;
+}
+#console-control-hooks.hooks-attention { color: $ds-status-approval-required; }
+#console-control-hooks:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
+#console-control-hooks:focus {
+    background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline;
+}
 
 /* ===== MODULE: features/_console_panels.tcss ===== */
 

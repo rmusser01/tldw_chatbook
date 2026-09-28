@@ -1314,3 +1314,28 @@ def test_css_ratchet_walker_sees_declarations_the_block_extractor_skips(tmp_path
     narrow = {name for _m, name, _css in _class_css_blocks(tmp_path, excluded_dirs=())}
     assert "AnnotatedDeclaration" not in narrow
     assert "FStringDeclaration" not in narrow
+
+
+def test_widget_builder_compiles_canonical_tokens_without_publishing_variable_scope(
+    tmp_path, monkeypatch
+):
+    css_dir = tmp_path / "css"
+    (css_dir / "core").mkdir(parents=True)
+    (css_dir / "core" / "_variables.tcss").write_text(
+        "/* canonical comment */\n$ds-space-1: 1;\n$ds-text-muted: $text-muted;\n"
+    )
+    block = widget_css.BundledBlock(
+        "sample.py",
+        "TokenWidget",
+        1,
+        "TokenWidget { padding: $ds-space-1; color: $ds-text-muted; }",
+    )
+    monkeypatch.setattr(widget_css, "iter_blocks", lambda *args: [block])
+    own, scoped = tmp_path / "own.tcss", tmp_path / "scoped.tcss"
+    build_css.build_widget_defaults(css_dir, own, scoped)
+    content = own.read_text() + scoped.read_text()
+    assert "padding: 1" in content and "color: $text-muted" in content
+    assert "$ds-" not in content and "canonical comment" not in content
+    stylesheet = Stylesheet(variables=App().get_css_variables())
+    stylesheet.add_source(content, read_from=("fixture", ""))
+    stylesheet.parse()

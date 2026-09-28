@@ -502,6 +502,7 @@ def test_self_contained_editor_categories_not_in_guided_mutation():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_internal_prompts_appears_in_settings_sidebar_expert_group():
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
@@ -513,6 +514,7 @@ def test_internal_prompts_appears_in_settings_sidebar_expert_group():
     assert SettingsCategoryId.ADVANCED_CONFIG in groups["Expert"]
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_category_summaries_cover_every_category_id_exactly_once():
     """Guards the total sidebar category count.
 
@@ -528,10 +530,11 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 30
+    assert len(summaries) == len(list(SettingsCategoryId)) == 31
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_category_groups_cover_every_category_id_exactly_once():
     """Guards against a category losing its sidebar group placement.
 
@@ -553,6 +556,7 @@ def test_settings_category_groups_cover_every_category_id_exactly_once():
     assert set(flattened) == set(SettingsCategoryId)
 
 
+@pytest.mark.bootstrap_profile
 def test_inspector_guidance_covers_every_settings_category():
     """Every non-domain sidebar category must have an explicit guidance entry.
 

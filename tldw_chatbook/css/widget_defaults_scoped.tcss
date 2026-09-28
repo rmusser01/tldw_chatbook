@@ -2278,6 +2278,44 @@
         display: none;
     }
 
+/* ===== WIDGET: ConsoleHooksReviewModal (Widgets/Console/console_hooks_review_modal.py) ===== */
+
+
+    ConsoleHooksReviewModal #console-hooks-review {
+        width: 90%; max-width: 110; height: 90%;
+        background: $panel; border: round $surface-lighten-1;
+        padding: 1;
+    }
+    ConsoleHooksReviewModal #console-hooks-title { height: auto; text-style: bold; }
+    ConsoleHooksReviewModal #console-hooks-notice { height: auto; color: $warning; }
+    ConsoleHooksReviewModal #console-hooks-tabs, ConsoleHooksReviewModal #console-hooks-actions {
+        height: 3; width: 100%;
+    }
+    ConsoleHooksReviewModal #console-hooks-list { height: 1fr; }
+    ConsoleHooksReviewModal .hook-review-row {
+        height: auto; border: round $surface-lighten-1;
+        margin-bottom: 1; padding: 0 1;
+    }
+    ConsoleHooksReviewModal .hook-review-heading, ConsoleHooksReviewModal .hook-review-controls { height: 3; }
+    ConsoleHooksReviewModal .hook-review-heading Checkbox { width: 1fr; }
+    ConsoleHooksReviewModal .hook-review-heading Button { min-width: 9; width: auto; }
+    ConsoleHooksReviewModal .hook-review-state, ConsoleHooksReviewModal .hook-review-detail { height: auto; }
+    ConsoleHooksReviewModal .hook-review-state { color: $text-muted; }
+    ConsoleHooksReviewModal .hook-review-detail { background: $surface-darken-1; padding: 1; }
+    ConsoleHooksReviewModal #console-hooks-review Button {
+        width: auto; min-width: 9; height: 3;
+        margin-right: 1;
+        background: $surface; color: $text;
+    }
+    ConsoleHooksReviewModal #console-hooks-review Button:hover { background: $surface-lighten-1; color: $text; }
+    ConsoleHooksReviewModal #console-hooks-review Button:focus {
+        background: $block-cursor-blurred-background; color: $text; text-style: bold underline;
+    }
+    ConsoleHooksReviewModal #console-hooks-review Button:disabled {
+        background: $surface-darken-1; color: $text-muted;
+    }
+    ConsoleHooksReviewModal #console-hooks-review #console-hooks-settings { height: 1; border: none; }
+
 /* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
 
 

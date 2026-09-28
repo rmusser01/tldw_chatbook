@@ -9,6 +9,7 @@ from tldw_chatbook.Widgets.destination_rail import (  # noqa: E402
     GLYPH_EXPANDED,
 )
 
+GLYPH_HOOKS = "⚓"
 GLYPH_ACTIVE = "▸"
 GLYPH_IN_PROGRESS = "●"
 GLYPH_DONE = "✓"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_glyphs import GLYPH_HOOKS
 from tldw_chatbook.UI.Workbench.workbench_state import (
     Density,
     WorkbenchAction,
@@ -11,6 +12,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchPaneState,
     WorkbenchState,
 )
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 
 def build_console_workbench_state(
@@ -23,6 +25,7 @@ def build_console_workbench_state(
     density: str = "normal",
     run_active: bool = False,
     ephemeral: bool = False,
+    hook_attention: int = 0,
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -39,6 +42,7 @@ def build_console_workbench_state(
             call sites do not need to change.
         can_send: Whether the visible composer draft can be sent.
         can_stop: Whether an active generation can be stopped.
+        hook_attention: Enabled hooks or permission errors needing attention.
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -71,6 +75,14 @@ def build_console_workbench_state(
             tooltip="Configure provider, model, tools, and generation",
         ),
         WorkbenchAction(
+            id="hooks",
+            label=resolve_glyph(GLYPH_HOOKS)
+            + (f" {hook_attention}" if hook_attention else ""),
+            tooltip=f"Hook permissions: {hook_attention} need review"
+            if hook_attention
+            else "Review hook permissions",
+        ),
+        WorkbenchAction(
             id="attach-context",
             # TASK-32325: the label says what the button DOES (open the
             # rail); the tooltip carries the staging pointer. "Attach
@@ -78,9 +90,7 @@ def build_console_workbench_state(
             # with the rail already open by default the click looked like
             # a dead button.
             label="Context rail",
-            tooltip=(
-                "Open the Console context rail; stage sources from Library"
-            ),
+            tooltip=("Open the Console context rail; stage sources from Library"),
         ),
         WorkbenchAction(
             id="run-library-rag",

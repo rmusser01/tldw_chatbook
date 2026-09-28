@@ -2,38 +2,53 @@
 
 import asyncio
 import json
+import os
 import sys
+from pathlib import Path
 
 import pytest
 import toml
 
 from tldw_chatbook import config
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
-def hook_file(tmp_path, monkeypatch):
-    data = tmp_path / "data"
-    data.mkdir(mode=0o700)
-    monkeypatch.setattr(config, "get_user_data_dir", lambda: data)
-    path = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
-    path.write_text(
-        toml.dumps(
+def hook_file(monkeypatch):
+    # ADR-126 binds the source for this interpreter; mutate only its already
+    # selected private test profile rather than switching a live source.
+    root = Path(os.environ["TLDW_TEST_CONFIG_ROOT"]).resolve()
+    path = Path(os.environ["TLDW_CONFIG_PATH"])
+    assert path.resolve().is_relative_to(root)
+    data = Path(config.get_user_data_dir())
+    assert data.resolve().is_relative_to(root)
+    permissions = data / "hook_permissions.json"
+    original = path.read_bytes()
+    previous = permissions.read_bytes() if permissions.exists() else None
+    permissions.unlink(missing_ok=True)
+    raw = toml.loads(original.decode())
+    raw["hooks"] = {
+        "hook": [
             {
-                "hooks": {
-                    "hook": [
-                        {
-                            "id": "one",
-                            "event": "PostToolUse",
-                            "command": [sys.executable, "-c", "pass"],
-                            "timeout_s": 5,
-                        }
-                    ]
-                }
+                "id": "one",
+                "event": "PostToolUse",
+                "command": [sys.executable, "-c", "pass"],
+                "timeout_s": 5,
             }
-        )
-    )
-    return path
+        ]
+    }
+    path.write_text(toml.dumps(raw))
+    try:
+        yield path
+    finally:
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+        path.write_bytes(original)
+        if previous is None:
+            permissions.unlink(missing_ok=True)
+        else:
+            permissions.write_bytes(previous)
+        config.refresh_runtime_config_from_cli_config()
 
 
 def _owner():
@@ -83,12 +98,23 @@ def test_deleting_an_approved_legacy_duplicate_cannot_transfer_grant(hook_file):
     assert not owner.snapshot().ready
 
 
-def test_changed_then_restored_definition_requires_new_review(hook_file):
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"event": "Stop"},
+        {"command": [sys.executable, "-c", "pass", "changed argument"]},
+        {"matcher": "fs_read"},
+        {"timeout_s": 6},
+    ],
+)
+def test_changed_then_restored_definition_requires_new_review(hook_file, change):
+    original = toml.loads(hook_file.read_text())["hooks"]["hook"][0]
     owner = _owner()
-    _approve(owner)
-    _edit(hook_file, lambda section: section["hook"][0].update(timeout_s=6))
-    assert not owner.snapshot().ready
-    _edit(hook_file, lambda section: section["hook"][0].update(timeout_s=5))
+    assert _approve(owner).ready
+    _edit(hook_file, lambda section: section["hook"][0].update(change))
+    changed = owner.snapshot()
+    assert not changed.ready and changed.rows[0].state == "pending"
+    _edit(hook_file, lambda section: section["hook"].__setitem__(0, original))
     assert not owner.snapshot().ready
 
 
@@ -366,21 +392,26 @@ def test_independent_python_process_reads_persisted_consent(hook_file):
 
 
 @pytest.mark.asyncio
-async def test_reapprove_cannot_revive_a_target_waiting_to_launch(hook_file, tmp_path):
+@pytest.mark.parametrize("event", ["PostToolUse", "PreToolUse", "UserPromptSubmit"])
+@pytest.mark.parametrize("transition", ["reapprove", "reenable"])
+async def test_stale_target_cannot_launch_or_bypass_a_blocking_hook(
+    hook_file, tmp_path, event, transition
+):
     import threading
     from contextlib import contextmanager
 
-    from tldw_chatbook.Agents.run_hooks import RunHooksEngine
+    from tldw_chatbook.Agents.run_hooks import BLOCKING_EVENTS, RunHooksEngine
 
     marker = tmp_path / "started"
     _edit(
         hook_file,
         lambda section: section["hook"][0].update(
+            event=event,
             command=[
                 sys.executable,
                 "-c",
                 f"from pathlib import Path; Path({str(marker)!r}).write_text('ran')",
-            ]
+            ],
         ),
     )
     owner = _owner()
@@ -400,15 +431,22 @@ async def test_reapprove_cannot_revive_a_target_waiting_to_launch(hook_file, tmp
         notification_targets=owner.notification_targets,
         launch_guard=waiting_guard,
     )
-    task = asyncio.create_task(engine.fire_async("PostToolUse", session_id="s"))
+    task = asyncio.create_task(engine.fire_async(event, session_id="s"))
     try:
         assert await asyncio.to_thread(entered.wait, 3)
         current = owner.snapshot()
-        owner.revoke(current, current.rows[0].entry.key)
-        _approve(owner)
+        if transition == "reapprove":
+            owner.revoke(current, current.rows[0].entry.key)
+            _approve(owner)
+        else:
+            _edit(hook_file, lambda section: section["hook"][0].update(enabled=False))
+            assert owner.snapshot().ready
+            _edit(hook_file, lambda section: section["hook"][0].update(enabled=True))
+            assert owner.snapshot().ready
         release.set()
-        await asyncio.wait_for(task, 5)
+        result = await asyncio.wait_for(task, 5)
         assert not marker.exists()
+        assert result.blocked is (event in BLOCKING_EVENTS)
     finally:
         release.set()
         engine.close()
@@ -527,3 +565,218 @@ def test_verified_master_disable_bypasses_unavailable_consent_lock(
     monkeypatch.setattr(owner, "_store_lock", unavailable)
     assert owner.snapshot().ready
     assert owner.targets("PreToolUse", "fs_read") == ()
+
+
+def test_guided_id_assignment_preserves_only_unchanged_owned_legacy_consent(hook_file):
+    import copy
+
+    _edit(hook_file, lambda section: section["hook"][0].pop("id"))
+    owner = _owner()
+    current = _approve(owner)
+    key = current.rows[0].entry.key
+    replacement = copy.deepcopy(current.config.section)
+    replacement["hook"][0]["id"] = "assigned"
+    saved, reviewed = owner.save_configuration(
+        current, replacement, legacy_ids={key: "assigned"}
+    )
+    assert saved.file_replaced and reviewed.ready
+    assert owner.targets("PostToolUse", None)[0].key == "id:assigned"
+
+
+def test_guided_id_assignment_does_not_transfer_an_incomplete_duplicate_group(
+    hook_file,
+):
+    import copy
+
+    def duplicate(section):
+        row = section["hook"][0]
+        row.pop("id")
+        section["hook"] = [row.copy(), row.copy()]
+
+    _edit(hook_file, duplicate)
+    owner = _owner()
+    current = _approve(owner)
+    replacement = copy.deepcopy(current.config.section)
+    replacement["hook"].pop(1)
+    replacement["hook"][0]["id"] = "assigned"
+    saved, reviewed = owner.save_configuration(
+        current, replacement, legacy_ids={current.rows[0].entry.key: "assigned"}
+    )
+    assert saved.file_replaced and not reviewed.ready
+
+
+def test_settings_save_refresh_failure_blocks_launch_until_explicit_recovery(
+    hook_file, monkeypatch
+):
+    import copy
+
+    owner = _owner()
+    current = _approve(owner)
+    replacement = copy.deepcopy(current.config.section)
+    replacement["hook"][0]["name"] = "friendly"
+    writer = config.replace_hooks_config_snapshot
+
+    def failed_refresh(expected, section):
+        result = writer(expected, section)
+        return config.LiteralConfigMutationResult(
+            result.file_replaced, False, None, "cache_reload"
+        )
+
+    monkeypatch.setattr(config, "replace_hooks_config_snapshot", failed_refresh)
+    result, pending = owner.save_configuration(current, replacement)
+    assert result.file_replaced and not result.caches_reloaded
+    assert not pending.ready and "refresh" in pending.blocked_reason
+    from tldw_chatbook.Agents.run_hooks import HookLaunchRefused
+
+    with pytest.raises(HookLaunchRefused):
+        owner.targets("UserPromptSubmit", None)
+    assert owner.recover().ready
+
+
+def test_settings_save_cannot_resurrect_another_owners_revocation(
+    hook_file, monkeypatch
+):
+    import copy
+
+    _edit(hook_file, lambda section: section["hook"][0].pop("id"))
+    owner = _owner()
+    current = _approve(owner)
+    key = current.rows[0].entry.key
+    replacement = copy.deepcopy(current.config.section)
+    replacement["hook"][0]["id"] = "new"
+    writer = config.replace_hooks_config_snapshot
+
+    def concurrent_revoke(expected, section):
+        other = _owner()
+        other.revoke(other.snapshot(), key)
+        return writer(expected, section)
+
+    monkeypatch.setattr(config, "replace_hooks_config_snapshot", concurrent_revoke)
+    result, pending = owner.save_configuration(
+        current, replacement, legacy_ids={key: "new"}
+    )
+    assert result.file_replaced and not pending.ready
+    assert pending.rows[0].state == "pending"
+
+
+def test_verified_master_off_does_not_require_a_permission_directory(
+    hook_file, monkeypatch
+):
+    _edit(hook_file, lambda section: section.update(enabled=False))
+
+    def unavailable():
+        raise OSError("permission directory unavailable")
+
+    monkeypatch.setattr(config, "get_user_data_dir", unavailable)
+    assert _owner().snapshot().ready
+
+
+def test_permission_review_does_not_discard_a_staged_configuration_edit(hook_file):
+    import copy
+
+    owner = _owner()
+    original = owner.snapshot()
+    _approve(owner)
+    replacement = copy.deepcopy(original.config.section)
+    replacement["hook"][0]["timeout_s"] = 7
+    result, reviewed = owner.save_configuration(original, replacement)
+    assert result.file_replaced and not reviewed.ready
+
+
+def test_permission_store_scope_retains_config_lease_and_rejects_other_files(hook_file):
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.Utils.private_paths import atomic_private_write_text
+
+    owner = _owner()
+    store = owner.snapshot().store_path
+    before = set(raw._states)
+    with config.locked_hooks_config_snapshot():
+        parent = raw._local.operation
+        with owner._store_lock(store):
+            assert raw._local.operation is not parent
+            assert parent in raw._states
+            with pytest.raises(bootstrap.RecoveryRequired, match="outside_scope"):
+                atomic_private_write_text(store.parent / "unrelated.json", "{}")
+        assert raw._local.operation is parent
+        with pytest.raises(bootstrap.RecoveryRequired, match="outside_scope"):
+            atomic_private_write_text(store, "{}")
+    assert set(raw._states) == before
+
+
+def test_recovery_closes_store_admission_without_reusing_cached_consent(hook_file):
+    import time
+
+    from tldw_chatbook.Agents.run_hooks import HookLaunchRefused
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    owner = _owner()
+    _approve(owner)
+    target = owner.notification_targets("PostToolUse", None)[0]
+    participant = raw._raw_participant(owner)
+    participant.close_admission()
+    try:
+        assert participant.drain(time.monotonic() + 1)
+        assert not owner.snapshot().ready
+        assert owner.notification_targets("PostToolUse", None) == ()
+        with pytest.raises(HookLaunchRefused):
+            owner.targets("UserPromptSubmit", None)
+        with (
+            pytest.raises(HookLaunchRefused),
+            owner.launch_guard(target, tool_name=None),
+        ):
+            pytest.fail("recovery admitted a cached hook")
+    finally:
+        participant.resume()
+    assert owner.snapshot().ready
+
+
+def test_backup_recognizes_but_never_imports_hook_permission_authority(hook_file):
+    from tldw_chatbook.Agents.recovery import recovery_adapters
+
+    owner = _owner()
+    _approve(owner)
+    adapter = next(a for a in recovery_adapters() if a.owner_id == "hooks.permissions")
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+
+    values = {
+        **config.load_settings(),
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(hook_file, "hooks-test"),
+    }
+    items = adapter.discover(values)
+    assert {item.path.name for item in items} == {
+        "hook_permissions.json",
+        "hook_permissions.json.lock",
+    }
+    assert all(item.status == "intentionally_excluded" for item in items)
+    assert adapter.validate(owner.snapshot().store_path)
+    with pytest.raises(
+        ValueError, match="device_local_hook_permissions_not_restorable"
+    ):
+        adapter.relocate(owner.snapshot().store_path, {})
+
+
+def test_decoder_depth_failure_keeps_permission_recovery_resettable(
+    hook_file, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents import hook_permissions
+
+    owner = _owner()
+    owner.snapshot()
+
+    def decode(_encoded):
+        raise RecursionError("decoder depth exceeded")
+
+    monkeypatch.setattr(
+        hook_permissions, "json", SimpleNamespace(loads=decode, dumps=json.dumps)
+    )
+    broken = owner.snapshot()
+    assert not broken.ready
+    reset = owner.reset_invalid_state(broken)
+    assert not reset.ready
+    assert reset.store_revision[0]

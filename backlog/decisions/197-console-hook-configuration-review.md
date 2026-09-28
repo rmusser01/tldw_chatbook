@@ -65,6 +65,12 @@ An editor-only or screen-only gate would leave shared/background execution open.
    [ADR-162](162-managed-agent-plugins.md) and
    [ADR-163](163-expanded-console-hook-runtime.md), outside this implementation.
 
+The exact local JSON/lock owner participates in ADR-126 admission and drain.
+Nested consent work retains the outer config lease without widening its paths.
+Backup discovery recognizes the permission file and lock as intentionally excluded;
+this installed owner rejects restored payloads. Portable configuration therefore
+requires fresh hook review and cannot import grant authority.
+
 ## Alternatives
 
 | Alternative | Reason not chosen |

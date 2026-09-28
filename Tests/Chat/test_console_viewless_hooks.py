@@ -56,11 +56,16 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from Tests.Agents.test_hook_permissions import hook_file
+from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 import toml
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
+
+
+pytestmark = pytest.mark.bootstrap_profile
+
+hook_file = _hook_file
 
 
 def _marked(app, conversation_id) -> bool:

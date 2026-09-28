@@ -966,6 +966,21 @@
         padding: 1;
     }
 
+/* ===== WIDGET: HooksSettingsPanel (UI/Screens/settings_hooks.py) ===== */
+
+    HooksSettingsPanel { height: auto; }
+    HooksSettingsPanel .hooks-actions {
+        height: auto; margin-bottom: 1; }
+    HooksSettingsPanel .hooks-actions Button {
+        min-width: 9; margin-right: 1; }
+    HooksSettingsPanel OptionList { height: 6; margin-bottom: 1; }
+    HooksSettingsPanel #settings-hooks-editor { height: auto; }
+    HooksSettingsPanel TextArea { height: 5; margin-bottom: 1; }
+    HooksSettingsPanel Select, HooksSettingsPanel Input {
+        margin-bottom: 1; }
+    HooksSettingsPanel .hooks-copy {
+        height: auto; color: $text-muted; margin-bottom: 1; }
+
 /* ===== WIDGET: SkillRecoveryReviewModal (UI/Screens/skills_screen.py) ===== */
 
     SkillRecoveryReviewModal { align: center middle; }
@@ -1376,6 +1391,10 @@
         align: center middle;
         background: $background 70%;
     }
+
+/* ===== WIDGET: ConsoleHooksReviewModal (Widgets/Console/console_hooks_review_modal.py) ===== */
+
+    ConsoleHooksReviewModal { align: center middle; }
 
 /* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
 

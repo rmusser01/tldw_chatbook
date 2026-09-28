@@ -5,8 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from Tests.Agents.test_hook_permissions import hook_file  # noqa: F401 -- shared pytest fixture
-
+from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.Chat.test_console_chat_controller import (
     ConsoleChatController,
     ConsoleChatStore,
@@ -22,6 +21,10 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptDispatchStatus,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+
+pytestmark = pytest.mark.bootstrap_profile
+
+hook_file = _hook_file
 
 
 @pytest.mark.asyncio

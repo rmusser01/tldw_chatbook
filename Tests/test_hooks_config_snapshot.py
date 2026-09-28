@@ -1,7 +1,10 @@
 """Hook writes compare the current section and preserve unrelated raw data."""
 
+import sys
+
 import toml
 
+from Tests.Backup_Recovery.config_test_support import install_config_source
 from tldw_chatbook import config
 
 
@@ -9,6 +12,9 @@ def test_hooks_save_rejects_stale_section_without_replacing_file(tmp_path, monke
     path = tmp_path / "config.toml"
     path.write_text(toml.dumps({"hooks": {"enabled": True, "hook": []}}))
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     original = config.read_hooks_config_snapshot()
     path.write_text(toml.dumps({"hooks": {"enabled": False, "hook": []}}))
     before = path.read_bytes()
@@ -35,6 +41,9 @@ def test_hooks_save_preserves_unknown_keys_and_concurrent_unrelated_edit(
         )
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     original = config.read_hooks_config_snapshot()
     raw = toml.loads(path.read_text())
     raw["other"]["value"] = 2
@@ -57,6 +66,9 @@ def test_hooks_snapshot_is_detached_and_scope_change_rejects_save(
     first.write_text(text)
     second.write_text(text)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(first))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     original = config.read_hooks_config_snapshot()
     original.section["hook"][0]["command"].append("new.py")
     assert "new.py" not in first.read_text()
@@ -72,6 +84,9 @@ def test_nan_original_can_be_compared_and_disabled(tmp_path, monkeypatch):
         '[hooks]\n[[hooks.hook]]\nevent="Stop"\ncommand=["python3"]\ntimeout_s=nan\n'
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     original = config.read_hooks_config_snapshot()
     result = config.replace_hooks_config_snapshot(
         original, {**original.section, "enabled": False}
@@ -83,6 +98,9 @@ def test_hooks_save_reports_replacement_when_publication_fails(tmp_path, monkeyp
     path = tmp_path / "config.toml"
     path.write_text("[hooks]\nenabled=true\n")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     original = config.read_hooks_config_snapshot()
 
     def fail_publication(*args, **kwargs):
@@ -105,6 +123,9 @@ def test_save_compares_writer_file_even_if_effective_path_changes_during_lock(
     first.write_text(text)
     second.write_text(text)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(second))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     original = config.read_hooks_config_snapshot()
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(first))
     lock = config._config_write_lock
@@ -126,6 +147,9 @@ def test_guided_replace_cannot_discard_unknown_hook_section_keys(tmp_path, monke
     path = tmp_path / "config.toml"
     path.write_text('[hooks]\nenabled=true\nfuture_option="retain"\n')
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     original = config.read_hooks_config_snapshot()
     result = config.replace_hooks_config_snapshot(
         original, {"enabled": False, "hook": []}
