@@ -12736,19 +12736,11 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 
 
-
-
-#llm-view-llama-cpp > .section-title,
-#llm-view-llamafile > .section-title {
-
-    margin-bottom: $ds-space-stack;
-}
-
 #llamacpp-snapshot-manager {
     height: auto;
-    width: $ds-width-full;
-    margin-top: $ds-space-1;
-    padding: $ds-space-0 $ds-space-1;
+    width: 100%;
+    margin-top: 1;
+    padding: 0 1;
     background: $panel;
 }
 
@@ -12771,8 +12763,8 @@ VerticalScroll.media-content-right-pane > Markdown {
 }
 
 #llamacpp-snapshot-manager .snapshot-actions {
-    height: $ds-size-3;
-    width: $ds-width-full;
+    height: 3;
+    width: 100%;
 }
 
 #llamacpp-snapshot-manager #snapshot-save,
@@ -12783,15 +12775,15 @@ VerticalScroll.media-content-right-pane > Markdown {
 #llamacpp-snapshot-manager #snapshot-next,
 #llamacpp-snapshot-manager #snapshot-apply,
 #llamacpp-snapshot-manager #snapshot-reload {
-    min-width: $ds-size-8;
-    width: $ds-width-fill;
-    margin: $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
+    min-width: 8;
+    width: 1fr;
+    margin: 0;
+    padding: 0 1;
     border: none;
     text-wrap: nowrap;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    max-height: $ds-size-3;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
 }
 
 #llamacpp-snapshot-manager #snapshot-save:disabled,
@@ -12807,8 +12799,8 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 #snapshot-slots,
 #snapshot-records {
-    height: $ds-size-5;
-    width: $ds-width-full;
+    height: 5;
+    width: 100%;
 }
 
 #snapshot-disabled-reason,
@@ -12827,43 +12819,43 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 #snapshot-keep,
 #settings-snapshot-keep {
-    width: $ds-size-8;
+    width: 8;
 }
 
 #llamacpp-snapshot-manager .snapshot-keep-label {
-    width: $ds-size-12;
+    width: 12;
 }
 
 #settings-snapshot-controls {
     height: auto;
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 
 .gguf-source-mode-row {
     layout: horizontal;
-    width: $ds-width-full;
-    height: $ds-size-3;
-    margin-bottom: $ds-space-1;
+    width: 100%;
+    height: 3;
+    margin-bottom: 1;
 }
 
 .gguf-source-label {
-    width: $ds-size-18;
-    height: $ds-size-3;
+    width: 18;
+    height: 3;
     content-align: right middle;
-    padding-right: $ds-space-1;
+    padding-right: 1;
 }
 
 .gguf-source-mode {
-    width: $ds-width-fill;
-    min-width: $ds-size-12;
-    height: $ds-size-3;
+    width: 1fr;
+    min-width: 12;
+    height: 3;
 }
 
 .gguf-source-region {
     display: none;
-    width: $ds-width-full;
+    width: 100%;
     height: auto;
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 
 .gguf-source-region.-active {
@@ -12872,27 +12864,27 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 .gguf-source-choice-row {
     layout: horizontal;
-    width: $ds-width-full;
-    height: $ds-size-3;
+    width: 100%;
+    height: 3;
 }
 
 .gguf-source-choice-row Input,
 .gguf-source-managed-select {
-    width: $ds-width-fill;
-    min-width: $ds-size-8;
-    height: $ds-size-3;
+    width: 1fr;
+    min-width: 8;
+    height: 3;
 }
 
 .gguf-source-refresh,
 .gguf-source-browse {
     width: auto;
-    margin-left: $ds-space-1;
+    margin-left: 1;
 }
 
 .gguf-source-authority,
 .gguf-source-copy,
 .gguf-source-status {
-    width: $ds-width-full;
+    width: 100%;
     height: auto;
     text-wrap: wrap;
 }
@@ -12908,18 +12900,18 @@ VerticalScroll.media-content-right-pane > Markdown {
 }
 
 .gguf-source-status {
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 
 .gguf-source-narrow .gguf-source-choice-row {
     layout: vertical;
-    height: $ds-size-6;
+    height: 6;
 }
 
 .gguf-source-narrow .gguf-source-refresh,
 .gguf-source-narrow .gguf-source-browse {
-    width: $ds-width-full;
-    margin-left: $ds-space-0;
+    width: 100%;
+    margin-left: 0;
 }
 
 
@@ -12966,23 +12958,23 @@ VerticalScroll.media-content-right-pane > Markdown {
 .llm-nav-pane {
     dock: left;
     width: auto;
-    min-width: $ds-size-25;
-    max-width: $ds-size-60;
-    height: $ds-height-full;
+    min-width: 25;
+    max-width: 60;
+    height: 100%;
     background: $boost;
-    padding: $ds-space-1;
+    padding: 1;
     border-right: thick $background-darken-1;
     overflow-y: auto;
     overflow-x: hidden;
 }
 
 .llm-nav-pane .llm-nav-button {
-    width: $ds-width-full;
-    margin-bottom: $ds-space-1;
+    width: 100%;
+    margin-bottom: 1;
     border: none;
-    height: $ds-size-3;
+    height: 3;
     text-align: left;
-    padding: $ds-space-0 $ds-space-1;
+    padding: 0 1;
 }
 .llm-nav-pane .llm-nav-button:hover {
     background: $surface-lighten-1;
@@ -12996,28 +12988,28 @@ VerticalScroll.media-content-right-pane > Markdown {
 }
 
 .llm-content-pane {
-    width: $ds-width-fill;
-    height: $ds-height-full;
-    padding: $ds-space-1 $ds-space-2;
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
     overflow-y: auto;
 }
 
 .llm-view-area {
-    width: $ds-width-full;
-    height: $ds-height-full;
+    width: 100%;
+    height: 100%;
     display: none;
 }
 
 
 #llm_management-window .llm-view-area > VerticalScroll {
-    height: $ds-height-full;
+    height: 100%;
 }
 
 #llamacpp-args-help-collapsible,
 #llamafile-args-help-collapsible,
 #vllm-args-help-collapsible {
-    margin-top: $ds-space-1;
-    margin-bottom: $ds-space-1;
+    margin-top: 1;
+    margin-bottom: 1;
     border: round $primary-lighten-1;
 }
 
@@ -13028,11 +13020,11 @@ VerticalScroll.media-content-right-pane > Markdown {
 }
 
 .help-text-display {
-    height: $ds-size-25;
-    width: $ds-width-full;
+    height: 25;
+    width: 100%;
     border: round $surface;
-    padding: $ds-space-1;
-    margin-top: $ds-space-1;
+    padding: 1;
+    margin-top: 1;
     background: $panel;
     overflow-y: scroll !important;
 }
@@ -13042,7 +13034,7 @@ VerticalScroll.media-content-right-pane > Markdown {
 #llamacpp-additional-args,
 #llamafile-additional-args,
 #vllm-additional-args {
-    height: $ds-size-3;
+    height: 3;
 
 
 
@@ -13052,13 +13044,13 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 #llm-view-llama-cpp .log_output,
 #llm-view-llamafile .log_output {
-    width: $ds-width-full;
-    height: $ds-size-15;
-    min-height: $ds-size-10;
-    max-height: $ds-size-20;
+    width: 100%;
+    height: 15;
+    min-height: 10;
+    max-height: 20;
     border: panel $primary-darken-2;
     background: $background-darken-1;
-    margin-top: $ds-space-1;
+    margin-top: 1;
     overflow-y: auto;
 }
 
@@ -13066,24 +13058,24 @@ VerticalScroll.media-content-right-pane > Markdown {
 .input_container {
     layout: horizontal;
     height: auto;
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 .input_container Input {
-    width: $ds-width-fill;
-    margin-right: $ds-space-1;
+    width: 1fr;
+    margin-right: 1;
 }
 .input_container .browse_button {
     width: auto;
-    height: $ds-height-full;
+    height: 100%;
 }
 
 .button_container {
     layout: horizontal;
     height: auto;
-    margin-top: $ds-space-1;
+    margin-top: 1;
 }
 .button_container Button {
-    margin-left: $ds-space-1;
+    margin-left: 1;
 }
 
 #llm-view-ollama {
@@ -13091,64 +13083,64 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 }
 #llm-view-ollama VerticalScroll {
-    height: $ds-height-full;
+    height: 100%;
 }
 
 #llm-view-ollama .label {
-    margin-top: $ds-space-1;
-    margin-bottom: $ds-space-0;
+    margin-top: 1;
+    margin-bottom: 0;
     text-style: bold;
 }
 #llm-view-ollama .section_label {
-    margin-top: $ds-space-2;
-    padding: $ds-space-0;
+    margin-top: 2;
+    padding: 0;
 
     text-align: left;
-    width: $ds-width-full;
+    width: 100%;
 }
 
 #llm-view-ollama .input_field,
 #llm-view-ollama .input_field_short,
 #llm-view-ollama .input_field_long {
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 #llm-view-ollama .input_field_long {
-    width: $ds-width-full;
+    width: 100%;
 }
 
 #llm-view-ollama .input_action_container {
     layout: horizontal;
     height: auto;
-    margin-bottom: $ds-space-0;
+    margin-bottom: 0;
 }
 #llm-view-ollama .input_action_container .input_field_short {
-    width: $ds-width-fill;
-    margin-right: $ds-space-1;
-    margin-bottom: $ds-space-0;
+    width: 1fr;
+    margin-right: 1;
+    margin-bottom: 0;
 }
 #llm-view-ollama .input_action_container .action_button_short {
     width: auto;
-    min-width: $ds-size-10;
-    height: $ds-size-3;
+    min-width: 10;
+    height: 3;
 }
 #llm-view-ollama .input_action_container .browse_button_short {
     width: auto;
-    min-width: $ds-size-15;
-    height: $ds-size-3;
+    min-width: 15;
+    height: 3;
 }
 
 #llm-view-ollama .action_container {
-    width: $ds-width-full;
+    width: 100%;
     height: auto;
-    margin-bottom: $ds-space-0;
+    margin-bottom: 0;
 }
 #llm-view-ollama .action_button {
-    width: $ds-width-full;
-    margin-top: $ds-space-1;
+    width: 100%;
+    margin-top: 1;
 }
 #llm-view-ollama .full_width_button {
-    width: $ds-width-full;
-    margin-top: $ds-space-1;
+    width: 100%;
+    margin-top: 1;
 }
 
 #llm-view-ollama .delete_button Button {
@@ -13161,97 +13153,119 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 
 .ollama-status-textarea {
-    width: $ds-width-full;
-    height: $ds-size-3;
+    width: 100%;
+    height: 3;
     border: round $primary-darken-1;
     background: $surface;
-    margin-top: $ds-space-1;
-    margin-bottom: $ds-space-1;
-    padding: $ds-space-0 $ds-space-1;
+    margin-top: 1;
+    margin-bottom: 1;
+    padding: 0 1;
     color: $text-muted;
 }
 
 
 #llm-view-ollama .output_textarea_medium {
-    width: $ds-width-full;
-    height: $ds-size-25;
+    width: 100%;
+    height: 25;
     border: round $primary;
     background: $panel;
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 #llm-view-ollama .output_textarea_small {
-    width: $ds-width-full;
-    height: $ds-size-6;
+    width: 100%;
+    height: 6;
     border: round $primary;
     background: $panel;
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 
 
 #llm-view-ollama .log_output_large {
-    width: $ds-width-full;
-    height: $ds-size-10;
+    width: 100%;
+    height: 10;
     border: panel $primary-darken-2;
     background: $background-darken-1;
 }
 
 
 .ollama-spacer {
-    height: $ds-size-1;
-    width: $ds-width-full;
+    height: 1;
+    width: 100%;
 }
 
 
 .ollama-button-bar {
     layout: horizontal;
     height: auto;
-    width: $ds-width-full;
-    margin: $ds-space-1 $ds-space-0;
+    width: 100%;
+    margin: 1 0;
     align-horizontal: center;
 }
 .ollama-button-bar Button {
-    width: $ds-width-fill;
-    margin: $ds-space-0 $ds-space-1;
+    width: 1fr;
+    margin: 0 1;
 }
 
 .ollama-actions-grid {
     layout: horizontal;
     height: auto;
     align-vertical: top;
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 
 .ollama-actions-column {
     layout: vertical;
-    width: $ds-width-fill;
+    width: 1fr;
     height: auto;
-    padding: $ds-space-1;
+    padding: 1;
     border: round $panel-lighten-1;
-    margin: $ds-space-0 $ds-space-1;
+    margin: 0 1;
 }
 .ollama-actions-column:first-of-type {
-    margin-left: $ds-space-0;
+    margin-left: 0;
 }
 .ollama-actions-column:last-of-type {
-    margin-right: $ds-space-0;
+    margin-right: 0;
 }
 
 .column-title {
     text-style: bold underline;
-    width: $ds-width-full;
+    width: 100%;
     text-align: center;
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 
 
 .ollama-actions-column .input_action_container {
-    margin-bottom: $ds-space-1;
+    margin-bottom: 1;
 }
 .ollama-actions-column .full_width_button {
-    margin-top: $ds-space-0;
+    margin-top: 0;
 }
 
 
+
+
+
+#llamacpp-setup-view Button {
+    margin-right: $ds-space-inline;
+}
+#llamacpp-setup-view .llamacpp-status {
+    color: $ds-text-muted;
+    margin-bottom: $ds-space-stack;
+}
+
+
+#llamacpp-setup-view .llamacpp-preview-actions Button {
+    width: 1fr;
+    min-width: 0;
+}
+#llamacpp-preview-command,
+#llamacpp-current-launch {
+    height: auto;
+    color: $text;
+    margin-bottom: $ds-space-stack;
+}
 
 /* ===== MODULE: features/_tools-settings.tcss ===== */
 

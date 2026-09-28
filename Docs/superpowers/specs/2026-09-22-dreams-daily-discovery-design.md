@@ -501,6 +501,7 @@ lands — keeps each plan reviewable).
 
 - **Guardian × Dreams wellbeing tie-in**
   ([TASK-33126](../../../backlog/tasks/task-33126%20-%20Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md)):
+  ([TASK-33082](../../../backlog/tasks/task-33150%20-%20Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md)):
   bidirectional port with tldw_server's Guardian self-monitoring —
   trend/topic/fixation analysis over configured "topics of consideration"
   surfacing humane course-correct notices; Dreams' interest profile and
