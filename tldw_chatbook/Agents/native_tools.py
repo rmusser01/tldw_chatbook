@@ -80,7 +80,7 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "together",
         "fireworks",
         "cerebras",
-        # TASK-33126: the doc-derived presets; each provider documents
+        # TASK-33201: the doc-derived presets; each provider documents
         # OpenAI-shaped tools/tool_choice on Chat Completions.
         "sambanova",
         "nvidia",

@@ -174,7 +174,7 @@ class ProviderRecord:
     response_allowances: frozenset[str] = frozenset()
     choice_allowances: frozenset[str] = frozenset()
     message_allowances: frozenset[str] = frozenset()
-    # Streamed-usage contract (TASK-33126). Strict records fail a stream that
+    # Streamed-usage contract (TASK-33201). Strict records fail a stream that
     # ends without usage, and OpenAI-semantics providers only send streamed
     # usage when asked: ``stream_include_usage`` adds
     # ``stream_options: {"include_usage": true}`` to streaming payloads.
@@ -184,7 +184,7 @@ class ProviderRecord:
     # send byte-identical payloads.
     stream_include_usage: bool = False
     stream_usage_optional: bool = False
-    # Provider status envelope (TASK-33126): the top-level object some
+    # Provider status envelope (TASK-33201): the top-level object some
     # providers attach to every body/stream event (MiniMax ``base_resp``).
     # A nonzero ``status_code`` is a provider error even when ``choices``
     # look valid, so the engine checks it before normalizing anything.
@@ -336,7 +336,7 @@ CEREBRAS = ProviderRecord(
     auth_scheme="bearer",
 )
 
-# --- Doc-derived inference-cloud presets (TASK-33126) ---
+# --- Doc-derived inference-cloud presets (TASK-33201) ---
 # Six more strict engine presets. Unlike Together/Fireworks/Cerebras, these
 # records are derived from each provider's PUBLIC DOCUMENTATION (read
 # 2026-09-27; no keys, no captured fixtures). Every allowance below is a

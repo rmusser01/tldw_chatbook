@@ -71,7 +71,7 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         "Together",
         "Fireworks",
         "Cerebras",
-        # TASK-33126: doc-derived presets with a /models route (MiniMax
+        # TASK-33201: doc-derived presets with a /models route (MiniMax
         # documents none and is seeded instead).
         "SambaNova",
         "NVIDIA",

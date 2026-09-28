@@ -84,7 +84,7 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         # Fireworks served-path base (the engine preset's default URL,
         # ADR-179 Phase 2); models live at /inference/v1/models.
         "/inference/v1",
-        # DeepInfra's OpenAI-compatible base (TASK-33126); models live at
+        # DeepInfra's OpenAI-compatible base (TASK-33201); models live at
         # /v1/openai/models.
         "/v1/openai",
     }
@@ -418,7 +418,7 @@ def supports_openai_compatible_model_discovery(
     provider_key = _normalized_provider_identity(provider_identity)
     record = RECORDS_BY_KEY.get(provider_key)
     if record is not None and record.discovery_route is None:
-        # Seeded-only preset (TASK-33126, MiniMax): no documented models
+        # Seeded-only preset (TASK-33201, MiniMax): no documented models
         # route, so never probe an unlisted URL.
         return False
     if provider_key == _QWENCLOUD_PROVIDER_KEY:

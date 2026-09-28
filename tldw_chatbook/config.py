@@ -4271,7 +4271,7 @@ Databricks = [] # Empty: model availability is workspace-dependent; fills via di
 Together = [] # Inference cloud: fills via /v1/models discovery or manual seeding
 Fireworks = [] # Inference cloud: fills via /inference/v1/models discovery or manual seeding
 Cerebras = [] # Inference cloud: fills via /v1/models discovery or manual seeding
-# Doc-derived inference clouds (TASK-33126); empty lists fill via discovery.
+# Doc-derived inference clouds (TASK-33201); empty lists fill via discovery.
 SambaNova = [] # fills via /v1/models discovery or manual seeding
 NVIDIA = [] # fills via /v1/models discovery or manual seeding
 DeepInfra = [] # fills via /v1/openai/models discovery or manual seeding
@@ -4529,7 +4529,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     retry_delay = 5.0
     streaming = true
 
-    # Doc-derived inference clouds (TASK-33126): same shape as above.
+    # Doc-derived inference clouds (TASK-33201): same shape as above.
     [api_settings.sambanova] # Matches key in [providers]
     api_key_env_var = "SAMBANOVA_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead

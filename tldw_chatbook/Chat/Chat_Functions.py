@@ -184,7 +184,7 @@ API_CALL_HANDLERS = {
     "together": _LazyHostedChatHandler(TOGETHER),
     "fireworks": _LazyHostedChatHandler(FIREWORKS),
     "cerebras": _LazyHostedChatHandler(CEREBRAS),
-    # Doc-derived inference-cloud presets (TASK-33126).
+    # Doc-derived inference-cloud presets (TASK-33201).
     "sambanova": _LazyHostedChatHandler(SAMBANOVA),
     "nvidia": _LazyHostedChatHandler(NVIDIA),
     "deepinfra": _LazyHostedChatHandler(DEEPINFRA),

@@ -1421,7 +1421,7 @@ class HostedPresetFinishPolicy:
 
 
 def raise_on_status_envelope(record: ProviderRecord, event: object) -> None:
-    """Fail on a nonzero provider status envelope (TASK-33126).
+    """Fail on a nonzero provider status envelope (TASK-33201).
 
     Some providers (MiniMax ``base_resp``) attach a status object to every
     body and stream event and report errors there even when ``choices`` looks

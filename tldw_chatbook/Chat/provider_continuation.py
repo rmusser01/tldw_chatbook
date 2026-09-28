@@ -39,7 +39,7 @@ ContinuationProvider = Literal[
     "together",
     "fireworks",
     "cerebras",
-    # TASK-33126 doc-derived presets.
+    # TASK-33201 doc-derived presets.
     "sambanova",
     "nvidia",
     "deepinfra",

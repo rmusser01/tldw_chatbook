@@ -171,9 +171,9 @@ class HostedChatStream(Iterator[dict[str, Any]]):
     ) -> None:
         self._records = records
         # Provider-specific check on each decoded event before parsing
-        # (TASK-33126: MiniMax status envelope); may raise ChatProviderError.
+        # (TASK-33201: MiniMax status envelope); may raise ChatProviderError.
         self._event_check = event_check
-        # A provider whose documented chunk schema has no usage (TASK-33126):
+        # A provider whose documented chunk schema has no usage (TASK-33201):
         # [DONE] without usage ends a usage-None turn; nothing else relaxes.
         self._usage_optional = usage_optional
         self._finish_policy = finish_policy

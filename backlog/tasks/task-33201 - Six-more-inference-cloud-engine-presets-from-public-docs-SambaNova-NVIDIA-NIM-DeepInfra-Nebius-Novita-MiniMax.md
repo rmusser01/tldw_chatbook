@@ -1,5 +1,5 @@
 ---
-id: TASK-33126
+id: TASK-33201
 title: >-
   Six more inference-cloud engine presets from public docs (SambaNova, NVIDIA
   NIM, DeepInfra, Nebius, Novita, MiniMax)
@@ -56,3 +56,7 @@ Qodo review (3 findings, all fixed): a nonzero MiniMax base_resp status alongsid
 
 Follow-up not done: capture_cloud.py cannot capture these yet (needs /models, sends no stream_options/extra body fields).
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Created as TASK-33126 on branch feat/inference-cloud-presets-2 (PR #2872). PR #2817 (Guardian x Dreams) landed TASK-33126 on dev first (2026-09-27 23:14 PT), so per the TASK-19601 owner rule (older arrival keeps the id) this task renumbered to TASK-33201 -- the first id above every id on origin/dev (max 33162), open remote branches (33165/33175/33200) and local worktrees (33163-33165/33200) on 2026-09-28.
