@@ -434,6 +434,10 @@ class ArtifactsScreen(BaseAppScreen):
         return getattr(self.app_instance, "collections_capture_scope_service",
                        None)
 
+    def _dreams_track_service(self) -> Any:
+        """The app's local watchlists service (the Dreams track seam), or None."""
+        return getattr(self.app_instance, "local_watchlists_service", None)
+
     def _open_dreams_story_row(self, widget_id: str) -> None:
         """Push the story modal for one dreams row (story or synthetic).
 
@@ -465,6 +469,10 @@ class ArtifactsScreen(BaseAppScreen):
                 # the runtime source activated, and composes the capture
                 # services on first use (they are deferred at boot).
                 capture_backend_getter=self._dreams_capture_scope,
+                # Phase 2 Task 3: the track action's seam -- the app's
+                # local watchlists service, resolved lazily so a runtime
+                # without it degrades the action to a notice.
+                subs_service_getter=self._dreams_track_service,
                 on_changed=self._start_dreams_refresh,
             )
         )
