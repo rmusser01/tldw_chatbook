@@ -16,12 +16,15 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderToolCalls,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
+    MAX_THINKING_ENVELOPE_BYTES,
+    MAX_THINKING_TEXT_BYTES,
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
     ThinkingBlock,
     ThinkingEnvelope,
     ThinkingEnvelopeValidationError,
     ThinkingStatus,
+    canonical_json_text_bytes,
     dump_thinking_blocks_json,
 )
 
@@ -98,6 +101,11 @@ class ThinkingCapture:
         self._boundary_reached = False
         self._collapsed_block_ids: set[str] = set()
         self._terminal_outcome: ThinkingStatus | None = None
+        # task-33081: exact running totals for the incremental text-append
+        # path -- raw UTF-8 for the per-block validator cap, canonical JSON
+        # bytes for the envelope cap. See observe_thinking_delta.
+        self._append_text_bytes: int | None = None
+        self._envelope_canonical_bytes = 0
 
     def snapshot(self) -> ThinkingCaptureUpdate:
         """Return the current process-local projection without changing it."""
@@ -136,7 +144,7 @@ class ThinkingCapture:
                 status="complete",
                 text=event.text,
             )
-            blocks = (*self._blocks, candidate)
+            self._install((*self._blocks, candidate))
         elif isinstance(current, DisplayableThinkingBlock) and (
             current.provider,
             current.model,
@@ -148,14 +156,40 @@ class ThinkingCapture:
             event.protocol,
             event.source_format,
         ):
-            try:
-                candidate = replace(current, text=current.text + event.text)
-            except ThinkingEnvelopeValidationError:
+            # task-33081: a text-append cannot change the envelope's
+            # structure -- only the current block's text grows -- so the
+            # full canonical encode/parse/encode round-trip per delta (which
+            # made long reasoning streams quadratic) reduces to these exact
+            # incremental size checks. Structural changes still run the
+            # full validation in _install.
+            candidate_text = current.text + event.text
+            delta_bytes = len(event.text.encode("utf-8"))
+            if self._append_text_bytes is None:
+                self._append_text_bytes = len(current.text.encode("utf-8"))
+            append_total = self._append_text_bytes + delta_bytes
+            # Appending text to the last block grows the canonical document
+            # by exactly this delta's escaped contribution (JSON string
+            # escaping is context-free), so the envelope cap is enforced
+            # exactly -- no fixed structural reserve, no per-delta dump
+            # (Qodo round: both the earlier 128 KiB reserve, which rejected
+            # valid near-limit captures, and raw-byte counting, which let
+            # control-character streams overshoot the canonical cap).
+            envelope_total = (
+                self._envelope_canonical_bytes
+                + canonical_json_text_bytes(event.text)
+            )
+            if (
+                not candidate_text
+                or append_total > MAX_THINKING_TEXT_BYTES
+                or envelope_total > MAX_THINKING_ENVELOPE_BYTES
+            ):
                 self._capture_failed()
-            blocks = (*self._blocks[:-1], candidate)
+            self._append_text_bytes = append_total
+            self._envelope_canonical_bytes = envelope_total
+            candidate = replace(current, text=candidate_text)
+            self._blocks = (*self._blocks[:-1], candidate)
         else:
             self._capture_failed()
-        self._install(blocks)
         return self._evidence_update(candidate.block_id)
 
     def observe_proprietary_evidence(
@@ -275,10 +309,16 @@ class ThinkingCapture:
     def _install(self, blocks: tuple[ThinkingBlock, ...]) -> None:
         try:
             envelope = ThinkingEnvelope(blocks=blocks)
-            dump_thinking_blocks_json(envelope)
+            dump = dump_thinking_blocks_json(envelope)
         except ThinkingEnvelopeValidationError:
             self._capture_failed()
         self._blocks = blocks
+        # task-33081: refresh the incremental append-path counters exactly;
+        # this runs only on structural changes, not per text delta. The
+        # dump above is the canonical document itself, so its byte length
+        # IS the envelope total.
+        self._append_text_bytes = None
+        self._envelope_canonical_bytes = len(dump.encode("utf-8"))
 
     def _envelope(self) -> ThinkingEnvelope | None:
         return ThinkingEnvelope(self._blocks) if self._blocks else None

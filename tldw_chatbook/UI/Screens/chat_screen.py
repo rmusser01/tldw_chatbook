@@ -810,6 +810,11 @@ CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # call to notice -- needs its own slow repaint timer. 10s keeps the
 # countdown's staleness bound well under the 300s cache TTL it is watching.
 CONSOLE_COST_TTL_TICK_SECONDS = 10.0
+# task-33081: during active streams the settings context estimate ran on
+# every 0.2s tick, re-tokenizing the entire growing streamed reply (the
+# token memo cannot hit while the content keeps changing). 1s staleness on
+# an estimate chip -- same spirit as the cost tick's 10s bound above.
+CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS = 1.0
 # task-13 (Console Inspector environment redesign): cadence for the
 # Environment panel's LOCAL tier (git status + the mtime-cached backlog
 # scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
@@ -8200,6 +8205,8 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_settings_context_estimate_for_session(session_id)
 
+    _console_estimate_cache: tuple[tuple[object, ...], float, Any] | None = None
+
     def _console_settings_context_estimate_for_session(
         self,
         session_id: str,
@@ -8212,6 +8219,33 @@ class ChatScreen(BaseAppScreen):
         if settings is None:
             raise KeyError(session_id)
         include_active_staging = store.active_session_id == session_id
+        try:
+            session_messages = store.messages_for_session(session_id)
+        except KeyError:
+            session_messages = []
+        composer = self._console_composer_or_none() if include_active_staging else None
+        draft_text = composer.draft_text() if composer is not None else ""
+        # task-33081: brief TTL so active streams stop re-tokenizing the
+        # whole growing reply every 0.2s tick; key changes (new message,
+        # settings revision, draft edit) still recompute immediately.
+        # Qodo round: length alone conflates equal-length draft edits, and
+        # launch-context presence alone conflates different staged bundles;
+        # fold in cheap content identities (str hash, object identity).
+        estimate_cache_key = (
+            session_id,
+            len(session_messages),
+            store.session_settings_revision(session_id),
+            hash(draft_text),
+            id(self._pending_console_launch_context),
+        )
+        now = time.monotonic()
+        cached_estimate = self._console_estimate_cache
+        if (
+            cached_estimate is not None
+            and cached_estimate[0] == estimate_cache_key
+            and now - cached_estimate[1] < CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+        ):
+            return cached_estimate[2]
         workspace_context = (
             self._workspace._current_console_workspace_context()
             if include_active_staging
@@ -8221,12 +8255,7 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context if include_active_staging else None
         )
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        try:
-            session_messages = store.messages_for_session(session_id)
-        except KeyError:
-            session_messages = []
         greeting = ""
-        composer = self._console_composer_or_none() if include_active_staging else None
         if include_active_staging:
             controller = self._ensure_console_chat_controller()
             history = spend.build_console_spend_history_projection(
@@ -8239,12 +8268,12 @@ class ChatScreen(BaseAppScreen):
             messages = spend.build_console_context_messages(
                 session_messages,
                 history.request_ids,
-                composer.draft_text() if composer is not None else "",
+                draft_text,
             )
             greeting = controller._seeded_greeting_text(session_id, session_messages)
         else:
             messages = spend.build_console_context_messages(session_messages, None, "")
-        return build_console_context_estimate(
+        estimate = build_console_context_estimate(
             messages,
             settings.provider,
             settings.model,
@@ -8268,6 +8297,8 @@ class ChatScreen(BaseAppScreen):
             staged_text=console_prompted_evidence_text(pending_launch),
             context_window=self._ensure_console_provider_gateway().cached_context_window(settings),
         )
+        self._console_estimate_cache = (estimate_cache_key, now, estimate)
+        return estimate
 
     def _active_console_context_control_state(
         self,
@@ -21053,22 +21084,28 @@ class ChatScreen(BaseAppScreen):
         def schedule() -> None:
             from tldw_chatbook.config import get_canvas_config_policy
 
-            policy = get_canvas_config_policy()
-            if (
-                not self._console_runtime().canvas_enabled()
-                or not policy.auto_open_on_create
-            ):
+            if not self._console_runtime().canvas_enabled():
                 return
             gateway = self._console_runtime().canvas_gateway
             if gateway is not None and gateway.has_browser_session_for(session_id):
                 return
-            self.run_worker(
-                self._open_console_canvas_selection(
+
+            async def open_when_policy_allows() -> None:
+                # task-33081: policy resolution can fall back to the OS
+                # keyring (remote web_server token) -- never resolve it on
+                # the UI event loop that runs this worker.
+                policy = await asyncio.to_thread(get_canvas_config_policy)
+                if not policy.auto_open_on_create:
+                    return
+                await self._open_console_canvas_selection(
                     session_id=session_id,
                     canvas_id=info.canvas_id,
                     revision_id=info.revision_id,
                     follow_latest=True,
-                ),
+                )
+
+            self.run_worker(
+                open_when_policy_allows(),
                 exclusive=True,
                 group="console-canvas-auto-open",
             )

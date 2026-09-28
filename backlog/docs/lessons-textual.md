@@ -1231,3 +1231,24 @@ the loop was when it crossed the threshold. That pinpoints a single long call
 representative point: the first live capture named
 `Backup_Recovery.native_files.pinned_directory` during boot, which is cheap
 syscalls inside a longer synchronous stretch.
+
+
+## A raising `exit_on_error=False` worker surfaces as a missing widget, not an error
+
+**TASK-33081, settings category swap, 2026-09-23.** An off-loop config
+refresh added to a pane-swap path passed `reload=True` POSITIONALLY through
+`asyncio.to_thread` to the keyword-only `get_image_generation_config` -- a
+`TypeError` raised inside an `exit_on_error=False` worker. The worker's
+`finally` still cleared the swap-pending flag, so the swap looked settled,
+the panes simply never recomposed, and 16 settings tests failed with bare
+`NoMatches` while captured logs showed no traceback at all. Surfacing it
+required calling the worker's coroutine DIRECTLY outside the worker and
+reading the raise.
+
+**What to do.** When a worker-driven rebuild silently produces nothing,
+invoke the worker's coroutine directly in a repro before reading anything
+into the compose path. Treat `asyncio.to_thread(fn, <scalar>)` as a smell
+for keyword-only APIs, and give test doubles the real keyword-only
+signatures. Any awaited off-loop work inserted into a swap/compose chain
+also needs helpers to WAIT for the swap's settle flag rather than assume a
+single pause covers it.
