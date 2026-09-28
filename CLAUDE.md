@@ -154,9 +154,14 @@ at the same spot caused most User Guide sync conflicts in the 2026-09-27 CI spec
 
 These apply to admins too.
 
-- Re-sync a PR that is behind with `gh pr update-branch <n>` (or a local rebase plus push).
-  Then merge the moment the required check is green, because each merge to `dev` makes the
-  other ready PRs behind again.
+- Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local
+  `git rebase origin/dev` pushed with `--force-with-lease`. Never merge `dev` into the branch
+  (plain `gh pr update-branch` does exactly that). This is the owner's rule; a merge resolution
+  is where `dev` lines get silently dropped. Then merge the moment the required check is green,
+  because each merge to `dev` makes the other ready PRs behind again.
+- Re-sync only the PR you are about to merge, not every behind PR. Under strict, one PR merges
+  per CI cycle, so each extra re-sync is a full wasted run (2026-09-28: a watcher that re-synced
+  5-7 PRs after every merge spent 5-7 runs per merge).
 - `gh pr merge <n> --auto --merge` is allowed **only** when both hold:
   - Qodo has posted its review on the *current* head;
   - every thread on that head is addressed and resolved.
