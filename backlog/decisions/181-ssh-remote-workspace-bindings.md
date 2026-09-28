@@ -204,9 +204,10 @@ target is a warm call of about one round trip.
   one-shot behaviour exactly; `session_idle_s` (default 60) sets the idle
   close; `bundle_cache = false` disables the host cache (the bundle is then
   sent on every session start).
-- **Measured (2026-09-27, LAN Wi-Fi host, Python 3.13).** Warm `fs_read`
-  median 13.3 ms / p90 28.5 ms over 420 back-to-back calls, against a
-  same-window ICMP ping median of 9.4 ms (spike echo floor 7.5 ms; target
-  ≤ floor + 15 ms). A cache-hit session start costs 110–420 ms (median
-  192 ms), dominated by opening the ssh channel over the ControlMaster;
-  a miss costs ~500 ms. Both are paid once per run per binding.
+- **Measured (2026-09-27, LAN Wi-Fi host, Python 3.13, two runs).** Warm
+  `fs_read` median 13.3 ms / p90 28.5 ms (n=420; same-window ICMP ping
+  median 9.4 ms) and 14.8 ms / p90 127.3 ms (n=317; ping median 32.4 ms),
+  against a target of spike echo floor 7.51 ms + 15 ms. A cache-hit session
+  start took 110–422 ms (medians 192 ms and 367 ms over 5 starts per run),
+  dominated by opening the ssh channel over the ControlMaster; a cache miss
+  took 498 ms and 591 ms. Both are paid once per run per binding.

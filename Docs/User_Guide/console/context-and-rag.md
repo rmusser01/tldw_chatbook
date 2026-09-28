@@ -984,9 +984,8 @@ exports, and snapshots can retain bytes. Full details are in
   lifecycle: `control_persist`, `enable_multiplexing` (set `false` for
   per-call direct connections, e.g. where `ssh.exe` lacks ControlMaster),
   `connect_timeout_s`, and `max_concurrent_calls`; plus the per-run session
-  worker: `session_worker` (default `true`; `false` = one ssh exchange per
-  call), `session_idle_s` (default `60`), and `bundle_cache` (default
-  `true`; server-side worker cache in `$XDG_RUNTIME_DIR/tldw-worker/`).
+  keys `session_worker`, `session_idle_s`, and `bundle_cache` (see
+  [SSH workspace folders](#ssh-workspace-folders-remote-bindings)).
 - [Settings ▸ RAG](../settings/rag.md) — the profile that both auto- and
   manual Library RAG retrieval read for search mode and result depth.
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are

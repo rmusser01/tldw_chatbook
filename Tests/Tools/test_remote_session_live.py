@@ -99,11 +99,6 @@ def live() -> Iterator[SimpleNamespace]:
     home = _host('printf %s "$HOME"').strip()
     assert home.startswith("/"), home
     scratch = f"{home}/tldw-live-{uuid.uuid4().hex[:10]}"
-    _host(
-        f"mkdir -m 700 {shlex.quote(scratch)} && cd {shlex.quote(scratch)} && "
-        "printf 'alpha body\\n' > alpha.txt && mkdir sub && printf 'beta\\n' > sub/beta.md "
-        "&& mkdir pinroot && printf 'pin\\n' > pinroot/p.txt"
-    )
     state_dir = Path(f"/tmp/tl-live-{uuid.uuid4().hex[:6]}")
     state_dir.mkdir(mode=0o700)
     masters = SshMasterManager(state_dir=state_dir)
@@ -166,10 +161,18 @@ def live() -> Iterator[SimpleNamespace]:
             executor=executor, cache=cache, binding_id=binding_id, key=key, loc=loc
         )
 
-    loc0 = parse_remote_locator(f"ssh://{HOST}{scratch}")
-    masters.ensure_master(loc0)  # master spawn is not part of any measured number
     _artifact, compressed, _bootstrap = _bundle_payload()
     try:
+        # Every host-touching setup step sits inside the try, so a failure
+        # here (unreachable host, auth hiccup, timeout) still removes this
+        # fixture's own scratch dir and closes the masters below.
+        _host(
+            f"mkdir -m 700 {shlex.quote(scratch)} && cd {shlex.quote(scratch)} && "
+            "printf 'alpha body\\n' > alpha.txt && mkdir sub && printf 'beta\\n' > sub/beta.md "
+            "&& mkdir pinroot && printf 'pin\\n' > pinroot/p.txt"
+        )
+        loc0 = parse_remote_locator(f"ssh://{HOST}{scratch}")
+        masters.ensure_master(loc0)  # master spawn is not part of any measured number
         yield SimpleNamespace(
             home=home,
             scratch=scratch,
@@ -188,7 +191,10 @@ def live() -> Iterator[SimpleNamespace]:
         masters.close_all()
         shutil.rmtree(state_dir, ignore_errors=True)
         assert scratch.startswith(f"{home}/tldw-live-")
-        _host(f"rm -rf -- {shlex.quote(scratch)}", check=False)
+        try:  # best effort: an unreachable host must not mask the real error
+            _host(f"rm -rf -- {shlex.quote(scratch)}", check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
 
 @pytest.fixture(autouse=True)
