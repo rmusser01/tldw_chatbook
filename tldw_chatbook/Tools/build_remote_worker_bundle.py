@@ -57,6 +57,7 @@ import importlib
 import importlib.util
 import inspect
 import sys
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -584,6 +585,110 @@ _BUNDLE_TAIL_TEMPLATE = '''
 #: remote actually executed.
 BUNDLE_SHA256 = _enter_worker_exchange("{stamp}")
 '''
+
+
+# ---------------------------------------------------------------------------
+# Stage-1 loader (Task 4): sent through the fixed bootstrap; asks for the
+# bundle only on a cache miss.
+# ---------------------------------------------------------------------------
+
+_LOADER_SOURCE = r'''
+import hashlib, json, os, stat, sys, tempfile, types, zlib
+_in = sys.stdin.buffer
+_out = sys.stdout.buffer
+_MAGIC = b"TLDW-REMOTE-0001"
+_MAX_BUNDLE = 8 << 20
+_header_line = _in.readline(4096)
+if not _header_line.endswith(b"\n"):
+    sys.exit(3)
+_header = json.loads(_header_line)
+_hash = str(_header["hash"])
+if len(_hash) != 64 or any(c not in "0123456789abcdef" for c in _hash):
+    sys.exit(3)
+
+def _private_dir(path):
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077
+
+def _cache_dir():
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not _header.get("cache") or not base or not _private_dir(base):
+        return None
+    path = os.path.join(base, "tldw-worker")
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    except OSError:
+        return None
+    return path if _private_dir(path) else None
+
+def _read_cached(directory):
+    try:
+        fd = os.open(os.path.join(directory, _hash), os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            return None
+        data = handle.read(_MAX_BUNDLE + 1)
+    return data if hashlib.sha256(data).hexdigest() == _hash else None
+
+def _store(directory, data):
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, os.path.join(directory, _hash))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return
+    for name in os.listdir(directory):
+        if name != _hash and not name.startswith(".tmp-"):
+            try:
+                os.unlink(os.path.join(directory, name))
+            except OSError:
+                pass
+
+_dir = _cache_dir()
+_data = _read_cached(_dir) if _dir else None
+if _data is None:
+    _out.write(_MAGIC + b"NEED " + _hash.encode() + b"\n"); _out.flush()
+    _size_bytes = _in.read(4)
+    if len(_size_bytes) != 4:
+        sys.exit(3)
+    _size = int.from_bytes(_size_bytes, "big")
+    if _size > _MAX_BUNDLE:
+        sys.exit(3)
+    _data = _in.read(_size)
+    if hashlib.sha256(_data).hexdigest() != _hash:
+        sys.exit(3)
+    if _dir:
+        _store(_dir, _data)
+_module = types.ModuleType("tldw_remote_worker")
+sys.modules[_module.__name__] = _module
+exec(compile(zlib.decompress(_data), "tldw_remote_worker", "exec"), _module.__dict__)
+_out.write(_MAGIC + b"READY " + _module.BUNDLE_SHA256.encode() + b"\n"); _out.flush()
+sys.exit(_module.serve_session(_in, _out))
+'''
+
+
+def build_loader_text() -> str:
+    """Return the stage-1 loader source (stdlib-only, Python >= 3.10)."""
+    return _LOADER_SOURCE.lstrip("\n")
+
+
+def loader_payload() -> bytes:
+    """Return the zlib-compressed loader the bootstrap decompresses."""
+    return zlib.compress(build_loader_text().encode("utf-8"), 9)
 
 
 def build_bundle_text() -> str:
