@@ -72,6 +72,7 @@ separate screens.
 | [Set up and use Persona Buddy](buddy.md) | Select Migu, move and resize the companion, use Console voice, handle approvals, and troubleshoot. |
 | [Set up and manage your Personal Context Profile](settings/personal-context-profile.md) | Optional interviews, global/workspace context, agent proposals, synchronization boundaries, export, and removal. |
 | [Turn feeds into a scheduled Watchlist briefing](watchlists-quickstart.md) | A start-to-finish Console walkthrough: create feeds and a Watchlist, follow receipts, generate a briefing, schedule it every 24 hours, and verify the saved result. |
+| [Enable and use Dreams](dreams.md) | Turn on the opt-in daily discovery digest: `[dreams]` config keys, where stories surface (Artifacts ▸ Dreams), and the keep/dive/export/ingest/feedback actions. |
 | [Using OpenAI-compatible TTS servers](openai-compatible-tts.md) | Pointing text-to-speech at your own server (e.g. a local, keyless engine like pocket-tts) via Settings ▸ Speech & TTS; also covers the app-wide default voice profile and per-character voices. |
 
 **Note:** The "⌃\<digit\>" (or "F\<n\>") shown before each nav label is

@@ -75,7 +75,10 @@ class HostScreen(Screen):
 
 
 class Host(ConsolidatedCSSApp):
-    CSS_PATH: ClassVar = [CSS_DIR / "tldw_cli_modular.tcss"]
+    CSS_PATH: ClassVar = [
+        CSS_DIR / "tldw_cli_modular.tcss",
+        CSS_DIR / "screen_agentic_settings.tcss",
+    ]
 
     def __init__(self, reader, *, detail_class=PersonalContextProvenanceDetails):
         super().__init__()

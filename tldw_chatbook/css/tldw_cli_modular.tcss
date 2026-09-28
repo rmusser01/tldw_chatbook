@@ -3451,6 +3451,22 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 
+#mcp-inspector-test-result-raw > CollapsibleTitle {
+    width: $ds-width-full;
+    height: auto;
+    min-width: $ds-size-0;
+}
+
+#mcp-inspector-test-result-raw > Contents {
+    padding: $ds-space-0;
+}
+
+
+.mcp-compact #mcp-inspector-test-result-raw-scroll {
+    height: $ds-size-8;
+}
+
+
 #mcp-hub-grid.mcp-compact #mcp-hub-rail {
     width: $ds-fr-2;
     min-width: $ds-size-16;
@@ -5468,6 +5484,12 @@ StatCard:hover {
     max-height: $ds-size-9;
 }
 
+#settings-theme-row-status {
+    height: $ds-size-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 #settings-theme-card-column .settings-action-row {
     height: auto;
 }
@@ -5741,174 +5763,6 @@ StatCard:hover {
     SettingsThemeEditor .theme-preview-dark-ink { color: $ds-theme-preview-dark-ink !important; }
     SettingsThemeEditor .theme-preview-light-ink { color: $ds-theme-preview-light-ink !important; }
     SettingsThemeEditor .theme-preview-invalid { background: $ds-theme-preview-invalid !important; color: $ds-theme-preview-light-ink !important; }
-
-/* ===== MODULE: components/_settings_personal_context.tcss ===== */
-
-
-
-
-.personal-context-provenance,
-#personal-context-deleted-metadata {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    border: none;
-    padding: $ds-space-0;
-    margin-bottom: $ds-space-stack;
-}
-
-.personal-context-provenance-content {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    color: $ds-text-primary;
-}
-
-.personal-context-provenance CollapsibleTitle,
-#personal-context-deleted-metadata CollapsibleTitle {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    color: $ds-text-primary;
-    background: $ds-surface-panel;
-}
-
-.personal-context-provenance CollapsibleTitle:hover,
-#personal-context-deleted-metadata CollapsibleTitle:hover {
-    color: $ds-hover-fg;
-    background: $ds-hover-bg;
-}
-
-.personal-context-provenance CollapsibleTitle:focus,
-#personal-context-deleted-metadata CollapsibleTitle:focus {
-    color: $ds-focus-fg;
-    background: $ds-focus-bg;
-    text-style: bold underline;
-}
-
-#personal-context-settings-panel {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
-}
-
-#personal-context-status {
-    width: auto;
-    height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    text-style: bold;
-}
-
-.personal-context-toolbar {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    layout: grid;
-    grid-size: 2;
-    grid-columns: 1fr 1fr;
-    grid-gutter: 0 1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
-
-.personal-context-toolbar Button {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    margin: $ds-space-0;
-}
-
-.personal-context-scope-row {
-    height: auto;
-    min-height: $ds-size-3;
-}
-
-.personal-context-scope-row Select {
-    width: $ds-width-fill;
-    min-width: $ds-size-12;
-}
-
-#personal-context-record-list {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    max-height: $ds-size-10;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
-
-.personal-context-record-row {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    min-height: $ds-size-3;
-    margin: $ds-space-0;
-    text-align: left;
-}
-
-.personal-context-record-selected {
-    border-left: thick $accent;
-}
-
-#personal-context-editor {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    margin: $ds-space-1 $ds-space-0;
-}
-
-#personal-context-editor Input,
-#personal-context-editor Select {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
-
-#personal-context-editor-error {
-    color: $error;
-    height: auto;
-    min-height: $ds-size-1;
-}
-
-RecoveryPassphraseDialog {
-    align: center middle;
-}
-
-#personal-context-recovery-dialog {
-    width: $ds-size-60;
-    max-width: $ds-percent-92;
-    height: auto;
-    padding: $ds-space-1 $ds-space-2;
-    border: thick $accent;
-    background: $surface;
-}
-
-#personal-context-recovery-dialog Input {
-    width: $ds-width-full;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
-
-#personal-context-recovery-dialog .button-container {
-    width: $ds-width-full;
-    height: auto;
-    align: center middle;
-}
-
-#settings-workbench.settings-workbench-compact #personal-context-settings-panel {
-    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
-
-#settings-workbench.settings-workbench-compact .personal-context-toolbar {
-    grid-size: 1;
-    grid-columns: 1fr;
-    grid-gutter: 0;
-}
-
-#settings-workbench.settings-workbench-compact .personal-context-scope-row {
-    layout: vertical;
-}
-
-#settings-workbench.settings-workbench-compact .personal-context-scope-row .settings-input-label,
-#settings-workbench.settings-workbench-compact .personal-context-scope-row Select {
-    width: $ds-width-full;
-}
 
 /* ===== MODULE: components/_profile_interview.tcss ===== */
 
@@ -10991,6 +10845,37 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 
 /* ===== MODULE: features/_library_artifacts.tcss ===== */
 
+
+/* ===== MODULE: components/_settings_personal_context.tcss ===== */
+
+RecoveryPassphraseDialog {
+    align: center middle;
+}
+
+#personal-context-recovery-dialog {
+    width: $ds-size-60;
+    max-width: $ds-percent-92;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: thick $accent;
+    background: $surface;
+}
+
+#personal-context-recovery-dialog Input {
+    width: $ds-width-full;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+#personal-context-recovery-dialog .button-container {
+    width: $ds-width-full;
+    height: auto;
+    align: center middle;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-scope-row .settings-input-label,
+#settings-workbench.settings-workbench-compact .personal-context-scope-row Select {
+    width: $ds-width-full;
+}
 
 /* ===== MODULE: features/_settings.tcss ===== */
 

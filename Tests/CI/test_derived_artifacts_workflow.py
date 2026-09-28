@@ -27,6 +27,7 @@ CHECKERS = (
     "scripts/check_profile_owned_path_inventory.py",
     "scripts/check_persistent_diagnostic_inventory.py",
     "scripts/check_backlog_task_ids.py",
+    "scripts/check_backlog_task_files.py",
     # TASK-20971. VALID_TABLES['chachanotes'] went stale, was repaired, and
     # went stale again 14.5 hours later; this is its authoring-time half.
     "scripts/check_schema_table_allowlist.py",
@@ -89,7 +90,8 @@ def test_required_aggregator_fails_when_either_lane_fails():
         verdict = next(
             step
             for step in job["steps"]
-            if step.get("name") == f"Require successful {'PR' if lane == 'pr-fast-lane' else 'UI'} fast lane"
+            if step.get("name")
+            == f"Require successful {'PR' if lane == 'pr-fast-lane' else 'UI'} fast lane"
         )
         assert verdict["if"] == (
             "${{ github.event_name == 'pull_request' && "
@@ -114,7 +116,8 @@ def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
     assert "strategy" not in job, "sharding would change the verified order"
 
     install = next(
-        step for step in job["steps"]
+        step
+        for step in job["steps"]
         if step.get("name") == "Install fast-lane dependencies"
     )["run"]
     assert "requirements-test.txt" not in install
@@ -122,7 +125,8 @@ def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
     assert ".[" not in install
 
     run = next(
-        step for step in job["steps"]
+        step
+        for step in job["steps"]
         if step.get("name") == "Run the gated Tests/UI slice"
     )["run"]
     assert "scripts/ui_pr_gate_census.txt" in run
@@ -186,9 +190,9 @@ def test_checker_steps_survive_an_earlier_failure():
     checker_steps = [step for step in _steps() if "python " in step.get("run", "")]
     assert len(checker_steps) == len(CHECKERS)
     for step in checker_steps:
-        assert "cancelled()" in str(step.get("if", "")), (
-            f"step {step.get('name')!r} would be skipped after an earlier failure"
-        )
+        assert "cancelled()" in str(
+            step.get("if", "")
+        ), f"step {step.get('name')!r} would be skipped after an earlier failure"
 
 
 def test_job_installs_nothing():

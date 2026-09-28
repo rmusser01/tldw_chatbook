@@ -251,7 +251,6 @@ CSS_MODULES = [
     # rules now live in _settings_splash_theme.tcss at this same manifest
     # position so cascade order is unchanged.
     "components/_settings_splash_theme.tcss",
-    "components/_settings_personal_context.tcss",
     "components/_profile_interview.tcss",
     # TASK-394: generic, app-wide component styles moved OUT of the splash/theme
     # module. Kept at this manifest position (immediately after it) so the
@@ -272,6 +271,7 @@ CSS_MODULES = [
     "features/_library.tcss",
     "features/_library_panels.tcss",
     "features/_library_artifacts.tcss",
+    "components/_settings_personal_context.tcss",
     "features/_settings.tcss",
     "features/_home.tcss",
     "features/_chat.tcss",
@@ -386,7 +386,9 @@ AGENTIC_SPLIT_SHEETS = {
 #: PR #2281 became moot when the console split was dissolved -- every
 #: console rule rides the boot bundle now -- and the settings pin moved to
 #: the settings split below.)
-SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label"})
+SETTINGS_SPLIT_PINNED_TOKENS = frozenset(
+    {"settings-input-label", "personal-context-recovery-dialog"}
+)
 
 _SPLIT_HEADER = """/* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
@@ -454,10 +456,17 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # `settings-input-label` pin is the original TASK-25812 one: it is
     # composed by Widgets/Persona_Widgets/personas_policy_rules_editor.py,
     # so its rule must ride the boot bundle, not the lazy settings sheet.
+    # Profile pane/provenance tokens are composed only by SettingsScreen
+    # through Widgets/Settings_Widgets/personal_context_panel.py and
+    # personal_context_provenance.py. Keep RecoveryPassphraseDialog's modal
+    # rules at boot; relocating the module crosses no identical selectors.
     ScreenOwnedSplit(
-        modules=("features/_settings.tcss",),
+        modules=(
+            "components/_settings_personal_context.tcss",
+            "features/_settings.tcss",
+        ),
         sheets={"settings": "screen_agentic_settings.tcss"},
-        prefixes={"settings": ("settings",)},
+        prefixes={"settings": ("settings", "personal-context")},
         pinned=SETTINGS_SPLIT_PINNED_TOKENS,
     ),
     # TASK-24459: 39.7 KB of the 40.5 KB module is `evals-*`-pure; the two

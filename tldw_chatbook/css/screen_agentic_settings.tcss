@@ -1,10 +1,10 @@
 /* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * settings-owned rules split out of features/_settings.tcss
+ * settings-owned rules split out of components/_settings_personal_context.tcss + features/_settings.tcss
  * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
  * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit features/_settings.tcss and re-run build_css.py.
+ * first paint. Edit components/_settings_personal_context.tcss + features/_settings.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -284,6 +284,145 @@ $ds-conversation-menu-width: 30;
 
 .tldw-agentic-split-preamble-end { }
 
+/* Canonical Settings > My Profile. Dense, text-labelled, narrow-safe controls. */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
+
+.personal-context-provenance,
+#personal-context-deleted-metadata {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    border: none;
+    padding: $ds-space-0;
+    margin-bottom: $ds-space-stack;
+}
+
+.personal-context-provenance-content {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    color: $ds-text-primary;
+}
+
+.personal-context-provenance CollapsibleTitle,
+#personal-context-deleted-metadata CollapsibleTitle {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.personal-context-provenance CollapsibleTitle:hover,
+#personal-context-deleted-metadata CollapsibleTitle:hover {
+    color: $ds-hover-fg;
+    background: $ds-hover-bg;
+}
+
+.personal-context-provenance CollapsibleTitle:focus,
+#personal-context-deleted-metadata CollapsibleTitle:focus {
+    color: $ds-focus-fg;
+    background: $ds-focus-bg;
+    text-style: bold underline;
+}
+
+#personal-context-settings-panel {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
+}
+
+#personal-context-status {
+    width: auto;
+    height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    text-style: bold;
+}
+
+.personal-context-toolbar {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-gutter: 0 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.personal-context-toolbar Button {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+}
+
+.personal-context-scope-row {
+    height: auto;
+    min-height: $ds-size-3;
+}
+
+.personal-context-scope-row Select {
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
+}
+
+#personal-context-record-list {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    max-height: $ds-size-10;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.personal-context-record-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+    text-align: left;
+}
+
+.personal-context-record-selected {
+    border-left: thick $accent;
+}
+
+#personal-context-editor {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    margin: $ds-space-1 $ds-space-0;
+}
+
+#personal-context-editor Input,
+#personal-context-editor Select {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+#personal-context-editor-error {
+    color: $error;
+    height: auto;
+    min-height: $ds-size-1;
+}
+
+#settings-workbench.settings-workbench-compact #personal-context-settings-panel {
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-toolbar {
+    grid-size: 1;
+    grid-columns: 1fr;
+    grid-gutter: 0;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-scope-row {
+    layout: vertical;
+}
 
 
 #settings-category-pane {

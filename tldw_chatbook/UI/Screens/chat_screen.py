@@ -8057,22 +8057,51 @@ class ChatScreen(BaseAppScreen):
     def consume_pending_vllm_console_intent(self) -> bool:
         """Apply one current verified vLLM target to the active session only."""
 
+        return self._consume_verified_console_intent(
+            HandoffChannel.VLLM_CONSOLE,
+            VllmConsoleIntent,
+            "vllm",
+            "_vllm_connection_owner",
+            owner_has_current_intent,
+        )
+
+    def consume_pending_llamacpp_console_intent(self) -> bool:
+        """Apply one current verified llama.cpp target to this session only."""
+
+        from ..Navigation.llamacpp_handoff import (
+            LlamaCppConsoleIntent,
+            owner_has_current_intent as llama_owner_has_current_intent,
+        )
+
+        return self._consume_verified_console_intent(
+            HandoffChannel.LLAMACPP_CONSOLE,
+            LlamaCppConsoleIntent,
+            "llama_cpp",
+            "_llamacpp_connection_owner",
+            llama_owner_has_current_intent,
+        )
+
+    def _consume_verified_console_intent(
+        self, channel, intent_type, provider, owner_attribute, current_intent
+    ) -> bool:
+        """Reuse the exact session adoption and compensation transaction."""
+
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return False
-        if store.release_recovery(HandoffChannel.VLLM_CONSOLE) is not None:
+        if store.release_recovery(channel) is not None:
             recovery_result = store.retry_release_recovery(
-                HandoffChannel.VLLM_CONSOLE,
+                channel,
                 automatic=False,
             )
             if recovery_result != "released":
                 self.app_instance.notify(
-                    "vLLM session handoff cleanup is still pending. It will "
+                    "verified provider session handoff cleanup is still pending. It will "
                     "retry on the next Console activation.",
                     severity="warning",
                 )
                 return False
-        claim = store.claim(HandoffChannel.VLLM_CONSOLE)
+        claim = store.claim(channel)
         if claim is None:
             return False
         session_store = None

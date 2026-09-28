@@ -39,6 +39,9 @@ from tldw_chatbook.Widgets.Settings_Widgets.personal_context_review_modal import
     ProposalReviewResult,
 )
 
+# Real config getters retain the private source selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 
 
@@ -236,7 +239,10 @@ class _Host(ConsolidatedCSSApp):
 
 
 class _ProvenanceHost(_Host):
-    CSS_PATH = str(CSS_DIR / "tldw_cli_modular.tcss")
+    CSS_PATH = [
+        CSS_DIR / "tldw_cli_modular.tcss",
+        CSS_DIR / "screen_agentic_settings.tcss",
+    ]
 
 
 @pytest.mark.asyncio

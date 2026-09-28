@@ -393,9 +393,11 @@ workspace URL without credentials in the URL, then correct
 timeout/retry/streaming types under **Advanced Config**. Test the draft again
 before saving.
 
-#### Inference clouds (Together, Fireworks, Cerebras)
+#### Inference clouds
 
-**Together**, **Fireworks**, and **Cerebras** are engine presets: each one is
+**Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** are
+engine presets: each one is
 a provider registry record served through the shared strict hosted-provider
 engine (the same path Databricks uses), not a per-provider adapter. There is
 no API mode selector for any of them.
@@ -405,13 +407,28 @@ no API mode selector for any of them.
 | **Together** | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
 | **Fireworks** | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
 | **Cerebras** | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+| **SambaNova** | `https://api.sambanova.ai/v1` | `SAMBANOVA_API_KEY` |
+| **NVIDIA NIM** | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` |
+| **DeepInfra** | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_API_KEY` |
+| **Nebius Token Factory** | `https://api.tokenfactory.nebius.com/v1` | `NEBIUS_API_KEY` |
+| **Novita AI** | `https://api.novita.ai/openai/v1` | `NOVITA_API_KEY` |
+| **MiniMax** | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` |
 
-All three are **discovery-first**: no models ship in the config because each
-account serves a different catalog. The provider model list starts empty —
-fill it with **Discover models** (an authenticated `GET {base}/models` that
-reuses the chat credential) or by seeding `[providers].Together` /
-`[providers].Fireworks` / `[providers].Cerebras` manually. Until a model is
-set, readiness blocks sends with the model named as the missing piece.
+All except MiniMax are **discovery-first**: no models ship in the config
+because each account serves a different catalog. The provider model list
+starts empty — fill it with **Discover models** (an authenticated
+`GET {base}/models` that reuses the chat credential) or by seeding the
+provider's `[providers]` entry (for example `[providers].Together`) manually.
+Until a model is set, readiness blocks sends with the model named as the
+missing piece. **MiniMax** documents no models route, so its list ships
+seeded with the models its API reference names (`MiniMax-M3`,
+`MiniMax-M2.7`, …) and is not refreshed automatically.
+
+SambaNova, NVIDIA NIM, DeepInfra, Nebius, Novita, and MiniMax were set up
+from each provider's public API documentation rather than from a recorded
+response, so an unexpected field in
+a real reply fails with a protocol error instead of being passed through.
+If that happens, please report the provider and the error.
 
 Function tools are exposed for the models that support them. Reasoning
 differs by provider: Together and Cerebras have no reasoning-effort control,
@@ -419,11 +436,23 @@ while **Fireworks keeps R1-family model reasoning private** — the server
 reasons behind its own API surface and does not stream it with the reply, so
 reasoning does not appear in transcripts (any `reasoning_content` the server
 does return gets Z.ai's private treatment: kept off the live stream). That is
-provider behavior, not the app dropping output.
+provider behavior, not the app dropping output. **NVIDIA NIM**, **Nebius**,
+**Novita**, and **MiniMax** reasoning models get the same private treatment;
+Novita and MiniMax are asked to return reasoning separately so it never
+leaks into the reply text as `<think>` tags. **SambaNova** documents reasoning
+inline as `<think>` text on non-streaming replies (streamed replies send it in
+a separate field, which is dropped); this preset does not split the inline
+form out of the reply text.
+
+**NVIDIA NIM** streams do not report token usage, so streamed NVIDIA replies
+show no token counts. Nebius and MiniMax treat a `content_filter` finish as
+a provider error rather than a partial reply.
+
+GitHub Models and Hyperbolic are not offered: both services retired their
+hosted inference APIs in 2026.
 
 If Test Provider reports invalid settings, keep exactly one canonical
-`[api_settings.together]` / `[api_settings.fireworks]` /
-`[api_settings.cerebras]` table, set the API key (or its env var), and leave
+`[api_settings.<provider>]` table (for example `[api_settings.together]`), set the API key (or its env var), and leave
 the shipped `api_base_url` unless your account documents a different one.
 Test the draft again before saving.
 
@@ -615,7 +644,11 @@ on one line: when the list is too narrow (e.g. at 80x24), the row keeps at
 least ten cells of the name and gives up the rest in this order — "overrides
 built-in" shortens to "overrides", then that marker goes, then the strip drops
 to three colours, then **launch** goes; **active** always stays. Only then is
-the name cut short with "…". Moving the
+the name cut short with "…". Whatever the highlighted row had to shorten or
+drop is spelled out on the line under the list — e.g. "launch default ·
+overrides built-in" — so it stays visible even when the preview card is
+scrolled out of view; the line is blank when the row already shows it all.
+Moving the
 highlight (mouse, **↑**/**↓** or **j**/**k**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
 dark/light · yours/shipped/built-in", the origin named once even for a
@@ -666,9 +699,16 @@ longer a registered theme (the "Launch default missing" case), Revert does not
 write it back: the label reads "Revert to \<theme\> (launch unchanged)" and
 the saved launch default stays as it is. The Revert button hides whenever
 pressing it would change nothing — its theme is already the one running and
-the launch default would not change (e.g. you switched back by hand). Toasts name what happened: Try says
+the launch default would not change (e.g. you switched back by hand). Switching back to a
+theme you used recently in this session (Revert, or returning to an earlier row) is
+faster than the first switch to it: the app keeps the styling it built for your last
+four themes. Toasts name what happened: Try says
 "Trying \<name\> for this
-session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
+session"; Use switches at once and saves the launch default in the
+background, then says "\<name\> is now your theme (was: \<previous\>)" (quitting
+waits for that save to finish; a Revert or palette switch right after Use
+drops that toast, since it no longer holds — and Revert, too, saves in the
+background and always lands after Use's save); if saving
 the launch default fails, Use still applies the theme for the session and
 says so ("\<name\> applied; the launch default was not saved") — nothing
 crashes and Revert stays available. If the save lands but the in-process
@@ -690,6 +730,20 @@ group shows a disabled "(none yet)" row instead. The themes folder is read in
 the background: the first time the picker opens, YOUR THEMES shows a disabled
 "Loading your themes…" row until the read finishes, and after a file action
 or Back from the editor the previous list stays up until the new one arrives.
+File actions (Save, Save as…, Rename, Delete, Import…, Export) also read and
+write in the background, so the screen stays responsive with many saved
+themes; they run one at a time, and a second one started meanwhile waits for
+the first — even one started after you left Theme and came back. Leaving
+Theme or quitting mid-action does not cut it short — including an action
+you confirmed in its dialog. Quitting waits up to five seconds in all for
+running file actions and the launch-default save together, and starts no new
+file action ("Theme file action not started: the app is quitting"). An action finishes only its own file once you have moved on
+(Back, or opened another theme): it does not change what the editor now shows,
+and if it would have needed a confirmation it skips it and says so ("Did not
+delete '\<name\>': the theme editor changed meanwhile. Delete it again.").
+Leaving the editor while a Save is still running does not ask about unsaved
+changes: Back and leaving wait for the Save, and stay in the editor, edits
+kept, if it fails (its toast says why) or asks to overwrite.
 **Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
 `_copy`. **Rename** and **Delete** ask first, and every theme dialog names

@@ -19,6 +19,9 @@ from tldw_chatbook.Widgets.Console.console_next_send_selection import (
     ConsoleNextSendSelectionResult,
 )
 
+# ChatScreen imports real config getters bound to the private bootstrap source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class _Screen:
     def __init__(self) -> None:

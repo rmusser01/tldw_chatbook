@@ -3,6 +3,7 @@
 Date: 2026-09-18
 
 Status: Accepted — written design approved; pre-implementation review corrections recorded 2026-09-18.
+Status: Proposed — design approved in conversation; written specification awaiting user review.
 
 Related tasks:
 
@@ -13,6 +14,8 @@ Related tasks:
 Amends presentation in ADR-083. Preserves ADR-010 local marks, ADR-085 receipt
 authority, ADR-069 including its September 7 capture amendment, ADR-097 trace
 disclosure, ADR-031 keyboard conventions and ADR-150 design tokens.
+authority, ADR-069 instruction disclosure, ADR-031 keyboard conventions and
+ADR-150 design tokens.
 
 ## Context
 
@@ -32,6 +35,7 @@ its underlying data requires. The user explicitly excludes the Inspector sidebar
    serialized compare-and-clear. A process-lifetime generation suffices for UI
    callbacks; timestamp equality alone is not a concurrency guard. Batch reads
    must cover the requested conversation IDs, not only the latest 100 marks.
+   Fence acknowledgement against a newer mark and changed target identity.
 2. Give Conversations and workspace chat rows a consistent compact visual and
    keyboard contract while retaining their existing ownership, ordering and
    bounded projections. Preserve subagent/progress information.
@@ -55,6 +59,7 @@ its underlying data requires. The user explicitly excludes the Inspector sidebar
    captured instruction access under ADR-069/097, and invalidate Safe/Full bodies
    across every trace-bearing view. Usage labels state actual estimate/coverage
    scope; call detail is never added twice to aggregate costs.
+   redaction and explicit Next Send disclosure authorities.
 6. Do not redesign the Inspector sidebar or globally change its glyphs as a
    side effect. Shared code edits must preserve that surface's behavior.
 
@@ -86,6 +91,8 @@ are required. Meaningful symbols must be qualified in supported terminal fonts
 and ASCII mode. The written specification has been approved; its source-backed
 review corrections are documented there. Implementation plans/notes must link
 this ADR. No implementation or live UX qualification is claimed by acceptance.
+and ASCII mode. The written specification must be reviewed before implementation
+planning, and implementation plans/notes must link this ADR.
 
 ## Links
 

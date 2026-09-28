@@ -432,6 +432,10 @@ from ..Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from ...Constants import TAB_CHAT
+from ..Navigation.llamacpp_handoff import (
+    LlamaCppDefaultIntent,
+    owner_has_current_intent as llama_owner_has_current_intent,
+)
 from ..Navigation.vllm_handoff import (
     VllmDefaultIntent,
     owner_has_current_intent,
@@ -3108,7 +3112,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
-        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent] | None = None
+        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None = None
         self._vllm_default_before_presentation: (
             _VllmDefaultPresentationSnapshot | None
         ) = None
@@ -13090,7 +13094,10 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return None
-        return store.release_recovery(HandoffChannel.VLLM_DEFAULT)
+        return (
+            store.release_recovery(HandoffChannel.VLLM_DEFAULT)
+            or store.release_recovery(HandoffChannel.LLAMACPP_DEFAULT)
+        )
 
     def _sync_vllm_default_recovery_widgets(self) -> None:
         """Expose surviving cleanup authority without leaking the handoff value."""
@@ -13207,14 +13214,30 @@ class SettingsScreen(BaseAppScreen):
         if self._vllm_default_claim is None and self._vllm_default_recovery() is None:
             return False
         self.app.notify(
-            "Finishing verified vLLM handoff. Settings actions are temporarily "
+            "Finishing verified provider handoff. Settings actions are temporarily "
             "unavailable.",
             severity="warning",
         )
         return True
 
     def _consume_pending_vllm_default_intent(self) -> bool:
-        """Stage one current verified target in Providers without saving it."""
+        """Stage one current verified vLLM target without saving it."""
+        return self._consume_verified_default_intent(
+            HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent, "vllm",
+            "_vllm_connection_owner", owner_has_current_intent,
+        )
+
+    def _consume_pending_llamacpp_default_intent(self) -> bool:
+        """Stage one current verified llama.cpp target without saving it."""
+        return self._consume_verified_default_intent(
+            HandoffChannel.LLAMACPP_DEFAULT, LlamaCppDefaultIntent, "llama_cpp",
+            "_llamacpp_connection_owner", llama_owner_has_current_intent,
+        )
+
+    def _consume_verified_default_intent(
+        self, channel, intent_type, provider, owner_attribute, current_intent
+    ) -> bool:
+        """Reuse the staged draft and exact-claim compensation transaction."""
 
         if self._vllm_default_claim is not None:
             return False
@@ -13252,14 +13275,14 @@ class SettingsScreen(BaseAppScreen):
                 self._snapshot_vllm_default_presentation()
             )
             self._vllm_default_claim = cast(
-                HandoffClaim[VllmDefaultIntent], claim
+                HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent], claim
             )
             self._vllm_default_release_retry_scheduled = False
             self._set_vllm_default_compensation_fence(True)
-            self._stage_provider_value("provider", "vllm")
+            self._stage_provider_value("provider", provider)
             self._stage_provider_value("model", intent.model_id)
             self._stage_provider_value("endpoint", intent.api_url)
-            self._sync_provider_manual_widget("vllm")
+            self._sync_provider_manual_widget(provider)
             model_input = self.query_one("#settings-model-value", Input)
             endpoint_input = self.query_one(
                 "#settings-provider-endpoint-value", Input
@@ -13313,31 +13336,40 @@ class SettingsScreen(BaseAppScreen):
 
     def _acknowledge_vllm_default_intent(
         self,
-        claim: HandoffClaim[VllmDefaultIntent],
-        intent: VllmDefaultIntent,
+        claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent],
+        intent: VllmDefaultIntent | LlamaCppDefaultIntent,
     ) -> None:
         """Acknowledge only after the staged draft and widgets reached a paint."""
 
         store = getattr(self.app_instance, "pending_handoffs", None)
-        draft = self._provider_draft()
         try:
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
+            llama = type(intent) is LlamaCppDefaultIntent
+            provider = "llama_cpp" if llama else "vllm"
+            owner = getattr(
+                self.app_instance,
+                "_llamacpp_connection_owner" if llama else "_vllm_connection_owner",
+                None,
+            )
+            current_intent = (
+                llama_owner_has_current_intent if llama else owner_has_current_intent
+            )
+            values = self._provider_setting_values_mapping()
             if (
                 type(store) is not PendingHandoffStore
                 or self._vllm_default_claim is not claim
                 or not self.is_mounted
-                or not owner_has_current_intent(owner, intent)
-                or draft is None
-                or draft.values.get("provider") != "vllm"
-                or draft.values.get("model") != intent.model_id
-                or draft.values.get("endpoint") != intent.api_url
+                or not current_intent(owner, intent)
+                or values.get("provider") != provider
+                or values.get("model") != intent.model_id
+                or values.get("endpoint") != intent.api_url
+                or self._provider_widget_value() != provider
                 or self.query_one("#settings-model-value", Input).value
                 != intent.model_id
                 or self.query_one("#settings-provider-endpoint-value", Input).value
                 != intent.api_url
                 or not store.acknowledge_current(claim)
             ):
-                raise RuntimeError("vLLM Settings handoff changed before render")
+                raise RuntimeError("verified provider Settings handoff changed before render")
         except BaseException:
             self._rollback_vllm_default_intent(claim=claim)
             return
@@ -13358,7 +13390,7 @@ class SettingsScreen(BaseAppScreen):
     def _rollback_vllm_default_intent(
         self,
         *,
-        claim: HandoffClaim[VllmDefaultIntent] | None = None,
+        claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None = None,
     ) -> None:
         """Restore the prefill draft and release only this exact claim."""
 
@@ -24403,6 +24435,12 @@ class SettingsScreen(BaseAppScreen):
             return True
         if not editor.is_modified:
             return True
+        if editor.save_in_flight:
+            # Review M-4: these edits are being saved -- wait for that, not a
+            # prompt. A refused or failed Save (it said why) or one waiting
+            # on its overwrite confirmation keeps them: stay.
+            await editor.save_settled()
+            return not editor.is_modified
         if self._theme_leave_in_progress or isinstance(self.app.screen, ThemeLeaveModal):
             # One prompt at a time: a category-leave (or earlier navigation)
             # prompt is already asking about these edits; stay put.
@@ -24415,7 +24453,7 @@ class SettingsScreen(BaseAppScreen):
         if choice == "cancel":
             return False
         if choice == "save":
-            editor.on_save_theme()
+            await editor.save_theme()
             return not editor.is_modified
         # TASK-33060: Discard undoes the Try before the leave/quit proceeds;
         # a clean leave relies on the editor's unmount (review I-1).
@@ -24452,6 +24490,10 @@ class SettingsScreen(BaseAppScreen):
         if not editor.is_modified:
             pane.show_picker()
             return
+        if editor.save_in_flight:
+            # Review M-4: the Save returns to the picker itself once written,
+            # or says why not and keeps the edits.
+            return
         self.run_worker(
             self._confirm_theme_back(pane, editor),
             group="settings-theme-back",
@@ -24466,7 +24508,7 @@ class SettingsScreen(BaseAppScreen):
         if choice == "cancel":
             return
         if choice == "save":
-            editor.on_save_theme()
+            await editor.save_theme()
             if editor.is_modified:
                 return  # refused name or pending overwrite confirmation: stay
         else:
@@ -24484,7 +24526,17 @@ class SettingsScreen(BaseAppScreen):
         """Save / Discard / Stay before an edited theme is remounted away (TASK-32941)."""
 
         try:
-            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+            try:
+                saving = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+            except QueryError:
+                saving = None
+            if saving is not None and saving.save_in_flight:
+                # Review M-4: wait for the Save, not a prompt; stay if it did
+                # not write (it said why).
+                await saving.save_settled()
+                choice = "cancel" if saving.is_modified else "discard"
+            else:
+                choice = await self.app.push_screen_wait(ThemeLeaveModal())
             if choice == "cancel":
                 return
             try:
@@ -24494,7 +24546,7 @@ class SettingsScreen(BaseAppScreen):
                     return
                 editor = None
             if choice == "save":
-                editor.on_save_theme()
+                await editor.save_theme()
                 if editor.is_modified:
                     # Save refused (bad name) or is waiting on its overwrite
                     # confirmation: stay so the edit is not lost.
@@ -24982,7 +25034,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return  # R38: the pane was torn down while the prompt was up
         # The editor's ThemesChanged(highlight=new) refreshes the picker.
-        editor.rename_user_theme(old, new)
+        editor.run_file_action(editor.rename_user_theme(old, new))
 
     @on(ThemePicker.ImportRequested)
     def handle_theme_import_requested(self, event: ThemePicker.ImportRequested) -> None:
@@ -25008,7 +25060,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         # R37: the editor's ThemesChanged(highlight=) refreshes the picker.
-        editor.import_theme(source)
+        editor.run_file_action(editor.import_theme(source))
 
     @on(SettingsThemeEditor.SaveAsRequested)
     def handle_theme_save_as_requested(
@@ -25032,7 +25084,7 @@ class SettingsScreen(BaseAppScreen):
             editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
         except QueryError:
             return
-        editor.save_as(new)
+        editor.run_file_action(editor.save_as(new))
 
     @on(SettingsThemeEditor.LaunchDefaultChanged)
     def handle_theme_launch_default_changed(
