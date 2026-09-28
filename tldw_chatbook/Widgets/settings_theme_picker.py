@@ -267,6 +267,11 @@ class ThemePicker(Vertical):
         # TASK-33069: the highlight from before the filter was typed, so
         # clearing it returns there instead of to row 1.
         self._prefilter_highlight: str | None = None
+        # Qodo 4118068766: the row the list fell back to because the filter
+        # hid the highlight. Still on it when the filter clears = the user
+        # never moved, so the pre-filter highlight wins; moved = theirs sticks.
+        self._filter_fallback: str | None = None
+        self._filtering = False
         self._scan_generation = 0
         self._pending_highlight: tuple[str, str | None] | None = None
         self._scanned = False
@@ -493,6 +498,8 @@ class ThemePicker(Vertical):
             (c for c in (highlight, self._prefilter_highlight, str(self.app.theme)) if c in ids),
             ids[0] if ids else None,
         )
+        if target != highlight:
+            self._filter_fallback = target
         if target is not None:
             lst.highlighted = lst.get_option_index(target)
         pending = self._pending_highlight
@@ -597,20 +604,29 @@ class ThemePicker(Vertical):
     @on(Input.Changed, "#settings-theme-filter")
     def _filter_changed(self, event: Input.Changed) -> None:
         event.stop()
-        filtering = bool(event.value.strip())
-        if filtering and self._prefilter_highlight is None:
+        if not event.value.strip():
+            self._end_filter()
+            return
+        if not self._filtering:
+            self._filtering = True
             self._prefilter_highlight = self.highlighted_id
+            self._filter_fallback = None
         self._render_list(self.highlighted_id)
-        if not filtering:
-            self._prefilter_highlight = None
+
+    def _end_filter(self) -> None:
+        """Re-list every theme once the filter is empty: back on the
+        pre-filter highlight, unless the user moved while filtering."""
+        moved = self.highlighted_id != self._filter_fallback
+        self._render_list(self.highlighted_id if moved else None)
+        self._prefilter_highlight = self._filter_fallback = None
+        self._filtering = False
 
     @on(Button.Pressed, "#settings-theme-clear-filter")
     def _clear_filter_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         with self.prevent(Input.Changed):
             self.query_one("#settings-theme-filter", Input).value = ""
-        self._render_list(None)
-        self._prefilter_highlight = None
+        self._end_filter()
         self.focus_list()
 
     @on(Input.Submitted, "#settings-theme-filter")

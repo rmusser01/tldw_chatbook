@@ -5,7 +5,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.content import Content
 from textual.theme import Theme
-from textual.widgets import Button, OptionList
+from textual.widgets import Button, Input, OptionList
 
 from Tests.private_profile import private_profile_test
 from Tests.textual_test_harness import IsolatedWidgetTestApp
@@ -1354,6 +1354,67 @@ async def test_clearing_a_no_match_filter_by_hand_falls_back_to_the_active_theme
         picker.query_one("#settings-theme-filter").value = ""
         await pilot.pause()
         assert picker.highlighted_id == str(app.theme)
+
+
+async def _filter_then_clear(pilot, picker, lst, *, move: bool):
+    """Highlight nord, filter it out, optionally move, then delete the
+    filter text by hand (Clear filter only shows on a no-match filter,
+    where nothing is highlighted to fall back from or move to)."""
+    lst.highlighted = lst.get_option_index("nord")
+    await pilot.pause()
+    field = picker.query_one("#settings-theme-filter", Input)
+    field.focus()
+    await pilot.press(*"textual")
+    await pilot.pause()
+    fallback = picker.highlighted_id
+    assert fallback not in (None, "nord")
+    moved_to = None
+    if move:
+        moved_to = next(
+            lst.get_option_at_index(i).id
+            for i in range(lst.option_count)
+            if lst.get_option_at_index(i).id not in (None, fallback)
+        )
+        lst.highlighted = lst.get_option_index(moved_to)
+        await pilot.pause()
+        field.focus()
+        await pilot.press("-")  # still filtering after the move
+        await pilot.pause()
+        assert picker.highlighted_id == moved_to
+    field.focus()
+    await pilot.pause()
+    await pilot.press(*["backspace"] * len(field.value))
+    await pilot.pause()
+    assert field.value == ""
+    return moved_to
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clearing_a_filter_returns_from_the_filtered_fallback(request, config_writes):
+    """Qodo 4118068766: the row the filter fell back to never outranks the
+    highlight from before the filter when the filter text is deleted."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        await _filter_then_clear(pilot, picker, lst, move=False)
+        assert picker.highlighted_id == "nord"
+        assert lst.highlighted == lst.get_option_index("nord")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clearing_a_filter_keeps_a_highlight_the_user_moved_to(request, config_writes):
+    """A row the user moved to while filtering is their choice: it stays
+    highlighted when the filter clears."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        moved_to = await _filter_then_clear(pilot, picker, lst, move=True)
+        assert picker.highlighted_id == moved_to
+        assert lst.highlighted == lst.get_option_index(moved_to)
 
 
 @pytest.mark.asyncio
