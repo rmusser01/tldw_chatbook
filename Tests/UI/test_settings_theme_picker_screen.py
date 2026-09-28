@@ -2103,3 +2103,76 @@ async def test_fifty_theme_files_are_scanned_off_the_ui_thread(request, monkeypa
         assert picker.highlighted_id == "mine07"
         assert len(scans) >= 3
         assert all(thread is not threading.main_thread() for thread in scans), scans
+
+
+# -- Critique #3 P3 wave (lane A) ---------------------------------------------
+
+
+async def _await_focus(host, pilot, widget_id):
+    for _ in range(40):
+        if host.focused is not None and host.focused.id == widget_id:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"focus is {getattr(host.focused, 'id', None)!r}, not {widget_id!r}")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rail_entry_focuses_the_theme_list_and_c_acts(request):
+    """TASK-33072 AC1: Enter on the Theme rail row lands in the list, so the
+    picker's keys work at once (c used to do nothing until F6/Tab)."""
+    from textual.widgets import Button
+
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _category(host, pilot, "Appearance")
+        host.screen.query_one("#settings-category-theme", Button).focus()
+        await pilot.press("enter")
+        await _await_focus(host, pilot, "settings-theme-list")
+        lst = host.screen.query_one("#settings-theme-list")
+        start = lst.highlighted
+        await pilot.press("j")
+        await pilot.pause(0.1)
+        assert host.focused is lst and lst.highlighted != start
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-editor-view"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rail_click_and_open_theme_focus_the_theme_list(request):
+    """TASK-33072 AC1: a rail click and Appearance > Open Theme both land in
+    the list."""
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _category(host, pilot, "Appearance")
+        await pilot.click("#settings-category-theme")
+        await _await_focus(host, pilot, "settings-theme-list")
+        await pilot.click("#settings-category-appearance")
+        await pilot.pause(0.3)
+        await pilot.click("#settings-appearance-open-theme")
+        await _await_focus(host, pilot, "settings-theme-list")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
+async def test_long_theme_names_stay_on_one_row_at_80x24(request, theme):
+    """TASK-33074: at 80x24 a long name used to push its colour strip onto a
+    second line; the name is truncated with an ellipsis instead."""
+    host = _host()
+    long_name = "modern_dark_dracula_copy_with_a_name_longer_than_any_list_row_at_this_size"
+    _saved_theme(host, long_name)
+    async with host.run_test(size=(80, 24)) as pilot:
+        host.theme = theme
+        await _highlight(host, pilot, long_name)
+        lst = host.screen.query_one("#settings-theme-list")
+        heights = lst._heights
+        for index in range(lst.option_count):
+            option = lst.get_option_at_index(index)
+            if option.id is not None:
+                assert heights[index] == 1, f"{option.id} wraps to {heights[index]} lines"
+        prompt = lst.get_option_at_index(lst.get_option_index(long_name)).prompt
+        assert prompt.plain.split("  ")[0].endswith("…")
+        assert "▮" in prompt.plain and "active" not in prompt.plain.split("  ")[0]

@@ -601,11 +601,15 @@ Theme now opens on a **picker**, not the editor. A **Filter themes** box
 narrows the list live, by display name or id. Below it, one grouped,
 scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then
 **TEXTUAL** (Textual's own built-ins) — each group's heading shows a count
-while you're filtering (e.g. "SHIPPED (12)"). Every row paints a seven-colour
+while you're filtering (e.g. "SHIPPED (12)"); the headings are bold, muted
+text, not greyed-out rows. Every row paints a seven-colour
 strip plus word markers, never colour alone: **active** on the theme running
 right now, **launch** on the configured launch default, and **overrides
 shipped** / **overrides textual** when one of your saved themes shadows a
-built-in name of the same id. Moving the highlight (mouse or **↑**/**↓**)
+built-in name of the same id. Each row stays on one line: when the list is
+too narrow for a long name (e.g. at 80x24), the name is cut short with "…"
+and its strip and markers stay. Moving the highlight (mouse, **↑**/**↓** or
+**j**/**k**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
 dark/light · yours/shipped/textual") and a live swatch preview — without
 touching the app you're actually using. The list takes all the height the
@@ -617,6 +621,9 @@ longer exists (its file was deleted or renamed outside the app), a notice
 appears above the list — "Launch default missing: \<id\> — Use any theme to
 fix it" — the same wording Appearance's summary row uses; using any theme
 clears it.
+
+Entering Theme — from the rail or Appearance's **Open Theme** — puts focus
+in the list, so these keys work at once.
 
 **Keys**, active while the list has focus: **Enter** (or the **Use this
 theme** button) — switch to the highlighted theme now *and* save it as the
@@ -632,8 +639,11 @@ shipped or Textual theme (Clone or New it first to make your own copy).
 While the list has focus the footer lists these keys; **F1** lists them too.
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
-match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
-starts from the theme you are running.
+match '\<text\>'" with a **Clear filter** button under it, the preview card
+is empty, and Enter does nothing; **New** (**n**) still works and starts from
+the theme you are running. Clearing the filter (the button, or deleting the
+text) returns the highlight to the theme you had before filtering, or else to
+the active theme.
 
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
@@ -701,8 +711,8 @@ name starting with a reserved prefix ("reserved name"), a symlinked or
 hard-linked file ("not a regular file"), or a second file claiming a name
 another file already holds ("duplicate of '\<name\>'"; the app uses the
 later file) — is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
-the reason as both a short label on the card and every disabled button's
-tooltip. It is listed even when its file name matches a shipped or Textual
+the reason as both a short label on the card — shown in place of the preview,
+which a broken file can't paint — and every disabled button's tooltip. It is listed even when its file name matches a shipped or Textual
 theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
 Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
 pressing one of their keys shows the reason instead. Only **Delete** works,

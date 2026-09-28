@@ -1240,3 +1240,119 @@ async def test_apply_scan_outcomes_set_availability_and_listing(request, config_
         assert picker.files_available is True and _yours(picker) == {"other"}
 
     await _mounted_picker(body)
+
+
+# -- Critique #3 P3 wave (lane A) ---------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unreadable_row_shows_its_error_in_place_of_the_preview(request, config_writes):
+    """TASK-33067: an unreadable row painted every preview row #808080 on
+    #808080 (1:1); the error line stands in for the preview instead."""
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: (set(), {"a": "bad colour"}))
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("unreadable:a")
+        await pilot.pause()
+        assert picker.query_one("#settings-theme-card-error").display
+        assert not picker.query_one(ThemePreview).display
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        assert picker.query_one(ThemePreview).display
+        assert not picker.query_one("#settings-theme-card-error").display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_no_match_filter_offers_clear_and_restores_the_previous_highlight(request, config_writes):
+    """TASK-33069: spec §9 Clear filter chip, no stale preview, and clearing
+    lands back on the theme highlighted before the filter -- not row 1."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("nord")
+        await pilot.pause()
+        clear = picker.query_one("#settings-theme-clear-filter", Button)
+        assert not clear.display
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"zzzqqq")
+        await pilot.pause()
+        assert clear.display
+        assert not picker.query_one(ThemePreview).display
+        assert str(picker.query_one("#settings-theme-card-title").render()) == ""
+        clear.press()
+        await pilot.pause()
+        assert picker.query_one("#settings-theme-filter").value == ""
+        assert picker.highlighted_id == "nord"
+        assert lst.highlighted == lst.get_option_index("nord")
+        assert picker.query_one(ThemePreview).display
+        assert not clear.display
+        assert app.focused is lst
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clearing_a_no_match_filter_by_hand_falls_back_to_the_active_theme(request, config_writes):
+    """TASK-33069 AC2: with no earlier highlight left to return to, clearing
+    lands on the active theme, not the first row (an unreadable file here)."""
+    picker = ThemePicker(id="settings-theme-picker", list_themes=lambda: (set(), {"a": "bad"}))
+    app = _app(picker)
+    for theme in ALL_THEMES:
+        app.register_theme(theme)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"zzzqqq")
+        await pilot.pause()
+        picker._prefilter_highlight = None  # nothing to return to
+        picker.query_one("#settings-theme-filter").value = ""
+        await pilot.pause()
+        assert picker.highlighted_id == str(app.theme)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_j_and_k_move_the_list_highlight(request, config_writes):
+    """TASK-33072 AC2."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.highlighted = lst.get_option_index("nord")
+        lst.focus()
+        await pilot.pause()
+        start = lst.highlighted
+        await pilot.press("j")
+        await pilot.pause()
+        assert lst.highlighted > start and picker.highlighted_id != "nord"
+        await pilot.press("k")
+        await pilot.pause()
+        assert lst.highlighted == start and picker.highlighted_id == "nord"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_row_truncates_only_the_name_to_fit(request):
+    """TASK-33074: the name gives way (ellipsis); strip and markers stay."""
+    from tldw_chatbook.Widgets.settings_theme_picker import _row
+
+    entry = tc.ThemeEntry(
+        id="x",
+        display_name="A Very Long Theme Name That Keeps Going",
+        origin="yours",
+        dark=True,
+        colours=tuple((key, "#112233") for key in tc.STRIP_KEYS),
+        is_active=True,
+        is_launch_default=False,
+    )
+    full = _row(entry).plain
+    assert full.startswith("A Very Long Theme Name That Keeps Going")
+    fitted = _row(entry, 30)
+    assert fitted.cell_len <= 30
+    assert "…" in fitted.plain and "▮" * len(tc.STRIP_KEYS) in fitted.plain and fitted.plain.endswith("active")
