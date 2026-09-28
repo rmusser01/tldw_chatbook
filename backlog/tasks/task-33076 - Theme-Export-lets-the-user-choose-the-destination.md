@@ -35,4 +35,6 @@ Critique #3 P3 (open since critique #2). Export always writes ~/Downloads/<name>
 
 <!-- SECTION:NOTES:BEGIN -->
 export_theme reads the file, then opens the name/path prompt prefilled with ~/Downloads/<name>_theme.toml. _export_target validates (path_validation.validate_browsing_path via the _typed_path helper shared with Import; .toml suffix; existing folder -- only the default Downloads may be created; not the themes folder; lstat refuses folders, links and non-regular files) inside the dialog and again after dismiss. Existing file -> the existing Overwrite confirmation. Tests monkeypatch Path.home to tmp dirs; the real ~/Downloads is never touched.
+
+P3 review fix (M1): the refuse-the-themes-folder check compared paths lexically, so `..`, a symlinked folder or a case-only spelling wrote into the themes folder. It now uses os.path.samefile (OSError -> not the same folder). test_export_refusals_show_in_the_prompt_and_write_nothing gained a `..` case and a symlinked-folder case (both fail on the old check).
 <!-- SECTION:NOTES:END -->

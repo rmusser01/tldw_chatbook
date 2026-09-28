@@ -598,7 +598,8 @@ Library readers after a successful save.
 ### Interface — Theme
 
 Theme now opens on a **picker**, not the editor. A **Filter themes** box
-narrows the list live, by display name or id. Below it, one grouped,
+narrows the list live, by theme name or id (not by group words such as
+"built-in" or "shipped" — the group headings already sort by those). Below it, one grouped,
 scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then
 **BUILT-IN** (the themes that come with the Textual framework) — each group's heading shows a count
 while you're filtering (e.g. "SHIPPED (12)"); the headings are bold, muted
@@ -610,11 +611,15 @@ theme of the same id. Two themes whose names read the same (Textual's
 `solarized-dark` and the shipped `solarized_dark`) are told apart by their
 origin — "Solarized Dark · built-in" and "Solarized Dark · shipped" — and
 only fall back to the id when both come from the same group. Each row stays
-on one line: when the list is too narrow for a long name (e.g. at 80x24), the
-name is cut short with "…" and its strip and markers stay. Moving the
+on one line: when the list is too narrow (e.g. at 80x24), the row keeps at
+least ten cells of the name and gives up the rest in this order — "overrides
+built-in" shortens to "overrides", then that marker goes, then the strip drops
+to three colours, then **launch** goes; **active** always stays. Only then is
+the name cut short with "…". Moving the
 highlight (mouse, **↑**/**↓** or **j**/**k**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
-dark/light · yours/shipped/built-in") and a live swatch preview — without
+dark/light · yours/shipped/built-in", the origin named once even for a
+name like "Solarized Dark · built-in") and a live swatch preview — without
 touching the app you're actually using. The list takes all the height the
 detail pane has (at full-screen sizes it no longer stops at 24 rows), and the
 highlighted row is filled in the theme's primary text colour as well as bold.
@@ -711,7 +716,8 @@ and either way, deleting a saved theme that reuses a shipped or built-in
 name (say `nord`) brings the original back. **Export** asks where to write
 the saved file, prefilled with `~/Downloads/<name>_theme.toml`. The path must
 be absolute, end in `.toml`, and be in a folder that already exists (only the
-Downloads folder is created if missing) other than the themes folder; a
+Downloads folder is created if missing) other than the themes folder — however
+it is spelled (`..`, a symlinked folder, a different letter case); a
 folder, symlink or other non-file at that path is refused. Each refusal shows
 inside the prompt, which keeps what you typed. An existing file is replaced
 only after an "Overwrite export" confirmation;

@@ -1727,7 +1727,13 @@ class SettingsThemeEditor(Vertical):
             return "Export needs a file name ending in .toml"
         if path.parent != self._default_export_dir() and not path.parent.is_dir():
             return "That folder does not exist"
-        if path.parent == self.custom_themes_path:
+        # Same folder, not same spelling: `..`, a symlinked config dir or a
+        # case-only difference must not route an export into the themes folder.
+        try:
+            into_themes = os.path.samefile(path.parent, self.custom_themes_path)
+        except OSError:  # either folder missing: they cannot be the same one
+            into_themes = False
+        if into_themes:
             return "Export to a folder other than the themes folder (Save as adds a theme)"
         try:
             info = os.lstat(path)

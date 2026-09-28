@@ -53,28 +53,56 @@ THEMES_LOADING_LABEL = "Loading your themes…"
 _SCAN_GROUP = "settings-theme-scan"
 
 
+def _bare_name(entry: ThemeEntry) -> str:
+    """The entry's label without the origin word a shared name carries.
+
+    build_catalog tells "Solarized Light" apart as "Solarized Light ·
+    built-in"; the card title already names the origin, and the filter
+    matches names only (P3 review M3/M4).
+    """
+    return entry.display_name.removesuffix(f" · {ORIGIN_LABELS[entry.origin]}")
+
+
+_MIN_NAME_CELLS = 10  # a narrow row keeps at least this much of the name
+
+
 def _row(entry: ThemeEntry, width: int | None = None) -> Text:
-    """One list row: name, colour strip, then the active/launch markers.
+    """One list row: name, colour strip, then the active/launch/overrides markers.
 
     Args:
         entry: The theme to show.
         width: The cells the row may take. When the whole row doesn't fit,
-            only the name gives way (ellipsis) so the row stays on one line
-            with its strip and markers (TASK-33074); None means no limit.
+            the tail gives way first, least important part first, until the
+            name keeps ``_MIN_NAME_CELLS`` (TASK-33074): "overrides built-in"
+            becomes "overrides", then goes, then the strip shrinks to three
+            swatches, then "launch" goes. "active" always stays. Only then
+            does the name take an ellipsis. None means no limit.
     """
-    tail = Text("  ")
-    for colour in entry.strip:
-        # entry.strip is always an uppercase #RRGGBB (theme_catalog._colour_hex
-        # resolves alpha hex and ANSI colour names before they reach here).
-        tail.append("▮", Style(color=colour))
-    markers = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
-    if entry.overrides:
-        markers.append(f"overrides {ORIGIN_LABELS[entry.overrides]}")
-    if markers:
-        tail.append("  " + " · ".join(markers))
-    name = Text(entry.display_name)
+    flags = [m for m, on_ in (("active", entry.is_active), ("launch", entry.is_launch_default)) if on_]
+    overrides = [f"overrides {ORIGIN_LABELS[entry.overrides]}"] if entry.overrides else []
+    strip = list(entry.strip)
+    tails = [(strip, flags + overrides)]
     if width is not None:
-        name.truncate(max(width - tail.cell_len, 1), overflow="ellipsis")
+        short = ["overrides"] if overrides else []
+        tails += [(strip, flags + short), (strip, flags), (strip[:3], flags), (strip[:3], ["active"] if entry.is_active else [])]
+
+    def build(colours: list[str], markers: list[str]) -> Text:
+        tail = Text("  ")
+        for colour in colours:
+            # entry.strip is always an uppercase #RRGGBB (theme_catalog._colour_hex
+            # resolves alpha hex and ANSI colour names before they reach here).
+            tail.append("▮", Style(color=colour))
+        if markers:
+            tail.append("  " + " · ".join(markers))
+        return tail
+
+    name = Text(entry.display_name)
+    if width is None:
+        return name + build(*tails[0])
+    need = min(name.cell_len, _MIN_NAME_CELLS)
+    built = [build(*t) for t in tails]
+    tail = next((t for t in built if t.cell_len + need <= width), built[-1])
+    name.truncate(max(width - tail.cell_len, 1), overflow="ellipsis")
     return name + tail
 
 
@@ -425,7 +453,10 @@ class ThemePicker(Vertical):
 
     def _render_list(self, highlight: str | None) -> None:
         query = self.query_one("#settings-theme-filter", Input).value.strip().casefold()
-        shown = [e for e in self.entries if not query or query in e.display_name.casefold() or query in e.id.casefold()]
+        # Names only, never origin words (P3 review M4): the group headers
+        # already sort by origin, and matching "built-in"/"shipped" would make
+        # every short query ("i", "p") list whole groups.
+        shown = [e for e in self.entries if not query or query in _bare_name(e).casefold() or query in e.id.casefold()]
         lst = self.query_one("#settings-theme-list", ThemeOptionList)
         width = lst.row_width()
         options: list[Option] = []
@@ -538,7 +569,7 @@ class ThemePicker(Vertical):
             title.update(entry.display_name)
         else:
             tone = "dark" if entry.dark else "light"
-            title.update(f"{entry.display_name}  ·  {tone} · {ORIGIN_LABELS[entry.origin]}")
+            title.update(f"{_bare_name(entry)}  ·  {tone} · {ORIGIN_LABELS[entry.origin]}")
         if preview.display:
             preview.paint(dict(entry.colours))
 

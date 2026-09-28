@@ -1120,6 +1120,7 @@ async def test_export_refusals_show_in_the_prompt_and_write_nothing(
     out = tmp_path_factory.mktemp("export-out")
     (out / "adir.toml").mkdir()
     (out / "link.toml").symlink_to(out / "target.toml")
+    (out / "themes-link").symlink_to(tmp_path, target_is_directory=True)
     editor = SettingsThemeEditor()
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1132,6 +1133,9 @@ async def test_export_refusals_show_in_the_prompt_and_write_nothing(
             (str(out / "x.txt"), "Export needs a file name ending in .toml"),
             (str(out / "missing" / "x.toml"), "That folder does not exist"),
             (str(tmp_path / "x.toml"), "Export to a folder other than the themes folder"),
+            # P3 review M1: other spellings of the themes folder are refused too.
+            (str(tmp_path / ".." / tmp_path.name / "x.toml"), "Export to a folder other than the themes folder"),
+            (str(out / "themes-link" / "x.toml"), "Export to a folder other than the themes folder"),
             (str(out / "adir.toml"), "Export needs a file name, not a folder or link"),
             (str(out / "link.toml"), "Export needs a file name, not a folder or link"),
         ]
@@ -1145,7 +1149,7 @@ async def test_export_refusals_show_in_the_prompt_and_write_nothing(
             assert error.display and reason in str(error.render()), typed
             assert str(out) not in str(error.render())  # R16
             assert field.value == typed
-        assert sorted(p.name for p in out.iterdir()) == ["adir.toml", "link.toml"]
+        assert sorted(p.name for p in out.iterdir()) == ["adir.toml", "link.toml", "themes-link"]
         assert not (out / "target.toml").exists()
         assert not (tmp_path / "x.toml").exists()
         assert not (home / "Downloads").exists()

@@ -35,4 +35,6 @@ Critique #3 P3. The group is titled 'TEXTUAL' (the framework's name), duplicate 
 
 <!-- SECTION:NOTES:BEGIN -->
 Picker group 'TEXTUAL' -> 'BUILT-IN'; theme_catalog.ORIGIN_LABELS maps textual -> 'built-in' and is used for the 'overrides ...' marker and the preview title's origin word (one-token edits in Lane A's picker file). build_catalog tells duplicate display names apart by origin word when unique (Solarized Dark · built-in / · shipped), falling back to the id within one origin. Rename/Export prompt titles and Delete/Replace/Overwrite confirmations show "'Display Name' (file.toml)" via _dialog_label/dialog_label (resolved through the one scan, R12). Tests + user guide updated.
+
+P3 review fixes (M3/M4): the card title repeated the origin for disambiguated names ('Solarized Dark · built-in  ·  dark · built-in'); it now uses _bare_name(entry), which strips the ' · <origin>' suffix. The filter matches that bare name and the id, not origin words: matching 'built-in'/'shipped' would make short queries ('i', 'p') list whole groups, and the headings already group by origin. Test: test_shared_name_shows_origin_once_and_filter_ignores_origin_words (fails on each half separately).
 <!-- SECTION:NOTES:END -->

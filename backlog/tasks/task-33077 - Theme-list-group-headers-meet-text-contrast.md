@@ -34,4 +34,6 @@ Critique #3 P3. Group headers render as disabled options at 2.54:1 (light) and 3
 
 <!-- SECTION:NOTES:BEGIN -->
 #settings-theme-list > .option-list--option-disabled is now $ds-text-muted, bold (was Textual's $text-disabled). This covers the group headers and the loading/none-yet placeholder rows, which are labels, not unavailable controls. Measured from compositor segments: Textual Dark 3.52 -> 6.77:1, Textual Light 2.59 -> 5.15:1. Test: test_theme_list_group_headers_meet_text_contrast (Tests/UI/test_settings_theme_card_contrast.py). Files: css/components/_settings_splash_theme.tcss, rebuilt tldw_cli_modular.tcss, settings.md.
+
+P3 review fix (M2): the contrast test still looked for 'TEXTUAL' (renamed BUILT-IN by TASK-33073) and only `assert seen`, so BUILT-IN — below the fold — was never measured. It now takes the titles from the picker's _GROUP_TITLES, scrolls a screenful at a time, and asserts every header was measured (old title list fails: 'headers never seen: TEXTUAL').
 <!-- SECTION:NOTES:END -->

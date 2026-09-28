@@ -34,4 +34,6 @@ Critique #3 P3. At 80x24 long names push the colour strip onto a second line. Ev
 
 <!-- SECTION:NOTES:BEGIN -->
 _row takes an optional width and truncates only the name (Rich Text.truncate, ellipsis) so the strip and markers stay. ThemeOptionList.row_width() is the content width minus the vertical scrollbar (always reserved: the catalog always overflows and a scrollbar appearing sends no Resize) and option padding; on resize the picker refits prompts in place (replace_option_prompt_at_index) rather than rebuilding the list, so a resize never moves the highlight or clears an export result. Test: test_long_theme_names_stay_on_one_row_at_80x24 (both Textual themes) plus test_row_truncates_only_the_name_to_fit. Files: settings_theme_picker.py, settings.md.
+
+P3 review fix (I2): an active, launch-default theme that overrides a built-in rendered at 80x24 as '…  ▮▮▮▮▮▮▮  active · launch · overrides built-in' and still wrapped. _row now has a width budget: the name keeps min(len, 10) cells and the tail gives way first — 'overrides <origin>' -> 'overrides' -> dropped -> strip 7 -> 3 swatches -> 'launch' dropped; 'active' never drops. Tests: test_row_tail_gives_way_before_the_name[32/26] and test_active_launch_overriding_theme_stays_on_one_row_at_80x24 (both fail on the pre-fix _row).
 <!-- SECTION:NOTES:END -->

@@ -2197,6 +2197,28 @@ async def test_long_theme_names_stay_on_one_row_at_80x24(request, theme):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_active_launch_overriding_theme_stays_on_one_row_at_80x24(request, monkeypatch):
+    """TASK-33074 (P3 review I2): a saved theme overriding a built-in, active
+    and the launch default, used to render as '…  ▮▮▮▮▮▮▮  active · launch ·
+    overrides built-in' and wrap. The tail gives way before the name does."""
+    from tldw_chatbook.Widgets import settings_theme_picker
+
+    monkeypatch.setattr(settings_theme_picker, "current_launch_default", lambda: "textual-dark")
+    host = _host()
+    _saved_theme(host, "textual-dark")
+    async with host.run_test(size=(80, 24)) as pilot:
+        host.theme = "textual-dark"
+        await _highlight(host, pilot, "textual-dark")
+        lst = host.screen.query_one("#settings-theme-list")
+        index = lst.get_option_index("textual-dark")
+        prompt = lst.get_option_at_index(index).prompt.plain
+        assert lst._heights[index] == 1, prompt
+        assert prompt.startswith("Textual D"), prompt
+        assert prompt.endswith("active · launch"), prompt
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_rename_to_taken_name_shows_error_in_dialog_and_keeps_input(request):
     from textual.widgets import Input
 

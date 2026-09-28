@@ -156,6 +156,28 @@ async def test_highlight_repaints_preview_not_app(request, config_writes):
         )
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_shared_name_shows_origin_once_and_filter_ignores_origin_words(request, config_writes):
+    """P3 review M3/M4: a name shared across origins is labelled "X · built-in";
+    the card title used to repeat the origin ("X · built-in  ·  light ·
+    built-in") and the filter "built" listed just those few rows."""
+    app, picker = await _picker_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _landed(app, pilot)
+        shared = next(e for e in picker.entries if e.display_name.endswith(" · built-in"))
+        lst = picker.query_one("#settings-theme-list", OptionList)
+        lst.focus()
+        lst.highlighted = lst.get_option_index(shared.id)
+        await pilot.pause()
+        title = str(picker.query_one("#settings-theme-card-title").render())
+        assert title.count("built-in") == 1, title
+        picker.query_one("#settings-theme-filter").focus()
+        await pilot.press(*"built")
+        await pilot.pause()
+        assert shared.id not in _option_ids(picker)
+
+
 def display_name_for(picker, theme_id):
     return next(e.display_name for e in picker.entries if e.id == theme_id)
 
@@ -1374,3 +1396,27 @@ async def test_row_truncates_only_the_name_to_fit(request):
     fitted = _row(entry, 30)
     assert fitted.cell_len <= 30
     assert "…" in fitted.plain and "▮" * len(tc.STRIP_KEYS) in fitted.plain and fitted.plain.endswith("active")
+
+
+@pytest.mark.parametrize("width", [32, 26])
+def test_row_tail_gives_way_before_the_name(width):
+    """P3 review I2: active + launch + overrides used to leave the name as a
+    bare ellipsis and still overflow the row. The tail shrinks first; the
+    name keeps a readable prefix and "active" never drops."""
+    from tldw_chatbook.Widgets.settings_theme_picker import _row
+
+    entry = tc.ThemeEntry(
+        id="textual-dark",
+        display_name="Textual Dark",
+        origin="yours",
+        dark=True,
+        colours=tuple((key, "#112233") for key in tc.STRIP_KEYS),
+        is_active=True,
+        is_launch_default=True,
+        overrides="textual",
+    )
+    assert _row(entry).plain.endswith("active · launch · overrides built-in")
+    fitted = _row(entry, width)
+    assert fitted.cell_len <= width, fitted.plain
+    assert fitted.plain.startswith("Textual D"), fitted.plain
+    assert "active" in fitted.plain
