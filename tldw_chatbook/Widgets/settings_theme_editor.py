@@ -1422,19 +1422,39 @@ class SettingsThemeEditor(Vertical):
             )
         )
 
-    async def _reset_theme(self) -> None:
-        """Reload original theme values (post-confirmation when modified).
+    def _reset_theme(self) -> Coroutine[Any, Any, None]:
+        """Start a confirmed Reset: reload the theme's saved values.
 
-        TASK-33240: one read on a worker thread (a file action); it lands
-        only in the session it started in.
+        Qodo 4125929734: the target, the session and the palette being
+        discarded are taken here, in the confirm callback -- not when the
+        worker first runs -- so a Back or another Edit in between is a newer
+        session the reset leaves alone.
+
+        Returns:
+            The reset's coroutine, run as a file action (TASK-33240: one read
+            on a worker thread; it lands only in the session it started in).
         """
         # R28: resolve by [theme].name, so a.toml holding name "b" resets
         # from a.toml, like every other file operation (R12).
-        name = self.current_theme_name
         self._session += 1
-        session = self._session
+        return self._reset_to_saved(self.current_theme_name, self._session, self._working_palette())
+
+    def _working_palette(self) -> tuple[str, bool, dict[str, str]]:
+        """The edits on screen: name, dark flag and the colour boxes as typed."""
+        return (
+            self.current_theme_name,
+            self.is_dark_theme,
+            {name: box.value for name, box in self.color_inputs.items()},
+        )
+
+    async def _reset_to_saved(self, name: str, session: int, confirmed: tuple[str, bool, dict[str, str]]) -> None:
         read = await self._read_saved(name, session)
         if self._stale(session):
+            return
+        if self._working_palette() != confirmed:
+            # Qodo 4125929745: the dialog closed before the read landed and
+            # the user kept editing; those edits were never confirmed.
+            self.app.notify("Reset skipped: you kept editing after confirming it", severity="warning")
             return
         if read is None:
             if is_catalog_theme(name):

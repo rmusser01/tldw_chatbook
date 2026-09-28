@@ -13,6 +13,7 @@ from textual.css.stylesheet import Stylesheet
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_overview_search_journeys import _category
 from Tests.UI.test_settings_theme_picker_screen import _host
+from Tests.UI.theme_editor_helpers import FULL_SCREEN_SIZE
 from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal, SettingsScreen
 from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
 from tldw_chatbook.Widgets.settings_theme_picker import ThemePane, ThemePicker
@@ -54,7 +55,7 @@ async def test_editor_to_picker_switch_restyles_only_the_pane(request, monkeypat
     the 136-node editor included) -- ~165 ms at 211x44. Only the pane and
     the focus change restyle now, and the picker still fills the pane."""
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         pane = await _theme_pane(host, pilot)
         lst = pane.query_one("#settings-theme-list")
         list_height = lst.size.height
@@ -90,7 +91,7 @@ async def test_save_returns_to_the_picker_with_one_rescan(request, monkeypatch):
     """TASK-33241: Save used to rescan the themes folder twice (show_picker's
     refresh, then a second one for the highlight)."""
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         pane = await _theme_pane(host, pilot)
         pane.open_editor("textual-dark", "clone")
         await pilot.pause()
@@ -121,7 +122,7 @@ async def test_closing_a_theme_dialog_skips_the_sync_rows_refresh(request, monke
         lambda self: calls.append(self) or True,
     )
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _theme_pane(host, pilot)
         calls.clear()
 

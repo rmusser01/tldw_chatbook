@@ -15,6 +15,7 @@ import pytest
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_theme_picker_screen import _highlight, _host, _saved_theme
+from Tests.UI.theme_editor_helpers import FULL_SCREEN_SIZE
 from tldw_chatbook.css.Themes import theme_catalog as tc
 from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
 
@@ -134,7 +135,7 @@ async def test_file_actions_keep_the_ui_thread_free_with_fifty_themes(request, m
     source = _themes_dir().parent / "incoming.toml"
     source.write_text('[theme]\nname = "incoming"\n[colors]\nprimary = "#224466"\n', encoding="utf-8")
     export_to = _themes_dir().parent / "exported.toml"
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "mine10")
         await _settle(host, pilot)
         settings = host.screen
@@ -235,7 +236,7 @@ async def test_file_actions_run_one_at_a_time(request, monkeypatch):
     host = _host()
     for name in ("one", "two", "three"):
         _saved_theme(host, name)
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "one")
         await _settle(host, pilot)
         settings = host.screen
@@ -281,7 +282,7 @@ async def test_action_racing_the_picker_scan_lands_the_newest_listing(request, m
     host = _host()
     for name in ("keep", "gone"):
         _saved_theme(host, name)
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "keep")
         await _settle(host, pilot)
         settings = host.screen
@@ -349,7 +350,7 @@ async def test_leaving_settings_mid_action_still_finishes_it(request, monkeypatc
 
     host = _host()
     _saved_theme(host, "leaving")
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "leaving")
         await _settle(host, pilot)
         settings = host.screen
@@ -394,7 +395,7 @@ async def test_a_save_landing_in_a_later_session_changes_only_its_own_file(reque
     host = _host()
     _saved_theme(host, "alpha")
     _saved_theme(host, "beta")
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "alpha")
         await _settle(host, pilot)
         settings = host.screen
@@ -438,7 +439,7 @@ async def test_a_stale_file_action_shows_no_dialog_in_the_new_session(request, m
     for name in ("doomed", "other"):
         _saved_theme(host, name)
     notes = []
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "doomed")
         await _settle(host, pilot)
         settings = host.screen
@@ -467,7 +468,7 @@ async def test_file_actions_of_two_editor_instances_run_one_at_a_time(request, m
     host = _host()
     for name in ("first", "second"):
         _saved_theme(host, name)
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "first")
         await _settle(host, pilot)
         settings = host.screen
@@ -517,7 +518,7 @@ async def test_quit_waits_for_a_file_action_between_its_steps(request, monkeypat
         "persist_cli_config_for_shutdown",
         lambda: order.append(("config", (_themes_dir() / "quitter.toml").exists())) or True,
     )
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "quitter")
         await _settle(host, pilot)
         editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
@@ -544,7 +545,7 @@ async def test_leaving_during_a_save_waits_for_it_instead_of_prompting(request, 
     host = _host()
     _saved_theme(host, "busy")
     notes = []
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "busy")
         await _settle(host, pilot)
         settings = host.screen
@@ -662,7 +663,7 @@ async def test_use_reports_a_write_that_raised(request, monkeypatch):
     host = _host()
     notes = []
     _slow_config(monkeypatch, fail=True)
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         host.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
         host.screen.query_one("#settings-theme-picker").use_highlighted()
@@ -697,7 +698,7 @@ async def test_use_then_quick_revert_shows_no_stale_use_toast(request, monkeypat
     _slow_config(monkeypatch, delay=1.5)
     host = _host()
     notes = []
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         picker = host.screen.query_one("#settings-theme-picker")
         before = str(host.theme)
@@ -733,7 +734,7 @@ async def test_quit_waits_for_a_confirmed_delete_and_starts_no_new_action(reques
         "persist_cli_config_for_shutdown",
         lambda: order.append((_themes_dir() / "confirmed.toml").exists()) or True,
     )
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "confirmed")
         await _settle(host, pilot)
         editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
@@ -782,7 +783,7 @@ async def test_revert_before_the_use_worker_runs_restores_the_old_default_withou
     Review #4: Revert does not wait for the writes on the UI thread."""
     written = _slow_config(monkeypatch, delay=0.1)
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         picker = host.screen.query_one("#settings-theme-picker")
         launch = tc.current_launch_default()
@@ -811,7 +812,7 @@ async def test_a_superseded_use_failure_is_not_reported(request, monkeypatch):
     monkeypatch.setattr(tc, "_apply_config_mutation", apply)
     host = _host()
     notes = []
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         picker = host.screen.query_one("#settings-theme-picker")
         host.notify = lambda message, **kw: notes.append(message)
@@ -882,7 +883,7 @@ async def test_edit_and_reset_keep_the_ui_thread_free_with_fifty_themes(request,
     for i in range(50):
         _saved_theme(host, f"mine{i:02d}")
     _saved_theme_file(host, "target", "target", primary="#AB0001")
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "target")
         await _settle(host, pilot)
         settings = host.screen
@@ -950,7 +951,7 @@ async def test_an_edit_read_superseded_by_another_edit_never_shows(request, monk
     host = _host()
     _saved_theme_file(host, "alpha", "alpha", primary="#AA0000")
     _saved_theme_file(host, "beta", "beta", primary="#00BB00")
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "alpha")
         await _settle(host, pilot)
         pane = host.screen.query_one("#settings-theme-pane")
@@ -986,7 +987,7 @@ async def test_an_edit_read_landing_after_back_changes_nothing(request, monkeypa
     host = _host()
     _saved_theme(host, "alpha")
     notes = []
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "alpha")
         await _settle(host, pilot)
         pane = host.screen.query_one("#settings-theme-pane")
@@ -1015,7 +1016,7 @@ async def test_a_reset_read_landing_after_back_changes_nothing(request, monkeypa
     host = _host()
     _saved_theme(host, "alpha")
     notes = []
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "alpha")
         await _settle(host, pilot)
         pane = host.screen.query_one("#settings-theme-pane")
@@ -1034,6 +1035,90 @@ async def test_a_reset_read_landing_after_back_changes_nothing(request, monkeypa
         await _settle(host, pilot)
         assert _primary(editor) == "#123456"
         assert not any("reset" in message for message in notes), notes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_reset_whose_worker_starts_late_leaves_a_newer_edit_alone(request, monkeypatch):
+    """Qodo 4125929734: Reset takes its target and session when it is
+    confirmed, not when its worker first runs. A worker that starts only
+    after Back and another Edit (the user now editing beta) resets nothing."""
+    from textual.widgets import Input
+
+    from Tests.UI.test_settings_theme_picker_screen import _saved_theme_file
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    _saved_theme_file(host, "alpha", "alpha", primary="#AA0000")
+    _saved_theme_file(host, "beta", "beta", primary="#00BB00")
+    notes = []
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
+        await _highlight(host, pilot, "alpha")
+        await _settle(host, pilot)
+        pane = host.screen.query_one("#settings-theme-pane")
+        editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
+        await pane.open_editor("alpha", "edit").wait()
+        await _settle(host, pilot)
+        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+        await pilot.pause(0.1)
+        queued = []
+        editor.run_file_action = queued.append  # the confirmed Reset's worker, not started yet
+        editor.on_reset_theme()
+        await _wait_for_screen(host, pilot, ConfirmationDialog)
+        await pilot.click("#confirm-button")
+        await _settle(host, pilot)
+        del editor.run_file_action
+        assert len(queued) == 1
+        pane.show_picker()
+        await _settle(host, pilot)
+        await pane.open_editor("beta", "edit").wait()
+        await _settle(host, pilot)
+        editor.query_one("#settings-theme-color-primary", Input).value = "#654321"
+        await pilot.pause(0.1)
+        host.notify = lambda message, **kw: notes.append(message)
+        await editor.run_file_action(queued[0]).wait()
+        await _settle(host, pilot)
+        assert (editor.current_theme_name, _primary(editor), editor.is_modified) == ("beta", "#654321", True)
+        assert not any("reset" in message.lower() for message in notes), notes
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_edits_made_while_a_reset_read_is_in_flight_survive(request, monkeypatch):
+    """Qodo 4125929745: the confirmation closes before Reset's read lands,
+    so the user can keep editing. Those edits were never confirmed for
+    discard: the reset is skipped, with a notice, and they stay."""
+    from textual.widgets import Input
+
+    from Tests.UI.test_settings_theme_picker_screen import _saved_theme_file
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    _saved_theme_file(host, "alpha", "alpha", primary="#AA0000")
+    notes = []
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
+        await _highlight(host, pilot, "alpha")
+        await _settle(host, pilot)
+        pane = host.screen.query_one("#settings-theme-pane")
+        editor = host.screen.query_one("#settings-theme-editor", SettingsThemeEditor)
+        await pane.open_editor("alpha", "edit").wait()
+        await _settle(host, pilot)
+        primary = editor.query_one("#settings-theme-color-primary", Input)
+        primary.value = "#123456"
+        await pilot.pause(0.1)
+        entered, release = _gate(monkeypatch, "_read_saved_theme")
+        editor.on_reset_theme()
+        await _wait_for_screen(host, pilot, ConfirmationDialog)
+        await pilot.click("#confirm-button")
+        await _until(pilot, entered.is_set, "reset's read")
+        await _until(pilot, lambda: not isinstance(host.screen, ConfirmationDialog), "the dialog to close")
+        primary.value = "#654321"
+        await pilot.pause(0.1)
+        host.notify = lambda message, **kw: notes.append(message)
+        release.set()
+        await _settle(host, pilot)
+        assert (_primary(editor), editor.is_modified) == ("#654321", True)
+        assert any(message.startswith("Reset skipped") for message in notes), notes
 
 
 # -- TASK-33243: the command palette shares the picker's write queue -----------
@@ -1058,7 +1143,7 @@ async def test_palette_switch_leaves_the_ui_thread_free(request, monkeypatch):
 
     monkeypatch.setattr(tc, "_write_launch_default", recorded_config_write)
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         provider = ThemeProvider(host.screen)
         started = time.perf_counter()
         provider.switch_theme("nord")
@@ -1081,7 +1166,7 @@ async def test_palette_switch_then_picker_use_lands_the_pickers_theme(request, m
     written = _slow_config(monkeypatch, delay=0.2)
     host = _host()
     notes = []
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         picker = host.screen.query_one("#settings-theme-picker")
         host.notify = lambda message, **kw: notes.append((message, kw.get("severity")))
@@ -1158,7 +1243,7 @@ async def test_palette_switch_moves_the_pickers_launch_marker_once_the_write_lan
     tc._write_launch_default("ghost-theme")  # a launch default that is not registered
     _slow_real_writes(monkeypatch, delay=1.0)
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         await _settle(host, pilot)
         notice = host.screen.query_one("#settings-theme-launch-missing")
@@ -1179,7 +1264,7 @@ async def test_picker_revert_moves_the_launch_marker_back_once_the_write_lands(r
 
     _slow_real_writes(monkeypatch, delay=1.0)
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         launch = tc.current_launch_default()
         assert launch != "nord"
@@ -1202,7 +1287,7 @@ async def test_two_quick_palette_switches_leave_the_marker_on_the_later_one(requ
 
     written = _slow_real_writes(monkeypatch, delay=1.0)
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         provider = ThemeProvider(host.screen)
         provider.switch_theme("gruvbox_dark")
@@ -1238,7 +1323,7 @@ async def test_a_landing_write_refresh_keeps_a_highlight_the_user_just_moved(req
     highlight message reaching the picker. The rebuild must keep the row the
     list shows, not snap back to the one the picker last heard about."""
     host = _host()
-    async with host.run_test(size=(211, 44)) as pilot:
+    async with host.run_test(size=FULL_SCREEN_SIZE) as pilot:
         await _highlight(host, pilot, "nord")
         picker = host.screen.query_one("#settings-theme-picker")
         lst = picker.query_one("#settings-theme-list")

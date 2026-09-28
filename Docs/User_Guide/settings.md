@@ -734,8 +734,9 @@ File actions (Save, Save as…, Rename, Delete, Import…, Export) also read and
 write in the background, and so do **Edit** on one of your themes and the
 editor's **Reset** (they read the theme file): after Edit the picker stays up
 until the file is read and the editor then opens on that theme (opening
-another theme or leaving Theme first cancels the older open, and Back
-cancels a Reset still reading) — so the screen stays responsive with many saved
+another theme or leaving Theme first cancels the older open, Back cancels a
+Reset still reading, and editing again before it lands skips the Reset with
+a notice, keeping your new edits) — so the screen stays responsive with many saved
 themes; they run one at a time, and a second one started meanwhile waits for
 the first — even one started after you left Theme and came back. Leaving
 Theme or quitting mid-action does not cut it short — including an action

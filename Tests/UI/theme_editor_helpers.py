@@ -11,6 +11,10 @@ from typing import Any
 
 from textual.pilot import Pilot
 
+#: The full-screen viewport theme tests run at (ThinkPad, 211x44): the app is
+#: used full-screen, and the stall/restyle costs they pin were measured here.
+FULL_SCREEN_SIZE = (211, 44)
+
 
 async def open_theme_editor(host: Any, pilot: Pilot) -> Any:
     """Clone the highlighted theme from the picker and return the editor.
