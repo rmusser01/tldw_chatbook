@@ -3855,6 +3855,28 @@ class TldwCli(
             self._local_skill_trust_service = self._build_local_skill_trust_service()
         return self._local_skill_trust_service
 
+    async def ensure_local_skill_trust_service(self) -> Any:
+        """First-use trust service build, OFF the UI event loop (task-33081).
+
+        The build performs OS keyring backend discovery (SecretService/D-Bus
+        on Linux -- the deferred-wiring notes' timing figure never measured
+        that platform). The sync property keeps its contract for callers
+        already on worker threads; UI-loop callers must come here so the
+        discovery never blocks the loop.
+
+        Returns:
+            The shared local skill trust service, built once; concurrent
+            first callers await the same build under the build lock.
+        """
+        if self._local_skill_trust_service is not None:
+            return self._local_skill_trust_service
+        async with self._local_skill_trust_service_build_lock:
+            if self._local_skill_trust_service is None:
+                self._local_skill_trust_service = await asyncio.to_thread(
+                    self._build_local_skill_trust_service
+                )
+            return self._local_skill_trust_service
+
     @local_skill_trust_service.setter
     def local_skill_trust_service(self, service: Any) -> None:
         self._local_skill_trust_service = service
@@ -5899,6 +5921,8 @@ class TldwCli(
         # Every consumer reads these through `getattr(app_instance, ...)` at
         # UI time, so a property is a drop-in.
         self._local_skill_trust_service: Any | None = None
+        # task-33081: serializes the off-loop first build above.
+        self._local_skill_trust_service_build_lock = asyncio.Lock()
         self._local_skills_service: Any | None = None
         self._skills_scope_service: Any | None = None
         # Captured NOW, at the timing the eager build had: `_build_local_

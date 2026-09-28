@@ -2634,13 +2634,11 @@ class LibrarySkillsController:
         """
         name = self._selected_skill_name
         generation = self._library_skill_detail_generation
-        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
-        granted_fn = getattr(trust_service, "script_execution_granted", None)
-        if not name or not callable(granted_fn):
+        if not name:
             self._library_skill_script_grant = False
             return
         self.run_worker(
-            self._load_library_skill_script_grant(name, generation, granted_fn),
+            self._load_library_skill_script_grant(name, generation),
             exclusive=True,
             group="library_skill_script_grant",
             exit_on_error=False,
@@ -2650,7 +2648,6 @@ class LibrarySkillsController:
         self,
         name: str,
         generation: int,
-        granted_fn,
     ) -> None:
         """Await the off-thread grant lookup and patch the trust panel.
 
@@ -2660,11 +2657,20 @@ class LibrarySkillsController:
                 out-of-order result if a different skill is open by the
                 time this resolves.
             generation: The retained Work session captured at kick-off time.
-            granted_fn: The trust service's bound
-                ``script_execution_granted`` method (captured at kick-off
-                so this never re-reads ``local_skill_trust_service``
-                itself).
         """
+        # task-33081: the trust service's first build performs OS keyring
+        # backend discovery (D-Bus SecretService on Linux) -- resolve it off
+        # the UI loop here instead of touching the sync property at kick-off.
+        app = self.app_instance
+        ensure = getattr(app, "ensure_local_skill_trust_service", None)
+        if callable(ensure):
+            trust_service = await ensure()
+        else:
+            trust_service = getattr(app, "local_skill_trust_service", None)
+        granted_fn = getattr(trust_service, "script_execution_granted", None)
+        if not callable(granted_fn):
+            self._library_skill_script_grant = False
+            return
         try:
             granted = await asyncio.to_thread(granted_fn, name)
         except Exception:
@@ -2749,7 +2755,14 @@ class LibrarySkillsController:
         above); the manifest check itself is what decides whether a reset
         actually happens, not the action id.
         """
-        service = getattr(self.app_instance, "local_skill_trust_service", None)
+        # task-33081: first-use build performs keyring backend discovery --
+        # resolve off the UI loop (duck-typed for app doubles in tests).
+        app = self.app_instance
+        ensure = getattr(app, "ensure_local_skill_trust_service", None)
+        if callable(ensure):
+            service = await ensure()
+        else:
+            service = getattr(app, "local_skill_trust_service", None)
         if service is None:
             return
         passphrase = await self._request_library_skill_trust_bootstrap_passphrase()

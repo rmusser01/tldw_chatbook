@@ -5418,13 +5418,45 @@ StatCard:hover {
 #settings-theme-list {
     height: auto;
     min-height: $ds-size-8;
-    max-height: $ds-size-24;
+}
+
+#settings-theme-pane.-picker {
+    height: $ds-height-fill;
+    min-height: $ds-size-24;
+}
+#settings-theme-pane.-picker.-stacked {
+    min-height: $ds-size-32;
+}
+#settings-theme-pane.-picker.-stacked.-narrow-card {
+    min-height: $ds-size-40;
+}
+#settings-theme-pane.-stacked #settings-theme-picker-columns {
+    layout: vertical;
+}
+#settings-theme-pane.-picker #settings-theme-picker,
+#settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-theme-pane.-picker #settings-theme-list-column,
+#settings-theme-pane.-picker #settings-theme-list {
+    height: $ds-height-fill;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list-column,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    height: auto;
+    min-height: $ds-size-0;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    min-height: $ds-size-8;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-picker-columns {
     layout: vertical;
 }
 
 #settings-theme-list > .option-list--option-highlighted {
+    background: $text-primary;
+    color: $ds-surface-panel;
     text-style: bold;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-list {
@@ -5432,10 +5464,29 @@ StatCard:hover {
 }
 
 #settings-theme-card-column .settings-action-row {
-    layout: vertical;
     height: auto;
 }
+#settings-theme-card-column .theme-action-group {
+    margin-top: $ds-space-1;
+}
 #settings-theme-card-column .theme-editor-action {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+#settings-theme-card-column #settings-theme-revert {
+    width: $ds-width-full;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .settings-action-row {
+    layout: vertical;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .theme-editor-action {
+    width: $ds-width-full;
+}
+
+#settings-theme-card-column #settings-theme-export-result {
+    layout: vertical;
+}
+#settings-theme-card-column #settings-theme-copy-path {
     width: $ds-width-full;
 }
 
@@ -5473,6 +5524,20 @@ StatCard:hover {
     color: $ds-text-primary;
     text-style: bold;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+
+#settings-theme-editor-columns,
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    height: auto;
+}
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    width: 1fr;
+}
+#settings-theme-editor.-stacked #settings-theme-editor-columns {
+    layout: vertical;
 }
 
 

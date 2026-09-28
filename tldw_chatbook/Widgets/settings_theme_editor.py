@@ -14,13 +14,14 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import QueryError
-from textual.events import Click, Key
+from textual.events import Click, Key, Resize
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.theme import BUILTIN_THEMES, Theme
+from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from ..Backup_Recovery import raw_participants as raw
@@ -106,6 +107,36 @@ class ThemeLeaveModal(ModalScreen[ThemeLeaveChoice]):
         self.dismiss("save")
 
 _INVALID_COLOUR_TEXT = "Invalid — use #RRGGBB"
+
+
+# TASK-33064/33066 (review M-2): the theme picker and editor both switch
+# from two columns to stacked below this own width -- one threshold, so the
+# pane never shows side-by-side list/card over a stacked editor. The
+# editor's palette column (label 24 + input + swatch 9) collapsed to 3 cols
+# beside the preview at a 52-col editor; the workbench's terminal-width
+# compact class flips too late (100 terminal cols is still a 33-col pane).
+THEME_STACK_BELOW = 100
+
+
+def theme_stack_width(widget: Widget) -> int:
+    """The width the theme picker/editor stack decision is made on.
+
+    The nearest scrolling ancestor's content width (the Settings detail
+    body), which its own vertical scrollbar does not change: stacking makes
+    the content taller and can add that scrollbar, so measuring the widget
+    itself let the class stick a column or two past the threshold (review
+    M-2). Falls back to the widget's own width outside a scroller.
+
+    Args:
+        widget: The picker pane or editor making the stack decision.
+
+    Returns:
+        The width, in cells, to compare against ``THEME_STACK_BELOW``.
+    """
+    for ancestor in widget.ancestors:
+        if isinstance(ancestor, ScrollableContainer):
+            return ancestor.size.width
+    return widget.size.width
 
 
 class SettingsThemeEditor(Vertical):
@@ -217,6 +248,10 @@ class SettingsThemeEditor(Vertical):
         self._loaded_catalog_theme: str | None = None
         # What the header says the editor was opened from (ThemePane sets it).
         self._editing_context: tuple[str, str] | None = None
+        # TASK-33060: (theme before this session's first Try, theme Try
+        # applied last); Discard restores the first while the app still
+        # runs the second.
+        self._try_undo: tuple[str, str] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the theme editor widget.
@@ -231,8 +266,14 @@ class SettingsThemeEditor(Vertical):
             yield Static("", id="settings-theme-editor-header", markup=False)
             yield from self._compose_theme_section()
             yield from self._compose_actions_section()
-            yield from self._compose_palette_section()
-            yield from self._compose_preview_section()
+            # TASK-33066: preview beside the palette so edits show without
+            # scrolling at full screen; `-stacked` (on_resize) stacks them
+            # again when the editor is too narrow for two usable columns.
+            with Horizontal(id="settings-theme-editor-columns"):
+                with Vertical(id="settings-theme-editor-palette-column"):
+                    yield from self._compose_palette_section()
+                with Vertical(id="settings-theme-editor-preview-column"):
+                    yield from self._compose_preview_section()
 
     def _compose_theme_section(self) -> ComposeResult:
         # TASK-32948: the theme list and New/Clone/Delete/Export moved to
@@ -328,9 +369,22 @@ class SettingsThemeEditor(Vertical):
         # _refresh_preview), so it follows every keystroke, not just Apply.
         yield ThemePreview("settings-theme-preview", id="settings-theme-preview")
 
+    def on_resize(self, event: Resize) -> None:
+        """Stack the preview under the palette when the detail body is narrow.
+
+        Args:
+            event: The resize event (the width is re-measured on the body).
+        """
+        self.set_class(theme_stack_width(self) < THEME_STACK_BELOW, "-stacked")
+
     def on_mount(self) -> None:
         """Initialize after composed descendants are mounted."""
         self.call_after_refresh(self._initialize_editor)
+
+    def on_unmount(self) -> None:
+        # Review I-1: a category switch or leaving Settings tears the editor
+        # down; an unsaved Try goes with it.
+        self.discard_try()
 
     def _initialize_editor(self) -> None:
         """Bind composed controls and load the active theme."""
@@ -366,11 +420,17 @@ class SettingsThemeEditor(Vertical):
             return
 
     def set_editing_context(self, source: str, mode: Literal["clone", "new", "edit"]) -> None:
-        """Say in the header what the editor was opened from (TASK-32948)."""
+        """Say in the header what the editor was opened from (TASK-32948).
+
+        The pane calls this once per open, so it also starts a new editing
+        session: an earlier session's Try is no longer Discard's to undo.
+        """
         self._editing_context = (source, mode)
+        self._try_undo = None
         self._render_header()
 
     def watch_current_theme_name(self) -> None:
+        """Re-render the header when the edited theme's name changes."""
         self._render_header()
 
     def _render_header(self) -> None:
@@ -803,7 +863,12 @@ class SettingsThemeEditor(Vertical):
                     theme_dict=self._theme_dict(),
                 )
             self.app.register_theme(theme)
+            # Review M-1: once the app left the last Try (a palette switch
+            # mid-edit), that choice is what Discard must put back.
+            undo = self._try_undo
+            before = undo[0] if undo and str(self.app.theme) == undo[1] else str(self.app.theme)
             self.app.theme = theme.name
+            self._try_undo = (before, theme.name)
             self.app.notify(
                 f"Theme '{escape_markup(self.current_theme_name)}' applied", severity="information"
             )
@@ -924,12 +989,16 @@ class SettingsThemeEditor(Vertical):
             self.app.notify(f"Theme '{escape_markup(theme_name)}' saved", severity="success")
             self.is_modified = False
             self._loaded_user_theme = theme_name
+            # Review I-2: a running Try becomes the saved theme -- even under
+            # a new name (Save as / renamed), where the tried custom_<old>
+            # would otherwise keep running. Nothing is left for Discard.
+            undo, self._try_undo = self._try_undo, None
             if self.current_theme_name != theme_name:
                 # Save as: the editor now edits the new file. Name first, so
                 # the Name box's Changed echo is a no-op.
                 self.current_theme_name = theme_name
                 self.query_one("#settings-theme-name", Input).value = theme_name
-            self._reapply_if_active(theme_name)
+            self._reapply_if_active(theme_name, tried=undo[1] if undo else None)
             self.post_message(self.ThemesChanged())
             self.post_message(self.Saved(theme_name))
         except Exception as e:
@@ -954,8 +1023,11 @@ class SettingsThemeEditor(Vertical):
             finally:
                 raw._remove_temporary(operation, temporary)
 
-    def _reapply_if_active(self, name: str) -> None:
+    def _reapply_if_active(self, name: str, *, tried: str | None = None) -> None:
         """Spec §6: saving the theme the app is showing re-applies it.
+
+        ``tried`` is the running Try's registration, which the save replaces
+        whatever it was named.
 
         Done here, not in the pane, so the category-leave Save (which tears
         the pane down before its messages run) re-applies too.
@@ -963,13 +1035,37 @@ class SettingsThemeEditor(Vertical):
         from ..css.Themes.theme_catalog import use_theme
 
         active = str(self.app.theme)
-        if active not in (name, f"custom_{name}"):
+        if active not in (name, f"custom_{name}", tried):
             return
         use_theme(self.app, name, persist=False)
         if active == name:
             # Same name: Textual's theme watcher does not re-fire, so the
             # re-registered palette needs an explicit CSS refresh.
             self.app.refresh_css(animate=False)
+
+    def discard_try(self) -> None:
+        """Undo this session's Try: put back the theme that ran before it.
+
+        TASK-33060 + review I-1: a Try never outlives its editor session
+        unless saved. Called from the two places every non-Save exit passes
+        through -- ``ThemePane.show_picker`` (Back, with or without the
+        prompt) and ``on_unmount`` (category switch, leaving Settings) --
+        plus the navigation prompt's Discard (a quit does not unmount).
+        A no-op without a Try, or once the app has moved off the tried
+        theme (the user chose another since).
+        """
+        undo, self._try_undo = self._try_undo, None
+        if undo is None or str(self.app.theme) != undo[1]:
+            return
+        try:
+            self.app.theme = undo[0]
+        except Exception as exc:  # noqa: BLE001 - e.g. the old theme was deleted
+            logger.warning(f"Could not restore the theme after Discard: {printable(exc)}")
+            self.app.notify(
+                f"Could not restore {escape_markup(printable(display_name(undo[0])))}: "
+                f"{escape_markup(printable(exc))}",
+                severity="error",
+            )
 
     def _snapshot_variables_palette(self) -> None:
         self._variables_palette = (dict(self.current_theme_data), bool(self.is_dark_theme))

@@ -14,6 +14,7 @@ from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.MCP.local_store import _looks_like_raw_secret_value
 from tldw_chatbook.MCP.mcp_import import ImportCandidate, parse_mcp_servers_json
+from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
 
 _ENV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 # Balanced forms only: $VAR or ${VAR}. Unbalanced values ($VAR} / ${VAR)
@@ -104,7 +105,7 @@ class MCPProfileForm(Vertical):
             placeholder="npx",
         )
         yield Static("Args — one per line", classes="form-label")
-        yield TextArea(
+        yield DetachSafeTextArea(
             "\n".join(str(a) for a in profile.get("args") or []), id="mcp-form-args"
         )
         # A2: mcp-status-warning colors the secret-lint warning text (the
@@ -129,7 +130,7 @@ class MCPProfileForm(Vertical):
         env_lines += [
             f"{k}={v}" for k, v in (profile.get("env_literals") or {}).items()
         ]
-        yield TextArea("\n".join(env_lines), id="mcp-form-env")
+        yield DetachSafeTextArea("\n".join(env_lines), id="mcp-form-env")
         # A2: mcp-status-error colors the validation/save-failure text (the
         # color rule itself has existed since T13 -- nothing applied the
         # class to this Static until now).
@@ -429,7 +430,7 @@ class MCPImportPanel(Vertical):
             classes="ds-field-row",
             markup=False,
         )
-        yield TextArea("", id="mcp-import-text")
+        yield DetachSafeTextArea("", id="mcp-import-text")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "From file…",

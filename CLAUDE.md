@@ -140,8 +140,11 @@ def _heavy_task(self):
    `len(_GATEABLE_BUILTINS)` (they used to break on every new row). A `_GATEABLE_BUILTINS` row surfaces automatically as a switch in the MCP hub (Servers mode ▸ built-in-source detail ▸ "Tool gates" group), via the single enumerator `all_tool_gates()` in `Agents/builtin_tool_gate.py` (task-3240) -- no manual UI wiring needed. Caveat: a config-gated `LocalToolSpec` tool that isn't a `_GATEABLE_BUILTINS` entry (e.g. `web_deep_search`, `Agents/local_tool_provider.py`) doesn't get a switch for free either way -- it needs one hand-added entry in `all_tool_gates()`'s own hand-list (see the `web_deep_search`/`WEB_DEEP_SEARCH_GATE_KEY` precedent there). Do not confuse this REGISTRATION-gate surface with the MCP screen's Tools/Permissions modes, which browse the catalog and set per-tool Allow/Ask/Off; those manage the PERMISSION layer, and a gate-off tool is absent from that surface entirely. The older `ToolsSettingsWindow` (`DEPRECATED (TASK-1346)`; its route resolves to the MCP screen) stays nav-unreachable and untouched -- it is not this enumerator's consumer.
 5. Override `risk_tags` if the tool mutates or reads user data; a tagged tool is floored to `ask` and raises an approval card per call
 
-**UI changes:** PRs that change a screen's UI should update the matching
-`Docs/User_Guide/` page (or at least its "Verified against" stamp).
+**UI changes:** PRs that change a screen's UI update the matching `Docs/User_Guide/`
+page's content where behaviour changed. Record what was verified -- and against which
+branch and date -- in the task's Implementation Notes, not in the User Guide page. Do
+not add "Verified against" paragraphs to User Guide pages: parallel PRs appending them
+at the same spot caused 121 sync-merge conflicts in one week (2026-09-27 CI spec).
 
 **Merging into `dev`** (protection as of 2026-09-27): GitHub refuses a merge unless all of these hold:
 
