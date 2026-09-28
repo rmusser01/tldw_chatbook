@@ -63,6 +63,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     tool_state_kind,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
+from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
 
 _TOOL_TEST_TEXT_LIMIT = 480
 _TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
@@ -1620,7 +1621,7 @@ class MCPInspector(VerticalScroll):
                     "", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False
                 ),
                 Label("Payload (JSON)", classes="form-label"),
-                TextArea("{}", id="mcp-adv-payload"),
+                DetachSafeTextArea("{}", id="mcp-adv-payload"),
                 Button(
                     "Run Action",
                     id="mcp-adv-run",
