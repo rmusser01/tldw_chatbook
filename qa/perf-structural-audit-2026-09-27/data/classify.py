@@ -1,10 +1,22 @@
-"""Assign every audit finding to a PR group (first matching rule wins)."""
+"""Step 2 of 4 (see extract_journal.py): assign each finding a PR group; first matching rule wins."""
 import json, re, os, collections, sys
+from typing import Any, Optional
 D = os.path.dirname(os.path.abspath(__file__))
-rows = json.load(open(os.path.join(D, 'findings.json')))
+with open(os.path.join(D, 'findings.json'), encoding='utf-8') as fh:
+    rows = json.load(fh)
 # (pr_key, predicate over (title_lower, path, cat, known))
 R = []
-def rule(key, title=None, path=None, cat=None, known=None):
+def rule(key: str, title: Optional[str] = None, path: Optional[str] = None,
+         cat: Optional[str] = None, known: Optional[str] = None) -> None:
+    """Register a classification rule.
+
+    Args:
+        key: PR group assigned when the rule matches.
+        title: Case-insensitive regex the finding title must match.
+        path: Regex the finding's first location must match.
+        cat: Comma-separated category slugs, one of which must equal the finding's category.
+        known: Case-insensitive regex the finding's known-task text must match.
+    """
     R.append((key, re.compile(title, re.I) if title else None, re.compile(path) if path else None,
               set(cat.split(',')) if cat else None, re.compile(known, re.I) if known else None))
 
@@ -64,7 +76,8 @@ rule('F6-cold-features', path=r'(TTS/|Audio/|STT/|Evals/|Chunking/|Local_Ingesti
 rule('Z-structural', cat='structural')
 rule('Z-misc', title=r'.')
 
-def classify(r):
+def classify(r: dict[str, Any]) -> str:
+    """Return the PR group of the first rule matching finding ``r`` (``Z-misc`` if none)."""
     t = r['title']; p = r['locs'][0] if r['locs'] else ''; c = r['cat']; k = r['known_task']
     for key, tr, pr, cr, kr in R:
         if tr and not tr.search(t): continue
@@ -74,7 +87,8 @@ def classify(r):
         return key
     return 'Z-misc'
 for r in rows: r['pr'] = classify(r)
-json.dump(rows, open(os.path.join(D, 'findings.json'), 'w'), indent=1)
+with open(os.path.join(D, 'findings.json'), 'w', encoding='utf-8') as fh:
+    json.dump(rows, fh, separators=(',', ':'), ensure_ascii=False)
 live = [r for r in rows if r['status'] in ('confirmed', 'unverified', 'known')]
 cnt = collections.defaultdict(collections.Counter)
 for r in live: cnt[r['pr']][r['sev']] += 1

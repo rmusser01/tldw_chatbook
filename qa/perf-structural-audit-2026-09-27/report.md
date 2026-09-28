@@ -213,7 +213,7 @@ Ranked by leverage. Each names the pattern to stop doing, with the census number
 | **2: Console** | 12–15 | Send path, idle/tick/render, typing/first paint, agent runtime | 06 (06/07/09 strongly preferred) | M–L |
 | **3: boot** | 16–19 | `__init__` diet, import diet, server-mode client, CSS | 07, 09 | M |
 | **4: network** | 20 | Pooled sessions, cached SSLContext | none | M |
-| **5: screens** (parallel) | 21–25 | Library, Settings/Personas, MCP, Watchlists/Schedules, others | 06, 08, 09 | M–L |
+| **5: screens** (parallel) | 21–25 | Library, Settings/Personas, MCP, Watchlists/Schedules, others | per task: 06 / 08 / 09 (each task's `dependencies` names the keystones its screen needs); all follow the post-Wave-1 re-measure | M–L |
 | **6: feature/data-scaled** (parallel) | 26–30 | Terminal, Notes sync / Personal Context, DB hygiene, memory/algorithms, cold sweep | 09 | S–M |
 
 Per-PR issue counts (unique issues after dedup):
@@ -323,8 +323,13 @@ Per-PR issue counts (unique issues after dedup):
   - `RunLogWriter.bind` resolves it twice per send;
   - the emergency-stop path resolves it per send and per 30 s scheduler tick;
   - `RAGConfig()` resolves the Chroma dir through it.
-- **Fix:** resolve once per config generation and data-dir setting, with a cheap identity re-check (`st_dev`/`st_ino` + mode + owner via `lstat` on the leaf) instead of a full re-walk. Memoize `resolve_sensitive_context` on the same key. Cache `default_emergency_stop_path()`.
-- **Owner decision D2:** is a generation-keyed memo with a leaf identity re-check an acceptable replacement for the per-call chain walk under ADR-029/ADR-126?
+- **Fix:** resolve once per config generation and data-dir setting, then re-verify the **whole verified chain** cheaply instead of re-walking it:
+  - compare every ancestor's current `lstat` identity (`st_dev`/`st_ino`, mode, owner) with the identity pinned at first verification. That is O(depth) stat calls, with no opens, registry reads or locks.
+  - where a caller can take a directory fd, prefer `openat` relative to the held, verified fd, so a later path swap cannot redirect it.
+  - a **leaf-only check is not sufficient**: re-permissioning or swapping an ancestor while the leaf is unchanged must still be refused, as the current walk refuses it.
+
+  Memoize `resolve_sensitive_context` on the same key. Cache `default_emergency_stop_path()`.
+- **Owner decision D2:** is a generation-keyed memo with a per-call **full-chain** identity re-check (every verified ancestor, not just the leaf) an acceptable replacement for the per-call chain walk under ADR-029/ADR-126?
 - **Tasks:** TASK-1320.
 - **Size:** M.
 
@@ -340,7 +345,9 @@ Per-PR issue counts (unique issues after dedup):
   - make the run-log append take admission once;
   - replace the backup-maintenance monitor's **10 Hz** 36-open probe with an event or 1 Hz;
   - load `journal.py`'s ~40 pydantic models lazily.
-- **Owner decision D1:** amend ADR-126 to permit generation-scoped admission evidence. Security invariant to preserve: a moved, replaced or re-permissioned directory is detected before any read or write that depends on it.
+- **Owner decision D1:** amend ADR-126 to permit generation-scoped admission evidence. Security invariant to preserve: a moved, replaced or re-permissioned directory, **whether the admitted directory or any verified ancestor**, is detected before any read or write that depends on it.
+  - `fstat` on the held fds catches re-permissioning of the pinned inodes.
+  - Catching a path-level swap also needs a per-component `lstat` identity comparison, or access that goes through the held fds (`openat`).
 - **Tasks:** TASK-32860, TASK-31502 (quiescence tax, related), TASK-24457.
 - **Gate:** `open()`s to `_ui_ready` (today ~190–207k); `open()`/s at idle (today ~3,400); per-transaction cost (today 4–15 ms, raw 1.4 µs).
 - **Size:** L. Split into 08a (evidence reuse in `storage_admission`/`bootstrap`) and 08b (per-owner call-site changes) if review needs it.
@@ -610,8 +617,8 @@ Backlog: PERF-01..PERF-30 are filed as **TASK-33260..TASK-33289** (PERF-NN = TAS
 
 | # | Decision | Blocks | Recommendation |
 |---|---|---|---|
-| **D1** | Amend ADR-126 to allow generation-scoped admission evidence (re-check identity via held descriptors, not a re-walk from `/` per call; admission per connection or generation instead of per transaction) | PERF-08 | Yes. It is the single largest lever, and the invariant (detect a moved, replaced or re-permissioned directory before use) can be kept with `fstat` on pinned fds. |
-| **D2** | Accept a per-generation memo of `get_user_data_dir` / DB paths / sensitive-path context with a leaf `lstat` identity re-check | PERF-07 | Yes. It mirrors TASK-32804.1's accepted reasoning. |
+| **D1** | Amend ADR-126 to allow generation-scoped admission evidence (re-check identity via held descriptors plus per-component identity comparison, not a re-walk from `/` per call; admission per connection or generation instead of per transaction) | PERF-08 | Yes. It is the single largest lever, and the invariant (detect a moved, replaced or re-permissioned admitted directory or ancestor before use) can be kept with held fds plus per-component `lstat` identity checks, or `openat` through the held fds. |
+| **D2** | Accept a per-generation memo of `get_user_data_dir` / DB paths / sensitive-path context with a per-call full-chain identity re-check (every verified ancestor) | PERF-07 | Yes, provided the re-check covers every ancestor; a leaf-only check would miss ancestor re-permissioning. It mirrors TASK-32804.1's accepted reasoning. |
 | **D3** | GC policy ADR (`gc.freeze` after ready and pre-import; thresholds; optional idle collect) | PERF-11 | Yes, after PERF-05 lands the leak fixes. |
 | **D4** | Make the Settings and Personas routes reusable (the TASK-24452 owner call, open since 08-29) | PERF-22 | Yes. Console and Library reuse already work. |
 | **D5** | Delete the 18 zero-consumer interop services and the dead duplicate packages, rather than lazy-load them | PERF-16 | Delete; lazy-load only what has a planned consumer. |
@@ -679,7 +686,7 @@ Backlog: PERF-01..PERF-30 are filed as **TASK-33260..TASK-33289** (PERF-NN = TAS
 - `report.md`: this report.
 - `appendix-issues-by-pr.md`: all 905 unique issues by PR (severity, status, location, tasks, corroboration, measured).
 - `data/findings.json`: all 1,043 findings with verifier verdicts, reasons, costs and fix sketches.
-- `data/issues.json`: the deduplicated issues with their PR assignment.
+- `data/issues.json` (generated, not committed): the deduplicated issues with their PR assignment. Recreate it with `classify.py` → `dedupe.py` → `plan_map.py`; the full rebuild order is in `data/extract_journal.py`.
 - `data/items.md`: every agent's summary, clean-areas list and census tables (the timer census, recompose census, DB index-coverage census, HTTP-client census, import-time top-40 and so on).
 - `data/pr_stats.json`: per-PR counts and the task ↔ PR map.
 - `data/extract_journal.py`, `classify.py`, `dedupe.py`, `plan_map.py`: rebuild everything from the workflow journal.

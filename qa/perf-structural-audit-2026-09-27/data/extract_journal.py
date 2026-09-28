@@ -1,15 +1,31 @@
-"""Rebuild merged audit findings from the workflow journal (covers resumed runs).
+"""Step 1 of 4: rebuild merged audit findings from the workflow journal.
 
-usage: python3 extract_journal.py <journal.jsonl>  -> writes findings.json + items.md next to this script
+Rebuild order (each step reads the previous step's output in this directory):
+  1. extract_journal.py <journal.jsonl>  -> findings.json, items.md
+  2. classify.py                         -> adds the PR group ("pr") to findings.json
+  3. dedupe.py                           -> issues.json (generated, not committed)
+  4. plan_map.py                         -> PERF numbers, pr_stats.json, ../appendix-issues-by-pr.md
+
+The journal is the Claude Code workflow journal of the audit run; it is a
+local maintainer input, read-only, and only ever parsed as JSON lines.
 """
 import json, sys, os, collections, re
+from pathlib import Path
 OUT = os.path.dirname(os.path.abspath(__file__))
+if len(sys.argv) != 2:
+    sys.exit("usage: python3 extract_journal.py <journal.jsonl>")
+journal = Path(sys.argv[1]).expanduser().resolve()
+if not journal.is_file():
+    sys.exit(f"journal not found: {journal}")
 label = {}; results = {}
-for l in open(sys.argv[1]):
-    try: o = json.loads(l)
-    except Exception: continue
-    if o.get('type') == 'started': label[o['key']] = o.get('label', '')
-    elif o.get('type') == 'result': results[o['key']] = o['result']
+with journal.open(encoding='utf-8') as fh:
+    for line in fh:
+        try: o = json.loads(line)
+        except ValueError: continue
+        # Skip anything that is not a well-formed started/result record.
+        if not isinstance(o, dict) or not isinstance(o.get('key'), str): continue
+        if o.get('type') == 'started': label[o['key']] = o.get('label', '')
+        elif o.get('type') == 'result' and 'result' in o: results[o['key']] = o['result']
 by_label = {label.get(k, k): r for k, r in results.items()}
 def item_of_find(l):
     m = re.match(r'find:slice(\d+):', l)
@@ -37,8 +53,9 @@ for item, fd in sorted(finders.items()):
             'cost_basis': 'measured' if (m and m.get('method') == 'measured') else f['cost_basis'],
             'fix': f['fix'], 'fix_notes': (v or {}).get('fix_notes', ''), 'fix_risk': f['fix_risk'], 'evidence': f['evidence'],
             'reason': (v or {}).get('reason', ''), 'measure_verdict': (m or {}).get('verdict', ''), 'has_measure': bool(m)})
-json.dump(rows, open(os.path.join(OUT, 'findings.json'), 'w'), indent=1)
-with open(os.path.join(OUT, 'items.md'), 'w') as fh:
+with open(os.path.join(OUT, 'findings.json'), 'w', encoding='utf-8') as fh:
+    json.dump(rows, fh, separators=(',', ':'), ensure_ascii=False)
+with open(os.path.join(OUT, 'items.md'), 'w', encoding='utf-8') as fh:
     for it in items:
         fh.write(f"\n\n# {it['item']}\n\n## summary\n{it['summary']}\n\n## clean areas\n" + '\n'.join('- ' + c for c in it['clean']) + f"\n\n## census\n{it['census']}\n")
 c = collections.Counter((r['status'], r['sev']) for r in rows)

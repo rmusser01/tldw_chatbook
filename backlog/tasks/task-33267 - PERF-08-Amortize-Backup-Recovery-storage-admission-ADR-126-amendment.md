@@ -26,7 +26,7 @@ Every outermost guarded call re-derives admission evidence from disk. It walks d
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 ADR-126 carries an approved amendment describing generation-scoped admission evidence and the preserved invariant
-- [ ] #2 A moved, replaced or re-permissioned admitted directory is still refused before dependent I/O (security tests)
+- [ ] #2 A moved, replaced or re-permissioned admitted directory or verified ancestor is still refused before dependent I/O (security tests cover a path-level swap, not only fstat of held fds)
 - [ ] #3 Per-transaction admission overhead on ChaChaNotes is under 0.5 ms (benchmark), and transactions on unrelated DBs no longer serialize
 - [ ] #4 open() calls to reach _ui_ready fall by at least 80% versus the 840ed2ca58 baseline on the same probe
 - [ ] #5 The backup-maintenance monitor no longer polls at 10 Hz, and guarded MCP store reads use a warm cache

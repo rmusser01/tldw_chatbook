@@ -1,7 +1,20 @@
-"""Cluster duplicate findings within each PR group; write issues.json (one row per unique issue)."""
-import json, os, re, collections
+"""Step 3 of 4 (see extract_journal.py): cluster duplicate findings per PR group into issues.json.
+
+issues.json is generated output and is not committed; re-run this script to recreate it.
+"""
+import json, os, re, collections, sys
 D = os.path.dirname(os.path.abspath(__file__))
-rows = [r for r in json.load(open(os.path.join(D, 'findings.json'))) if r['status'] in ('confirmed', 'unverified', 'known')]
+with open(os.path.join(D, 'findings.json'), encoding='utf-8') as fh:
+    rows = [r for r in json.load(fh) if r['status'] in ('confirmed', 'unverified', 'known')]
+if rows and 'pr' not in rows[0]:
+    sys.exit("findings.json has no PR groups yet: run classify.py first")
+# Two findings are the same issue when they share a file and sit within
+# NEAR_LINES lines with some title overlap, share a file with strong overlap,
+# or have near-identical titles anywhere (token Jaccard similarity).
+NEAR_LINES = 40
+NEAR_JACCARD = 0.15
+SAME_FILE_JACCARD = 0.35
+ANY_FILE_JACCARD = 0.55
 SEV = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3}
 STOP = set('the a an of on in to and or per every each is are for with by at from its it that this as be not only still'.split())
 def toks(t): return {w for w in re.findall(r'[a-z_][a-z0-9_]+', t.lower()) if w not in STOP and len(w) > 2}
@@ -21,7 +34,7 @@ for i in range(len(rows)):
         pi, li = loc(rows[i]); pj, lj = loc(rows[j])
         jac = len(T[i] & T[j]) / max(1, len(T[i] | T[j]))
         same_file = pi == pj
-        if (same_file and abs(li - lj) <= 40 and jac >= 0.15) or (same_file and jac >= 0.35) or jac >= 0.55:
+        if (same_file and abs(li - lj) <= NEAR_LINES and jac >= NEAR_JACCARD) or (same_file and jac >= SAME_FILE_JACCARD) or jac >= ANY_FILE_JACCARD:
             union(i, j)
 groups = collections.defaultdict(list)
 for i, r in enumerate(rows): groups[find(i)].append(r)
@@ -37,7 +50,8 @@ for g in groups.values():
         'cost': rep['cost'][:400], 'fix': rep['fix'][:500], 'fix_notes': rep['fix_notes'][:300], 'ids': [x['id'] for x in g],
     })
 issues.sort(key=lambda x: (x['pr'], SEV[x['sev']], -x['n']))
-json.dump(issues, open(os.path.join(D, 'issues.json'), 'w'), indent=1)
+with open(os.path.join(D, 'issues.json'), 'w', encoding='utf-8') as fh:
+    json.dump(issues, fh, indent=1)
 c = collections.defaultdict(collections.Counter)
 for x in issues: c[x['pr']][x['sev']] += 1
 print('findings', len(rows), '-> unique issues', len(issues))
