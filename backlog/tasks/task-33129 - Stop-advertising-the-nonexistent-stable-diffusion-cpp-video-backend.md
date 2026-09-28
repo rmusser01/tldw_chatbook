@@ -1,5 +1,5 @@
 ---
-id: TASK-33084
+id: TASK-33129
 title: Stop advertising the nonexistent stable-diffusion-cpp video backend
 status: Done
 assignee: []
@@ -38,3 +38,7 @@ REFUTED on origin/dev — closed with no production change. The premise was form
 - Tests/Video_Generation/test_adapter_registry.py::test_default_adapters_point_at_local_package pins the exact key set {minimax, comfyui, stable_diffusion_cpp}, and ::test_lazy_specs_do_not_import_until_get_adapter pins the not-yet-importable contract explicitly.
 - AC #1 and #2 would reverse a shipped, tested design decision and are withdrawn. The drift-prevention intent behind AC #2 is already satisfied: any accidental phantom entry changes the pinned key set and fails the existing test.
 
+
+## Renumbering provenance
+
+Filed 2026-09-27 as task-33084. origin/dev minted its own task-33084 before this branch merged, so per the landed-keeps-id rule this task moved to task-33129; every inbound reference moved with it.

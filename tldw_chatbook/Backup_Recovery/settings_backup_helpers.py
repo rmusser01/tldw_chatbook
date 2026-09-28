@@ -1,4 +1,4 @@
-"""Backup helpers relocated from the retired Tools & Settings window (TASK-33081).
+"""Backup helpers relocated from the retired Tools & Settings window (TASK-33126).
 
 The legacy window (``UI/Tools_Settings_Window.py``) was navigation-unreachable
 and has been deleted; its DB backup/restore UI is superseded by the

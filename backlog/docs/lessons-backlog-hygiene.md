@@ -1166,7 +1166,7 @@ all Codex snapshots: they can also expose another session's uncommitted claim.
 
 ## A grep-verified premise can still be wrong — read the pinning tests before deleting
 
-**What happened.** 2026-09-27, simplification-cascade filings TASK-33083/33084/33082. The audit (run
+**What happened.** 2026-09-27, simplification-cascade filings TASK-33128/33084/33082. The audit (run
 against a branch 1,872 commits behind dev) called `pipeline_loader.py` dead weight and the video
 registry's `stable_diffusion_cpp` entry phantom drift. Both claims had been **grep-verified against
 dev** — the reference counts matched. Execution still refuted them: dev's registry docstring plus two
