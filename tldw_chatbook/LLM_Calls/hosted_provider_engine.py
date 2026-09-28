@@ -952,6 +952,8 @@ def build_hosted_chat_payload(
         "messages": messages,
         "stream": stream,
     }
+    if stream and record.stream_include_usage:
+        payload["stream_options"] = {"include_usage": True}
     if temperature is not None:
         payload["temperature"] = temperature
     if top_p is not None:
@@ -1418,6 +1420,40 @@ class HostedPresetFinishPolicy:
         return value
 
 
+def raise_on_status_envelope(record: ProviderRecord, event: object) -> None:
+    """Fail on a nonzero provider status envelope (TASK-33201).
+
+    Some providers (MiniMax ``base_resp``) attach a status object to every
+    body and stream event and report errors there even when ``choices`` looks
+    valid. The status text is provider-authored and never copied into the
+    message; only the integer code is.
+
+    Args:
+        record: Preset naming the envelope key (``status_envelope_key``).
+        event: One decoded response body or stream event.
+
+    Raises:
+        ChatProviderError: When the envelope reports a nonzero status code.
+        HostedChatProtocolError: When the envelope or its code is malformed.
+    """
+    key = record.status_envelope_key
+    if key is None or not isinstance(event, Mapping) or key not in event:
+        return
+    envelope = event[key]
+    if not isinstance(envelope, Mapping):
+        raise HostedChatProtocolError(f"{record.display_name} status is malformed.")
+    code = envelope.get("status_code")
+    if code is None or (code == 0 and type(code) is int):
+        return
+    if type(code) is not int:
+        raise HostedChatProtocolError(f"{record.display_name} status is malformed.")
+    raise ChatProviderError(
+        provider=record.key,
+        message=f"{record.display_name} reported error status {code}.",
+        status_code=502,
+    )
+
+
 def normalize_hosted_provider_response(
     record: ProviderRecord, response: object
 ) -> HostedChatTurn:
@@ -1444,6 +1480,7 @@ def normalize_hosted_provider_response(
     validators = _validators_for(record)
     safe = deepcopy(response)
     try:
+        raise_on_status_envelope(record, safe)
         if isinstance(safe, Mapping):
             choices = safe.get("choices")
             if isinstance(choices, Sequence) and not isinstance(
@@ -2002,6 +2039,12 @@ def _send_hosted_chat_request(
                     allowed_choice_keys=record.choice_allowances,
                     allowed_message_keys=record.message_allowances,
                     tolerant_top_level_extras=record.tolerant_response_extras,
+                    usage_optional=record.stream_usage_optional,
+                    event_check=(
+                        (lambda event: raise_on_status_envelope(record, event))
+                        if record.status_envelope_key is not None
+                        else None
+                    ),
                 ),
                 record=record,
                 resolution=resolution,

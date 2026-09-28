@@ -518,9 +518,11 @@ provider’s supported environment variable. Common examples include
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
 `MOONSHOT_API_KEY`, `ZAI_API_KEY`, `DATABRICKS_TOKEN` (Databricks
 AI Gateway — see the Settings guide for the workspace-host base URL), and
-`TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, and `CEREBRAS_API_KEY` (the
-Together, Fireworks, and Cerebras inference clouds — model lists fill via
-**Discover models**).
+the inference-cloud keys `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`,
+`CEREBRAS_API_KEY`, `SAMBANOVA_API_KEY`, `NVIDIA_API_KEY`,
+`DEEPINFRA_API_KEY`, `NEBIUS_API_KEY`, `NOVITA_API_KEY`, and
+`MINIMAX_API_KEY` (model lists fill via **Discover models**; MiniMax ships a
+seeded list).
 
 Do not commit keys to the repository. Config encryption and keyring-backed
 storage are available for supported paths; the wizard’s **Protect keys** step
