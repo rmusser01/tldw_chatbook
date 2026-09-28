@@ -2255,6 +2255,14 @@ def count_global_speech_tts_unsaved_fields(
     The field-level twin of the panel's ``has_unsaved_changes``
     (TASK-33002.4): values compare validated where they validate and raw
     where they do not, so Input text that parses to the saved value is clean.
+
+    Args:
+        original: The saved global speech/TTS state.
+        draft: The edited global speech/TTS state.
+
+    Returns:
+        The number of defaults and provider fields whose draft value
+        differs from the saved one.
     """
 
     def differing(left: Mapping[str, object], right: Mapping[str, object]) -> int:

@@ -168,7 +168,12 @@ class ModelConfigField:
 
     @property
     def request_keys(self) -> tuple[str, ...]:
-        """Request keys read from the one definition; ``()`` for non-generation fields."""
+        """Request keys read from the one definition.
+
+        Returns:
+            The request keys this field writes, or ``()`` for a
+            non-generation field.
+        """
         return GENERATION_FIELD_REQUEST_KEYS.get(self.name, ())
 
 

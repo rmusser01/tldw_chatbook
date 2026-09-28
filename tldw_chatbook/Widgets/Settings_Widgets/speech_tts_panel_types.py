@@ -419,7 +419,12 @@ class SpeechTTSPanelDraftSnapshot:
         )
 
     def unsaved_field_count(self) -> int:
-        """Count this draft's fields that differ from saved (TASK-33002.4)."""
+        """Count this draft's fields that differ from saved (TASK-33002.4).
+
+        Returns:
+            The number of global and realtime/pipeline-voice fields whose
+            draft value differs from the saved one.
+        """
         siblings = zip(
             self.realtime_draft.snapshot() + self.pipeline_voice_draft.snapshot(),
             self.realtime_original.snapshot() + self.pipeline_voice_original.snapshot(),

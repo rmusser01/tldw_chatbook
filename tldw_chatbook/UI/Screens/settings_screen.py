@@ -3108,6 +3108,8 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
+        # Bumped whenever the Test rows go stale; every live probe carries it.
+        self._provider_test_draft_generation = 0
         self._openai_reconnect_token = None
         self._openai_reconnect_busy = False
         self._openai_reconnect_prompt_open = False
@@ -13894,7 +13896,11 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _provider_display_name(self, provider: str) -> str:
-        return provider_display_name(provider)
+        # Markup: a registry entry's name is user text, and its sinks are
+        # Statics, Buttons and toasts.
+        return escape_markup(
+            provider_display_name(provider, self._app_config_mapping())
+        )
 
     @staticmethod
     def _provider_catalog_group(entry: ConsoleProviderCatalogEntry) -> str:
@@ -15719,6 +15725,7 @@ class SettingsScreen(BaseAppScreen):
         provider: str,
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
+        generation: int | None = None,
     ) -> None:
         from .settings_endpoint_probe import (
             SettingsEndpointProbePurpose,
@@ -15747,6 +15754,7 @@ class SettingsScreen(BaseAppScreen):
                 outcome,
                 identity=identity,
                 token=token,
+                generation=generation,
             )
         except Exception:  # noqa: BLE001 - UI settlement must not strand probe state.
             failure = self._provider_probe_connection_error_outcome()
@@ -15755,6 +15763,8 @@ class SettingsScreen(BaseAppScreen):
                     token,
                     self._provider_probe_result_from_outcome(failure),
                 )
+            if not self._provider_probe_generation_current(generation):
+                return
             # A fixed line: rebuilding the rows could raise again in here.
             self._provider_test_result = (
                 "Configuration check could not finish; run it again."
@@ -15785,6 +15795,7 @@ class SettingsScreen(BaseAppScreen):
         *,
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
+        generation: int | None = None,
     ) -> None:
         """Fold a live endpoint probe outcome into the Test rows and toast.
 
@@ -15792,6 +15803,8 @@ class SettingsScreen(BaseAppScreen):
             outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
             identity: The tested draft's identity, when it has one.
             token: The evidence-store token of this probe.
+            generation: The Test draft generation the probe launched under;
+                an outcome from an older generation is dropped.
         """
         from .settings_endpoint_probe import SettingsEndpointProbeOutcome
 
@@ -15803,6 +15816,8 @@ class SettingsScreen(BaseAppScreen):
             and token is not None
             and not self._provider_evidence_store().settle(token, probe_result)
         ):
+            return
+        if not self._provider_probe_generation_current(generation):
             return
         detail, summary, passed = self._provider_readiness_test_report(
             probe=probe_result
@@ -15816,6 +15831,20 @@ class SettingsScreen(BaseAppScreen):
                 if passed and probe_result.endpoint == "reachable"
                 else "warning"
             ),
+        )
+
+    def _provider_probe_generation_current(self, generation: int | None) -> bool:
+        """Whether a probe launched at ``generation`` still describes the draft.
+
+        Args:
+            generation: The Test draft generation captured at launch, or
+                ``None`` for a caller that does not track one.
+
+        Returns:
+            ``True`` when no edit has staled the Test rows since launch.
+        """
+        return generation is None or generation == getattr(
+            self, "_provider_test_draft_generation", 0
         )
 
     def _update_provider_test_result(self) -> None:
@@ -15840,6 +15869,10 @@ class SettingsScreen(BaseAppScreen):
         it never clobbers the not-run sentinel or thrashes on every keystroke.
         """
         self._provider_subscription_test = None
+        # Any in-flight probe, identified or not, now describes an old draft.
+        self._provider_test_draft_generation = (
+            getattr(self, "_provider_test_draft_generation", 0) + 1
+        )
         if self._provider_test_result in (
             self._PROVIDER_TEST_NOT_RUN_COPY,
             self._PROVIDER_TEST_STALE_COPY,
@@ -31857,6 +31890,7 @@ class SettingsScreen(BaseAppScreen):
                     provider_config_key(self._provider_widget_value()),
                     identity,
                     token,
+                    getattr(self, "_provider_test_draft_generation", 0),
                 )
                 return
             self._provider_test_result = detail

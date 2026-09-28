@@ -735,6 +735,25 @@ def _assert_labelled_rows(detail: str) -> dict[str, str]:
     return dict(rows)
 
 
+def test_settings_provider_label_names_a_custom_endpoint_escaped():
+    """Qodo #2878 finding 3: Settings labels a ``custom-ep:`` id with its
+    registry entry's name, escaped because that name is user text."""
+    screen = _bare_settings_screen(
+        {
+            "custom_endpoints": {
+                "gpu-box": {
+                    "display_name": "GPU [box]",
+                    "base_url": "http://127.0.0.1:9999/v1",
+                    "family": "openai_compatible",
+                }
+            }
+        }
+    )
+
+    assert screen._provider_display_name("custom-ep:gpu-box") == r"GPU \[box]"
+    assert screen._provider_display_name("openai") == "OpenAI"
+
+
 def test_provider_source_ui_honors_persisted_explicit_keyless_decision():
     screen = _bare_settings_screen(
         {
@@ -1853,6 +1872,63 @@ async def test_custom_named_credential_query_param_never_reaches_rows_or_toast(
         assert toasts, "the Test produced no toast"
         assert all("SEKRET" not in toast and "mycred" not in toast for toast in toasts)
         assert toasts[-1].startswith("Model listing failed (connection refused)")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_identity_less_probe_finishing_after_an_edit_leaves_the_new_draft_stale(
+    request,
+):
+    """Qodo #2878 finding 2: a keyless provider with a query-bearing endpoint
+    forms no draft identity, so the evidence store never guards its probe. An
+    edit made while it runs must still keep its outcome and toast off the new
+    draft."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    release = asyncio.Event()
+
+    async def held_probe(_base_url: str, **_kwargs: object):
+        await release.wait()
+        return await _reachable_endpoint_probe(_base_url)
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts: list[str] = []
+        host.notify = lambda message, **_kwargs: toasts.append(str(message))
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9099/v1?tag=a"
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        await pilot.pause()
+        assert screen._provider_current_draft_identity() is None
+
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            held_probe,
+        ):
+            screen.action_settings_test_category()
+            await pilot.pause()
+            assert "checking" in _provider_test_result_text(screen).lower()
+
+            endpoint.value = "http://localhost:9100/v1"
+            screen.handle_provider_endpoint_changed(
+                Input.Changed(endpoint, endpoint.value)
+            )
+            await pilot.pause()
+            toasts.clear()
+
+            release.set()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert (
+            _provider_test_result_text(screen)
+            == SettingsScreen._PROVIDER_TEST_STALE_COPY
+        )
+        assert toasts == []
 
 
 @pytest.mark.asyncio
