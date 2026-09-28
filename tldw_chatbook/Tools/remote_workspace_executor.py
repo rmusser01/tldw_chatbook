@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Tools import remote_session_frames as session_frames
 from tldw_chatbook.Tools.build_remote_worker_bundle import (
+    RESPONSE_HEADROOM_BYTES,
     expected_bundle_stamp,
     loader_payload,
 )
@@ -94,8 +95,9 @@ _BUNDLE_PATH = Path(__file__).resolve().parent / "remote_worker_bundle.py"
 _NOISE_GARBAGE_CAP = 4 * 1024
 
 #: Hard capture ceiling for one exchange (response ceiling plus noise
-#: headroom, mirroring the local executor's bounded readers).
-_STDOUT_CAPTURE_CAP = MAX_RESPONSE_BYTES + (64 * 1024)
+#: headroom, mirroring the local executor's bounded readers). The same
+#: headroom sizes the bundle's session per-child cap (builder-asserted).
+_STDOUT_CAPTURE_CAP = MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES
 
 _DEFAULT_BUDGET_SECONDS = 30.0
 
@@ -407,7 +409,10 @@ def _session_request(spec: Mapping[str, Any], chain: Any) -> dict[str, Any]:
 
     ``spec`` is ``{"op": <operation>, **arguments}`` plus two harness-only
     keys: ``budget`` (the request's ``timeout_seconds``, default 30) and
-    ``stale_identity`` (perturb the root inode so the pin must fail).
+    ``stale_identity`` (perturb the root inode so the pin must fail —
+    ``identities[0]`` is the root, since ``chain.identities`` is
+    root-first, so ``root_identity`` and ``ancestor_identities[0]`` stay
+    consistent with each other and only disagree with the disk).
     Exclusion lists the wire requires default to empty.
     """
     arguments = dict(spec)
@@ -491,7 +496,8 @@ def run_session_loopback(
 
     Returns:
         Request index -> parsed LINE dicts, then ``{"status": (exit,
-        signal)}`` as the last element.
+        signal), "arrival": n}`` as the last element, where ``n`` is the
+        0-based order in which that STATUS arrived across the session.
 
     Raises:
         RemoteWorkspaceLoopbackError: On a missing root, loader/protocol
@@ -537,6 +543,9 @@ def run_session_loopback(
                 "protocol_failure", f"expected READY, got {line[:200]!r}"
             )
 
+        # ponytail: writes every REQUEST before reading anything — fine for
+        # test batches; a large batch could fill both pipes and surface as
+        # loopback_timeout (interleave writes with reads if that matters).
         wire = session_frames.encode_frame(
             session_frames.HELLO, 0, json.dumps(_SESSION_HELLO).encode()
         )
@@ -547,6 +556,7 @@ def run_session_loopback(
 
         results: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(requests))}
         pending = set(results)
+        arrivals = 0
         reader = session_frames.FrameReader(max_body=MAX_RESPONSE_BYTES + 1)
         while pending:
             _read_ready(out_fd, deadline)
@@ -560,7 +570,10 @@ def run_session_loopback(
                 if kind == session_frames.LINE:
                     results[index].append(json.loads(body))
                 elif kind == session_frames.STATUS:
-                    results[index].append({"status": session_frames.decode_status(body)})
+                    results[index].append(
+                        {"status": session_frames.decode_status(body), "arrival": arrivals}
+                    )
+                    arrivals += 1
                     pending.discard(index)
         process.stdin.close()  # EOF: serve returns 0
         returncode = process.wait(max(0.1, deadline - time.monotonic()))

@@ -5087,11 +5087,13 @@ def main(stream: Any, *, bundle_sha256: str = "") -> int:
     )
 
 
-#: Per-child output cap for the session fork-server. The bundle cannot
-#: import the parent's pydantic-side protocol module, so this is the same
-#: LITERAL as ``workspace_tool_protocol.MAX_RESPONSE_BYTES``; the builder
-#: refuses to build when the two differ.
-_SESSION_MAX_RESPONSE_BYTES = 6065536
+#: Per-child TOTAL output cap for the session fork-server: the admitted
+#: frame plus a maximum terminal frame must fit, so it is
+#: ``workspace_tool_protocol.MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES``
+#: (the one-shot path's whole-stdout allowance). The bundle cannot import
+#: the parent's pydantic-side protocol module, so this is a LITERAL; the
+#: builder refuses to build when it differs.
+_SESSION_MAX_RESPONSE_BYTES = 6131072
 
 
 def serve_session(in_stream: Any, out_stream: Any) -> int:
@@ -5173,4 +5175,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("b5080f2a17549c6dad335723c112c582007ab019e3577b89ede74bbd750f797c")
+BUNDLE_SHA256 = _enter_worker_exchange("cb4b42cc98a002197d07fa9f6ec476ff2ad457eb9d467b06eff810a6e1dcddda")

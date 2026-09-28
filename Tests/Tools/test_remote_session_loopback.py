@@ -8,12 +8,15 @@ fork-server over binary frames.
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from Tests.Tools.test_remote_worker_bundle import _python_310_interpreter
 from tldw_chatbook.Tools.remote_workspace_executor import run_session_loopback
+from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
 
 
 def _ws(tmp_path: Path) -> Path:
@@ -46,6 +49,35 @@ def test_catastrophic_regex_dies_alone(tmp_path: Path) -> None:
     exit_code, signal_no = out[0][-1]["status"]
     assert exit_code == 75 or signal_no is not None
     assert out[1][-2]["outcome"] == "success"
+    # Out-of-order completion: the fast read's STATUS beats the slow grep's.
+    assert out[1][-1]["arrival"] < out[0][-1]["arrival"]
+
+
+def test_near_max_terminal_frame_survives_the_per_child_cap(tmp_path: Path) -> None:
+    """Admitted + a near-MAX_RESPONSE_BYTES terminal frame must not be capped.
+
+    One diff line of 1.2 MB of ``\\x01`` (no NUL, so git treats it as
+    text): git truncates at 1 MB and every byte JSON-escapes to six, the
+    worst case ``MAX_RESPONSE_BYTES`` is sized for.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    (root / "x.txt").write_text("seed\n")
+    git("add", "x.txt")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed")
+    (root / "x.txt").write_bytes(b"\x01" * 1_200_000 + b"\n")
+
+    out = run_session_loopback(root, [{"op": "git_diff"}])
+    admitted, terminal, status = out[0]
+    assert admitted["outcome"] == "admitted"
+    assert terminal["outcome"] == "success"
+    assert len(json.dumps(terminal)) > MAX_RESPONSE_BYTES - 128 * 1024
+    assert status["status"] == (0, None)
 
 
 def test_pin_failure_leaves_session_up(tmp_path: Path) -> None:

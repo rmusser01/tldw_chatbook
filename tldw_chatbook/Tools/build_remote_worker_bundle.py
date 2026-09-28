@@ -91,6 +91,13 @@ BUNDLE_MODULES: tuple[str, ...] = (
 #: builder renders its data into the artifact (see ``_denylist_section``).
 REMOTE_DENYLIST_MODULE = "tldw_chatbook.Tools.remote_sensitive_paths"
 
+#: Headroom above the protocol's per-frame ``MAX_RESPONSE_BYTES`` for a
+#: whole exchange's stdout (admitted frame + a maximum terminal frame +
+#: newlines). Shared by the one-shot capture cap
+#: (``remote_workspace_executor._STDOUT_CAPTURE_CAP``) and the session
+#: per-child cap (``_SESSION_MAX_RESPONSE_BYTES``) so the two cannot drift.
+RESPONSE_HEADROOM_BYTES = 64 * 1024
+
 _WORKER_MODULE = "tldw_chatbook.Tools.workspace_tool_worker"
 #: Session fork-server: not imported by the worker, but the bundle's
 #: ``serve_session`` entry calls its ``serve`` — a second closure root.
@@ -497,11 +504,13 @@ def main(stream: Any, *, bundle_sha256: str = "") -> int:
     )
 
 
-#: Per-child output cap for the session fork-server. The bundle cannot
-#: import the parent's pydantic-side protocol module, so this is the same
-#: LITERAL as ``workspace_tool_protocol.MAX_RESPONSE_BYTES``; the builder
-#: refuses to build when the two differ.
-_SESSION_MAX_RESPONSE_BYTES = 6065536
+#: Per-child TOTAL output cap for the session fork-server: the admitted
+#: frame plus a maximum terminal frame must fit, so it is
+#: ``workspace_tool_protocol.MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES``
+#: (the one-shot path's whole-stdout allowance). The bundle cannot import
+#: the parent's pydantic-side protocol module, so this is a LITERAL; the
+#: builder refuses to build when it differs.
+_SESSION_MAX_RESPONSE_BYTES = 6131072
 
 
 def serve_session(in_stream: Any, out_stream: Any) -> int:
@@ -763,13 +772,15 @@ def loader_payload() -> bytes:
 
 
 def _assert_session_response_cap_matches_protocol() -> None:
-    """Refuse to build when the adapter's cap literal drifts from the parent's."""
+    """Refuse to build when the adapter's session cap drifts from the parent's."""
     from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
 
-    if f"\n_SESSION_MAX_RESPONSE_BYTES = {MAX_RESPONSE_BYTES}\n" not in _IO_ADAPTER_SOURCE:
+    expected = MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES
+    if f"\n_SESSION_MAX_RESPONSE_BYTES = {expected}\n" not in _IO_ADAPTER_SOURCE:
         raise BundleBuildError(
             "_SESSION_MAX_RESPONSE_BYTES in the bundle IO adapter must equal "
-            f"workspace_tool_protocol.MAX_RESPONSE_BYTES ({MAX_RESPONSE_BYTES})"
+            "workspace_tool_protocol.MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES "
+            f"({expected})"
         )
 
 
