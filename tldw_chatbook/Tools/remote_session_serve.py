@@ -31,6 +31,11 @@ _MAX_IDLE_S = 1_000_000.0
 #: at most this many ``max_request_bytes`` of queued bodies in aggregate.
 _QUEUE_PER_CHILD = 4
 _QUEUE_BYTES_FACTOR = 2
+#: How long the parent holds a still-running child's output before writing
+#: it, so a fast operation's admitted marker, result and STATUS leave in one
+#: write (one ssh packet) instead of two small ones. A slow operation's
+#: marker goes out this much later; nothing else waits. 0 disables it.
+_COALESCE_S = 0.010
 
 
 class _Child:
@@ -191,6 +196,8 @@ def serve(
     max_children, idle_s, hello = 8, 60.0, False
     last_activity = clock()
     outbox = bytearray()
+    hold_until: float | None = None
+    urgent = False
 
     def flush() -> None:
         view = memoryview(outbox)
@@ -201,19 +208,21 @@ def serve(
         outbox.clear()
 
     def start(request_id: int, raw: bytes) -> None:
+        nonlocal urgent
         try:
             child = _spawn(raw, request_id, run_request)
         except OSError:
             # fork/pipe refused (process or fd limit): only this request
             # fails; the loop, its children and its queue carry on.
             outbox.extend(encode_frame(STATUS, request_id, encode_status(HOST_SPAWN_FAILED, None)))
+            urgent = True
             return
         children[child.fd] = child
         by_request[request_id] = child
         selector.register(child.fd, selectors.EVENT_READ, child)
 
     def finish(child: _Child) -> None:
-        nonlocal queued_bytes
+        nonlocal queued_bytes, urgent
         selector.unregister(child.fd)
         os.close(child.fd)
         if child.partial and not child.capped:
@@ -226,6 +235,7 @@ def serve(
         exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else None
         signal_no = os.WTERMSIG(status) if os.WIFSIGNALED(status) else None
         outbox.extend(encode_frame(STATUS, child.request_id, encode_status(exit_code, signal_no)))
+        urgent = True
         del children[child.fd]
         by_request.pop(child.request_id, None)
         while queue and len(children) < max_children:
@@ -234,8 +244,10 @@ def serve(
             start(request_id, raw)
 
     def refuse(request_id: int) -> None:
+        nonlocal urgent
         # Never ran: the same STATUS a cancelled queued request gets.
         outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
+        urgent = True
 
     def kill_all() -> None:
         for child in list(children.values()):
@@ -251,9 +263,14 @@ def serve(
     try:
         while True:
             busy = bool(children or queue)
-            timeout = None if busy else max(0.0, idle_s - (clock() - last_activity))
+            if hold_until is not None:
+                timeout = max(0.0, hold_until - clock())
+            elif busy:
+                timeout = None
+            else:
+                timeout = max(0.0, idle_s - (clock() - last_activity))
             events = selector.select(timeout)
-            if not events and not busy and clock() - last_activity >= idle_s:
+            if not events and not busy and hold_until is None and clock() - last_activity >= idle_s:
                 return 0
             for key, _mask in events:
                 if key.data is None:  # stdin
@@ -298,6 +315,7 @@ def serve(
                                 queue.append((request_id, body))
                                 queued_bytes += len(body)
                                 outbox.extend(encode_frame(BUSY, request_id, b""))
+                                urgent = True
                         elif kind == CANCEL:
                             child = by_request.get(request_id)
                             if child is not None:
@@ -316,6 +334,7 @@ def serve(
                                     outbox.extend(encode_frame(
                                         STATUS, request_id, encode_status(None, signal.SIGKILL),
                                     ))
+                                    urgent = True
                                 queue.clear()
                                 queue.extend(remaining)
                                 queued_bytes = sum(len(item[1]) for item in queue)
@@ -348,8 +367,11 @@ def serve(
                     child.partial = bytearray(lines[-1])
                     for line in lines[:-1]:
                         outbox.extend(encode_frame(LINE, child.request_id, line + b"\n"))
-            if outbox:
+                    if lines[:-1] and hold_until is None:
+                        hold_until = clock() + _COALESCE_S
+            if outbox and (urgent or hold_until is None or clock() >= hold_until):
                 flush()
+                urgent, hold_until = False, None
     except FrameError:
         return 3
     finally:

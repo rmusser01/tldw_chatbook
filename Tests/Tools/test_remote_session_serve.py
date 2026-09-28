@@ -44,6 +44,11 @@ HANDLER = textwrap.dedent('''
                     pass
             out.write(leaked.encode() + b"\\n")
             return 0
+        if cmd in ("twostep", "twostep-slow"):
+            out.write(b"one\\n"); out.flush()
+            time.sleep(0.002 if cmd == "twostep" else 0.6)
+            out.write(b"two\\n"); out.flush()
+            return 0
         out.write(b"echo:" + raw + b"\\n"); out.flush()
         return 0
     sys.exit(serve(0, 1, run_request=run_request, max_request_bytes=1 << 20, max_response_bytes=1 << 16))
@@ -412,5 +417,49 @@ def test_queue_byte_bound_refuses_the_excess_at_once():
         frames = _statuses_for(proc, reader, 4, 1, timeout=5)
         assert {r: decode_status(b) for k, r, b in frames if k == STATUS} == {4: (None, 9)}
         assert {r for k, r, _ in frames if k == BUSY} == {2, 3}
+    finally:
+        _terminate(proc)
+
+
+def _chunks_until_status(proc, reader, timeout=10.0):
+    """Frames grouped by the os.read chunk they arrived in."""
+    chunks, end, fd = [], time.monotonic() + timeout, proc.stdout.fileno()
+    while time.monotonic() < end:
+        ready, _, _ = select.select([fd], [], [], end - time.monotonic())
+        if not ready:
+            break
+        data = os.read(fd, 65536)
+        if not data:
+            break
+        frames = reader.feed(data)
+        chunks.append(frames)
+        if any(kind == STATUS for kind, _, _ in frames):
+            break
+    return chunks
+
+
+# A generous window for the tests (the shipped value is _COALESCE_S): a
+# loaded CI runner must not turn "child exited within the window" flaky.
+_HOLD_200MS = "import tldw_chatbook.Tools.remote_session_serve as _s; _s._COALESCE_S = 0.2"
+
+
+def test_fast_op_output_and_status_leave_in_one_write():
+    proc, reader = _session(prelude=_HOLD_200MS)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"twostep"))
+        chunks = _chunks_until_status(proc, reader)
+        assert len(chunks) == 1, chunks
+        assert [kind for kind, _, _ in chunks[0]] == [LINE, LINE, STATUS]
+    finally:
+        _terminate(proc)
+
+
+def test_slow_op_first_line_is_not_held_until_the_end():
+    proc, reader = _session(prelude=_HOLD_200MS)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"twostep-slow"))
+        chunks = _chunks_until_status(proc, reader)
+        assert len(chunks) >= 2
+        assert [kind for kind, _, _ in chunks[0]] == [LINE]
     finally:
         _terminate(proc)
