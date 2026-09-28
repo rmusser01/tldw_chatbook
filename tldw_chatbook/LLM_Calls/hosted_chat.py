@@ -166,8 +166,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         allowed_choice_keys: frozenset[str] = frozenset(),
         allowed_message_keys: frozenset[str] = frozenset(),
         tolerant_top_level_extras: bool = False,
+        usage_optional: bool = False,
     ) -> None:
         self._records = records
+        # A provider whose documented chunk schema has no usage (TASK-33126):
+        # [DONE] without usage ends a usage-None turn; nothing else relaxes.
+        self._usage_optional = usage_optional
         self._finish_policy = finish_policy
         self._allowed_extra_keys = allowed_extra_keys
         self._allowed_choice_keys = allowed_choice_keys
@@ -210,7 +214,8 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             # captured long-tail servers ship none) ends a usage-None turn;
             # a missing finish reason still fails (controller ruling b).
             if self._finish_reason is None or (
-                self._usage is None and not self._tolerant
+                self._usage is None
+                and not (self._tolerant or self._usage_optional)
             ):
                 self.close()
                 raise HostedChatProtocolError(

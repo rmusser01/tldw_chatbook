@@ -71,6 +71,13 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         "Together",
         "Fireworks",
         "Cerebras",
+        # TASK-33126: doc-derived presets with a /models route (MiniMax
+        # documents none and is seeded instead).
+        "SambaNova",
+        "NVIDIA",
+        "DeepInfra",
+        "Nebius",
+        "Novita",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 11
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 16
     assert SELECTOR_MERGE_CAP == 50

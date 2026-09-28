@@ -25,6 +25,13 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "Together",
     "Fireworks",
     "Cerebras",
+    # TASK-33126 doc-derived presets with a /models route (MiniMax has none
+    # documented, so it is seeded from its docs instead).
+    "SambaNova",
+    "NVIDIA",
+    "DeepInfra",
+    "Nebius",
+    "Novita",
 )
 
 SELECTOR_MERGE_CAP = 50

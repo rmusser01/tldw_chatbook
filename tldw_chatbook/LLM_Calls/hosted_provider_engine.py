@@ -952,6 +952,8 @@ def build_hosted_chat_payload(
         "messages": messages,
         "stream": stream,
     }
+    if stream and record.stream_include_usage:
+        payload["stream_options"] = {"include_usage": True}
     if temperature is not None:
         payload["temperature"] = temperature
     if top_p is not None:
@@ -2002,6 +2004,7 @@ def _send_hosted_chat_request(
                     allowed_choice_keys=record.choice_allowances,
                     allowed_message_keys=record.message_allowances,
                     tolerant_top_level_extras=record.tolerant_response_extras,
+                    usage_optional=record.stream_usage_optional,
                 ),
                 record=record,
                 resolution=resolution,

@@ -106,6 +106,11 @@ class ProviderRecord:
             null, scalar, or shape-safe mapping).
         message_allowances: Tolerated extra message/delta-level keys
             (same value rule).
+        stream_include_usage: Send ``stream_options.include_usage`` on
+            streaming requests (providers that only stream usage on request).
+        stream_usage_optional: Accept a stream that ends without usage
+            (providers whose chunk schema carries none); a finish reason is
+            still required.
         tolerant_response_extras: Long-tail tolerant profile switch
             (custom family only, fixture-gated): shape-safe unknown
             top/event keys and null-valued unknown choice/message keys are
@@ -165,6 +170,16 @@ class ProviderRecord:
     response_allowances: frozenset[str] = frozenset()
     choice_allowances: frozenset[str] = frozenset()
     message_allowances: frozenset[str] = frozenset()
+    # Streamed-usage contract (TASK-33126). Strict records fail a stream that
+    # ends without usage, and OpenAI-semantics providers only send streamed
+    # usage when asked: ``stream_include_usage`` adds
+    # ``stream_options: {"include_usage": true}`` to streaming payloads.
+    # ``stream_usage_optional`` is for providers whose documented chunk schema
+    # carries no usage at all -- the stream then ends as a usage-None turn
+    # (finish reason still required). Both default off so existing presets
+    # send byte-identical payloads.
+    stream_include_usage: bool = False
+    stream_usage_optional: bool = False
     # Long-tail tolerant profile (custom family only, ADR-179 Phase 2,
     # fixture-gated): shape-safe unknown top/event keys dropped; null-valued
     # unknown choice/message keys dropped (non-null ones still fail closed
@@ -307,6 +322,216 @@ CEREBRAS = ProviderRecord(
     engine_driven=True,
     base_url_suffix=None,
     reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+
+# --- Doc-derived inference-cloud presets (TASK-33126) ---
+# Six more strict engine presets. Unlike Together/Fireworks/Cerebras, these
+# records are derived from each provider's PUBLIC DOCUMENTATION (read
+# 2026-09-27; no keys, no captured fixtures). Every allowance below is a
+# field the provider documents in its Chat Completions response schema;
+# anything a doc did not show stays strict (fails closed). The first live
+# capture reconciles these sets -- amend, never silent.
+#
+# Excluded on purpose (both retired, confirmed on the providers' own pages
+# 2026-09-27): GitHub Models (retired 2026-07-30, docs.github.com/en/
+# github-models) and Hyperbolic serverless inference (hyperbolic.ai/docs/
+# faq/inference-models).
+#
+# SambaNova Cloud -- OpenAPI spec github.com/sambanova/sambanova-inference-
+# api-spec (openapi.documented.json): choice ``logprobs`` (nullable); the
+# streaming delta alone carries ``reasoning``/``channel`` (gpt-oss) -- the
+# non-streaming message has no reasoning field (reasoning is inline
+# ``<think>`` text there), so reasoning is "ignored" rather than routed.
+# ``stream_options.include_usage`` is a documented request field.
+SAMBANOVA = ProviderRecord(
+    key="sambanova",
+    config_key="SambaNova",
+    display_name="SambaNova",
+    classification=_CLOUD,
+    api_key_env_var="SAMBANOVA_API_KEY",
+    api_key_env_candidates=("SAMBANOVA_API_KEY",),
+    default_base_url="https://api.sambanova.ai/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "SAMBANOVA_API_KEY",
+        # No "model" key (see TOGETHER): discovery/seeding fills models.
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    choice_allowances=frozenset({"logprobs"}),
+    message_allowances=frozenset({"reasoning", "channel"}),
+    stream_include_usage=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# NVIDIA NIM (build.nvidia.com) -- docs.api.nvidia.com/nim/reference/
+# llm-apis + per-model OpenAPI schemas: message ``reasoning_content``
+# (model-specific), and the ChatCompletionChunk schema has NO ``usage`` and
+# no ``stream_options`` request field, so streams may end without usage.
+# ``GET /v1/models`` is not in the official docs but answers OpenAI-shaped
+# (unauthenticated probe, 2026-09-27), so the catalog auto-refreshes.
+NVIDIA = ProviderRecord(
+    key="nvidia",
+    config_key="NVIDIA",
+    display_name="NVIDIA NIM",
+    classification=_CLOUD,
+    api_key_env_var="NVIDIA_API_KEY",
+    api_key_env_candidates=("NVIDIA_API_KEY",),
+    default_base_url="https://integrate.api.nvidia.com/v1",
+    native_tools=True,
+    reasoning_effort=False,  # enum varies per model page
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "NVIDIA_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    stream_usage_optional=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# DeepInfra -- docs.deepinfra.com/chat/overview: base ``/v1/openai``,
+# top-level ``service_tier``, extra ``usage.estimated_cost`` (usage is only
+# shape-checked, so no allowance needed). Streamed usage arrives on the
+# finish chunk without any request option (docs.deepinfra.com/chat/
+# streaming). Its reasoning field name is undocumented, so reasoning stays
+# "ignored" and an unknown message field still fails closed.
+DEEPINFRA = ProviderRecord(
+    key="deepinfra",
+    config_key="DeepInfra",
+    display_name="DeepInfra",
+    classification=_CLOUD,
+    api_key_env_var="DEEPINFRA_API_KEY",
+    api_key_env_candidates=("DEEPINFRA_API_KEY",),
+    default_base_url="https://api.deepinfra.com/v1/openai",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "DEEPINFRA_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    response_allowances=frozenset({"service_tier"}),
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# Nebius Token Factory (renamed from Nebius AI Studio in 2026; the legacy
+# api.studio.nebius.com host is being retired) -- docs.tokenfactory.
+# nebius.com/api-reference/inference/create-chat-completion: top-level
+# ``service_tier``, choice ``logprobs``, message ``reasoning_content``,
+# finish reasons stop/length/tool_calls/content_filter, documented
+# ``stream_options.include_usage``.
+NEBIUS = ProviderRecord(
+    key="nebius",
+    config_key="Nebius",
+    display_name="Nebius Token Factory",
+    classification=_CLOUD,
+    api_key_env_var="NEBIUS_API_KEY",
+    api_key_env_candidates=("NEBIUS_API_KEY",),
+    default_base_url="https://api.tokenfactory.nebius.com/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "NEBIUS_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"content_filter"}),
+    response_allowances=frozenset({"service_tier"}),
+    choice_allowances=frozenset({"logprobs"}),
+    stream_include_usage=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# Novita AI -- docs.novita.ai/guides/llm-api: chat is served at
+# ``/openai/v1/chat/completions`` (the old ``/v3/openai`` base is
+# superseded). docs.novita.ai/guides/llm-reasoning: reasoning goes to
+# message/delta ``reasoning_content`` only when ``separate_reasoning`` is
+# set, so the record sends it. Documented ``stream_options.include_usage``.
+NOVITA = ProviderRecord(
+    key="novita",
+    config_key="Novita",
+    display_name="Novita AI",
+    classification=_CLOUD,
+    api_key_env_var="NOVITA_API_KEY",
+    api_key_env_candidates=("NOVITA_API_KEY",),
+    default_base_url="https://api.novita.ai/openai/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "NOVITA_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    extra_body_fields={"separate_reasoning": True},
+    stream_include_usage=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# MiniMax (international platform) -- platform.minimax.io/docs/
+# api-reference/text-chat-openai: top-level ``base_resp`` plus the
+# ``input_sensitive``/``output_sensitive`` (+``_type``) safety flags;
+# message ``name`` and ``audio_content``; ``reasoning_split: true`` moves
+# thinking out of ``<think>`` text into ``reasoning_content``; finish
+# reasons add ``content_filter``; ``stream_options.include_usage`` defaults
+# false. The OpenAI quickstart repoints ``OPENAI_API_KEY`` -- deliberately
+# NOT a candidate here (it would send an OpenAI key to MiniMax). No
+# ``/v1/models`` is documented (401 without a key), so models are seeded
+# from the documented ``model`` enum and the catalog does not auto-refresh.
+MINIMAX = ProviderRecord(
+    key="minimax",
+    config_key="MiniMax",
+    display_name="MiniMax",
+    classification=_CLOUD,
+    api_key_env_var="MINIMAX_API_KEY",
+    api_key_env_candidates=("MINIMAX_API_KEY",),
+    default_base_url="https://api.minimax.io/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "MINIMAX_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"content_filter"}),
+    extra_body_fields={"reasoning_split": True},
+    response_allowances=frozenset(
+        {
+            "base_resp",
+            "input_sensitive",
+            "input_sensitive_type",
+            "output_sensitive",
+            "output_sensitive_type",
+        }
+    ),
+    message_allowances=frozenset({"name", "audio_content"}),
+    stream_include_usage=True,
+    reasoning_disposition="proprietary",
     auth_scheme="bearer",
 )
 
@@ -537,6 +762,7 @@ ALL_RECORDS: tuple[ProviderRecord, ...] = (
     OPENAI, ANTHROPIC, COHERE, GROQ, OPENROUTER, DEEPSEEK, MISTRAL, GOOGLE,
     HUGGINGFACE, MOONSHOT, ZAI, QWENCLOUD, DATABRICKS,
     TOGETHER, FIREWORKS, CEREBRAS, CUSTOM_HOSTED,
+    SAMBANOVA, NVIDIA, DEEPINFRA, NEBIUS, NOVITA, MINIMAX,
     LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )
