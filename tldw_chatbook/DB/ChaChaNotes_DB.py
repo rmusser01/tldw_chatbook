@@ -11722,18 +11722,24 @@ UPDATE db_schema_version
             params.append(normalized_topic_label)
 
         normalized_query = self._normalize_nullable_text(query)
+        # Message-content matching goes through messages_fts (kept in sync
+        # by triggers -- see schema ~line 326), never a leading-wildcard
+        # LIKE on messages.content (task-249). The subquery is deliberately
+        # UNCORRELATED (PERF-02, TASK-33261): SQLite runs the MATCH once and
+        # probes the materialized id list. The correlated EXISTS TASK-278
+        # shipped re-ran the full-text query per candidate conversation
+        # (~1.1 s vs ~7 ms in the 2026-09-27 audit bench; ~70 s for a common
+        # term at 150k messages). The hidden-column form
+        # (`fts.messages_fts MATCH`) is deliberate: the bare-alias form
+        # (`fts MATCH ?`) fails with "no such column: fts" inside a JOIN.
+        content_match_clause = (
+            "id IN (SELECT m.conversation_id FROM messages_fts fts "
+            "JOIN messages m ON fts.rowid = m.rowid "
+            "WHERE m.deleted = 0 AND fts.messages_fts MATCH ?)"
+        )
         if normalized_query_terms is not None:
             for index, term in enumerate(normalized_query_terms):
-                query_clauses = [
-                    "title LIKE ?",
-                    "EXISTS ("
-                    "SELECT 1 FROM messages_fts fts "
-                    "JOIN messages m ON fts.rowid = m.rowid "
-                    "WHERE m.conversation_id = conversations.id "
-                    "AND m.deleted = 0 "
-                    "AND fts.messages_fts MATCH ?"
-                    ")",
-                ]
+                query_clauses = ["title LIKE ?", content_match_clause]
                 params.extend([f"%{term}%", self._fts_prefix_match_expression(term)])
                 if len(normalized_query_terms) == 1:
                     query_clauses.append("id = ?")
@@ -11748,27 +11754,7 @@ UPDATE db_schema_version
                     params.append(json.dumps(workspace_term_ids, separators=(",", ":")))
                 clauses.append(f"({' OR '.join(query_clauses)})")
         elif normalized_query is not None:
-            # Message-content matching goes through messages_fts (kept in
-            # sync by triggers -- see schema ~line 326) instead of a
-            # correlated leading-wildcard substring scan against the raw
-            # messages.content column: that was index-hostile, re-scanning
-            # every candidate conversation's messages per call (task-249 /
-            # performance audit finding A4). Title and id= matching are
-            # unchanged.
-            query_clauses = [
-                "title LIKE ? OR id = ? OR EXISTS ("
-                "SELECT 1 FROM messages_fts fts "
-                "JOIN messages m ON fts.rowid = m.rowid "
-                "WHERE m.conversation_id = conversations.id "
-                "AND m.deleted = 0 "
-                # NOTE: the hidden-column form (`fts.messages_fts MATCH`) is
-                # deliberate — the bare-alias form (`fts MATCH ?`) fails with
-                # "no such column: fts" inside this correlated EXISTS+JOIN
-                # (verified against the test suite); both forms are
-                # documented FTS5.
-                "AND fts.messages_fts MATCH ?"
-                ")"
-            ]
+            query_clauses = [f"title LIKE ? OR id = ? OR {content_match_clause}"]
             like_query = f"%{normalized_query}%"
             fts_query = self._fts_prefix_match_expression(normalized_query)
             params.extend([like_query, normalized_query, fts_query])

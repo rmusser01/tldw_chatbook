@@ -154,6 +154,65 @@ class TestSqlShapePin:
         assert "MATCH" in source
 
 
+def _count_query_plan(db: CharactersRAGDB, query=None, **filters) -> list[str]:
+    """EXPLAIN QUERY PLAN details for the page count statement.
+
+    Captured with ``sqlite_stat1`` absent -- no DB module here runs
+    ``ANALYZE``, so this is the plan every real user gets (CLAUDE.md index
+    rule).
+    """
+    where_clause, params = db._conversation_search_filter(query, **filters)
+    with db.transaction() as conn:
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()[0]
+        assert has_stats == 0
+        rows = conn.execute(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) AS total FROM conversations "
+            f"WHERE {where_clause}",
+            tuple(params),
+        ).fetchall()
+    return [row[3] for row in rows]
+
+
+class TestContentMatchRunsOncePerQuery:
+    """PERF-02 (TASK-33261): the FTS match must not re-run per conversation.
+
+    TASK-278 moved content matching onto ``messages_fts`` but as a
+    correlated ``EXISTS(... WHERE m.conversation_id = conversations.id AND
+    messages_fts MATCH ?)``, so SQLite re-evaluates the full-text query once
+    per candidate conversation: ~1.1 s against ~7 ms uncorrelated in the
+    2026-09-27 audit's DB bench, ~70 s for a common term at 150k messages.
+    An uncorrelated ``id IN (SELECT conversation_id ...)`` evaluates the
+    MATCH once. Pinned on the plan, not on timing.
+    """
+
+    def test_single_query_content_match_is_not_correlated(self, db):
+        _conversation_with_message(db, title="Title", content="alpha beta")
+        plan = _count_query_plan(db, "alpha")
+        assert any("VIRTUAL TABLE" in detail for detail in plan), plan
+        assert not [d for d in plan if "CORRELATED" in d], plan
+
+    def test_per_term_content_match_is_not_correlated(self, db):
+        _conversation_with_message(db, title="Title", content="alpha beta")
+        plan = _count_query_plan(
+            db, None, scope_type="all", query_terms=["alpha", "beta"]
+        )
+        assert any("VIRTUAL TABLE" in detail for detail in plan), plan
+        assert not [d for d in plan if "CORRELATED" in d], plan
+
+    def test_per_term_content_match_requires_every_term(self, db):
+        both = _conversation_with_message(
+            db, title="Unrelated", content="alpha beta gamma"
+        )
+        _conversation_with_message(db, title="Other", content="alpha only here")
+        rows, total, _ = db.search_conversations_page(
+            None, scope_type="all", query_terms=["alpha", "beta"]
+        )
+        assert _ids(rows) == {both}
+        assert total == 1
+
+
 def _seed_coherent_conversation_population(db: CharactersRAGDB) -> list[str]:
     conversation_ids = []
     for index in range(45):
