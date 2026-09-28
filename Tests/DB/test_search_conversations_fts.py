@@ -188,12 +188,14 @@ class TestContentMatchRunsOncePerQuery:
     """
 
     def test_single_query_content_match_is_not_correlated(self, db):
+        """A plain query's content match plans as an uncorrelated subquery."""
         _conversation_with_message(db, title="Title", content="alpha beta")
         plan = _count_query_plan(db, "alpha")
         assert any("VIRTUAL TABLE" in detail for detail in plan), plan
         assert not [d for d in plan if "CORRELATED" in d], plan
 
     def test_per_term_content_match_is_not_correlated(self, db):
+        """Each ``query_terms`` content match plans as an uncorrelated subquery."""
         _conversation_with_message(db, title="Title", content="alpha beta")
         plan = _count_query_plan(
             db, None, scope_type="all", query_terms=["alpha", "beta"]
@@ -202,6 +204,7 @@ class TestContentMatchRunsOncePerQuery:
         assert not [d for d in plan if "CORRELATED" in d], plan
 
     def test_per_term_content_match_requires_every_term(self, db):
+        """``query_terms`` stay AND-ed: a conversation must match every term."""
         both = _conversation_with_message(
             db, title="Unrelated", content="alpha beta gamma"
         )
