@@ -137,16 +137,18 @@ async def synthesize_queries(
 def preview_queries(
     topics: list[str], goals: list[dict], *, count: int
 ) -> list[dict]:
-    """Public preview seam over the fallback list (the modals' only route).
+    """Public preview seam over the fallback list.
 
-    The Artifacts story-detail modal renders a "what we'll look for"
-    preview of the NEXT cycle's queries without ever calling an LLM from
-    the UI, so it shows exactly what a degraded cycle would search. That
-    is this function: the deterministic fallback, exposed publicly so the
-    modal never imports the private helper (controller-authorized wrapper,
-    Task 7). Rows carry ``goal_derived`` so the preview can label which
-    lines came from goals; the same privacy gate as synthesis applies —
-    unsearchable goals are filtered here and never contribute a line.
+    Two consumers: the Artifacts story-detail modal renders a "what we'll
+    look for" preview of the NEXT cycle's queries without ever calling an
+    LLM from the UI (so it shows exactly what a degraded cycle would
+    search), and the cycle's LLM-exhausted fallback searches this same
+    deterministic list verbatim when the daily budget rules out a
+    synthesis call. The fallback is exposed publicly so neither consumer
+    imports the private helper (controller-authorized wrapper, Task 7).
+    Rows carry ``goal_derived`` so the preview can label which lines came
+    from goals; the same privacy gate as synthesis applies — unsearchable
+    goals are filtered here and never contribute a line.
 
     Args:
         topics: Current snapshot topic texts, heaviest first.

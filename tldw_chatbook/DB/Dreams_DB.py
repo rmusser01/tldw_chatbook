@@ -808,12 +808,22 @@ class DreamsDB(BaseDB):
         return [dict(row) for row in rows]
 
     def find_tracked_by_story(self, origin_story_id: int) -> dict | None:
-        """Return the newest tracked item originating from a story, or None."""
+        """Return the newest ACTIVE tracked item from a story, or None.
+
+        Final review (ruling P10): the story modal's untrack resolves
+        through this lookup, so a retired/paused row must never surface --
+        re-retiring a sweep-retired row would rewrite its
+        ``retired_reason`` audit data (COALESCE) and disable a
+        subscription the sweep deliberately left live. With the filter the
+        story rows' active-only tracked badge and the ``u`` action agree
+        on what "tracked" means.
+        """
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT * FROM dream_tracked_items WHERE origin_story_id = ?"
+                " AND status = ?"
                 " ORDER BY created_at DESC, id DESC LIMIT 1",
-                (origin_story_id,),
+                (origin_story_id, "active"),
             ).fetchone()
         return dict(row) if row is not None else None
 

@@ -118,11 +118,15 @@ def snapshot(
     ``searchable`` filtering -- rows keep their flag so the egress layer,
     query synthesis, is the single place that enforces the privacy gate);
     ``last_boosted_at`` is stored as an ISO string or NULL and is converted
-    to epoch floats for the decay math. Feedback is applied here as an
-    OFFSET over the decayed weight (``FEEDBACK_STEP`` per net reaction,
-    clamped) instead of being written back into the stored weight: a stored
-    write would re-apply the same reactions every cycle of their window,
-    and the signal refresh would clobber it on derived rows.
+    to epoch floats for the decay math. The ``profile_digest`` the cycle
+    hashes this whole mapping into is a LOCAL commitment that intentionally
+    covers unsearchable goals: it never leaves the machine, and the goals'
+    raw text is already plaintext in the same SQLite DB. Feedback is
+    applied here as an OFFSET over the decayed weight (``FEEDBACK_STEP``
+    per net reaction, clamped) instead of being written back into the
+    stored weight: a stored write would re-apply the same reactions every
+    cycle of their window, and the signal refresh would clobber it on
+    derived rows.
 
     Args:
         db: Dreams database to read the interest profile from.
