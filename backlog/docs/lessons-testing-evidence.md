@@ -16769,3 +16769,7 @@ publication; the ordinary and dispatch publication routes advance the revision.
 Give a warm-cache invalidation probe a stable, materialized source baseline.
 A read that mutates the fixture's revision can conceal the missing event fence
 that the test is meant to detect.
+
+### PR #2196: Windows checkout must preserve tokenizer table bytes
+
+During the 2026-09-27 final offline verification, `git ls-files --eol` showed LF index blobs but CRLF working files in `assets/tiktoken_cache`; the unchanged manifest rejected GPT-2 vocabulary SHA-256 (`84809de...` instead of `1ce1664...`) and encoding construction failed. Mark the immutable cache inventory `-text`, as with Canvas and built-in skills, instead of changing reviewed hashes or normalizing inside the reader. Restoring exact Git blobs and applying the attribute made all 31 affected cases pass, including an upstream-fetch refusal and all five encoding constructors. Metadata-only dependency probes establish installation; test actual blocked imports through their public fallback, not an eager-import-era availability flag.
