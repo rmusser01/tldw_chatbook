@@ -48,5 +48,8 @@ Measured: the config write took 78-147 ms on the UI thread per Use on dev; now i
 
 Tests: Tests/UI/test_settings_theme_file_actions_off_thread.py (Use's write thread, FIFO ordering incl. a blocking write behind a pending one, quit waits before the config pass, a raising write is reported). Picker tests wait for the Use worker.
 
+
+Review fix round (M-1, M-2): each launch-default write is numbered as it is asked for (`_submit_launch_default`); only the latest records its outcome. `persist_launch_default_async` now returns `(file_replaced, caches_reloaded, latest)`: a write superseded by a later one (a Revert or palette switch in Use's ~140 ms window) leaves `app_config` to that later write, and the picker's `_persist_use` shows no toast for it -- before, the Use toast arrived after the Revert and `app_config` ended on the reverted theme. The editor's `_persist_launch_default` keeps the 2-tuple. Quit now calls `wait_for_theme_quit_work` (theme file actions, then launch-default writes; see TASK-33078). Tests: superseded write leaves app_config to the later one; Use then quick Revert shows no stale Use toast.
+
 Files: tldw_chatbook/css/Themes/theme_catalog.py, tldw_chatbook/Widgets/settings_theme_picker.py (`_switch`, `_persist_use`), tldw_chatbook/app.py (`_run_blocking_quit_persistence`), Docs/User_Guide/settings.md.
 <!-- SECTION:NOTES:END -->
