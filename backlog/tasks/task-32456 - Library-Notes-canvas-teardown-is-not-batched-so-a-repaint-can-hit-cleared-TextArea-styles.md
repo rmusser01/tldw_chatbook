@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-11 10:30'
+updated_date: '2026-09-28 02:12'
 labels:
   - library
   - notes
@@ -38,3 +39,9 @@ test symptom with a per-test loop drain in
 - [ ] #2 A deterministic regression test drives that teardown with a pending repaint and reproduces the `text-area--gutter` KeyError before the fix, as TASK-32114's does for the MCP panel
 - [ ] #3 With the product guard in place, the `_drain_pending_repaints` fixture task-32298 added is removed or justified in its docstring
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**2026-09-27.** The TextArea detach race behind TASK-32049 is fixed at class level by `tldw_chatbook/Widgets/detach_safe_text_area.py::DetachSafeTextArea` (#2866) for the five MCP-module TextAreas. A per-call-site `app.batch_update()` patch (as TASK-32114 applied to the MCP Test Tool panel) does not close the class of bug for every other TextArea. `NoteEditorTextArea` subclassing `DetachSafeTextArea` is likely the fix for this task's Library Notes canvas instance. Status unchanged.
+<!-- SECTION:NOTES:END -->

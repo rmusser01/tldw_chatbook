@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-09-10 13:35'
-updated_date: '2026-09-11 19:10'
+updated_date: '2026-09-28 02:12'
 labels:
   - library
   - notes
@@ -120,4 +120,6 @@ live `TextArea` outside a batch update can hit it. Library is such a surface:
 `NoteEditorTextArea`.
 
 Files: `Tests/UI/test_library_notes_reader.py` (the inert fixture removed).
+
+**2026-09-27.** The TextArea detach race behind TASK-32049 is fixed at class level by `tldw_chatbook/Widgets/detach_safe_text_area.py::DetachSafeTextArea` (#2866) for the five MCP-module TextAreas. A per-call-site `app.batch_update()` patch does not close the class of bug for every other TextArea. `NoteEditorTextArea` subclassing `DetachSafeTextArea` is likely the fix for the Library Notes canvas race this task and TASK-32456 track. Status unchanged.
 <!-- SECTION:NOTES:END -->

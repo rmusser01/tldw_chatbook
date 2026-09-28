@@ -104,6 +104,14 @@
     color: $ds-surface-panel;
     text-style: bold;
 }
+/* TASK-33077: group headers (and the loading / none-yet rows) are disabled
+   options only so the cursor skips them; Textual paints those
+   `$text-disabled`, 2.54:1 (light) and 3.43:1 (dark). They are labels, not
+   unavailable controls: muted but readable, bold as headings. */
+#settings-theme-list > .option-list--option-disabled {
+    color: $ds-text-muted;
+    text-style: bold;
+}
 #settings-workbench.settings-workbench-compact #settings-theme-list {
     max-height: $ds-size-9;
 }

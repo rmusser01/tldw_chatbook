@@ -2586,17 +2586,27 @@ class RagProfileNameModal(ModalScreen[str | None]):
     brief) -- this follows the same dismiss-with-a-value + push_screen(modal,
     callback) shape as ``ConsoleSystemPromptModal``. Dismisses with the
     trimmed name, or ``None`` on Cancel/Escape/a blank submission.
+
+    TASK-33070: ``validate`` (optional) is called with the trimmed value on
+    submit; a returned reason is shown inside the dialog and the typed value
+    kept, ``None`` dismisses as before.
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
     def __init__(
-        self, *, title: str, initial: str = "", confirm_label: str = "Save"
+        self,
+        *,
+        title: str,
+        initial: str = "",
+        confirm_label: str = "Save",
+        validate: Callable[[str], str | None] | None = None,
     ) -> None:
         super().__init__()
         self._modal_title = title
         self._initial = initial
         self._confirm_label = confirm_label
+        self._validate = validate
 
     def compose(self) -> ComposeResult:
         with Vertical(
@@ -2604,6 +2614,12 @@ class RagProfileNameModal(ModalScreen[str | None]):
         ):
             yield Static(self._modal_title, classes="destination-section")
             yield Input(value=self._initial, id="settings-rag-profile-name-input")
+            # Untrusted text (a file's reason, a typed path): never markup.
+            error = Static(
+                "", id="settings-rag-profile-name-error", classes="settings-rag-profile-name-error", markup=False
+            )
+            error.display = False
+            yield error
             with Horizontal(classes="settings-action-row"):
                 yield Button("Cancel", id="settings-rag-profile-name-cancel")
                 yield Button(
@@ -2641,7 +2657,17 @@ class RagProfileNameModal(ModalScreen[str | None]):
             value = self.query_one("#settings-rag-profile-name-input", Input).value
         except QueryError:
             value = ""
-        self.dismiss(value.strip() or None)
+        value = value.strip()
+        reason = self._validate(value) if value and self._validate is not None else None
+        if reason:
+            from ...css.Themes.themes import printable
+
+            error = self.query_one("#settings-rag-profile-name-error", Static)
+            error.update(printable(reason))
+            error.display = True
+            self.query_one("#settings-rag-profile-name-input", Input).focus()
+            return
+        self.dismiss(value or None)
 
 
 class RagProfileSwitchConfirmModal(ModalScreen[str]):
@@ -3347,6 +3373,9 @@ class SettingsScreen(BaseAppScreen):
         #: focus survives the rebuild. (`recompose()` still consumes it too,
         #: for the rarer whole-screen rebuild.)
         self._pending_category_focus_value: str | None = None
+        # TASK-33072: entering Theme lands in its list after the swap,
+        # unless an F6 pressed mid-swap claimed the focus first.
+        self._theme_list_focus_pending = False
         #: task-15475: per-instance queue for `_after_category_panes` (the
         #: class attribute is None precisely so this is never shared).
         self._pending_pane_swap_callbacks: list[
@@ -22974,6 +23003,7 @@ class SettingsScreen(BaseAppScreen):
             )
 
         if self._category_pane_swap_pending:
+            self._theme_list_focus_pending = False  # this press wins (TASK-33072)
             self._after_category_panes(self.app.call_later, cycle)
         else:
             cycle()
@@ -24636,6 +24666,11 @@ class SettingsScreen(BaseAppScreen):
                 self._pending_category_focus_value = category_value
             else:
                 self.call_after_refresh(self._focus_category, category_value)
+            if category_value == SettingsCategoryId.THEME.value:
+                # TASK-33072: Theme's keys (c/t/e, j/k) act on its list, so
+                # land there -- queued behind the rail restore above.
+                self._theme_list_focus_pending = True
+                self._after_category_panes(self._focus_theme_list)
         if not category_changed:
             # task-1623: re-evaluate the fold indicator against the inspector's
             # content. Only on the no-switch path: a real switch runs a pane
@@ -24889,15 +24924,32 @@ class SettingsScreen(BaseAppScreen):
         """Prompt for the new name, then rename through the editor's file API."""
         event.stop()
         old = event.theme_id
+        # TASK-33073: the list's name with its file ("'Mine' (mine.toml)").
+        label = self._with_theme_editor(lambda editor: editor.dialog_label(old)) or f"'{old}'"
         self.app.push_screen(
             RagProfileNameModal(
                 # R27 (7): [theme].name is hand-editable; x[/] must not crash.
-                title=f"Rename theme '{escape_markup(old)}'",
+                title=f"Rename theme {escape_markup(label)}",
                 initial=old,
                 confirm_label="Rename",
+                # TASK-33070: a taken/invalid name is shown in the dialog.
+                validate=lambda new: self._with_theme_editor(
+                    lambda editor: editor.rename_refusal(old, new)
+                ),
             ),
             lambda new: self._handle_theme_rename_result(old, new),
         )
+
+    def _with_theme_editor(
+        self, call: Callable[[SettingsThemeEditor], str | None]
+    ) -> str | None:
+        """Run a theme prompt's check or label on the editor (file checks
+        stay in that one instance); None once the pane is gone (R38)."""
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return None
+        return call(editor)
 
     def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
         if not new or new == old:
@@ -24914,7 +24966,14 @@ class SettingsScreen(BaseAppScreen):
         """Prompt for a theme file path, then import it through the editor."""
         event.stop()
         self.app.push_screen(
-            RagProfileNameModal(title="Import theme — full path to a .toml file", initial="", confirm_label="Import"),
+            RagProfileNameModal(
+                title="Import theme — full path to a .toml file",
+                initial="",
+                confirm_label="Import",
+                validate=lambda source: self._with_theme_editor(
+                    lambda editor: editor.import_refusal(source)
+                ),
+            ),
             self._handle_theme_import_result,
         )
 
@@ -25096,6 +25155,27 @@ class SettingsScreen(BaseAppScreen):
         # silently overwrite this (spec §8: land on the launch default, not
         # whatever's merely active right now).
         self._after_category_panes(self._highlight_theme_launch_default)
+
+    def _focus_theme_list(self) -> None:
+        """Move focus from the Theme rail row to the picker's list.
+
+        Only while focus is still where the category switch put it (on the
+        rail, or nowhere) and no F6 was pressed mid-swap: those keep their
+        target.
+        """
+        if not self._theme_list_focus_pending:
+            return
+        self._theme_list_focus_pending = False
+        focused = self.app.focused
+        try:
+            rail = self.query_one("#settings-category-pane")
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return
+        if focused is not None and rail not in focused.ancestors_with_self:
+            return
+        if pane.current == "settings-theme-picker":
+            pane.query_one(ThemePicker).focus_list()
 
     def _highlight_theme_launch_default(self) -> None:
         from ...css.Themes.theme_catalog import current_launch_default

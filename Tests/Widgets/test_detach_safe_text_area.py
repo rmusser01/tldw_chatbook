@@ -35,8 +35,16 @@ async def _render_after_removal(widget_type: type[TextArea]) -> list:
 @pytest.mark.asyncio
 async def test_stock_text_area_raises_after_detach():
     """Negative control: proves the race is real on the pinned Textual."""
-    with pytest.raises(KeyError, match="text-area--gutter"):
+    try:
         await _render_after_removal(TextArea)
+    except KeyError as exc:
+        assert "text-area--gutter" in str(exc)
+    else:
+        pytest.fail(
+            "Stock TextArea no longer raises when a detached widget is repainted: "
+            "Textual appears to have fixed the detach race, so DetachSafeTextArea "
+            "may now be removable (TASK-32049)."
+        )
 
 
 @pytest.mark.asyncio

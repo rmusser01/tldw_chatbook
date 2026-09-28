@@ -362,7 +362,8 @@ The project uses GitHub Actions for continuous integration:
    - Separate jobs for UI tests, workflow self-checks, and artifact-lease tests
    - Nightly deep job (`nightly-deep`, scheduled) carries the OS/Python
      breadth (Ubuntu 3.11/3.12/3.13, macOS 3.12, Windows 3.12) plus the
-     `--run-slow` tier and coverage
+     `--run-slow` tier and coverage (disabled 2026-09-27 until CI throughput
+     sub-project 3; see ADR-103)
    - Test result and coverage reporting
 
 2. **Derived Artifacts Workflow** (`derived-artifacts.yml`):
