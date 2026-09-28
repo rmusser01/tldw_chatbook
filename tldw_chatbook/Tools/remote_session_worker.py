@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import select
+import signal
 import subprocess
 import threading
 import time
@@ -95,13 +96,16 @@ class _HandshakeFailed(Exception):
         self.stalled = stalled
 
 
+class _WriteStalled(Exception):
+    """Internal: a write could not complete by its deadline."""
+
+
 @dataclass
 class _Pending:
     done: threading.Event = field(default_factory=threading.Event)
     admitted_at: float | None = None
     terminal: bytes | None = None
     status: tuple[int | None, int | None] | None = None
-    dead_exit: int | None = None
 
 
 class RemoteSessionWorker:
@@ -153,6 +157,11 @@ class RemoteSessionWorker:
         self._next_id = 1
         self._alive = False
         self._idle_since: float | None = None
+        #: Death cause (R9): None while alive/unstarted, True for a natural
+        #: death (EOF / ssh exited), False when the laptop ended it.
+        self._death_natural: bool | None = None
+        self._death_code: int | None = None
+        self._settled = threading.Event()  # set once _die has reaped
 
     @property
     def alive(self) -> bool:
@@ -191,6 +200,9 @@ class RemoteSessionWorker:
             )
             raise SessionStartError(True, failure, "ssh could not be run") from None
         self._proc = proc
+        # Every write is select-bounded (see _write): a stalled remote can
+        # never wedge a writer, and so never the write lock.
+        os.set_blocking(proc.stdin.fileno(), False)  # type: ignore[union-attr]
         self._stderr_thread = threading.Thread(
             target=self._drain_stderr, name="ssh-session-stderr", daemon=True
         )
@@ -201,26 +213,24 @@ class RemoteSessionWorker:
         deadline = time.monotonic() + _HANDSHAKE_TIMEOUT_S
         try:
             # LOCKSTEP: after each write, send nothing until the loader answers.
-            self._handshake_write(loader + header)
+            self._handshake_write(loader + header, deadline)
             line = self._read_handshake_line(deadline)
             if line == b"NEED " + bundle_hash.encode():
-                self._handshake_write(len(compressed).to_bytes(4, "big") + compressed)
+                self._handshake_write(len(compressed).to_bytes(4, "big") + compressed, deadline)
                 line = self._read_handshake_line(deadline)
         except _HandshakeFailed as ended:
             self._fail_start(ended)
         if line != b"READY " + expected_bundle_stamp(artifact).encode():
-            self._kill()
+            self._kill_and_reap()
             raise SessionStartError(False, None, "handshake: unexpected loader line or stamp")
+        hello = json.dumps({"max_children": self._max_children, "idle_s": self._idle_s})
         try:
             self._write(
-                encode_frame(
-                    HELLO,
-                    0,
-                    json.dumps({"max_children": self._max_children, "idle_s": self._idle_s}).encode(),
-                )
+                encode_frame(HELLO, 0, hello.encode()),
+                time.monotonic() + self._transport.grace_seconds,
             )
-        except OSError:
-            self._kill()
+        except (OSError, _WriteStalled):
+            self._kill_and_reap()
             raise SessionStartError(False, None, "session closed before HELLO") from None
         with self._lock:
             self._alive = True
@@ -232,16 +242,21 @@ class RemoteSessionWorker:
         if stream is None:
             return
         try:
-            while chunk := stream.read(65536):
+            # os.read returns whatever is available: each chunk lands in the
+            # capture at once, so a join timeout still sees what was read.
+            while chunk := os.read(stream.fileno(), 65536):
                 self._stderr.append(chunk)
         except (OSError, ValueError):
             pass
 
-    def _handshake_write(self, data: bytes) -> None:
+    def _handshake_write(self, data: bytes, deadline: float) -> None:
         try:
-            self._write(data)
+            self._write(data, deadline)
         except OSError:
             pass  # the process died; the read below sees EOF and classifies it
+        except _WriteStalled:
+            self._kill_and_reap()
+            raise SessionStartError(False, None, "handshake write stalled") from None
 
     def _read_handshake_line(self, deadline: float) -> bytes:
         """Read one magic-prefixed line byte-wise, never past its newline.
@@ -298,15 +313,33 @@ class RemoteSessionWorker:
 
     # -- steady state ------------------------------------------------------
 
-    def _write(self, data: bytes) -> None:
+    def _write(self, data: bytes, deadline: float) -> None:
+        """Write ``data`` whole under the write lock, by ``deadline``.
+
+        Raises:
+            _WriteStalled: The lock or the pipe did not free up in time.
+                A stall mid-frame leaves the stream unusable, so callers
+                treat any stall as a self-inflicted session death.
+            OSError: The pipe broke (the process is gone).
+        """
         fd = self._proc.stdin.fileno()  # type: ignore[union-attr]
-        with self._write_lock:
+        if not self._write_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise _WriteStalled()
+        try:
             view = memoryview(data)
             while view:
-                view = view[os.write(fd, view) :]
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+                    raise _WriteStalled()
+                try:
+                    view = view[os.write(fd, view) :]
+                except BlockingIOError:
+                    continue
+        finally:
+            self._write_lock.release()
 
     def _reader(self) -> None:
-        """Route inbound frames to waiters; any error is session death.
+        """Route inbound frames to waiters; EOF is a natural death, any error a laptop kill.
 
         R7: per-frame cap ``MAX_RESPONSE_BYTES + 1`` — a LINE body is one
         worker line plus its newline (same bound the loopback harness and
@@ -332,24 +365,43 @@ class RemoteSessionWorker:
                         pending.status = status
                         pending.done.set()
                     # BUSY is informational: the request stays queued host-side.
-        except Exception:  # noqa: BLE001 - FrameError/JSON/KeyError/TypeError/OSError: session death
-            pass
-        self._die()
+        except Exception:  # noqa: BLE001 - FrameError/JSON/KeyError/TypeError/OSError
+            self._die(natural=False)
+            return
+        self._die(natural=True)
 
-    def _die(self) -> None:
-        """Mark the session dead, reap it, and release every waiter."""
+    def _die(self, *, natural: bool) -> None:
+        """Mark the session dead, reap it, and release every waiter.
+
+        The FIRST recorded cause wins (R9): a later reader EOF after a
+        laptop kill or ``close()`` stays self-inflicted. A natural death
+        reaps before killing so ssh's real exit code survives (ssh closes
+        stdout on channel EOF and exits once exit-status arrives), exactly
+        as the one-shot ``_settle_process``.
+        """
         with self._lock:
+            if self._death_natural is None:
+                self._death_natural = natural
+            natural = self._death_natural
             self._alive = False
         proc = self._proc
-        exit_code = 255
+        code = 255
         if proc is not None:
-            self._kill()
-            exit_code = proc.wait()
+            if natural:
+                try:
+                    code = proc.wait(timeout=self._transport.grace_seconds)
+                except subprocess.TimeoutExpired:
+                    self._kill()
+                    code = proc.wait()
+            else:
+                self._kill()
+                code = proc.wait()
         with self._lock:
+            if self._death_code is None:
+                self._death_code = code
             waiters = list(self._pending.values())
+        self._settled.set()
         for pending in waiters:
-            if pending.dead_exit is None:
-                pending.dead_exit = exit_code
             pending.done.set()
 
     def call(self, request_bytes: bytes, *, budget: float) -> RemoteCallResult:
@@ -360,34 +412,32 @@ class RemoteSessionWorker:
         stuck and the whole session is killed.
         """
         with self._lock:
-            if not self._alive:
-                return RemoteCallResult(
-                    False,
-                    None,
-                    TransportFailure(
-                        TransportFailureKind.WORKER_FAILED_TO_START, None, "session not running"
-                    ),
-                )
-            request_id = self._next_id
-            self._next_id += 1
-            pending = self._pending[request_id] = _Pending()
-            self._idle_since = None
+            alive = self._alive
+            if alive:
+                request_id = self._next_id
+                self._next_id += 1
+                pending = self._pending[request_id] = _Pending()
+                self._idle_since = None
+        if not alive:
+            return self._dead_session_result()
         grace = self._transport.grace_seconds
         sent_at = time.monotonic()
         killed = False
         try:
-            self._write(encode_frame(REQUEST, request_id, request_bytes))
+            self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
             while not pending.done.is_set():
                 remaining = (pending.admitted_at or sent_at) + budget + grace - time.monotonic()
                 if remaining <= 0:
                     killed = True
-                    self._write(encode_frame(CANCEL, request_id, b""))
+                    self._write(encode_frame(CANCEL, request_id, b""), time.monotonic() + grace)
                     if not pending.done.wait(grace):
-                        self._die()  # parent stuck: treated as session death
+                        self._die(natural=False)  # parent stuck: laptop kills the session
                     break
                 pending.done.wait(min(remaining, 0.5))
-        except (OSError, ValueError):  # ValueError: stdin already closed
-            self._die()
+        except _WriteStalled:
+            self._die(natural=False)
+        except (OSError, ValueError):  # broken pipe / stdin closed by close()
+            self._die(natural=True)
         finally:
             with self._lock:
                 self._pending.pop(request_id, None)
@@ -395,16 +445,50 @@ class RemoteSessionWorker:
                     self._idle_since = time.monotonic()
         return self._result(pending, budget, killed=killed)
 
+    def _dead_session_result(self) -> RemoteCallResult:
+        """R9: a natural death classifies by the real ssh exit code; a laptop end is REMOTE_OP_FAILED."""
+        if self._death_natural:
+            self._settled.wait(self._transport.grace_seconds + _CLOSE_WAIT_S)
+            code = self._death_code if self._death_code is not None else 255
+            failure = self._transport.classify_exchange_failure(
+                self._loc,
+                exit_code=code,
+                admitted=False,
+                admitted_at=None,
+                budget=1.0,
+                killed=False,
+                noise_capped=False,
+                stderr=self._stderr.value(),
+            )
+            return RemoteCallResult(False, None, failure)
+        return RemoteCallResult(
+            False,
+            None,
+            TransportFailure(
+                TransportFailureKind.REMOTE_OP_FAILED, self._death_code, "session ended by the laptop"
+            ),
+        )
+
     def _result(self, pending: _Pending, budget: float, *, killed: bool) -> RemoteCallResult:
         admitted = pending.admitted_at is not None
         if pending.terminal is not None:
             # As the one-shot: a terminal frame is the response, whatever the exit.
             return RemoteCallResult(admitted, pending.terminal, None)
-        if pending.status is not None:
+        if pending.status is None:
+            if not admitted:
+                return self._dead_session_result()
+            code = self._death_code if self._death_code is not None else -9
+        else:
             exit_code, signal_no = pending.status
             code = exit_code if exit_code is not None else -(signal_no or 9)
-        else:
-            code = pending.dead_exit if pending.dead_exit is not None else 255
+            if killed and not admitted:
+                # R8: our CANCEL ended a never-admitted (e.g. queued) request
+                # on a live session — an op timeout, never UNREACHABLE.
+                return RemoteCallResult(
+                    False,
+                    None,
+                    TransportFailure(TransportFailureKind.OP_TIMEOUT, code, "operation timed out"),
+                )
         failure = self._transport.classify_exchange_failure(
             self._loc,
             exit_code=code,
@@ -418,16 +502,33 @@ class RemoteSessionWorker:
         return RemoteCallResult(admitted, None, failure)
 
     def _kill(self) -> None:
+        """SIGKILL the session: its whole group when it leads one (real ssh
+        spawns with start_new_session, so ProxyCommand children die too),
+        else just the process (a test spawn shares pytest's group)."""
         proc = self._proc
-        if proc is not None and proc.poll() is None:
-            try:
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            if os.getpgid(proc.pid) == proc.pid:
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
                 proc.kill()
-            except OSError:
+        except OSError:
+            pass
+
+    def _kill_and_reap(self) -> None:
+        self._kill()
+        if self._proc is not None:
+            try:
+                self._proc.wait(timeout=_CLOSE_WAIT_S)
+            except subprocess.TimeoutExpired:
                 pass
 
     def close(self) -> None:
         """Close stdin (host exits on EOF), wait briefly, then kill. Never raises."""
         with self._lock:
+            if self._death_natural is None:
+                self._death_natural = False
             self._alive = False
         proc = self._proc
         if proc is None:
@@ -440,8 +541,4 @@ class RemoteSessionWorker:
         try:
             proc.wait(timeout=_CLOSE_WAIT_S)
         except subprocess.TimeoutExpired:
-            self._kill()
-            try:
-                proc.wait(timeout=_CLOSE_WAIT_S)
-            except subprocess.TimeoutExpired:
-                pass
+            self._kill_and_reap()

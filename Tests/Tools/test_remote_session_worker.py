@@ -86,6 +86,7 @@ def worker_factory(monkeypatch):
         env: dict[str, str] | None = None,
         cache: bool = False,
         grace: float = 1.0,
+        max_children: int = 4,
     ):
         if expected_stamp is not None:
             monkeypatch.setattr(worker_module, "expected_bundle_stamp", lambda _data: expected_stamp)
@@ -109,7 +110,7 @@ def worker_factory(monkeypatch):
                 SshMasterManager(enabled=False), grace_seconds=grace
             ),
             python=sys.executable,
-            max_children=4,
+            max_children=max_children,
             idle_s=30,
             cache=cache,
             spawn=spawn,
@@ -278,8 +279,10 @@ def test_hung_parent_kills_session(worker_factory, workspace):
     os.kill(spawns[0].pid, signal.SIGSTOP)
     started = time.monotonic()
     result = worker.call(read_request(workspace, "a.txt"), budget=1)
-    assert result.failure is not None and not worker.alive
     assert time.monotonic() - started < 10
+    assert not worker.alive and not result.admitted
+    # R9: the laptop ended the session -> status-preserving REMOTE_OP_FAILED.
+    assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
 
 
 def test_session_death_fails_inflight_and_marks_dead(worker_factory, workspace):
@@ -290,9 +293,77 @@ def test_session_death_fails_inflight_and_marks_dead(worker_factory, workspace):
     assert worker.idle_since is None  # a request is in flight
     spawns[0].kill()
     result = fut.result(10)
-    assert result.failure is not None and not worker.alive
+    assert not worker.alive
+    assert result.admitted and result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
+
+
+def test_queued_request_timeout_is_op_timeout_and_session_lives(worker_factory, workspace):
+    """R8: a never-admitted request cancelled on a live session is OP_TIMEOUT."""
+    worker, _ = worker_factory(max_children=1)
+    worker.start()
+    with ThreadPoolExecutor(1) as pool:
+        long_op = pool.submit(worker.call, grep_request(workspace, "(a+)+$", 4), budget=4)
+        time.sleep(0.5)  # the grep occupies the only child slot
+        queued = worker.call(read_request(workspace, "a.txt"), budget=0.5)
+        assert not queued.admitted
+        assert queued.failure.kind is TransportFailureKind.OP_TIMEOUT
+        assert worker.alive
+        first = long_op.result(20)
+    assert first.admitted and first.failure.kind is TransportFailureKind.OP_TIMEOUT
+    assert worker.call(read_request(workspace, "a.txt"), budget=10).failure is None
+
+
+#: Host that answers READY, then exits 255 ON ITS OWN once a request is in.
+_EXIT_255_HOST = textwrap.dedent(
+    """
+    import os, sys, time
+    os.read(0, 1 << 20)
+    os.write(1, b"TLDW-REMOTE-0001READY " + sys.argv[1].encode() + b"\\n")
+    time.sleep(1.0)
+    os.close(1)  # like real ssh: stdout EOF first, exit once exit-status arrives
+    time.sleep(0.3)
+    os._exit(255)
+    """
+)
+
+
+def test_natural_255_death_classifies_by_real_exit_code(worker_factory, workspace):
+    artifact, _, _ = _bundle_payload()
+    worker, _ = worker_factory(
+        spawn_argv=[sys.executable, "-c", _EXIT_255_HOST, expected_bundle_stamp(artifact)]
+    )
+    worker.start()
+    inflight = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not inflight.admitted
+    assert inflight.failure.kind is TransportFailureKind.UNREACHABLE
+    assert inflight.failure.exit_code == 255
     after = worker.call(read_request(workspace, "a.txt"), budget=10)
-    assert after.failure is not None and not after.admitted
+    assert after.failure.kind is TransportFailureKind.UNREACHABLE
+
+
+def test_call_after_close_is_remote_op_failed(worker_factory, workspace):
+    worker, _ = worker_factory()
+    worker.start()
+    worker.close()
+    result = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not result.admitted
+    assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
+
+
+def test_stalled_writer_cannot_wedge_other_callers(worker_factory, workspace):
+    worker, spawns = worker_factory()
+    worker.start()
+    os.kill(spawns[0].pid, signal.SIGSTOP)
+    big = b"x" * (8 << 20)  # far past the pipe buffer: the write stalls
+    started = time.monotonic()
+    with ThreadPoolExecutor(2) as pool:
+        stuck = pool.submit(worker.call, big, budget=1)
+        time.sleep(0.2)
+        small = pool.submit(worker.call, read_request(workspace, "a.txt"), budget=1)
+        results = [stuck.result(15), small.result(15)]
+    assert time.monotonic() - started < 10
+    assert not worker.alive
+    assert all(r.failure.kind is TransportFailureKind.REMOTE_OP_FAILED for r in results)
 
 
 def test_close_is_idempotent_and_never_raises(worker_factory):
@@ -324,3 +395,27 @@ def test_malformed_status_is_session_death(worker_factory, workspace):
     worker.start()
     result = worker.call(read_request(workspace, "a.txt"), budget=10)
     assert result.failure is not None and not worker.alive
+
+
+#: Host that asks for the bundle, then never reads it (73 KB > pipe buffer).
+_NEED_NO_READ_HOST = textwrap.dedent(
+    """
+    import os, sys, time
+    os.read(0, 1 << 20)
+    os.write(1, b"TLDW-REMOTE-0001NEED " + sys.argv[1].encode() + b"\\n")
+    time.sleep(30)
+    """
+)
+
+
+def test_bundle_write_is_bounded_by_the_handshake_deadline(worker_factory, monkeypatch):
+    monkeypatch.setattr(worker_module, "_HANDSHAKE_TIMEOUT_S", 2.0)
+    _, compressed, _ = _bundle_payload()
+    worker, _ = worker_factory(
+        spawn_argv=[sys.executable, "-c", _NEED_NO_READ_HOST, hashlib.sha256(compressed).hexdigest()]
+    )
+    started = time.monotonic()
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert time.monotonic() - started < 8
+    assert err.value.transport is False and "write stalled" in str(err.value)
