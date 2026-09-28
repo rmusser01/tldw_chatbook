@@ -16867,3 +16867,50 @@ The closed native barrier's memory baseline timed out at 300s under both current
 Startup deferral broke Library state re-exports used by a suspend test. Fixed lazy exports restored exact canonical classes. The reachable test then exposed an inherited __new__ fixture missing its unavailable-navigation owner; an empty-state fixture also expected a removed preview. Both failed against exact pre-repair source. Real construction plus an isolated UI callback preserved timer assertions; the canvas test now checks absent preview/export and an enabled Start in Console. Include legacy-namespace and real-construction checks when deferring imports.
 
 The expanded owner run passed 925 cases and failed a navigation test in a Pilot global message-queue drain after ID/title selection was visible. Removing that drain exposed a second race: the typed navigation request had not yet cleared. The final helper polls all three concrete postconditions (ID, visible title, no pending navigation), with unchanged limits. Independent positive/wrong-ID/wrong-title/pending controls showed RED then GREEN, and the entire affected Library/closure group passed 34/34. Avoid global queue drains as substitutes for owner completion; wait for the complete state the test actually asserts.
+
+### Count transcript work separately from coalesced draft repaints (PR #2196 / TASK-24300)
+
+**What happened.** The mounted empty-versus-400-message census counted zero transcript snapshots and zero history/context/spend row traversals in both arms after settled projection caching. It still failed exact equality because the total one-row draft estimate count was 19 versus 17: Textual coalesced a different number of repaint calls. That was not a transcript-size term. Recording the largest message input to any estimate kept the exact comparison deterministic and failed on a full-history estimate while admitting the one-row live draft. A separate one-app 400-message census pinned all full-history traversal totals to zero.
+
+**What to do.** Keep zero-work counters for settled transcript walks and measure the maximum input size for draft-only estimators. Do not interpret a different number of coalesced one-row UI calls as evidence of O(N) transcript work, or weaken the mounted gate by dropping the projection paths from the census.
+
+### A bundled tokenizer probe needs a child without inherited overrides (PR #2196 / TASK-24305)
+
+The post-rebase focused run passed 32 cases and failed the lazy-tokenizer bundled-hook probe: preceding context-parity tests had set `TIKTOKEN_CACHE_DIR`, which the probe child inherited. An explicit cache override correctly makes the runtime skip bundled-cache reader installation. The child failed only with that inherited override; clearing `TIKTOKEN_CACHE_DIR` and `DATA_GYM_CACHE_DIR` inside the bundled-hook probe passed the same combined run (36 cases, including deferred-persistence regressions). Give a bundled-runtime child its intended environment before package import, and keep production override behavior intact.
+
+
+### Materialize streams before probing cached event invalidation (PR #2196 / TASK-24300)
+
+The independent review's first continuation probe built a cache key before the
+snapshot folded buffered text. That fold advanced the speech/display revision,
+so the next lookup rebuilt history even though ToolBatchReady published no
+revision. It appeared fresh at 6 -> 7. Materializing the prefix synchronously
+before warming held the revision at 8 -> 8: cached history still admitted the
+assistant while a fresh projection excluded its active continuation. Separate
+warm ToolBatchReady and FinalContinuation regressions now pin the actual event
+publication; the ordinary and dispatch publication routes advance the revision.
+
+Give a warm-cache invalidation probe a stable, materialized source baseline.
+A read that mutates the fixture's revision can conceal the missing event fence
+that the test is meant to detect.
+
+### PR #2196: Windows checkout must preserve tokenizer table bytes
+
+During the 2026-09-27 final offline verification, `git ls-files --eol` showed LF index blobs but CRLF working files in `assets/tiktoken_cache`; the unchanged manifest rejected GPT-2 vocabulary SHA-256 (`84809de...` instead of `1ce1664...`) and encoding construction failed. Mark the immutable cache inventory `-text`, as with Canvas and built-in skills, instead of changing reviewed hashes or normalizing inside the reader. Restoring exact Git blobs and applying the attribute made all 31 affected cases pass, including an upstream-fetch refusal and all five encoding constructors. Metadata-only dependency probes establish installation; test actual blocked imports through their public fallback, not an eager-import-era availability flag.
+
+### Under pytest, a stylesheet reparse costs ~2 ms; in production it costs ~430 ms (TASK-33075, 2026-09-27)
+
+**What happened.** Profiling a theme switch in a `run_test` harness, the first
+pass showed `Stylesheet.reparse` at ~750 ms per switch, and a second pass over
+the same themes showed ~1.5 ms, with Textual's `parse` never called. The root
+conftest installs `Tests/UI/css_cache.py`, a process-global parse cache keyed
+on the stylesheet's variables. Production has no such cache: Textual's
+`reparse` builds a fresh `Stylesheet` with an empty per-instance cache, so
+every theme switch re-parses the whole ~830 KB bundle. That reparse turned
+out to be the largest single cost of the switch (40-60%). A warm-cache profile
+would have ranked it as noise.
+
+**What to do.** Run any CSS/theme performance probe with
+`TLDW_TEST_CSS_CACHE=0`. The private-profile wrapper passes the variable
+through to its child. Also wrap `Stylesheet.reparse` and check that it runs
+at production cost before you rank anything else.

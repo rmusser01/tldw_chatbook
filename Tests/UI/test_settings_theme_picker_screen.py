@@ -347,7 +347,8 @@ def _visible(host, widget):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
-@pytest.mark.parametrize("size", [(80, 24), (190, 55)])
+# TASK-33064: 120x36 and 150x40 are the own-width stacked layout (list over card).
+@pytest.mark.parametrize("size", [(80, 24), (120, 36), (150, 40), (190, 55)])
 @private_profile_test
 async def test_every_picker_control_is_reachable(request, theme, size):
     host = _host()
@@ -963,7 +964,7 @@ async def test_rename_prompt_escapes_markup_in_theme_name(request):
         await pilot.pause(0.2)
         assert isinstance(host.screen, RagProfileNameModal)
         title = host.screen.query_one(".destination-section", Static)
-        assert "x[/]" in str(title.render())
+        assert "Rename theme 'X[/]' (odd.toml)" in str(title.render())  # TASK-33073 label
 
 
 @pytest.mark.asyncio
@@ -982,7 +983,7 @@ async def test_delete_of_an_unreadable_file_removes_it(request):
         await _highlight(host, pilot, "unreadable:nord")
         picker = host.screen.query_one("#settings-theme-picker")
         entry = next(e for e in picker.entries if e.id == "unreadable:nord")
-        assert entry.origin == "yours" and entry.error == "not valid TOML"
+        assert entry.origin == "yours" and entry.error == "not valid TOML (line 1, column 9)"
         assert entry.display_name == "Nord (unreadable)"
         # R40(b): the pane lists through ONE scan per refresh.
         editor = host.screen.query_one("#settings-theme-editor")
@@ -1094,6 +1095,13 @@ async def test_export_shows_full_path_and_copy_path_copies_it(request, monkeypat
         await _highlight(host, pilot, "mine")
         assert not host.screen.query_one("#settings-theme-export-result").display
         await pilot.click("#settings-theme-picker-export")
+        await pilot.pause(0.2)
+        # TASK-33076: the destination prompt, prefilled with Downloads.
+        from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+        assert isinstance(host.screen, RagProfileNameModal)
+        assert "'Mine' (mine.toml)" in host.screen._modal_title
+        await pilot.click("#settings-rag-profile-name-confirm")
         await pilot.pause(0.3)
         export_path = downloads_home / "Downloads" / "mine_theme.toml"
         assert export_path.exists()
@@ -1179,7 +1187,7 @@ async def test_theme_names_with_markup_render_literally_everywhere(request, monk
         assert isinstance(host.screen, ConfirmationDialog)
         # The dialog renders with markup off: no escape backslash shows.
         message = str(host.screen.query_one(".dialog-message", Label).render())
-        assert message.startswith("Delete the saved theme 'z[/]'?")
+        assert message.startswith("Delete the saved theme 'Z[/]' (odd2.toml)?")  # TASK-33073
         await pilot.click("#confirm-button")
         await pilot.pause(0.3)
         assert "Deleted theme 'z[/]'" in toasts
@@ -1518,6 +1526,544 @@ async def test_real_navigate_to_screen_prompts_and_stay_keeps_settings(request, 
         assert host.screen is settings and editor.is_modified
 
 
+# -- TASK-33060: Discard undoes the editor's Try on every leave path ---------
+
+
+async def _try_edited_clone(host, pilot):
+    """Clone, edit Primary, press the editor's Try; return (settings, original)."""
+    await _category(host, pilot, "Theme")
+    settings = host.screen
+    original = host.theme
+    settings.query_one("#settings-theme-list").focus()
+    await pilot.press("c")
+    await pilot.pause(0.2)
+    await _edit_primary(host, pilot, "#FF0000")
+    await pilot.click("#settings-theme-apply")  # Try
+    await pilot.pause(0.2)
+    assert host.theme.startswith("custom_") and host.theme != original
+    return settings, original
+
+
+def _active_ids(settings):
+    return [e.id for e in settings.query_one("#settings-theme-picker").entries if e.is_active]
+
+
+async def _discard_prompt(host, pilot):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    await pilot.pause(0.2)
+    assert isinstance(host.screen, ThemeLeaveModal)
+    await pilot.click("#settings-theme-leave-discard")
+    await host.workers.wait_for_complete()
+    await pilot.pause(0.2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["back", "escape"])
+@private_profile_test
+async def test_try_then_discard_on_back_restores_the_pre_editor_theme(request, how):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        if how == "back":
+            await pilot.click("#settings-theme-back")
+        else:
+            settings.set_focus(None)
+            await pilot.press("escape")
+        await _discard_prompt(host, pilot)
+        assert host.theme == original
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-picker"
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_discard_on_category_switch_restores_the_pre_editor_theme(request):
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await _discard_prompt(host, pilot)
+        assert settings.active_category == SettingsCategoryId.APPEARANCE.value
+        assert host.theme == original
+        await _category(host, pilot, "Theme")
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_discard_on_navigation_restores_the_pre_editor_theme(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        assert await _leave(host, pilot, settings, "settings-theme-leave-discard") is True
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_discard_on_quit_restores_the_pre_editor_theme(request, monkeypatch):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, original = await _try_edited_clone(host, pilot)
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False  # stop the real quit flow right after the screen's answer
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await _discard_prompt(host, pilot)
+        await quit_flow.wait()
+        assert past_screen_check == [True]
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_save_keeps_the_saved_theme(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        editor = settings.query_one("#settings-theme-editor")
+        name = editor.current_theme_name
+        await pilot.click("#settings-theme-save")
+        await pilot.pause(0.3)
+        assert host.theme == name
+        assert _active_ids(settings) == [name]
+        # A later clean Back has nothing to undo.
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-picker"
+
+
+# -- Fix round (review I-1): a Try never outlives the editor session ---------
+# Try is not an edit, so the prompt-free exits (nothing unsaved) used to
+# leave the tried custom_* palette running with no picker row active.
+
+
+def _no_leave_prompt(host):
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    return not isinstance(host.screen, ThemeLeaveModal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["c", "n"])
+@private_profile_test
+async def test_try_then_clean_back_restores_the_pre_editor_theme(request, key):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press(key)  # Clone / New, no edit
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")  # Try
+        await pilot.pause(0.2)
+        assert host.theme.startswith("custom_")
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        assert _no_leave_prompt(host)
+        assert settings.query_one("#settings-theme-pane").current == "settings-theme-picker"
+        assert host.theme == original
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_reset_then_back_restores_the_pre_editor_theme(request):
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=(190, 55)) as pilot:
+        original = host.theme
+        await _highlight(host, pilot, "mine")
+        await pilot.press("e")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot, "#FF0000")
+        await pilot.click("#settings-theme-apply")  # Try
+        await pilot.pause(0.2)
+        assert host.theme == "custom_mine"
+        await pilot.click("#settings-theme-reset")
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # "Discard changes"
+        await pilot.pause(0.2)
+        settings = host.screen
+        assert settings.query_one("#settings-theme-editor").is_modified is False
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        assert _no_leave_prompt(host)
+        assert host.theme == original
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_clean_category_switch_restores_the_pre_editor_theme(request):
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")
+        await pilot.pause(0.2)
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert _no_leave_prompt(host)
+        assert settings.active_category == SettingsCategoryId.APPEARANCE.value
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_try_then_clean_navigation_restores_when_the_editor_goes(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")
+        await pilot.pause(0.2)
+        assert await settings.confirm_navigation() is True  # nothing unsaved: no prompt
+        # Leaving Settings removes the (non-reusable) screen, editor and all.
+        await settings.query_one("#settings-theme-pane").remove()
+        await pilot.pause(0.1)
+        assert host.theme == original
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_after_try_back_and_picker_try_targets_the_listed_theme(request):
+    from textual.widgets import Button
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        original = host.theme
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-apply")
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        await _highlight(host, pilot, "nord")
+        await pilot.press("t")
+        await pilot.pause(0.2)
+        revert = settings.query_one("#settings-theme-revert", Button)
+        assert "Custom" not in revert.label.plain
+        revert.press()
+        await pilot.pause(0.2)
+        assert host.theme == original
+        assert _active_ids(settings) == [original]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_picker_revert_never_targets_an_unlisted_custom_theme(request):
+    """Defence in depth: a custom_* registration is never a picker row, so a
+    Try from one records the listed theme behind it (or the launch default)."""
+    from textual.theme import Theme
+    from textual.widgets import Button
+
+    host = _host()
+    _saved_theme(host)
+    host.register_theme(Theme(name="custom_mine", primary="#FF0000", dark=True))
+    host.register_theme(Theme(name="custom_ghost", primary="#00FF00", dark=True))
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        revert = settings.query_one("#settings-theme-revert", Button)
+        for running, expected in (("custom_mine", "mine"), ("custom_ghost", "textual-dark")):
+            host.theme_revert_change = None
+            host.theme = running
+            await _highlight(host, pilot, "nord")
+            await pilot.press("t")
+            await pilot.pause(0.2)
+            assert host.theme_revert_change.previous_active == expected
+            assert "Custom" not in revert.label.plain
+
+
+# -- Fix round (review I-2): Save / Save as after a Try keeps the SAVED theme --
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["save_as", "rename_then_save"])
+@private_profile_test
+async def test_try_then_save_under_a_new_name_applies_the_saved_theme(request, how):
+    from textual.color import Color
+    from textual.widgets import Input
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        editor = settings.query_one("#settings-theme-editor")
+        if how == "save_as":
+            editor.save_as("brandnew")
+        else:
+            editor.query_one("#settings-theme-name", Input).value = "brandnew"
+            await pilot.pause(0.1)
+            await pilot.click("#settings-theme-save")
+        await pilot.pause(0.3)
+        assert host.theme == "brandnew"
+        assert _active_ids(settings) == ["brandnew"]
+        assert Color.parse(host.get_theme("brandnew").primary).hex == "#FF0000"
+
+
+# -- Fix round (review M-1): Discard keeps a theme chosen between two Tries ---
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_discard_keeps_a_theme_chosen_elsewhere_between_tries(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        host.theme = "nord"  # e.g. the command palette, mid-edit
+        await pilot.pause(0.1)
+        await _edit_primary(host, pilot, "#00FF00")
+        await pilot.click("#settings-theme-apply")  # Try again
+        await pilot.pause(0.2)
+        await pilot.click("#settings-theme-back")
+        await _discard_prompt(host, pilot)
+        assert host.theme == "nord"
+
+
+# -- Fix round (review M-3): the Discard failure toast strips control chars ---
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_discard_failure_toast_prints_the_theme_name_safely(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, _original = await _try_edited_clone(host, pilot)
+        toasts = _record_toasts(host)
+        from loguru import logger as _logger
+
+        logged: list[str] = []
+        sink = _logger.add(lambda m: logged.append(str(m)), level="WARNING")
+        editor = settings.query_one("#settings-theme-editor")
+        editor._try_undo = ("gone\x1b]52;c;x\x07", host.theme)  # unregistered
+        try:
+            editor.discard_try()
+        finally:
+            _logger.remove(sink)
+        await pilot.pause(0.1)
+        assert any("Could not restore" in t for t in toasts)
+        assert not any("\x1b" in t or "\x07" in t for t in toasts)
+        # Qodo 4116640363: the log line is printable too.
+        restore_logs = [m for m in logged if "Could not restore the theme" in m]
+        assert restore_logs
+        assert not any("\x1b" in m or "\x07" in m for m in restore_logs)
+
+
+# -- TASK-33063: the Scope Inspector agrees with the editor's unsaved state --
+
+
+def _theme_dirty_surfaces(settings):
+    from textual.widgets import Button, Static
+
+    header = str(settings.query_one("#settings-selected-category-draft-status", Static).render())
+    row = str(settings.query_one("#settings-theme-unsaved-note", Static).render())
+    rail = str(settings.query_one("#settings-category-theme", Button).label)
+    return header, row, rail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolve", ["settings-theme-leave-discard", "settings-theme-leave-save"])
+@private_profile_test
+async def test_inspector_agrees_with_theme_editor_unsaved_state(request, resolve):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        await _edit_primary(host, pilot)
+        await pilot.pause(0.2)
+        assert _theme_dirty_surfaces(settings) == (
+            "Unsaved changes", "Unsaved theme changes: Yes", "> Theme *",
+        )
+        await pilot.click("#settings-theme-back")
+        await pilot.pause(0.2)
+        await pilot.click(f"#{resolve}")
+        await host.workers.wait_for_complete()
+        await pilot.pause(0.3)
+        assert _theme_dirty_surfaces(settings) == (
+            "No unsaved changes", "Unsaved theme changes: No", "> Theme",
+        )
+
+
+# -- TASK-33062: the picker's keys are discoverable; no stale "Apply" copy ---
+
+
+_THEME_KEYS = ("Enter", "t", "c", "n", "i", "e", "r", "Del")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_footer_lists_the_picker_keys_while_the_list_has_focus(request):
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.pause(0.1)
+        keys = [key for key, _ in settings._footer_shortcut_entries()]
+        assert all(key in keys for key in _THEME_KEYS)
+        settings.query_one("#settings-theme-filter").focus()  # c/t/... type here
+        await pilot.pause(0.1)
+        keys = [key for key, _ in settings._footer_shortcut_entries()]
+        assert not any(key in keys for key in _THEME_KEYS)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_f1_help_lists_the_picker_keys_and_no_apply_button(request):
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        state = host.screen._workbench_help_state(SettingsCategoryId.THEME)
+        assert [key for key, _ in state.shortcuts] == list(_THEME_KEYS)
+        notes = " ".join(state.notes)
+        assert "No shortcut keys" not in notes
+        assert "theme list has focus" in notes
+        assert "Apply" not in notes
+        assert "Use/Try switch themes; the editor's Save stores a theme file" in notes
+
+
+# TASK-33064 (critique #3 #5): at full-screen sizes the list fills the
+# detail pane (it was capped at 24 rows, leaving a 14-19 row band) and the
+# card's actions sit in three groups -- switching, creation, your theme --
+# each laid out as one horizontal row.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@private_profile_test
+async def test_picker_fills_the_full_screen_canvas_and_groups_actions(request, size):
+    from textual.widgets import Button
+
+    host = _host()
+    _saved_theme(host)
+    async with host.run_test(size=size) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("t")  # Try "mine": arms Revert
+        await pilot.pause(0.2)
+        screen = host.screen
+        body = screen.query_one("#settings-detail-pane-body")
+        lst = screen.query_one("#settings-theme-list")
+        assert lst.region.bottom >= body.content_region.bottom - 1, (
+            f"empty band under the list at {size}: list ends {lst.region.bottom}, pane {body.content_region.bottom}"
+        )
+        groups = (
+            ("#settings-theme-use", "#settings-theme-try"),
+            ("#settings-theme-picker-clone", "#settings-theme-picker-new", "#settings-theme-picker-import"),
+            (
+                "#settings-theme-picker-edit",
+                "#settings-theme-picker-rename",
+                "#settings-theme-picker-export",
+                "#settings-theme-picker-delete",
+            ),
+        )
+        rows = []
+        for group in groups:
+            ys = {screen.query_one(sel, Button).region.y for sel in group}
+            assert len(ys) == 1, f"{group} not on one row at {size}: {ys}"
+            xs = [screen.query_one(sel, Button).region.x for sel in group]
+            assert xs == sorted(xs), group
+            rows.append(ys.pop())
+        revert = screen.query_one("#settings-theme-revert", Button)
+        assert revert.display
+        # Revert belongs to the switching group: right under Use/Try, above creation.
+        assert rows[0] < revert.region.y < rows[1]
+        assert rows == sorted(rows)
+        # Every control is on screen without scrolling.
+        for selector in PICKER_CONTROLS + YOURS_ONLY_CONTROLS + ("#settings-theme-revert",):
+            region = _visible(host, screen.query_one(selector))
+            assert region.height > 0 and region.width > 0, f"{selector} clipped at {size}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@private_profile_test
+async def test_editor_preview_is_visible_beside_the_palette_at_full_screen(request, size):
+    """TASK-33066: editing Primary must show in the preview without scrolling."""
+    from Tests.UI.theme_editor_helpers import open_theme_editor
+
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        await _category(host, pilot, "Theme")
+        await open_theme_editor(host, pilot)
+        await pilot.pause(0.1)
+        primary = host.screen.query_one("#settings-theme-color-primary")
+        preview = host.screen.query_one("#settings-theme-preview")
+        assert _visible(host, primary).height > 0, f"Primary off-screen at {size}"
+        shown = _visible(host, preview)
+        assert shown.height == preview.outer_size.height, (
+            f"preview {shown.height}/{preview.outer_size.height} rows visible at {size}"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_editor_stacks_the_preview_when_too_narrow_for_two_columns(request):
+    """TASK-33066: a 120-col terminal is not compact but gives a ~52-col
+    editor; side by side the colour inputs collapsed to 3 cols there."""
+    from Tests.UI.theme_editor_helpers import open_theme_editor
+
+    host = _host()
+    async with host.run_test(size=(120, 36)) as pilot:
+        await _category(host, pilot, "Theme")
+        await open_theme_editor(host, pilot)
+        await pilot.pause(0.1)
+        primary = host.screen.query_one("#settings-theme-color-primary")
+        preview = host.screen.query_one("#settings-theme-preview")
+        assert primary.region.width >= 10
+        assert preview.region.y > primary.region.y  # stacked below, not beside
+
+
+# -- Fix round (review M-2): picker and editor stack at ONE threshold, measured
+# on the detail body so the scrollbar that stacking adds cannot hold the
+# stacked layout past it. At 44 rows a 180-col terminal gives a
+# 99-col body, 181 a 100-col body (the threshold).
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("width", "stacked"), [(180, True), (181, False)])
+@private_profile_test
+async def test_picker_and_editor_stack_together_at_one_threshold(request, width, stacked):
+    host = _host()
+    async with host.run_test(size=(170, 44)) as pilot:  # start stacked, scrollbar shown
+        await _category(host, pilot, "Theme")
+        settings = host.screen
+        pane = settings.query_one("#settings-theme-pane")
+        await pilot.resize_terminal(width, 44)
+        await pilot.pause(0.3)
+        assert pane.has_class("-stacked") is stacked
+        settings.query_one("#settings-theme-list").focus()
+        await pilot.press("c")
+        await pilot.pause(0.3)
+        await pilot.resize_terminal(170, 44)
+        await pilot.pause(0.3)
+        await pilot.resize_terminal(width, 44)
+        await pilot.pause(0.3)
+        assert settings.query_one("#settings-theme-editor").has_class("-stacked") is stacked
+
+
 # -- TASK-32957: the folder scan is off the UI thread ------------------------
 
 
@@ -1564,3 +2110,180 @@ async def test_fifty_theme_files_are_scanned_off_the_ui_thread(request, monkeypa
         assert picker.highlighted_id == "mine07"
         assert len(scans) >= 3
         assert all(thread is not threading.main_thread() for thread in scans), scans
+
+
+# -- Critique #3 P3 wave (lane A) ---------------------------------------------
+
+
+async def _await_focus(host, pilot, widget_id):
+    for _ in range(40):
+        if host.focused is not None and host.focused.id == widget_id:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"focus is {getattr(host.focused, 'id', None)!r}, not {widget_id!r}")
+
+
+# -- TASK-33070: Rename/Import refusals stay inside the dialog ---------------
+
+
+def _prompt_error(host):
+    from textual.widgets import Static
+
+    error = host.screen.query_one("#settings-rag-profile-name-error", Static)
+    return str(error.render()) if error.display else ""
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rail_entry_focuses_the_theme_list_and_c_acts(request):
+    """TASK-33072 AC1: Enter on the Theme rail row lands in the list, so the
+    picker's keys work at once (c used to do nothing until F6/Tab)."""
+    from textual.widgets import Button
+
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _category(host, pilot, "Appearance")
+        host.screen.query_one("#settings-category-theme", Button).focus()
+        await pilot.press("enter")
+        await _await_focus(host, pilot, "settings-theme-list")
+        lst = host.screen.query_one("#settings-theme-list")
+        start = lst.highlighted
+        await pilot.press("j")
+        await pilot.pause(0.1)
+        assert host.focused is lst and lst.highlighted != start
+        await pilot.press("c")
+        await pilot.pause(0.2)
+        assert host.screen.query_one("#settings-theme-pane").current == "settings-theme-editor-view"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rail_click_and_open_theme_focus_the_theme_list(request):
+    """TASK-33072 AC1: a rail click and Appearance > Open Theme both land in
+    the list."""
+    host = _host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _category(host, pilot, "Appearance")
+        await pilot.click("#settings-category-theme")
+        await _await_focus(host, pilot, "settings-theme-list")
+        await pilot.click("#settings-category-appearance")
+        await pilot.pause(0.3)
+        await pilot.click("#settings-appearance-open-theme")
+        await _await_focus(host, pilot, "settings-theme-list")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
+async def test_long_theme_names_stay_on_one_row_at_80x24(request, theme):
+    """TASK-33074: at 80x24 a long name used to push its colour strip onto a
+    second line; the name is truncated with an ellipsis instead."""
+    host = _host()
+    long_name = "modern_dark_dracula_copy_with_a_name_longer_than_any_list_row_at_this_size"
+    _saved_theme(host, long_name)
+    async with host.run_test(size=(80, 24)) as pilot:
+        host.theme = theme
+        await _highlight(host, pilot, long_name)
+        lst = host.screen.query_one("#settings-theme-list")
+        heights = lst._heights
+        for index in range(lst.option_count):
+            option = lst.get_option_at_index(index)
+            if option.id is not None:
+                assert heights[index] == 1, f"{option.id} wraps to {heights[index]} lines"
+        prompt = lst.get_option_at_index(lst.get_option_index(long_name)).prompt
+        assert prompt.plain.split("  ")[0].endswith("…")
+        assert "▮" in prompt.plain and "active" not in prompt.plain.split("  ")[0]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_active_launch_overriding_theme_stays_on_one_row_at_80x24(request, monkeypatch):
+    """TASK-33074 (P3 review I2): a saved theme overriding a built-in, active
+    and the launch default, used to render as '…  ▮▮▮▮▮▮▮  active · launch ·
+    overrides built-in' and wrap. The tail gives way before the name does."""
+    from tldw_chatbook.Widgets import settings_theme_picker
+
+    monkeypatch.setattr(settings_theme_picker, "current_launch_default", lambda: "textual-dark")
+    host = _host()
+    _saved_theme(host, "textual-dark")
+    async with host.run_test(size=(80, 24)) as pilot:
+        host.theme = "textual-dark"
+        await _highlight(host, pilot, "textual-dark")
+        lst = host.screen.query_one("#settings-theme-list")
+        index = lst.get_option_index("textual-dark")
+        prompt = lst.get_option_at_index(index).prompt.plain
+        assert lst._heights[index] == 1, prompt
+        assert prompt.startswith("Textual D"), prompt
+        assert prompt.endswith("active · launch"), prompt
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_rename_to_taken_name_shows_error_in_dialog_and_keeps_input(request):
+    from textual.widgets import Input
+
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    host = _host()
+    path = _saved_theme(host)
+    _saved_theme(host, "ours")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _highlight(host, pilot, "mine")
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        name_input = host.screen.query_one("#settings-rag-profile-name-input", Input)
+        name_input.value = "ours"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        assert "Name taken: 'ours'" in _prompt_error(host)
+        assert name_input.value == "ours"
+        # Invalid names are refused in place too.
+        name_input.value = "../evil"
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        assert "Invalid theme name" in _prompt_error(host)
+        # A free name then goes through.
+        name_input.value = "fresh"
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.3)
+        assert not isinstance(host.screen, RagProfileNameModal)
+        assert not path.exists() and (path.parent / "fresh.toml").exists()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_refusal_shows_error_in_dialog_and_keeps_path(request, tmp_path_factory):
+    from textual.widgets import Input
+
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.settings_screen import RagProfileNameModal
+
+    src = tmp_path_factory.mktemp("import-bad")
+    source = src / "bad.toml"
+    source.write_text('[colors]\nprimary = "blue"\n', encoding="utf-8")
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Theme")
+        host.screen.query_one("#settings-theme-list").focus()
+        await pilot.press("i")
+        await pilot.pause(0.2)
+        path_input = host.screen.query_one("#settings-rag-profile-name-input", Input)
+        path_input.value = str(source)
+        await pilot.click("#settings-rag-profile-name-confirm")
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, RagProfileNameModal)
+        error = _prompt_error(host)
+        assert "primary: 'blue' is not #RGB, #RRGGBB or #RRGGBBAA" in error
+        assert str(src) not in error  # R16: never the path
+        assert path_input.value == str(source)
+        themes = config._get_effective_config_path().parent / "themes"
+        assert not (themes / "bad.toml").exists()
+        # Fixed on disk, the same typed path now imports.
+        source.write_text('[colors]\nprimary = "#0000FF"\n', encoding="utf-8")
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        await host.workers.wait_for_complete()
+        assert not isinstance(host.screen, RagProfileNameModal)
+        assert (themes / "bad.toml").exists()

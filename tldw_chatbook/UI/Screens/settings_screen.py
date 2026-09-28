@@ -294,7 +294,7 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
-from ...Widgets.settings_theme_picker import ThemePane, ThemePicker
+from ...Widgets.settings_theme_picker import ThemeOptionList, ThemePane, ThemePicker
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
 from ...Widgets.settings_image_gen_panel import (
@@ -2584,17 +2584,27 @@ class RagProfileNameModal(ModalScreen[str | None]):
     brief) -- this follows the same dismiss-with-a-value + push_screen(modal,
     callback) shape as ``ConsoleSystemPromptModal``. Dismisses with the
     trimmed name, or ``None`` on Cancel/Escape/a blank submission.
+
+    TASK-33070: ``validate`` (optional) is called with the trimmed value on
+    submit; a returned reason is shown inside the dialog and the typed value
+    kept, ``None`` dismisses as before.
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
     def __init__(
-        self, *, title: str, initial: str = "", confirm_label: str = "Save"
+        self,
+        *,
+        title: str,
+        initial: str = "",
+        confirm_label: str = "Save",
+        validate: Callable[[str], str | None] | None = None,
     ) -> None:
         super().__init__()
         self._modal_title = title
         self._initial = initial
         self._confirm_label = confirm_label
+        self._validate = validate
 
     def compose(self) -> ComposeResult:
         with Vertical(
@@ -2602,6 +2612,12 @@ class RagProfileNameModal(ModalScreen[str | None]):
         ):
             yield Static(self._modal_title, classes="destination-section")
             yield Input(value=self._initial, id="settings-rag-profile-name-input")
+            # Untrusted text (a file's reason, a typed path): never markup.
+            error = Static(
+                "", id="settings-rag-profile-name-error", classes="settings-rag-profile-name-error", markup=False
+            )
+            error.display = False
+            yield error
             with Horizontal(classes="settings-action-row"):
                 yield Button("Cancel", id="settings-rag-profile-name-cancel")
                 yield Button(
@@ -2639,7 +2655,17 @@ class RagProfileNameModal(ModalScreen[str | None]):
             value = self.query_one("#settings-rag-profile-name-input", Input).value
         except QueryError:
             value = ""
-        self.dismiss(value.strip() or None)
+        value = value.strip()
+        reason = self._validate(value) if value and self._validate is not None else None
+        if reason:
+            from ...css.Themes.themes import printable
+
+            error = self.query_one("#settings-rag-profile-name-error", Static)
+            error.update(printable(reason))
+            error.display = True
+            self.query_one("#settings-rag-profile-name-input", Input).focus()
+            return
+        self.dismiss(value or None)
 
 
 class RagProfileSwitchConfirmModal(ModalScreen[str]):
@@ -2905,6 +2931,8 @@ class SettingsScreen(BaseAppScreen):
             )
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
+        if category is SettingsCategoryId.THEME:
+            shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
         return tuple(shortcuts)
 
     #: task-1564: categories whose `t` binding performs a real test action --
@@ -2941,6 +2969,19 @@ class SettingsScreen(BaseAppScreen):
         ("a", "set active"),
         ("c", "clone"),
         ("b", "backfill"),
+    )
+
+    #: TASK-33062: ThemeOptionList's own bindings (spec §5), advertised in
+    #: the footer while the theme list has focus and always in F1.
+    THEME_SHORTCUTS = (
+        ("Enter", "use"),
+        ("t", "try"),
+        ("c", "clone"),
+        ("n", "new"),
+        ("i", "import"),
+        ("e", "edit yours"),
+        ("r", "rename yours"),
+        ("Del", "delete yours"),
     )
 
     PERSONAL_CONTEXT_SHORTCUTS = (
@@ -3330,6 +3371,9 @@ class SettingsScreen(BaseAppScreen):
         #: focus survives the rebuild. (`recompose()` still consumes it too,
         #: for the rarer whole-screen rebuild.)
         self._pending_category_focus_value: str | None = None
+        # TASK-33072: entering Theme lands in its list after the swap,
+        # unless an F6 pressed mid-swap claimed the focus first.
+        self._theme_list_focus_pending = False
         #: task-15475: per-instance queue for `_after_category_panes` (the
         #: class attribute is None precisely so this is never shared).
         self._pending_pane_swap_callbacks: list[
@@ -3701,6 +3745,13 @@ class SettingsScreen(BaseAppScreen):
             )
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
+        if (
+            self._active_category_id() is SettingsCategoryId.THEME
+            and self._theme_list_focused()
+        ):
+            # TASK-33062: the keys are the list's bindings; elsewhere (the
+            # filter, the editor) they type or do nothing.
+            shortcuts = shortcuts + self.THEME_SHORTCUTS
         if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
             profile_shortcuts = self._active_personal_context_shortcuts()
             if text_entry_focused:
@@ -3720,6 +3771,12 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return ()
         return panel.available_shortcuts()
+
+    def _theme_list_focused(self) -> bool:
+        try:
+            return isinstance(self.app.focused, ThemeOptionList)
+        except Exception:
+            return False  # no active app (bare-screen tests / teardown)
 
     def _text_entry_focused(self) -> bool:
         """Whether a printable-key-consuming widget owns focus right now."""
@@ -4119,6 +4176,8 @@ class SettingsScreen(BaseAppScreen):
                 notes.append(f"{prefix}{value}")
         if not self._category_footer_shortcuts(category):
             notes.append("No shortcut keys are specific to this category.")
+        if category is SettingsCategoryId.THEME:
+            notes.append("The keys below act on the highlighted theme while the theme list has focus.")
         return tuple(notes)
 
     def on_mount(self) -> None:
@@ -5675,8 +5734,8 @@ class SettingsScreen(BaseAppScreen):
                 writes_allowed=True,
                 runtime_owner="Theme picker and editor",
                 boundary_copy=(
-                    "Settings Theme editor owns custom color palettes and theme files; "
-                    "use the editor's Apply/Save/Reset buttons."
+                    "Settings Theme owns custom color palettes and theme files. "
+                    "Use/Try switch themes; the editor's Save stores a theme file."
                 ),
                 recovery_copy=(
                     f"Themes are saved to {_display_path(_theme_save_target())}{os.sep}; reset or delete "
@@ -8196,6 +8255,9 @@ class SettingsScreen(BaseAppScreen):
                 else None
             )
             return bool(state and state.is_dirty)
+        if category is SettingsCategoryId.THEME:
+            # TASK-33063: the editor's flag is Theme's only draft.
+            return bool(self.theme_editor_modified)
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty) or (
             category is SettingsCategoryId.PROVIDERS_MODELS
@@ -8981,10 +9043,6 @@ class SettingsScreen(BaseAppScreen):
         )
         dirty_marker = ""
         if self._category_has_unsaved_changes(summary.category):
-            dirty_marker = " *"
-        elif (
-            summary.category == SettingsCategoryId.THEME and self.theme_editor_modified
-        ):
             dirty_marker = " *"
         # task-1563: view-only stub categories are full nav peers whose whole
         # page says "edit elsewhere" -- badge them in the rail so a third of
@@ -22666,7 +22724,8 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Save target", f"{_display_path(_theme_save_target())}{os.sep}")
             yield self._detail_row(
-                "Save", "editor-owned - use the editor's Apply/Save/Reset buttons"
+                "Save",
+                "editor-owned - Use/Try switch themes; the editor's Save stores a file",
             )
             modified = "Yes" if self.theme_editor_modified else "No"
             yield self._detail_row(
@@ -22967,6 +23026,7 @@ class SettingsScreen(BaseAppScreen):
             )
 
         if self._category_pane_swap_pending:
+            self._theme_list_focus_pending = False  # this press wins (TASK-33072)
             self._after_category_panes(self.app.call_later, cycle)
         else:
             cycle()
@@ -24357,6 +24417,9 @@ class SettingsScreen(BaseAppScreen):
         if choice == "save":
             editor.on_save_theme()
             return not editor.is_modified
+        # TASK-33060: Discard undoes the Try before the leave/quit proceeds;
+        # a clean leave relies on the editor's unmount (review I-1).
+        editor.discard_try()
         return True
 
     async def confirm_quit(self) -> bool:
@@ -24407,6 +24470,7 @@ class SettingsScreen(BaseAppScreen):
             if editor.is_modified:
                 return  # refused name or pending overwrite confirmation: stay
         else:
+            # show_picker below undoes the Try (TASK-33060, review I-1).
             editor.is_modified = False
             self.theme_editor_modified = False
             self._refresh_theme_modified_widgets()
@@ -24423,16 +24487,19 @@ class SettingsScreen(BaseAppScreen):
             choice = await self.app.push_screen_wait(ThemeLeaveModal())
             if choice == "cancel":
                 return
-            if choice == "save":
-                try:
-                    editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
-                except QueryError:
+            try:
+                editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+            except QueryError:
+                if choice == "save":
                     return
+                editor = None
+            if choice == "save":
                 editor.on_save_theme()
                 if editor.is_modified:
                     # Save refused (bad name) or is waiting on its overwrite
                     # confirmation: stay so the edit is not lost.
                     return
+            # Discard: the editor's unmount undoes its Try (review I-1).
             self._theme_leave_bypass = True
             self._select_category(category_value, restore_focus=restore_focus)
         finally:
@@ -24622,6 +24689,11 @@ class SettingsScreen(BaseAppScreen):
                 self._pending_category_focus_value = category_value
             else:
                 self.call_after_refresh(self._focus_category, category_value)
+            if category_value == SettingsCategoryId.THEME.value:
+                # TASK-33072: Theme's keys (c/t/e, j/k) act on its list, so
+                # land there -- queued behind the rail restore above.
+                self._theme_list_focus_pending = True
+                self._after_category_panes(self._focus_theme_list)
         if not category_changed:
             # task-1623: re-evaluate the fold indicator against the inspector's
             # content. Only on the no-switch path: a real switch runs a pane
@@ -24875,15 +24947,32 @@ class SettingsScreen(BaseAppScreen):
         """Prompt for the new name, then rename through the editor's file API."""
         event.stop()
         old = event.theme_id
+        # TASK-33073: the list's name with its file ("'Mine' (mine.toml)").
+        label = self._with_theme_editor(lambda editor: editor.dialog_label(old)) or f"'{old}'"
         self.app.push_screen(
             RagProfileNameModal(
                 # R27 (7): [theme].name is hand-editable; x[/] must not crash.
-                title=f"Rename theme '{escape_markup(old)}'",
+                title=f"Rename theme {escape_markup(label)}",
                 initial=old,
                 confirm_label="Rename",
+                # TASK-33070: a taken/invalid name is shown in the dialog.
+                validate=lambda new: self._with_theme_editor(
+                    lambda editor: editor.rename_refusal(old, new)
+                ),
             ),
             lambda new: self._handle_theme_rename_result(old, new),
         )
+
+    def _with_theme_editor(
+        self, call: Callable[[SettingsThemeEditor], str | None]
+    ) -> str | None:
+        """Run a theme prompt's check or label on the editor (file checks
+        stay in that one instance); None once the pane is gone (R38)."""
+        try:
+            editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
+        except QueryError:
+            return None
+        return call(editor)
 
     def _handle_theme_rename_result(self, old: str, new: str | None) -> None:
         if not new or new == old:
@@ -24900,7 +24989,14 @@ class SettingsScreen(BaseAppScreen):
         """Prompt for a theme file path, then import it through the editor."""
         event.stop()
         self.app.push_screen(
-            RagProfileNameModal(title="Import theme — full path to a .toml file", initial="", confirm_label="Import"),
+            RagProfileNameModal(
+                title="Import theme — full path to a .toml file",
+                initial="",
+                confirm_label="Import",
+                validate=lambda source: self._with_theme_editor(
+                    lambda editor: editor.import_refusal(source)
+                ),
+            ),
             self._handle_theme_import_result,
         )
 
@@ -25032,7 +25128,8 @@ class SettingsScreen(BaseAppScreen):
         theme editor and wipe the very in-progress edit that raised this
         notification (see the theme_editor_modified reactive's comment).
         """
-        self._refresh_category_button_label(SettingsCategoryId.THEME)
+        # TASK-33063: the inspector header and rail marker, from the one flag.
+        self._update_draft_status_widgets(SettingsCategoryId.THEME)
         try:
             row = self.query_one("#settings-theme-unsaved-note", Static)
         except QueryError:
@@ -25081,6 +25178,27 @@ class SettingsScreen(BaseAppScreen):
         # silently overwrite this (spec §8: land on the launch default, not
         # whatever's merely active right now).
         self._after_category_panes(self._highlight_theme_launch_default)
+
+    def _focus_theme_list(self) -> None:
+        """Move focus from the Theme rail row to the picker's list.
+
+        Only while focus is still where the category switch put it (on the
+        rail, or nowhere) and no F6 was pressed mid-swap: those keep their
+        target.
+        """
+        if not self._theme_list_focus_pending:
+            return
+        self._theme_list_focus_pending = False
+        focused = self.app.focused
+        try:
+            rail = self.query_one("#settings-category-pane")
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return
+        if focused is not None and rail not in focused.ancestors_with_self:
+            return
+        if pane.current == "settings-theme-picker":
+            pane.query_one(ThemePicker).focus_list()
 
     def _highlight_theme_launch_default(self) -> None:
         from ...css.Themes.theme_catalog import current_launch_default

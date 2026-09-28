@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.css import build_css
-from tldw_chatbook.app import _generated_css_is_stale
+from tldw_chatbook.app_entry import _generated_css_is_stale
 
 
 @pytest.fixture()
@@ -333,6 +333,9 @@ class TestBuilderIntegration:
         package = tmp_path / "checkout-漢" / "tldw_chatbook"
         css_dir = package / "css"
         (css_dir / "core").mkdir(parents=True)
+        (css_dir / "core" / "_variables.tcss").write_text(
+            "$ds-space-1: 1;\n", encoding="utf-8"
+        )
         distinctive_rule = "Screen { color: #123456; }"
         (css_dir / "core" / "_base.tcss").write_text(
             distinctive_rule + "\n", encoding="utf-8"

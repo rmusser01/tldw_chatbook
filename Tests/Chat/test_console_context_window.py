@@ -513,6 +513,13 @@ async def test_send_boundary_does_not_reprobe_a_failing_server_per_send(
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         gateway = ConsoleProviderGateway(http_client=client)
         resolution = await gateway.resolve_for_send(selection)
+        # task-33081: metadata probes are background refreshes now -- drain
+        # them before counting, then hold the send boundary to the same
+        # no-reprobe-within-the-cache-window contract.
+        await asyncio.gather(
+            *set(gateway._context_window_refreshes),
+            *list(gateway._reasoning_metadata_refreshes.values()),
+        )
         after_first_send = len(probes)
         from tldw_chatbook.Chat import console_context_window
 
@@ -521,6 +528,180 @@ async def test_send_boundary_does_not_reprobe_a_failing_server_per_send(
         for _ in range(4):
             clock[0] += 10  # 40 s of sends: past the old 5 s, inside 60 s
             resolution = await gateway.resolve_for_send(selection)
+            await asyncio.gather(
+                *set(gateway._context_window_refreshes),
+                *list(gateway._reasoning_metadata_refreshes.values()),
+            )
     assert resolution.ready
     assert after_first_send >= 1
     assert len(probes) == after_first_send
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_never_waits_on_metadata():
+    """task-33081: a slow metadata endpoint must not delay the send itself."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderSelection,
+    )
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    props_calls = 0
+
+    async def handler(request):
+        nonlocal props_calls
+        if request.url.path == "/props":
+            props_calls += 1
+            entered.set()
+            await release.wait()
+            return httpx.Response(
+                200, json={"default_generation_settings": {"n_ctx": 8192}}
+            )
+        return httpx.Response(200, json={"data": [{"id": "selected"}]})
+
+    selection = ConsoleProviderSelection(
+        provider="llama_cpp",
+        base_url="http://localhost:9000",
+        explicit_model="selected",
+        max_tokens=1024,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(http_client=client)
+        first = await asyncio.wait_for(gateway.resolve_for_send(selection), 0.5)
+        assert first.ready
+        # No probe answer yet: local-table fallback, unverified, immediate.
+        assert first.context_window.verified is False
+
+        await entered.wait()
+        refreshes = set(gateway._context_window_refreshes) | set(
+            gateway._reasoning_metadata_refreshes.values()
+        )
+        assert refreshes, "send path must schedule background metadata refreshes"
+        release.set()
+        await asyncio.gather(*refreshes)
+
+        second = await gateway.resolve_for_send(selection)
+        assert second.ready
+        assert (second.context_window.tokens, second.context_window.verified) == (
+            8192,
+            True,
+        )
+        assert props_calls >= 1
+
+
+@pytest.mark.asyncio
+async def test_answered_endpoint_is_not_retried_on_the_failure_ttl():
+    """task-33081: only transport failures retry on the short TTL."""
+    cache = ContextWindowCache(success_ttl=60, failure_ttl=0.05)
+
+    async def answered(request):
+        return httpx.Response(200, json={"data": [{"id": "other"}]})
+
+    answered_target = ContextWindowTarget("vllm", "vllm", "http://localhost:9000", "m")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answered)) as client:
+        await cache.resolve(answered_target, client)
+    await asyncio.sleep(0.15)
+    assert cache.needs_refresh(answered_target) is False
+
+    def unreachable(request):
+        raise httpx.ConnectError("endpoint down")
+
+    failed_target = ContextWindowTarget("vllm", "vllm", "http://localhost:9001", "m")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unreachable)) as client:
+        await cache.resolve(failed_target, client)
+    await asyncio.sleep(0.15)
+    assert cache.needs_refresh(failed_target) is True
+
+
+@pytest.mark.asyncio
+async def test_declared_oversized_content_length_is_not_downloaded():
+    """task-33081: a Content-Length over the cap aborts before reading the body."""
+
+    class _BoomStream(httpx.AsyncByteStream):
+        async def __aiter__(self):  # pragma: no cover - must never run
+            raise AssertionError("oversized metadata body must not be downloaded")
+            yield b""
+
+    oversized = httpx.Response(
+        200,
+        headers={"Content-Length": str(300_000)},
+        stream=_BoomStream(),
+    )
+    target = ContextWindowTarget("custom", "custom", "http://localhost:9000", "m")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: oversized)
+    ) as client:
+        result = await ContextWindowCache().resolve(target, client)
+    assert result.verified is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_leader_caches_on_the_failure_ttl():
+    """task-33081 (Qodo round): a cancelled probe must not pin an
+    unverified fallback for a full success TTL."""
+    cache = ContextWindowCache(success_ttl=60, failure_ttl=0.05)
+    entered = asyncio.Event()
+
+    async def handler(request):
+        entered.set()
+        await asyncio.Event().wait()
+
+    target = ContextWindowTarget("custom", "custom", "http://localhost:9000", "m")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        leader = asyncio.create_task(cache.resolve(target, client))
+        await entered.wait()
+        leader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await leader
+        # Immediately after cancellation the record is still "fresh" only
+        # on the failure TTL; waiting past it allows a new probe.
+        await asyncio.sleep(0.15)
+        assert cache.needs_refresh(target) is True
+
+
+@pytest.mark.asyncio
+async def test_overlapping_sends_share_one_reasoning_metadata_refresh():
+    """task-33081 (Qodo round): concurrent sends must not race two /props
+    probes for one metadata key."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderSelection,
+    )
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        if request.url.path == "/props" and not request.url.params:
+            # The reasoning template probe carries no query params; the
+            # context-window probe carries model/autoload (a separate
+            # consumer with its own single-flight cache).
+            calls += 1
+            entered.set()
+            await release.wait()
+            return httpx.Response(503)
+        if request.url.path == "/props":
+            await release.wait()
+            return httpx.Response(503)
+        return httpx.Response(200, json={"data": [{"id": "selected"}]})
+
+    selection = ConsoleProviderSelection(
+        provider="llama_cpp",
+        base_url="http://localhost:9000",
+        explicit_model="selected",
+        max_tokens=1024,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(http_client=client)
+        first = await asyncio.wait_for(gateway.resolve_for_send(selection), 0.5)
+        await entered.wait()
+        second = await asyncio.wait_for(gateway.resolve_for_send(selection), 0.5)
+        assert first.ready and second.ready
+        in_flight = dict(gateway._reasoning_metadata_refreshes)
+        assert len(in_flight) <= 1
+        third = await asyncio.wait_for(gateway.resolve_for_send(selection), 0.5)
+        assert gateway._reasoning_metadata_refreshes.keys() <= set(in_flight)
+        release.set()
+        await asyncio.gather(*list(gateway._reasoning_metadata_refreshes.values()))
+        assert calls == 1

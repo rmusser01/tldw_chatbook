@@ -365,8 +365,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 36,
-      "diagnostic_digest": "6ff60e29a2ebf9c05e57",
+      "call_count": 38,
+      "diagnostic_digest": "d313308fcaabf7f5fc91",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_agent_bridge.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -379,15 +379,15 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 88,
-      "diagnostic_digest": "2e58c49d016a9de23d51",
+      "call_count": 89,
+      "diagnostic_digest": "37daa61f45ba07ef8b6b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 92,
-      "diagnostic_digest": "0d9682e0ebb4133935c4",
+      "call_count": 94,
+      "diagnostic_digest": "ba11def525e14fb83ce4",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_store.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -491,8 +491,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 20,
-      "diagnostic_digest": "f77e9287a2ebc03a3595",
+      "call_count": 21,
+      "diagnostic_digest": "328623f2672016810a78",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_provider_gateway.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -4068,8 +4068,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 14,
-      "diagnostic_digest": "1573efe36f9a3f88b677",
+      "call_count": 15,
+      "diagnostic_digest": "420165746014283861f8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/settings_theme_editor.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4194,10 +4194,24 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 401,
-      "diagnostic_digest": "c6d3d8f6a789b7971bf0",
+      "call_count": 347,
+      "diagnostic_digest": "96098a2e5821453ffcb4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 5,
+      "diagnostic_digest": "86734a89aa348ff787c7",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_destinations.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 49,
+      "diagnostic_digest": "3ee90cdaafc682f9f563",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_entry.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10491,15 +10505,6 @@
     {
       "candidates": [
         {
-          "call_digest": "e02cc5afcde7adfd",
-          "method": "error",
-          "path_expressions": [
-            "result.stderr"
-          ],
-          "scope": "<module>",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "3aef1d3ee8d4bed1",
           "method": "warning",
           "path_expressions": [
@@ -10615,6 +10620,20 @@
           ],
           "scope": "TldwCli._init_prompts_service",
           "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/app.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "e02cc5afcde7adfd",
+          "method": "error",
+          "path_expressions": [
+            "result.stderr"
+          ],
+          "scope": "_run_module_main",
+          "status": "legacy_unreviewed"
         },
         {
           "call_digest": "e02cc5afcde7adfd",
@@ -10626,7 +10645,7 @@
           "status": "legacy_unreviewed"
         }
       ],
-      "path": "tldw_chatbook/app.py"
+      "path": "tldw_chatbook/app_entry.py"
     },
     {
       "candidates": [

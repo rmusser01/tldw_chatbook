@@ -64,6 +64,17 @@ def chat_with_provider(*, provider: str, **_kwargs: Any) -> str:
 class MCPTools:
     """Container for MCP tool implementations."""
 
+    #: TASK-32955: the standalone server sets a per-process CharacterReadGuard
+    #: once it has published character_get ([mcp] expose_character_tools), so
+    #: update_character refuses to replace a long field that was never read in
+    #: full. None (switch off, or the in-process runtime) applies no guard.
+    character_read_guard: Any = None
+    #: TASK-32955: the standalone server sets the default profile's runtime
+    #: source loader, so its character writes refuse in server mode. None (the
+    #: in-process runtime) skips the check: the default profile's source is not
+    #: the calling Console session's, so it would misjudge either direction.
+    runtime_source_loader: Any = None
+
     def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):
         """Initialize tools with database connections."""
         self.chachanotes_db = chachanotes_db
@@ -455,17 +466,31 @@ class MCPTools:
             LocalCharacterPersonaService,
         )
         from ..DB.ChaChaNotes_DB import ConflictError, InputError
+        from ..Tools import character_tool_service as card_tools
 
         try:
+            # TASK-32955: character editing is local-only, as in the Console.
+            loader = self.runtime_source_loader
+            if loader is not None and loader() == "server":
+                return {"error_code": "unsupported", "error": card_tools.SERVER_REFUSAL}
             service = LocalCharacterPersonaService(self.chachanotes_db)
             if character_id is None:
                 record = service.create_character(fields)
             else:
-                if self.chachanotes_db.get_character_card_by_id(character_id) is None:
+                current = self.chachanotes_db.get_character_card_by_id(character_id)
+                if current is None:
                     return {
                         "error_code": "not_found",
                         "error": "Character was not found.",
                     }
+                guard = self.character_read_guard
+                if guard is not None and int(current["version"]) == expected_version:
+                    unread = card_tools.first_unread_long_field(guard, current, fields)
+                    if unread is not None:
+                        return {
+                            "error_code": "read_full_field_first",
+                            "error": card_tools.read_full_field_first_message(unread),
+                        }
                 record = service.update_character(
                     character_id, fields, expected_version=expected_version
                 )

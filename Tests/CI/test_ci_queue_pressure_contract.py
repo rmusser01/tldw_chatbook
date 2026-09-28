@@ -32,6 +32,7 @@ FAST_LANE_TARGETS = (
     "Tests/Model_Artifacts/test_operation_leases_process.py",
     "Tests/UI/test_mcp_workbench.py",
     "Tests/UI/test_mcp_tools_mode.py",
+    "Tests/Widgets/test_detach_safe_text_area.py",
 )
 HEAVY_JOB_KEYS = {
     "core-tests",
@@ -46,9 +47,7 @@ HEAVY_JOB_KEYS = {
 }
 STANDALONE_WORKFLOWS = (
     "derived-artifacts.yml",
-    "css-bundle-guard.yml",
     "perf-guard.yml",
-    "backlog-guard.yml",
 )
 
 
@@ -359,3 +358,24 @@ def test_pull_request_workflows_are_never_cancelled_in_progress() -> None:
     heavy = _workflow("test.yml")
     assert "pull_request" not in _triggers(heavy)
     assert heavy["concurrency"]["cancel-in-progress"] == PUSH_ONLY_CANCELLATION
+
+
+def test_bundle_and_backlog_checks_run_on_push_events() -> None:
+    """The bundle and backlog-id checks still run on dev/main pushes.
+
+    With css-bundle-guard/backlog-guard deleted, the required workflow is the
+    only place these checks run -- so they must run on dev/main pushes too, not
+    only inside the pull-request-only fast lanes.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    assert {"dev", "main"} <= set(_triggers(workflow)["push"]["branches"])
+    steps = workflow["jobs"]["derived-artifacts"]["steps"]
+    for script in ("tldw_chatbook/css/check_bundle_sync.py", "scripts/check_backlog_task_ids.py"):
+        matching = [step for step in steps if script in str(step.get("run", ""))]
+        assert matching, f"{script} is not run by the required job"
+        for step in matching:
+            assert "pull_request" not in str(step.get("if", "")), (
+                f"{script} must not be pull-request-only"
+            )
+    assert not (PROJECT_ROOT / ".github/workflows/css-bundle-guard.yml").exists()
+    assert not (PROJECT_ROOT / ".github/workflows/backlog-guard.yml").exists()

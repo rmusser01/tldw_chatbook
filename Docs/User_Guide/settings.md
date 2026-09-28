@@ -154,7 +154,7 @@ page links to each backend's setup guide and displays these restrictions.
 | Core | **Web Search** | Shared basic/deep search default, backend credentials, local setup checks, and explicit saved-settings test. | Draft — save with s |
 | Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
 | Interface | **Appearance** | Density and visual defaults shared with the app shell, plus a read-only theme row that links to the Theme picker. | Draft — save with s |
-| Interface | **Theme** | A filterable picker of every theme (yours, shipped, Textual's) with live preview, Use/Try/Revert, Edit/Rename/Delete/Export for your own, and an editor behind Clone/New/Edit. | Applies immediately |
+| Interface | **Theme** | A filterable picker of every theme (yours, shipped, built-in) with live preview, Use/Try/Revert, Edit/Rename/Delete/Export for your own, and an editor behind Clone/New/Edit. | Applies immediately |
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
@@ -598,21 +598,40 @@ Library readers after a successful save.
 ### Interface — Theme
 
 Theme now opens on a **picker**, not the editor. A **Filter themes** box
-narrows the list live, by display name or id. Below it, one grouped,
+narrows the list live, by theme name or id (not by group words such as
+"built-in" or "shipped" — the group headings already sort by those). Below it, one grouped,
 scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then
-**TEXTUAL** (Textual's own built-ins) — each group's heading shows a count
-while you're filtering (e.g. "SHIPPED (12)"). Every row paints a seven-colour
+**BUILT-IN** (the themes that come with the Textual framework) — each group's heading shows a count
+while you're filtering (e.g. "SHIPPED (12)"); the headings are bold, muted
+text, not greyed-out rows. Every row paints a seven-colour
 strip plus word markers, never colour alone: **active** on the theme running
 right now, **launch** on the configured launch default, and **overrides
-shipped** / **overrides textual** when one of your saved themes shadows a
-built-in name of the same id. Moving the highlight (mouse or **↑**/**↓**)
+shipped** / **overrides built-in** when one of your saved themes shadows a
+theme of the same id. Two themes whose names read the same (Textual's
+`solarized-dark` and the shipped `solarized_dark`) are told apart by their
+origin — "Solarized Dark · built-in" and "Solarized Dark · shipped" — and
+only fall back to the id when both come from the same group. Each row stays
+on one line: when the list is too narrow (e.g. at 80x24), the row keeps at
+least ten cells of the name and gives up the rest in this order — "overrides
+built-in" shortens to "overrides", then that marker goes, then the strip drops
+to three colours, then **launch** goes; **active** always stays. Only then is
+the name cut short with "…". Moving the
+highlight (mouse, **↑**/**↓** or **j**/**k**)
 repaints the **preview card** on the right — a title line ("\<name\> ·
-dark/light · yours/shipped/textual") and a live swatch preview — without
-touching the app you're actually using. If the configured launch default no
+dark/light · yours/shipped/built-in", the origin named once even for a
+name like "Solarized Dark · built-in") and a live swatch preview — without
+touching the app you're actually using. The list takes all the height the
+detail pane has (at full-screen sizes it no longer stops at 24 rows), and the
+highlighted row is filled in the theme's primary text colour as well as bold.
+When the picker is narrower than 100 columns (a mid-width terminal), the card
+moves below the list instead of squeezing both. If the configured launch default no
 longer exists (its file was deleted or renamed outside the app), a notice
 appears above the list — "Launch default missing: \<id\> — Use any theme to
 fix it" — the same wording Appearance's summary row uses; using any theme
 clears it.
+
+Entering Theme — from the rail or Appearance's **Open Theme** — puts focus
+in the list, so these keys work at once.
 
 **Keys**, active while the list has focus: **Enter** (or the **Use this
 theme** button) — switch to the highlighted theme now *and* save it as the
@@ -624,11 +643,15 @@ top row returns focus to the filter box instead of wrapping to the bottom.
 When the highlighted theme is one of **yours**, three more keys work: **e** —
 **Edit** it in place (no `_copy` suffix, unlike Clone), **r** — **Rename**,
 and **Delete** — remove it. These three, plus **Export**, have no effect on a
-shipped or Textual theme (Clone or New it first to make your own copy).
+shipped or built-in theme (Clone or New it first to make your own copy).
+While the list has focus the footer lists these keys; **F1** lists them too.
 **F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
 as everywhere else on this screen. With no match, the list shows "No themes
-match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
-starts from the theme you are running.
+match '\<text\>'" with a **Clear filter** button under it, the preview card
+is empty, and Enter does nothing; **New** (**n**) still works and starts from
+the theme you are running. Clearing the filter (the button, or deleting the
+text) returns the highlight to the theme you had before filtering, or else to
+the active theme.
 
 A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
 — the theme that was active before that change (chained across repeated
@@ -638,7 +661,12 @@ return to the new name instead, and deleting that theme drops the Revert
 button, so it never targets a theme that no longer exists. When a persisted Use captures a moment where the active theme
 and the launch default already disagreed (e.g. an earlier Try left the
 active theme unsaved), the label also names the launch default: "Revert to
-\<theme\> (launch: \<launch theme\>)". Toasts name what happened: Try says
+\<theme\> (launch: \<launch theme\>)". If that earlier launch default is no
+longer a registered theme (the "Launch default missing" case), Revert does not
+write it back: the label reads "Revert to \<theme\> (launch unchanged)" and
+the saved launch default stays as it is. The Revert button hides whenever
+pressing it would change nothing — its theme is already the one running and
+the launch default would not change (e.g. you switched back by hand). Toasts name what happened: Try says
 "Trying \<name\> for this
 session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
 the launch default fails, Use still applies the theme for the session and
@@ -650,9 +678,13 @@ toast, so the command palette's "Switch to \<theme\>" command — which also
 persists like Use — shows the exact same wording, cache-refresh warning
 included.
 
-**Your themes** get a second row of chips beneath Use/Try/Clone/New/Revert —
-**Edit**, **Rename**, **Delete** and **Export** — visible only when the
-highlighted theme is one of yours (a shipped or Textual theme shows neither
+The card's buttons come in three groups, a blank row apart: switching —
+**Use this theme** and **Try**, with **Revert** under them when it applies;
+creating — **Clone**, **New** and **Import…**; and, for **your themes** only,
+**Edit**, **Rename**, **Export** and **Delete**. Each group is one row when the
+card is at least 48 columns wide; on a narrower card (always at compact
+width) every button takes its own full-width row. The your-theme group is
+visible only when the highlighted theme is one of yours (a shipped or built-in theme shows neither
 the row's buttons nor its keys; Clone or New it first). An empty YOUR THEMES
 group shows a disabled "(none yet)" row instead. The themes folder is read in
 the background: the first time the picker opens, YOUR THEMES shows a disabled
@@ -660,12 +692,20 @@ the background: the first time the picker opens, YOUR THEMES shows a disabled
 or Back from the editor the previous list stays up until the new one arrives.
 **Edit** opens the full
 editor on the saved file, in place — unlike Clone, it does not append
-`_copy`. **Rename** and **Delete** ask first: Rename opens a name prompt
-("Rename theme '\<old\>'"); a name already in use answers "Name taken:
-'\<new\>'" and changes nothing. Renaming your launch default updates the
+`_copy`. **Rename** and **Delete** ask first, and every theme dialog names
+the theme as the list shows it together with its file ("'Warm Paper'
+(warm_paper.toml)"): Rename opens a name prompt ("Rename theme 'Warm Paper'
+(warm_paper.toml)"); a name already in use ("Name taken: '\<new\>'") or an
+invalid one shows its reason inside the prompt, which stays open with what
+you typed so you can correct it. Renaming your launch default updates the
 saved launch default to the new name without changing the theme you are
 running (if it is the running theme, the app follows it to the new name). **Delete** confirms ("Delete the saved theme
-'\<name\>'? This removes the theme file and cannot be undone."); if the
+'\<Name\>' (\<file\>.toml)? This removes the theme file and cannot be undone."),
+and when the theme is in use the dialog says what happens next: "It is your
+current and launch theme; the app will switch to Textual Dark and launch
+with it.", "It is your launch theme; the app will launch with Textual Dark
+from now on.", or "It is your current theme; the app will switch to your
+launch theme, \<Name\>." (Textual Dark if that launch theme is missing). If the
 deleted theme is both the launch default and the one on screen, the launch
 default and the running theme both reset to Textual Dark and the toast says
 so; if it is the launch default but not the one on screen, only the launch
@@ -673,13 +713,20 @@ default setting resets to Textual Dark — the running theme is left alone —
 and the toast says "launch default reset to Textual Dark"; if it was merely
 active (not the launch default) it switches to your launch default instead;
 and either way, deleting a saved theme that reuses a shipped or built-in
-name (say `nord`) brings the original back. **Export** writes the saved
-file to your Downloads folder and asks before replacing an earlier export;
+name (say `nord`) brings the original back. **Export** asks where to write
+the saved file, prefilled with `~/Downloads/<name>_theme.toml`. The path must
+be absolute, end in `.toml`, and be in a folder that already exists (only the
+Downloads folder is created if missing) other than the themes folder — however
+it is spelled (`..`, a symlinked folder, a different letter case); a
+folder, symlink or other non-file at that path is refused. Each refusal shows
+inside the prompt, which keeps what you typed. An existing file is replaced
+only after an "Overwrite export" confirmation;
 on success the card shows "Exported to \<full path\>" with a **Copy path**
 button (copies the path to the clipboard and confirms "Path copied") — the
 row clears the next time you highlight a different theme.
 
-A saved file that can't be read — invalid TOML, a missing or unparseable
+A saved file that can't be read — invalid TOML (the card names the line
+and column, e.g. "not valid TOML (line 3, column 1)"), a missing or unparseable
 primary colour, a `[colors]` key that isn't one of the ten base colours, a
 colour that isn't `#RGB`, `#RRGGBB` or `#RRGGBBAA` ("invalid colour 'secondary'"), or
 a name containing control characters ("name has control characters"), a
@@ -687,8 +734,8 @@ name starting with a reserved prefix ("reserved name"), a symlinked or
 hard-linked file ("not a regular file"), or a second file claiming a name
 another file already holds ("duplicate of '\<name\>'"; the app uses the
 later file) — is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
-the reason as both a short label on the card and every disabled button's
-tooltip. It is listed even when its file name matches a shipped or Textual
+the reason as both a short label on the card — shown in place of the preview,
+which a broken file can't paint — and every disabled button's tooltip. It is listed even when its file name matches a shipped or Textual
 theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
 Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
 pressing one of their keys shows the reason instead. Only **Delete** works,
@@ -713,10 +760,12 @@ unescapes every backslash-escaped character a drop pastes on macOS
 #RGB, #RRGGBB or #RRGGBBAA" — no names or `rgb(…)`), invalid TOML, or a name that isn't
 filename-safe, contains `[`, contains control characters, or starts with
 `custom_` or `unreadable:` each refuse with a specific reason and write
-nothing. A `[variables]` entry that isn't a colour
+nothing. The reason shows inside the Import prompt, which stays open with
+the path you typed; invalid TOML names the parser's line and column ("File
+is not valid TOML (line 3, column 1)"). A `[variables]` entry that isn't a colour
 (or `auto NN%`, or a text style) is dropped with a warning instead, the same
 as Save. Importing a name you already have asks first ("Replace the saved
-theme '\<name\>'?"); Cancel leaves the existing file byte-for-byte
+theme '\<Name\>' (\<file\>.toml)?"); Cancel leaves the existing file byte-for-byte
 unchanged. On success the picker highlights the new theme and shows
 "Imported '\<name\>'".
 
@@ -747,7 +796,8 @@ the colour and its hex; an invalid value marks the box and the swatch reads
 "Invalid — use #RRGGBB". **Color Presets** fill the colour chosen in the
 **Presets fill** box (Primary by default), by click or by focusing a swatch
 and pressing Enter or Space. The **Live Preview** is a Console-shaped stub
-that repaints as you type. A theme cloned from a shipped one keeps that
+that repaints as you type; on a wide window it sits beside the palette so
+your edits show without scrolling (narrow windows stack it below). A theme cloned from a shipped one keeps that
 theme's extra readability colours (muted text, footer keys, input selection)
 through Try, Save and Export — they are stored in a `[variables]` table in
 the TOML. They are tuned for that palette, so once you change any base
@@ -760,7 +810,15 @@ Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard*
 Settings category while the editor is open, or leave Settings altogether
 (the tab bar, the command palette or a shortcut) or quit the app, and a Save that needs an
 overwrite confirmation or a valid name keeps you on the editor either way.
-Changing only the **Name** box counts as an unsaved edit.
+Changing only the **Name** box counts as an unsaved edit. The editor's
+**Try** lasts only while you're in the editor: leaving it any way but
+**Save** — **Back** with nothing unsaved, **Discard**, a category switch or
+leaving Settings — puts back the theme that was running when you opened
+the editor (unless you switched themes elsewhere since, e.g. from the
+command palette; that choice stays). After **Save** or **Save as…**, the
+saved theme is the one applied, under its saved name.
+While the editor has unsaved edits, the rail shows **Theme \***, and the Scope
+Inspector's header and its "Unsaved theme changes" row both say so.
 
 While a backup or recovery holds the theme files, YOUR THEMES shows a
 disabled "Theme files unavailable while backup/recovery is in progress" row
@@ -1170,7 +1228,8 @@ section (its save contract, scope, runtime owner, whether writes are allowed,
 boundary, and
 recovery — the same contract the State banner and Scope Inspector carry)
 followed by the category's working shortcut keys, with the RAG-only keys shown
-only while on RAG. Every category has a non-empty help body; one without
+only while on RAG and Theme's list keys (Enter, t, c, n, i, e, r, Del) listed
+for Theme. Every category has a non-empty help body; one without
 category-specific keys says so.
 
 Command palette (**Ctrl+P**) entries that land here: "Settings & Preferences:
@@ -1531,3 +1590,11 @@ for a named endpoint (`custom-ep:<slug>`) now hide the rows that endpoint's
 family request drops, as Console does (an ollama-family endpoint hides Min
 P); pinned by a real-rebase comparison test. Not driven live. The rest of
 this page's content unchanged from the prior stamp.*
+
+*Verified against `fix/theme-crit3-lane-b` (off dev @ ae8cb2783c) — 2026-09-27
+(TASK-33061/33064/33065): Theme ▸ Revert with a missing launch default,
+the hidden no-op Revert, the full-height list and grouped card buttons
+(measured in-process at 211x44, 235x52, 150x40, 120x36 and 80x24), and the
+highlighted-row fill (measured from painted cells under textual-dark,
+textual-light, gruvbox_dark and solarized_light). Pinned by pilot tests,
+not driven live.*

@@ -36,7 +36,48 @@
 #settings-theme-list {
     height: auto;
     min-height: $ds-size-8;
-    max-height: $ds-size-24;
+}
+/* TASK-33064: at full-screen sizes the list used to stop at 24 rows (of ~95
+   options), leaving a 14-19 row band under it. While the picker is showing
+   (ThemePane's `-picker` class) the chain from the pane down to the list is
+   1fr of the detail body's viewport instead -- a direct child of the
+   VerticalScroll, so the fr resolves against the viewport, not against an
+   auto ancestor (the clipping regression noted above). The min-heights keep
+   the card (title + preview + grouped chips, ~18 rows; ~27 with its chips
+   stacked) whole on a short terminal: the body scrolls instead. The editor
+   view keeps `auto`, and compact restores the auto chain below.
+   ThemePane sets `-stacked` from its own width (below 100 cols the two
+   columns squeeze the list to ~26 cols, e.g. 120x36 and 150x40): the card
+   then sits under a list that still takes the remaining height. */
+#settings-theme-pane.-picker {
+    height: $ds-height-fill;
+    min-height: $ds-size-24;
+}
+#settings-theme-pane.-picker.-stacked {
+    min-height: $ds-size-32;
+}
+#settings-theme-pane.-picker.-stacked.-narrow-card {
+    min-height: $ds-size-40;
+}
+#settings-theme-pane.-stacked #settings-theme-picker-columns {
+    layout: vertical;
+}
+#settings-theme-pane.-picker #settings-theme-picker,
+#settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-theme-pane.-picker #settings-theme-list-column,
+#settings-theme-pane.-picker #settings-theme-list {
+    height: $ds-height-fill;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list-column,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    height: auto;
+    min-height: $ds-size-0;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    min-height: $ds-size-8;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-picker-columns {
     layout: vertical;
@@ -48,28 +89,65 @@
    type, see _lists.tcss precedent) -- `ThemeOptionList > .option-list--
    option-highlighted` (the subclass name) measured un-bolded: component
    styles resolve against the declaring base type, not every subclass name
-   used as a CSS type-selector. */
+   used as a CSS type-selector.
+   TASK-33065: the fill was the shared `$surface` (_lists.tcss), 1.0-1.1:1
+   against the list, so bold carried the row alone among bold headers and
+   markers. The row now inverts like a focused chip on the card below
+   (`$text-primary` fill, `$ds-surface-panel` text; `$text-primary` is the
+   AA-pinned hue, ensure_readable_text_hues). `$block-cursor-background`
+   was measured first: 2.84:1 on solarized_light. The fill clears 3:1
+   against the list on every theme the contrast test runs
+   (Tests/UI/test_settings_theme_card_contrast.py), focused or not: the
+   list shows one highlight either way. */
 #settings-theme-list > .option-list--option-highlighted {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    text-style: bold;
+}
+/* TASK-33077: group headers (and the loading / none-yet rows) are disabled
+   options only so the cursor skips them; Textual paints those
+   `$text-disabled`, 2.54:1 (light) and 3.43:1 (dark). They are labels, not
+   unavailable controls: muted but readable, bold as headings. */
+#settings-theme-list > .option-list--option-disabled {
+    color: $ds-text-muted;
     text-style: bold;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-list {
     max-height: $ds-size-9;
 }
-/* Same stacking the editor's action row already gets under
-   `#settings-theme-card .settings-action-row` below -- the picker's chip row
-   lives under `#settings-theme-card-column` instead, so it needs its own
-   pair. Unconditional (not compact-scoped): `#settings-theme-card-column`
-   is only ever 1fr of the picker's width (half, once list-column takes the
-   other 1fr), so a horizontal 4-chip row overflows it even at 190x55 --
-   measured 66 cols of chips (Use 18 + Try/Clone/New 16 each) packed into a
-   54-col column, clipping New to a single visible column
-   (Region(x=145,w=16) against a Region(x=92,w=54) clip). Compact width
-   (<100 cols) just makes the same overflow worse, not a different bug. */
+/* TASK-33064: the card's chips come in three groups (switching, creation,
+   your theme), one horizontal row each, the groups a blank row apart. Each
+   chip takes an equal share of its row (`1fr`, no 16-cell Button minimum):
+   the card column is only half the picker (61 cols at 211x44), and four
+   16-cell chips overflowed it (TASK-31279). Revert sits on its own row under
+   Use/Try because its label names up to two themes. A narrow card
+   (ThemePane's `-narrow-card`, set on resize below 48 card cols -- every
+   compact layout) stacks every chip full width, as before: shares of a
+   26-col card cropped "Use this theme" to 8 cells. */
 #settings-theme-card-column .settings-action-row {
-    layout: vertical;
     height: auto;
 }
+#settings-theme-card-column .theme-action-group {
+    margin-top: $ds-space-1;
+}
 #settings-theme-card-column .theme-editor-action {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+#settings-theme-card-column #settings-theme-revert {
+    width: $ds-width-full;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .settings-action-row {
+    layout: vertical;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .theme-editor-action {
+    width: $ds-width-full;
+}
+/* The export result is a path line with Copy path under it, not a chip row. */
+#settings-theme-card-column #settings-theme-export-result {
+    layout: vertical;
+}
+#settings-theme-card-column #settings-theme-copy-path {
     width: $ds-width-full;
 }
 /* R19/R23/R24 (TASK-32948 PR 2 Task 6): the editor's colour-keeping
@@ -123,6 +201,24 @@
     color: $ds-text-primary;
     text-style: bold;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+/* TASK-33066: palette and live preview side by side (the picker's list +
+   card idiom), stacked again when the editor is narrower than
+   SettingsThemeEditor.TWO_COLUMN_MIN_WIDTH (`-stacked`, set on resize).
+   height:auto throughout -- this sits in the detail pane's scroll (see the
+   TASK-32948 note above). */
+#settings-theme-editor-columns,
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    height: auto;
+}
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    width: 1fr;
+}
+#settings-theme-editor.-stacked #settings-theme-editor-columns {
+    layout: vertical;
 }
 
 /* TASK-31259: the preview is a Console-shaped stub whose rows are painted from

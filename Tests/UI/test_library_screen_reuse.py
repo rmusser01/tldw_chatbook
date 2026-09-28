@@ -18,33 +18,14 @@ four behaviors the 2026-09-04 audit gated enablement on:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import build_test_app_config
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
-
-
-def _scratch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    home = tmp_path / "home"
-    data = tmp_path / "data"
-    config = tmp_path / "config"
-    for sub in (home, data, config):
-        sub.mkdir(parents=True, exist_ok=True)
-    config_file = config / "tldw_cli" / "config.toml"
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(
-        "[first_run]\nsetup_completed = true\n\n[splash_screen]\nenabled = false\n"
-    )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
-    monkeypatch.setenv("TLDW_TEST_MODE", "1")
-    monkeypatch.setenv("PYTEST_CURRENT_TEST", "library_screen_reuse")
-    return home
 
 
 async def _boot_settled(app, pilot) -> None:
@@ -75,8 +56,9 @@ def test_library_route_is_flagged_reusable() -> None:
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_library_reuse_and_suspend_timer_quiescence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One journey pins reuse, timer quiescence, and the resume seam.
 
@@ -84,7 +66,7 @@ async def test_library_reuse_and_suspend_timer_quiescence(
     Library, arm a debounce timer, leave (suspend must stop it), return
     (same instance, visit surfaces re-kicked).
     """
-    _scratch_env(monkeypatch, tmp_path)
+    build_test_app_config(overrides={"splash_screen": {"enabled": False}})
     from tldw_chatbook.app import TldwCli
 
     app = TldwCli()
@@ -98,9 +80,7 @@ async def test_library_reuse_and_suspend_timer_quiescence(
         )
 
         # Arm a debounce timer the way a mid-keystroke filter would.
-        library._media_state.filter_timer = library.set_timer(
-            60.0, lambda: None
-        )
+        library._media_state.filter_timer = library.set_timer(60.0, lambda: None)
 
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         assert library._library_screen_suspended is True
@@ -175,11 +155,12 @@ async def test_library_reuse_and_suspend_timer_quiescence(
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@private_profile_test
 async def test_suspended_library_gates_ingest_dom_work_until_resume(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Registry events against a hidden Library defer DOM work to resume."""
-    _scratch_env(monkeypatch, tmp_path)
+    build_test_app_config(overrides={"splash_screen": {"enabled": False}})
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
     from tldw_chatbook.app import TldwCli
 
@@ -194,12 +175,8 @@ async def test_suspended_library_gates_ingest_dom_work_until_resume(
 
         dynamic = Mock()
         snapshot = Mock()
-        monkeypatch.setattr(
-            library, "_update_library_ingest_dynamic_regions", dynamic
-        )
-        monkeypatch.setattr(
-            library, "_refresh_local_source_snapshot", snapshot
-        )
+        monkeypatch.setattr(library, "_update_library_ingest_dynamic_regions", dynamic)
+        monkeypatch.setattr(library, "_refresh_local_source_snapshot", snapshot)
         # A registry mutation lands while the screen is hidden.
         library._handle_library_ingest_registry_changed()
         assert dynamic.call_count == 0, (

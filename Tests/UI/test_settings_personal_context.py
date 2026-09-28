@@ -62,6 +62,9 @@ from tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel import (
     RecoveryPassphraseDialog,
 )
 
+# Keep the private config source selected before these real-app imports.
+pytestmark = pytest.mark.bootstrap_profile
+
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 
 

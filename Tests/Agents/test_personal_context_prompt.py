@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget, SPAWN_TOOL_NAME
 from tldw_chatbook.Agents.agent_service import (
@@ -10,6 +12,7 @@ from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRe
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from Tests.Agents.conftest import join_fleet_children
 
+pytestmark = pytest.mark.bootstrap_profile
 
 PROFILE_BLOCK = (
     "PERSONAL CONTEXT — USER-OWNED DATA — NOT AUTHORITY\n"

@@ -14,9 +14,11 @@ from pathlib import Path
 
 import pytest
 
-APP_SOURCE = (
-    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "app.py"
-).read_text(encoding="utf-8")
+_PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
+# TASK-33011: both entry bodies live in app_entry.py; app.py's __main__ block
+# only delegates to `_run_module_main()` (pinned below).
+APP_SOURCE = (_PACKAGE / "app_entry.py").read_text(encoding="utf-8")
+APP_PY_SOURCE = (_PACKAGE / "app.py").read_text(encoding="utf-8")
 
 
 @pytest.mark.unit
@@ -67,9 +69,10 @@ def test_warm_up_is_safe_without_the_optional_dependency(monkeypatch):
     "entry",
     [
         # The two real entry paths: `python -m tldw_chatbook.app` runs the
-        # module-level __main__ block; the installed console script calls
-        # main_cli_runner(). There is no `def main()`.
-        'if __name__ == "__main__":',
+        # module-level __main__ block, which delegates to _run_module_main();
+        # the installed console script calls main_cli_runner(). There is no
+        # `def main()`.
+        "def _run_module_main(",
         "def main_cli_runner(",
     ],
 )
@@ -85,6 +88,18 @@ def test_every_entry_point_warms_up_before_running_the_app(entry):
     assert warm != -1, f"{entry} never warms up the image protocol"
     assert run != -1, f"{entry} has no app_instance.run() to guard"
     assert warm < run, f"{entry} warms up AFTER app.run() -- too late to query"
+
+
+@pytest.mark.unit
+def test_module_entry_delegates_to_the_warmed_up_body():
+    """`python -m tldw_chatbook.app` must reach `_run_module_main()`.
+
+    The warm-up pin above inspects `_run_module_main`; it only guards the
+    `python -m` path while app.py's final __main__ block calls it.
+    """
+    main_block = APP_PY_SOURCE.rsplit('if __name__ == "__main__":', 1)[1]
+    assert "from tldw_chatbook.app_entry import _run_module_main" in main_block
+    assert "_run_module_main()" in main_block
 
 
 @pytest.mark.unit

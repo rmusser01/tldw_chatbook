@@ -50,7 +50,7 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (drafted as 072, renumbered twice at merge time as concurrent branches claimed 072–076; accepted 2026-08-21 with both judgment decisions approved by the owner; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
+ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (phase 1, accepted); phase 2 drafted as backlog/decisions/184-agent-task-server-execution-message-refs-and-approval-escalation.md (status: Proposed — awaiting owner rulings on message durability and the approval floor) (drafted as 072, renumbered twice at merge time as concurrent branches claimed 072–076; accepted 2026-08-21 with both judgment decisions approved by the owner; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
 Reason: cross-system service contract (client↔server execution ownership, result delivery, approval policy for server-side tool use) — squarely in ADR-required territory, and the owner has stated the long-term direction this task exists to realize.
 
 1. Draft ADR-077: execution contract, result-delivery channels, approval policy, reconciliation semantics

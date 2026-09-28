@@ -14942,23 +14942,40 @@ class ConsoleChatController:
         # mount, the advisory permission summary fired INSIDE the human-wait
         # mark, decision stamping on cancel/timeout, and finishing-phase
         # retention at teardown.
-        self._interrupt_host.run_round(
-            "approval",
-            round_id,
-            payload,
-            round_state,
-            session_id=session_id,
-            owning_session_id=owning_session_id,
-            deadline=deadline,
-            is_parked=is_parked,
-            announce_detached=_announce_if_detached,
-            human_wait_run_id=owning_run_id,
-            on_cancelled=_on_cancelled,
-            on_timeout=_on_timeout,
-            before_wait=lambda: self._maybe_fire_permission_summary(payload),
-            on_teardown=_on_teardown,
-            on_outcome=_on_outcome,
-        )
+        activity_bridge = getattr(self, "_agent_bridge", None)
+        project_wait = getattr(activity_bridge, "set_tool_approval_pending", None)
+
+        def project_tool_wait(pending: bool) -> None:
+            if callable(project_wait):
+                try:
+                    project_wait(owning_session_id, owning_run_id, unique_keys, pending)
+                except Exception as exc:  # noqa: BLE001 — display cannot interrupt approval
+                    logger.warning(
+                        "Console tool approval display could not be updated ({})",
+                        type(exc).__name__,
+                    )
+
+        project_tool_wait(True)
+        try:
+            self._interrupt_host.run_round(
+                "approval",
+                round_id,
+                payload,
+                round_state,
+                session_id=session_id,
+                owning_session_id=owning_session_id,
+                deadline=deadline,
+                is_parked=is_parked,
+                announce_detached=_announce_if_detached,
+                human_wait_run_id=owning_run_id,
+                on_cancelled=_on_cancelled,
+                on_timeout=_on_timeout,
+                before_wait=lambda: self._maybe_fire_permission_summary(payload),
+                on_teardown=_on_teardown,
+                on_outcome=_on_outcome,
+            )
+        finally:
+            project_tool_wait(False)
         verdicts_out = ApprovalDecisions(
             result.get("map") or {key: "deny" for key in unique_keys}
         )
@@ -27066,10 +27083,14 @@ class ConsoleChatController:
 
         def project_thinking(update: Any) -> None:
             if update.envelope is not None:
+                # task-33081: validated=True -- the capture enforces the
+                # canonical limits incrementally per delta; re-validating
+                # the whole growing envelope here was quadratic.
                 self.store.replace_message_thinking(
                     assistant_message_id,
                     update.envelope,
                     generation_token=generation_token,
+                    validated=True,
                 )
 
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
@@ -27924,7 +27945,15 @@ class ConsoleChatController:
                         ),
                         project_instruction_notice_key=None,
                     )
-                    self.store.set_session_project_instruction_state(session_id, state)
+                    # task-33081: both steps write SQLite / scan the binding
+                    # root -- they must not run on the UI event loop that
+                    # owns this coroutine (the resolve-time preview twin
+                    # already runs them via asyncio.to_thread).
+                    await asyncio.to_thread(
+                        self.store.set_session_project_instruction_state,
+                        session_id,
+                        state,
+                    )
                 if is_remote(project_selection.root):
                     # Task 19: AGENTS.md reads route through the remote
                     # executor (reader strategy). ADR-069 prep-failure
@@ -27946,7 +27975,8 @@ class ConsoleChatController:
                         )
                     )
                 else:
-                    startup_candidate = ProjectInstructionResolver().resolve_startup(
+                    startup_candidate = await asyncio.to_thread(
+                        ProjectInstructionResolver().resolve_startup,
                         binding_id=project_selection.binding.binding_id,
                         binding_root=project_selection.root,
                         locator_fingerprint=project_selection.locator_fingerprint,

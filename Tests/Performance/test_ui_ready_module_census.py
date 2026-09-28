@@ -175,6 +175,11 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # TASK-33011: process entry points; reached only via cli.py / `python -m`.
+    "tldw_chatbook.app_entry",
+    # TASK-33011: TldwCli's destination/handoff/Personal Context bodies; the
+    # app stubs import it on first call, which is always post-ready.
+    "tldw_chatbook.app_destinations",
     # Serving metadata discovery is first-use work; pure capacity defaults are not.
     "tldw_chatbook.Chat.console_context_window",
     # Parsing imported notes and assigning settings controls are first-use work.

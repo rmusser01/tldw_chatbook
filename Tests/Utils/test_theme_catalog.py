@@ -110,12 +110,26 @@ def test_every_colour_of_every_entry_is_uppercase_rrggbb():
     assert all(len(e.colours) == len(BASE_KEYS) for e in entries)
 
 
-def test_duplicate_display_names_get_id_suffix():
+def test_duplicate_display_names_are_told_apart_by_origin_word():
+    """TASK-33073: solarized-light (built-in) vs solarized_light (shipped)
+    read "Solarized Light · built-in" / "· shipped", not the slug."""
     twin = Theme(name="solarized_light", primary="#268BD2", dark=False)
     entries = build_catalog(_available(solarized_light=twin), set(), "textual-dark", "x")
     names = [e.display_name for e in entries]
     assert len(names) == len(set(names))
-    assert any(n.endswith("· solarized-light") for n in names)
+    assert "Solarized Light · built-in" in names
+    assert "Solarized Light · shipped" in names
+    assert not any("solarized" in n for n in names)
+
+
+def test_duplicate_display_names_in_one_origin_fall_back_to_id():
+    a = Theme(name="my-theme", primary="#268BD2")
+    b = Theme(name="my_theme", primary="#268BD2")
+    entries = build_catalog(
+        _available(**{"my-theme": a, "my_theme": b}), {"my-theme", "my_theme"}, "textual-dark", "x"
+    )
+    names = {e.display_name for e in entries}
+    assert {"My Theme · my-theme", "My Theme · my_theme"} <= names
 
 
 def test_is_catalog_theme():
@@ -138,6 +152,10 @@ class _FakeApp:
         if value not in self._known:
             raise InvalidThemeError(value)
         self._theme = value
+
+    @property
+    def available_themes(self):
+        return {name: object() for name in self._known}
 
 
 @pytest.fixture
@@ -245,6 +263,16 @@ def test_revert_reports_whether_the_launch_default_was_restored(writes, monkeypa
     assert app.theme == "textual-dark"
 
 
+def test_revert_never_writes_a_missing_launch_default_back(writes):
+    # TASK-33061: started with a launch default that is not a registered
+    # theme; reverting a Use must not resurrect it in config.
+    app = _FakeApp()
+    change = tc.ThemeChange("textual-dark", "ghost_theme", True)
+    app.theme = "nord"
+    assert tc.revert_theme(app, change) == (True, True)
+    assert app.theme == "textual-dark" and writes == []
+
+
 def test_revert_of_try_writes_nothing(writes):
     app = _FakeApp()
     tc.revert_theme(app, tc.use_theme(app, "nord", persist=False))
@@ -320,3 +348,30 @@ def test_saved_theme_colours_are_listed_not_grey():
     colours = dict(tc._colours(theme))
     assert colours["primary"] == "#112233"
     assert colours["background"] == "#0A0A0A"
+
+
+def test_catalog_colours_resolve_once_per_theme(monkeypatch):
+    """TASK-33075: every theme switch rebuilds the picker catalog, and
+    resolving ~91 themes' colour systems each time was ~80% of that rebuild.
+    The resolution is cached per theme definition -- a changed definition
+    under the same name still resolves afresh."""
+    calls = []
+    real = Theme.to_color_system
+
+    def counting(self):
+        calls.append(self.name)
+        return real(self)
+
+    monkeypatch.setattr(Theme, "to_color_system", counting)
+    mine = Theme(name="cache_probe_33075", primary="#112233")
+    available = _available(cache_probe_33075=mine)
+    build_catalog(available, set(), "nord", "nord")
+    calls.clear()
+    build_catalog(available, set(), "gruvbox", "nord")
+    assert calls == []
+
+    changed = Theme(name="cache_probe_33075", primary="#445566")
+    entries = build_catalog(_available(cache_probe_33075=changed), set(), "nord", "nord")
+    assert calls == ["cache_probe_33075"]
+    entry = next(e for e in entries if e.id == "cache_probe_33075")
+    assert dict(entry.colours)["primary"] == "#445566"

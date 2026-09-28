@@ -2149,6 +2149,7 @@ class AgentService:
         work_chain_id: str | None = None,
         worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
         app_config: Mapping[str, Any] | None = None,
+        on_tool_activity: Callable[[AgentStep, str, str], None] | None = None,
     ) -> None:
         from .execution_capacity import RuntimeCapacity
         from .automatic_work_runtime import current_automatic_work
@@ -2178,6 +2179,7 @@ class AgentService:
         )
         self._primary_trace_call_persistence_error: Exception | None = None
         self._on_step = on_step
+        self._on_tool_activity = on_tool_activity
         self.skill_runner = skill_runner
         # task-3 (skills-foundation): per-run authorization + reader for the
         # skill_file runtime tool. `None` (the default, and every caller
@@ -8024,6 +8026,11 @@ class AgentService:
             # run. Otherwise control steps can retain links to model events
             # that disappear after restart.
             on_trace_step=observe_trace_step,
+            on_tool_activity=(
+                (lambda step: self._on_tool_activity(step, agent_kind, run_id))
+                if self._on_tool_activity is not None
+                else None
+            ),
             reserve_context_trace=reserve_context_trace,
             # PR2a Task 5: bind THIS run's id into the hook. `LoopDeps`
             # keeps its `(calls) -> verdicts` shape (the pure runtime stays

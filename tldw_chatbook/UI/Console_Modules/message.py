@@ -2979,7 +2979,7 @@ class ConsoleMessageController:
         """
         if self._console_chat_store is not None:
             session_id = self._console_chat_store.active_session_id
-            if session_id is not None and self._console_chat_store.messages_for_session(
+            if session_id is not None and self._console_chat_store.has_messages(
                 session_id
             ):
                 return True
@@ -2994,4 +2994,5 @@ class ConsoleMessageController:
         session_id = store.active_session_id
         if session_id is None:
             return False
-        return bool(store.messages_for_session(session_id))
+        # TASK-24300: emptiness only -- no snapshot of the transcript needed.
+        return store.has_messages(session_id)

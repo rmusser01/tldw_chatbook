@@ -38,6 +38,9 @@ BASE_KEYS = (
     "panel", "foreground", "success", "warning", "error",
 )
 _ORIGIN_ORDER: dict[str, int] = {"yours": 0, "shipped": 1, "textual": 2}
+#: TASK-33073: the user-facing word for each origin ("textual" is the
+#: framework's name, not something a user chose).
+ORIGIN_LABELS: dict[str, str] = {"yours": "yours", "shipped": "shipped", "textual": "built-in"}
 _SHIPPED_NAMES = frozenset(t.name for t in ALL_THEMES if getattr(t, "name", None))
 
 
@@ -93,7 +96,24 @@ def is_catalog_theme(name: str) -> bool:
     return name in _SHIPPED_NAMES or name in BUILTIN_THEMES
 
 
+#: TASK-33075: resolved colours per theme definition. Every theme switch
+#: rebuilds the picker catalog, and generating ~91 colour systems was ~80% of
+#: that rebuild (~40-80 ms a switch). Keyed on ``repr`` (every Theme field,
+#: ~3 us) so a re-registered or edited definition never reads stale colours.
+_COLOURS_CACHE: dict[str, tuple[tuple[str, str], ...]] = {}
+
+
 def _colours(theme: Theme) -> tuple[tuple[str, str], ...]:
+    key = repr(theme)
+    cached = _COLOURS_CACHE.get(key)
+    if cached is None:
+        if len(_COLOURS_CACHE) >= 1024:
+            _COLOURS_CACHE.clear()  # ponytail: crude bound; editor Try variants are the only growth
+        cached = _COLOURS_CACHE[key] = _resolve_colours(theme)
+    return cached
+
+
+def _resolve_colours(theme: Theme) -> tuple[tuple[str, str], ...]:
     # Same resolution as the editor (TASK-31255): explicit colours byte-exact,
     # unset ones from the generated colour system.
     try:
@@ -165,12 +185,22 @@ def build_catalog(
         origin, overrides = _origin(name, user_names)
         rows.append((name, origin, overrides, theme))
     counts = Counter(display_name(name) for name, *_ in rows)
+    per_origin = Counter((display_name(name), origin) for name, origin, *_ in rows)
+
+    def label(name: str, origin: Origin) -> str:
+        # TASK-33073: a shared name is told apart by its origin word when
+        # that is enough (solarized-dark vs solarized_dark), else its id.
+        shown = display_name(name)
+        if counts[shown] == 1:
+            return shown
+        if per_origin[(shown, origin)] == 1:
+            return f"{shown} · {ORIGIN_LABELS[origin]}"
+        return f"{shown} · {name}"
+
     entries = [
         ThemeEntry(
             id=name,
-            display_name=(
-                f"{display_name(name)} · {name}" if counts[display_name(name)] > 1 else display_name(name)
-            ),
+            display_name=label(name, origin),
             origin=origin,
             dark=bool(getattr(theme, "dark", True)),
             colours=_colours(theme),
@@ -330,7 +360,9 @@ def use_theme_toast(name: str, change: ThemeChange) -> tuple[str, str]:
 
 def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
     """Undo ``change``: restore the active theme and, if it was persisted,
-    the launch default.
+    the launch default -- unless that launch default is not a registered
+    theme (TASK-33061): writing it back would resurrect the "Launch default
+    missing" state, so the saved launch default is left as it is.
 
     Args:
         app: The running app.
@@ -346,9 +378,24 @@ def revert_theme(app: Any, change: ThemeChange) -> tuple[bool, bool]:
             registered.
     """
     app.theme = change.previous_active
-    if change.persisted:
+    if change.persisted and launch_default_restorable(app, change):
         return _persist_launch_default(app, change.previous_launch_default)
     return True, True
+
+
+def launch_default_restorable(app: Any, change: ThemeChange) -> bool:
+    """Whether a Revert of ``change`` may write its previous launch default.
+
+    It must still be a registered theme (TASK-33061).
+
+    Args:
+        app: The running app, for its registered themes.
+        change: The switch a Revert would undo.
+
+    Returns:
+        True when ``change.previous_launch_default`` is a registered theme.
+    """
+    return change.previous_launch_default in app.available_themes
 
 
 def user_theme_names(directory: Path) -> set[str]:

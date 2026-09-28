@@ -17,6 +17,7 @@ from Tests.UI.test_settings_overview_search_journeys import _category
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from Tests.UI.theme_editor_helpers import open_theme_editor
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.Widgets.settings_theme_picker import _GROUP_TITLES
 
 THEMES = ("textual-dark", "textual-light", "gruvbox_dark", "solarized_light")
 # TASK-32948 PR 2: New/Clone/Delete/Export moved to the picker; the editor
@@ -83,6 +84,28 @@ def _edges(host, widget):
     """The first and last painted cells of a one-row widget."""
     cells = list(_cells(host, widget.region))
     return cells[0], cells[-1]
+
+
+def _highlighted_row(host, lst):
+    """(cells of the highlighted row, the list background beside it).
+
+    Located by the row's own text, not ``highlighted - scroll_offset``: group
+    headers render a divider line of their own, so the option index and the
+    line offset only agree with no dividers above the row. The background is
+    read from a plain option row (not a header, not the highlight).
+    """
+    needle = lst.get_option_at_index(lst.highlighted).prompt.plain.split("  ")[0].strip()
+    row_cells = list_bg = None
+    for dy in range(lst.region.height):
+        cells = list(_cells(host, Region(lst.region.x, lst.region.y + dy, lst.region.width, 1)))
+        text = "".join(c for _, c, _ in cells)
+        if row_cells is None and needle and needle in text:
+            row_cells = cells
+        elif list_bg is None and "▮" in text:
+            glyph = next(style for _, c, style in cells if c.isalnum())
+            if not glyph.bold:
+                list_bg = glyph.bgcolor
+    return row_cells, list_bg
 
 
 async def _open_theme_card(pilot, host, theme):
@@ -194,20 +217,31 @@ async def test_theme_picker_use_and_try_chips_meet_contrast(theme, request):
         # Locating the row by its own text is robust to the divider count.
         lst = picker.query_one("#settings-theme-list")
         await _show(pilot, lst)
-        highlighted_text = lst.get_option_at_index(lst.highlighted).prompt.plain
-        needle = highlighted_text.split("  ")[0].strip()
-        row_cells = None
-        for dy in range(lst.region.height):
-            row_region = Region(lst.region.x, lst.region.y + dy, lst.region.width, 1)
-            cells = list(_cells(host, row_region))
-            if needle and needle in "".join(c for _, c, _ in cells):
-                row_cells = cells
-                break
-        assert row_cells is not None, f"{theme}: highlighted row {needle!r} not visible"
+        row_cells, list_bg = _highlighted_row(host, lst)
+        assert row_cells is not None, f"{theme}: highlighted row not visible"
         alnum_cells = [(char, style) for _, char, style in row_cells if char.isalnum()]
         assert alnum_cells, f"{theme}: no painted glyph on the highlighted row"
         for char, style in alnum_cells:
             assert style.bold, f"{theme}: highlighted row cell {char!r} is not bold"
+
+        # TASK-33065: bold alone was the cue -- the fill measured 1.10:1
+        # (light) and 1.12:1 (dark) against the list. The fill itself must
+        # clear the 3:1 non-text floor against the list background, focused
+        # or not.
+        for focused in (False, True):
+            if focused:
+                lst.focus()
+                await pilot.pause(0.1)
+            row_cells, list_bg = _highlighted_row(host, lst)
+            glyph = next(style for _, c, style in row_cells if c.isalnum())
+            fill = glyph.bgcolor
+            assert _contrast(fill, list_bg) >= 3.0, (
+                f"{theme} (focused={focused}): highlight fill {fill} on list {list_bg} "
+                f"is {_contrast(fill, list_bg):.2f}:1"
+            )
+            assert _contrast(glyph.color, fill) >= 4.5, (
+                f"{theme} (focused={focused}): highlighted name {glyph.color} on {fill}"
+            )
 
 
 @pytest.mark.asyncio
@@ -361,3 +395,38 @@ async def test_preset_swatches_have_edges_and_a_contrasting_focus_ring(theme, re
         assert _contrast(glyph.color, glyph.bgcolor) >= 3.0, (
             f"{theme} off glyph {glyph.color} on {glyph.bgcolor}"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
+async def test_theme_list_group_headers_meet_text_contrast(theme, request):
+    """TASK-33077: the group headers rendered as disabled options, 2.54:1
+    (light) and 3.43:1 (dark)."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker(pilot, host, theme)
+        lst = picker.query_one("#settings-theme-list")
+        # P3 review M2: measure every header the picker defines (a rename
+        # can't silently skip one), scrolling a screenful at a time — BUILT-IN
+        # sits below the fold.
+        titles = set(_GROUP_TITLES.values())
+        seen = set()
+        y = 0
+        while True:
+            lst.scroll_to(y=y, animate=False, immediate=True)
+            await _show(pilot, lst)
+            for dy in range(lst.region.height):
+                row = Region(lst.region.x, lst.region.y + dy, lst.region.width, 1)
+                cells = list(_cells(host, row))
+                text = "".join(c for _, c, _ in cells)
+                for title in titles - seen:
+                    if title in text:
+                        seen.add(title)
+                        style = next(s for _, c, s in cells if c.isalpha())
+                        ratio = _contrast(style.color, style.bgcolor)
+                        assert ratio >= 4.5, f"{theme}/{title} header {ratio:.2f}:1"
+            if seen == titles or y >= lst.max_scroll_y:
+                break
+            y += max(lst.region.height - 1, 1)
+        assert seen == titles, f"{theme}: headers never seen: {sorted(titles - seen)}"

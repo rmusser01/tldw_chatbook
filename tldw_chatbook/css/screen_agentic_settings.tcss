@@ -206,6 +206,7 @@ $ds-widgets-skeleton-title-share: 60%;
 $ds-messages-scroll-cap: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 $ds-console-frame: #6f7782;
+$ds-tool-preview-max-height: 3;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -884,6 +885,13 @@ Button.settings-category-group-toggle:focus {
     padding: $ds-space-1 $ds-space-2;
     border: thick $ds-action-focus;
     background: $ds-surface-panel;
+}
+
+/* TASK-33070: a name/path prompt's validation reason, shown in the dialog
+   (hidden via Static.display until a submit is refused). */
+.settings-rag-profile-name-error {
+    height: auto;
+    color: $ds-status-error-readable;
 }
 
 .settings-speech-credential-modal {

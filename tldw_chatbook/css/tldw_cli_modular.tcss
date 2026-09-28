@@ -255,6 +255,8 @@ $ds-messages-text-scroll-cap: 40vh;
 
 $ds-console-frame: #6f7782;
 
+$ds-tool-preview-max-height: 3;
+
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -5416,13 +5418,50 @@ StatCard:hover {
 #settings-theme-list {
     height: auto;
     min-height: $ds-size-8;
-    max-height: $ds-size-24;
+}
+
+#settings-theme-pane.-picker {
+    height: $ds-height-fill;
+    min-height: $ds-size-24;
+}
+#settings-theme-pane.-picker.-stacked {
+    min-height: $ds-size-32;
+}
+#settings-theme-pane.-picker.-stacked.-narrow-card {
+    min-height: $ds-size-40;
+}
+#settings-theme-pane.-stacked #settings-theme-picker-columns {
+    layout: vertical;
+}
+#settings-theme-pane.-picker #settings-theme-picker,
+#settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-theme-pane.-picker #settings-theme-list-column,
+#settings-theme-pane.-picker #settings-theme-list {
+    height: $ds-height-fill;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-picker-columns,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list-column,
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    height: auto;
+    min-height: $ds-size-0;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-pane.-picker #settings-theme-list {
+    min-height: $ds-size-8;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-picker-columns {
     layout: vertical;
 }
 
 #settings-theme-list > .option-list--option-highlighted {
+    background: $text-primary;
+    color: $ds-surface-panel;
+    text-style: bold;
+}
+
+#settings-theme-list > .option-list--option-disabled {
+    color: $ds-text-muted;
     text-style: bold;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-list {
@@ -5430,10 +5469,29 @@ StatCard:hover {
 }
 
 #settings-theme-card-column .settings-action-row {
-    layout: vertical;
     height: auto;
 }
+#settings-theme-card-column .theme-action-group {
+    margin-top: $ds-space-1;
+}
 #settings-theme-card-column .theme-editor-action {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+#settings-theme-card-column #settings-theme-revert {
+    width: $ds-width-full;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .settings-action-row {
+    layout: vertical;
+}
+#settings-theme-pane.-narrow-card #settings-theme-card-column .theme-editor-action {
+    width: $ds-width-full;
+}
+
+#settings-theme-card-column #settings-theme-export-result {
+    layout: vertical;
+}
+#settings-theme-card-column #settings-theme-copy-path {
     width: $ds-width-full;
 }
 
@@ -5471,6 +5529,20 @@ StatCard:hover {
     color: $ds-text-primary;
     text-style: bold;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+
+#settings-theme-editor-columns,
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    height: auto;
+}
+#settings-theme-editor-palette-column,
+#settings-theme-editor-preview-column {
+    width: 1fr;
+}
+#settings-theme-editor.-stacked #settings-theme-editor-columns {
+    layout: vertical;
 }
 
 
@@ -10714,6 +10786,58 @@ ConsoleConversationInspector #console-inspector-tabs > ContentTabs {
 
 .inspector-usage-detail.inspector-detail-narrow .inspector-section-list { width: $ds-width-fill; }
 ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
+
+
+.console-activity-status-tool {
+    width: $ds-width-auto;
+    min-width: $ds-size-0;
+    max-width: $ds-percent-70;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-activity-status-queued,
+.console-activity-status-running {
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.console-activity-status-awaiting_approval,
+.console-activity-status-timed_out {
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.console-tool-preview {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    max-height: $ds-tool-preview-max-height;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-inset;
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.console-tool-detail {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    color: $ds-text-primary;
+}
+
+.console-tool-approval {
+    width: $ds-width-auto;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0 $ds-space-inset;
+    padding: $ds-space-0 $ds-space-inline;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-tool-approval:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
+.console-tool-approval:focus { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
+.console-tool-approval:disabled { background: $ds-disabled-bg; color: $ds-text-disabled-readable; }
 
 /* ===== MODULE: features/_library.tcss ===== */
 

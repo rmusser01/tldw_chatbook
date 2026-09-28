@@ -748,6 +748,8 @@ def _scope(
             dictionary_files.pin_inputs(state)
         if route == "theme_directory" or (route == "pet" and writing):
             settings_files.preflight(state, route, attempt)
+        if route == "theme_export":
+            settings_files.check_export_parent(state)
         if any(
             hold is not None and hold.authority.pause_requested(hold.names)
             for hold in state.holds
@@ -932,11 +934,78 @@ def _file(operation, path, mode):
         _close_descriptor(state, fd)
 
 
-def _replace(operation, temporary, destination):
+_UNCHECKED = object()
+
+
+def _entry_identity(state, path):
+    """``path``'s (dev, inode) without following a leaf link, or None if absent."""
+    try:
+        info = (
+            os.stat(path.name, dir_fd=state.pins[path.parent], follow_symlinks=False)
+            if state.pinned
+            else os.stat(path, follow_symlinks=False)
+        )
+    except FileNotFoundError:
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _replace(operation, temporary, destination, *, expected=_UNCHECKED):
+    """Publish ``temporary`` as ``destination``.
+
+    Args:
+        operation: The active raw write scope.
+        temporary: The admitted temporary this scope created.
+        destination: The admitted publication target.
+        expected: Omitted, replace whatever is there (the historical
+            behaviour). ``None``, create ``destination`` only if it is still
+            absent (a hard link, which fails on an existing entry). A
+            ``(st_dev, st_ino)`` pair, replace only that observed file.
+
+    Raises:
+        FileExistsError: ``destination`` is not the entry ``expected`` names;
+            nothing was published and the scope stays usable.
+    """
     state = _check(operation, temporary, writing=True)
     _check(operation, destination, writing=True)
     temporary, destination = lexical_path(temporary), lexical_path(destination)
+    linked = False
+    if expected is not _UNCHECKED:
+        if _entry_identity(state, destination) != expected:
+            raise FileExistsError(f"{destination.name} changed before it was written")
+        if expected is None:
+            _check_temporary_identity(state, temporary)
+            try:
+                if state.pinned:
+                    os.link(
+                        temporary.name,
+                        destination.name,
+                        src_dir_fd=state.pins[temporary.parent],
+                        dst_dir_fd=state.pins[destination.parent],
+                    )
+                else:
+                    os.link(temporary, destination)
+                linked = True
+            except FileExistsError:
+                raise FileExistsError(
+                    f"{destination.name} appeared before it was written"
+                ) from None
+            except OSError:
+                # ponytail: no hard links on this filesystem (FAT/exFAT) --
+                # fall back to the checked replace below; its window is the
+                # microseconds since the identity check above.
+                pass
     try:
+        if linked:
+            # Published by the link; retire the temporary's own name.
+            if state.pinned:
+                os.unlink(temporary.name, dir_fd=state.pins[temporary.parent])
+                flush_directory(state.pins[destination.parent])
+            else:
+                os.unlink(temporary)
+                fsync_parent_directory(destination.parent)
+            state.created_files.pop(temporary)
+            return
         if destination == state.backup:
             try:
                 info = (

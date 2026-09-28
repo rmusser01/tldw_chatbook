@@ -658,7 +658,9 @@ class LoopDeps:
     # projection as compatibility-safe and bypass the strict boundary below.
     # Appended to preserve legacy positional LoopDeps construction.
     has_tool_record_projection: Callable[[ToolCall], bool] = lambda _call: False
-
+    # Ephemeral display copy; never changes durable trace payloads (ADR-195).
+    # Append to preserve the positional constructor slots above.
+    on_tool_activity: Callable[[AgentStep], None] | None = None
 
 
 def _continuation_calls_match(
@@ -1362,7 +1364,7 @@ def run_agent_loop(
         )
         return True
 
-    def trace(kind: str, **kw) -> AgentStep:
+    def trace(kind: str, *, display_args: dict | None = None, **kw) -> AgentStep:
         """Capture a safe lifecycle observation outside legacy control steps."""
         nonlocal trace_steps
         if not kw.get("created_at"):
@@ -1375,6 +1377,11 @@ def run_agent_loop(
             deps.on_trace_step(step)
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass
+        if deps.on_tool_activity is not None:
+            try:
+                deps.on_tool_activity(replace(step, args=display_args))
+            except Exception:  # noqa: BLE001, S110 — display cannot affect execution
+                pass
         return step
 
     def _outcome(
@@ -2275,6 +2282,11 @@ def run_agent_loop(
             used_correlations.add(correlation)
             proposal_step = trace(
                 STEP_TOOL_PROPOSED,
+                display_args=(
+                    {}
+                    if deps.on_tool_activity is None or call.name in MESSAGE_TOOL_NAMES
+                    else dict(project_record("display", call).arguments)
+                ),
                 summary=f"{call.name} proposed",
                 tool_name=call.name,
                 status="proposed",

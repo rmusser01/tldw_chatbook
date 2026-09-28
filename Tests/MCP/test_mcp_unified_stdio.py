@@ -201,6 +201,9 @@ def _compose_server(
         "local_tools_exposure_enabled",
         lambda: local_registration is not None,
     )
+    monkeypatch.setattr(
+        local_server_tools, "character_tools_exposure_enabled", lambda: False
+    )
     if local_registration is not None:
         monkeypatch.setattr(
             local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
@@ -208,7 +211,7 @@ def _compose_server(
         monkeypatch.setattr(
             local_server_tools,
             "build_server_local_provider",
-            lambda _root, _store: object(),
+            lambda _root, _store, **_options: object(),
         )
         monkeypatch.setattr(
             local_server_tools,

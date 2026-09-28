@@ -36,7 +36,7 @@ cleanup; neither composition uses the external-publication configuration gate.
 ``_local_agent_tool_registrations`` turns a composed provider's catalog
 into binding-ready ``LocalToolRegistration`` entries (name, description,
 JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
-``[mcp] expose_local_tools`` is enabled.
+``[mcp] expose_local_tools`` or ``[mcp] expose_character_tools`` is enabled.
 """
 
 from __future__ import annotations
@@ -198,6 +198,37 @@ def hub_character_service() -> Any:
     )
 
 
+def server_character_service(tools: Any, read_guard: Any) -> Any:
+    """The external MCP server's real character read service (TASK-32955).
+
+    Reads go through ``LocalCharacterPersonaService`` over the server's own
+    ChaChaNotes database. ``read_guard`` is one per server process, so one per
+    stdio client session; the server hands the same guard to ADR-183's
+    ``update_character`` once these reads are published.
+
+    Args:
+        tools: The server's ``MCPTools`` (its database).
+        read_guard: The ``CharacterReadGuard`` the reads record into.
+
+    Returns:
+        A ``CharacterToolService`` whose ``search``/``get`` back the external
+        ``character_search``/``character_get`` tools.
+    """
+    from tldw_chatbook.Character_Chat.local_character_persona_service import (
+        LocalCharacterPersonaService,
+    )
+    from tldw_chatbook.Tools.character_tool_service import (
+        CharacterToolService,
+        load_runtime_source,
+    )
+
+    return CharacterToolService(
+        service_loader=lambda: LocalCharacterPersonaService(tools.chachanotes_db),
+        runtime_source_loader=load_runtime_source,
+        read_guard=read_guard,
+    )
+
+
 def _build_hub_local_provider_handle(
     workspace_root: Path,
     *,
@@ -316,7 +347,11 @@ def build_hub_local_inspection_provider(
 
 
 def build_server_local_provider(
-    workspace_root: Path, permission_store: Any
+    workspace_root: Path,
+    permission_store: Any,
+    *,
+    local_tools: bool = True,
+    character_service: Any = None,
 ) -> "LocalToolProvider":
     """Compose a LocalToolProvider for non-Console (external) MCP serving.
 
@@ -331,6 +366,12 @@ def build_server_local_provider(
         permission_store: An ``MCPPermissionStore``-shaped object (typed as
             ``Any`` so tests can hand in temp stores or minimal fakes);
             must provide ``load() -> dict`` and ``get_kill_switch() -> bool``.
+        local_tools: Include the ``[mcp] expose_local_tools`` family
+            (workspace, web, Watchlists).
+        character_service: When given (``[mcp] expose_character_tools``),
+            add ``character_search`` and ``character_get`` re-marked as
+            external here; ``character_save`` stays Console-only
+            (TASK-32955).
 
     Returns:
         A ``LocalToolProvider`` whose catalog excludes ``todo_create``,
@@ -378,6 +419,7 @@ def build_server_local_provider(
         LocalToolExposure,
         LocalToolProvider,
         WorkspaceToolExecutor,
+        _character_specs,
         _default_specs,
     )
 
@@ -391,7 +433,15 @@ def build_server_local_provider(
             watchlists_service=watchlists_service,
         )
         if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
-    ]
+    ] if local_tools else []
+    if character_service is not None:
+        # Re-marked here, not in `_default_specs`: flipping the enum there
+        # would also publish them through the Hub-local composition.
+        external_specs += [
+            replace(spec, exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP)
+            for spec in _character_specs(character_service)
+            if spec.name in ("character_search", "character_get")
+        ]
 
     return LocalToolProvider(
         workspace_root=resolved_root,
@@ -463,6 +513,19 @@ def local_tools_exposure_enabled() -> bool:
 
     return coerce_bool_setting(
         get_cli_setting("mcp", "expose_local_tools", False), False
+    )
+
+
+def character_tools_exposure_enabled() -> bool:
+    """The `[mcp] expose_character_tools` gate (TASK-32955), coerced.
+
+    Default off, and independent of both `[mcp] expose_local_tools` and the
+    Console's `[tools] character_tools_enabled`.
+    """
+    from ..config import coerce_bool_setting, get_cli_setting
+
+    return coerce_bool_setting(
+        get_cli_setting("mcp", "expose_character_tools", False), False
     )
 
 
