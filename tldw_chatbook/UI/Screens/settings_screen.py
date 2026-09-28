@@ -3347,6 +3347,9 @@ class SettingsScreen(BaseAppScreen):
         #: focus survives the rebuild. (`recompose()` still consumes it too,
         #: for the rarer whole-screen rebuild.)
         self._pending_category_focus_value: str | None = None
+        # TASK-33072: entering Theme lands in its list after the swap,
+        # unless an F6 pressed mid-swap claimed the focus first.
+        self._theme_list_focus_pending = False
         #: task-15475: per-instance queue for `_after_category_panes` (the
         #: class attribute is None precisely so this is never shared).
         self._pending_pane_swap_callbacks: list[
@@ -22974,6 +22977,7 @@ class SettingsScreen(BaseAppScreen):
             )
 
         if self._category_pane_swap_pending:
+            self._theme_list_focus_pending = False  # this press wins (TASK-33072)
             self._after_category_panes(self.app.call_later, cycle)
         else:
             cycle()
@@ -24636,6 +24640,11 @@ class SettingsScreen(BaseAppScreen):
                 self._pending_category_focus_value = category_value
             else:
                 self.call_after_refresh(self._focus_category, category_value)
+            if category_value == SettingsCategoryId.THEME.value:
+                # TASK-33072: Theme's keys (c/t/e, j/k) act on its list, so
+                # land there -- queued behind the rail restore above.
+                self._theme_list_focus_pending = True
+                self._after_category_panes(self._focus_theme_list)
         if not category_changed:
             # task-1623: re-evaluate the fold indicator against the inspector's
             # content. Only on the no-switch path: a real switch runs a pane
@@ -25096,6 +25105,27 @@ class SettingsScreen(BaseAppScreen):
         # silently overwrite this (spec §8: land on the launch default, not
         # whatever's merely active right now).
         self._after_category_panes(self._highlight_theme_launch_default)
+
+    def _focus_theme_list(self) -> None:
+        """Move focus from the Theme rail row to the picker's list.
+
+        Only while focus is still where the category switch put it (on the
+        rail, or nowhere) and no F6 was pressed mid-swap: those keep their
+        target.
+        """
+        if not self._theme_list_focus_pending:
+            return
+        self._theme_list_focus_pending = False
+        focused = self.app.focused
+        try:
+            rail = self.query_one("#settings-category-pane")
+            pane = self.query_one("#settings-theme-pane", ThemePane)
+        except QueryError:
+            return
+        if focused is not None and rail not in focused.ancestors_with_self:
+            return
+        if pane.current == "settings-theme-picker":
+            pane.query_one(ThemePicker).focus_list()
 
     def _highlight_theme_launch_default(self) -> None:
         from ...css.Themes.theme_catalog import current_launch_default

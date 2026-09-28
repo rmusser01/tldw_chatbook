@@ -394,3 +394,29 @@ async def test_preset_swatches_have_edges_and_a_contrasting_focus_ring(theme, re
         assert _contrast(glyph.color, glyph.bgcolor) >= 3.0, (
             f"{theme} off glyph {glyph.color} on {glyph.bgcolor}"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
+async def test_theme_list_group_headers_meet_text_contrast(theme, request):
+    """TASK-33077: the group headers rendered as disabled options, 2.54:1
+    (light) and 3.43:1 (dark)."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        picker = await _open_theme_picker(pilot, host, theme)
+        lst = picker.query_one("#settings-theme-list")
+        lst.scroll_to(y=0, animate=False, immediate=True)
+        await _show(pilot, lst)
+        seen = set()
+        for dy in range(lst.region.height):
+            row = Region(lst.region.x, lst.region.y + dy, lst.region.width, 1)
+            cells = list(_cells(host, row))
+            text = "".join(c for _, c, _ in cells)
+            for title in ("YOUR THEMES", "SHIPPED", "TEXTUAL"):
+                if title in text and title not in seen:
+                    seen.add(title)
+                    style = next(s for _, c, s in cells if c.isalpha())
+                    ratio = _contrast(style.color, style.bgcolor)
+                    assert ratio >= 4.5, f"{theme}/{title} header {ratio:.2f}:1"
+        assert seen, f"{theme}: no group header visible"
