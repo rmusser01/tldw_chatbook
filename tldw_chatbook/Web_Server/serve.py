@@ -124,6 +124,13 @@ _CHATBOOK_AUTH_BOOTSTRAP_JS = """(() => {
 })();
 """
 _SERVED_STATIC_ROOT = files("tldw_chatbook.Web_Server").joinpath("static")
+
+#: One-hour public cache policy shared by every state-free static asset the
+#: server owns (the served-shell assets, the auth bootstrap, and the patched
+#: textual-serve bundle): each is deterministic for a given installed build,
+#: so a single named policy is the one place to change if that ever stops
+#: being true.
+_STATIC_ASSET_CACHE_CONTROL = "public, max-age=3600"
 _SERVED_SHELL_HTML = _SERVED_STATIC_ROOT.joinpath("served_shell.html").read_text(
     encoding="utf-8"
 )
@@ -477,7 +484,7 @@ def resolve_web_font_size(query_value: str | None) -> int:
 def patch_textual_serve_viewport_js(source: str) -> str:
     """Patch textual-serve's browser resize hook to repaint after viewport changes.
 
-    task-32905: the repaint machinery must not feed back into the app. An
+    task-33130: the repaint machinery must not feed back into the app. An
     earlier revision ran the full resize handler on EVERY output frame (the
     first-byte hook replacement) with an unconditional ``sendSize()`` inside
     every repaint; because the app answers each resize with fresh output,
@@ -497,6 +504,16 @@ def patch_textual_serve_viewport_js(source: str) -> str:
       rebuild); the resize repaint still calls ``clearTextureAtlas`` plus a
       full ``refresh``, which is the remedy for the GPU-renderer staleness
       this patch family was built for.
+
+    Args:
+        source: The full minified textual-serve browser bundle, as served by
+            the installed ``textual_serve`` package.
+
+    Returns:
+        The patched bundle, or ``source`` unchanged (fail closed) when the
+        bundle does not contain every required upstream hook -- i.e. when
+        the installed textual-serve version no longer matches the shape
+        this patch was built against.
     """
     if _CHATBOOK_VIEWPORT_PATCH_MARKER in source:
         return source
@@ -1272,7 +1289,7 @@ class ChatbookWebServerMixin:
         return web.Response(
             body=_SERVED_STATIC_ROOT.joinpath(filename).read_bytes(),
             content_type=content_type,
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={"Cache-Control": _STATIC_ASSET_CACHE_CONTROL},
         )
 
     async def handle_chatbook_auth_js(self, request):
@@ -1282,7 +1299,7 @@ class ChatbookWebServerMixin:
         return web.Response(
             text=_CHATBOOK_AUTH_BOOTSTRAP_JS,
             content_type="application/javascript",
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={"Cache-Control": _STATIC_ASSET_CACHE_CONTROL},
         )
 
     def _patched_textual_js(self) -> str:
@@ -1308,13 +1325,21 @@ class ChatbookWebServerMixin:
         textual-serve version, so it gets the same one-hour public cache
         policy as the immutable shell assets instead of re-downloading on
         every page load.
+
+        Args:
+            request: The aiohttp request (unused; the response depends only
+                on the installed bundle).
+
+        Returns:
+            A successful ``application/javascript`` response carrying the
+            patched bundle with the shared static-asset cache policy.
         """
         from aiohttp import web
 
         return web.Response(
             text=self._patched_textual_js(),
             content_type="application/javascript",
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={"Cache-Control": _STATIC_ASSET_CACHE_CONTROL},
         )
 
 
