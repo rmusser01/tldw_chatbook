@@ -658,6 +658,20 @@ def test_feedback_ignores_old_and_neutral_reactions(dreams_db, settings):
     assert _net(dreams_db) == {}
 
 
+def test_feedback_tracked_reaction_is_positive(dreams_db, settings):
+    """Phase 2 Track flip: ``tracked`` now nets +1 (+0.1 snapshot weight)."""
+    _fresh_topic(dreams_db, "tracked topic", 0.5)
+    _seed_story_with_feedback(dreams_db, matched=["tracked topic"],
+                              kind="tracked")
+    net = _net(dreams_db)
+    assert net == {"tracked topic": 1}
+    assert _snapshot_weight(dreams_db, "tracked topic", net) == \
+        pytest.approx(0.6)
+    # The stored weight is untouched (offset, never rewrite).
+    assert _profile_row(dreams_db, "tracked topic")["weight"] == \
+        pytest.approx(0.5)
+
+
 @pytest.mark.asyncio
 async def test_feedback_never_compounds_across_cycles(dreams_db, settings):
     """Regression: one reaction used to re-add +0.1 on EVERY cycle."""

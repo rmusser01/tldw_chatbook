@@ -66,9 +66,10 @@ _LLM_URL_PREFIX = "dreams://llm/"
 
 #: How far back the feedback loop reads (spec §feedback loop: a trailing
 #: two-week window of story reactions). Feedback kinds count +1 (``more``/
-#: ``kept``/``dived``/``ingested``) or −1 (``less``); ``exported``/
-#: ``tracked`` are recorded but carry no weight signal. The per-reaction
-#: step and clamp live with the snapshot that applies them
+#: ``kept``/``dived``/``ingested``/``tracked`` -- the Phase 2 Track flip:
+#: tracking a story is a positive signal) or −1 (``less``); ``exported`` is
+#: recorded but carries no weight signal. The per-reaction step and clamp
+#: live with the snapshot that applies them
 #: (``interest_profile.FEEDBACK_STEP``).
 _FEEDBACK_WINDOW_DAYS = 14
 
@@ -108,6 +109,11 @@ class CycleDeps:
         perform_search: ``perform_websearch``-shaped search seam.
         now: Injected clock (UTC-aware); drives date bucketing, staleness,
             and catch-up windows.
+        dispatch_getter: Returns the ``NotificationDispatchService`` or
+            ``None``; read only by the Phase 2 track check
+            (``track_service.run_track_check``) to deliver a ``changed``
+            verdict's notification. ``None`` (the default) means a run row
+            without delivery -- existing cycle construction is unaffected.
     """
     dreams_db: DreamsDB
     chachanotes_db_getter: Callable[[], Any]
@@ -119,6 +125,7 @@ class CycleDeps:
     now: Callable[[], datetime] = field(
         default=lambda: datetime.now(UTC)
     )
+    dispatch_getter: Callable[[], Any] | None = None
 
 
 @dataclass(slots=True)
@@ -474,8 +481,9 @@ def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
     """Net reactions per matched topic over the trailing window (sync).
 
     Joins ``dream_feedback`` → ``dream_stories.matched_topics`` and nets
-    each normalized topic (+1 per ``more``/``kept``/``dived``/``ingested``,
-    −1 per ``less``; ``exported``/``tracked`` are neutral). Nothing is
+    each normalized topic (+1 per ``more``/``kept``/``dived``/``ingested``/
+    ``tracked`` -- tracking a story is a positive signal, the Phase 2
+    Track flip -- −1 per ``less``; ``exported`` is neutral). Nothing is
     written: ``interest_profile.snapshot`` applies the result as an offset,
     so a reaction counts exactly once per cycle for as long as it is inside
     the window -- never compounding into the stored weight -- and a derived
@@ -505,7 +513,7 @@ def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
         except ValueError:
             continue
         kind = str(row["kind"])
-        delta = (1 if kind in ("more", "kept", "dived", "ingested")
+        delta = (1 if kind in ("more", "kept", "dived", "ingested", "tracked")
                  else -1 if kind == "less" else 0)
         if delta == 0 or not isinstance(topics, list):
             continue
