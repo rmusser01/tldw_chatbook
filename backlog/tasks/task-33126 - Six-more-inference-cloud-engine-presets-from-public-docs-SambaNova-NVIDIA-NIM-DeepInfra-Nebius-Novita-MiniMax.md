@@ -52,5 +52,7 @@ Allowances are exactly the fields each doc publishes (e.g. MiniMax base_resp + s
 
 Tests: Tests/LLM_Calls/test_doc_derived_presets.py (62 tests, mutation-checked: disabling each engine flag or a MiniMax allowance turns tests red). test_app_model_catalog_wiring now derives its expected provider list from AUTO_REFRESH_PROVIDER_LIST_KEYS instead of re-pinning it. Local failures match origin/dev by name (RecoveryRequired local gate); test_console_settings_modal_provider_round_trip_ignores_none_model_sentinel fails 3/3 on clean dev too (pre-existing).
 
+Qodo review (3 findings, all fixed): a nonzero MiniMax base_resp status alongside valid choices used to be returned as a reply -- new status_envelope_key field checks it on every body and stream event (nonzero -> 502, code only); MiniMax manual discovery no longer probes an undocumented /v1/models (discovery_route=None = seeded-only, refused by the discovery gate); docstrings on the new tests. Each fix mutation-checked.
+
 Follow-up not done: capture_cloud.py cannot capture these yet (needs /models, sends no stream_options/extra body fields).
 <!-- SECTION:NOTES:END -->
