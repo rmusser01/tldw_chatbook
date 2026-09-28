@@ -85,6 +85,31 @@ def test_find_tracked_by_story(db):
     assert found["id"] == item_id
 
 
+def test_find_tracked_by_story_returns_only_active_rows(db):
+    """Final review, ruling P10: a retired/paused wrapper is not untrackable.
+
+    Without the status filter the story modal's ``u`` resolves a
+    sweep-retired row, re-retires it (``retired_reason`` COALESCE-rewrites
+    the sweep's ``event_passed``/``quiet`` audit data), re-disables the
+    already-disabled subscription, and posts "Stopped tracking this page."
+    for a watch the user never manually stopped.
+    """
+    retired = _make_item(db, origin_story_id=42)
+    db.set_tracked_status(retired, "retired", retired_reason="event_passed")
+    assert db.find_tracked_by_story(42) is None, (
+        "a retired row must not surface for untrack"
+    )
+
+    paused = _make_item(db, origin_story_id=42)
+    db.set_tracked_status(paused, "paused")
+    assert db.find_tracked_by_story(42) is None, (
+        "a paused row must not surface for untrack either"
+    )
+
+    active = _make_item(db, origin_story_id=42)
+    assert db.find_tracked_by_story(42)["id"] == active
+
+
 def test_set_tracked_status_stamps_retired_reason_and_updated_at(db):
     item_id = _make_item(db)
     # Backdate the stamp so the update must land in a strictly later

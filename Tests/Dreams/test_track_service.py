@@ -1302,3 +1302,59 @@ async def test_run_track_check_sweeps_before_checking(dreams_db, settings):
     item = dreams_db.get_tracked_item(item_id)
     assert item["status"] == "retired"
     assert item["retired_reason"] == "event_passed"
+
+
+# --- re-track after a sweep auto-retire (final review, ruling P10) --------------
+
+
+@pytest.mark.asyncio
+async def test_retrack_after_sweep_retire_keeps_dream_provenance(
+        tmp_path, dreams_db, settings, subs_stack):
+    """A sweep-retired watch must re-track with its provenance intact.
+
+    The sweep retires the WRAPPER but leaves the dream-created subscription
+    ``is_active=1``, so the re-track rides the plain attach branch. Without
+    the P10 provenance carry the new wrapper would land
+    ``created_by_dreams=0`` -- a later untrack would then (correctly) never
+    disable the subscription, leaving the page scheduled and alerting
+    forever with no wrapper to retire: an orphaned active subscription.
+    """
+    subs_db, service = subs_stack
+    first = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        event_date="2026-09-20", origin_story_id=7,
+    )
+    assert first["outcome"] == "created"
+
+    # The sweep auto-retires the wrapper (event passed + grace) and leaves
+    # the subscription ACTIVE -- that asymmetry is the bug's setup.
+    await sweep_track_lifecycle(dreams_db, now=NOW)
+    retired = dreams_db.get_tracked_item(first["tracked_item_id"])
+    assert retired["status"] == "retired"
+    assert retired["retired_reason"] == "event_passed"
+    assert int(
+        subs_db.get_subscription(first["subscription_id"])["is_active"]
+    ) == 1, "fixture: the sweep retires the wrapper, not the subscription"
+
+    second = await track_page(
+        service, dreams_db, url=_URL, title="Festival", intent="event",
+        origin_story_id=7,
+    )
+
+    assert second["outcome"] == "attached", (
+        "the subscription is active, so this is a plain attach"
+    )
+    assert second["subscription_id"] == first["subscription_id"], (
+        "re-track adopts the same subscription, never a duplicate"
+    )
+    wrapper = dreams_db.get_tracked_item(second["tracked_item_id"])
+    assert wrapper["created_by_dreams"] == 1, (
+        "provenance carries from the sweep-retired row onto the new wrapper"
+    )
+
+    # The point of the provenance: untrack must disable the subscription.
+    outcome = await untrack(service, dreams_db, second["tracked_item_id"])
+    assert outcome["subscription_disabled"] is True
+    assert int(
+        subs_db.get_subscription(first["subscription_id"])["is_active"]
+    ) == 0, "no orphaned active subscription may outlive the wrapper"

@@ -23,12 +23,17 @@ there is no stored prior page text to leak. A ``changed`` verdict writes a
 ``rebaseline_track`` re-anchors the comparison so the same change never
 re-alerts.
 
-Re-track after untrack (ruling P7, fix round 1): the URL lookup ignores
+Re-track after untrack (ruling P7, fix round 1) or after a sweep
+auto-retire (ruling P10, final review): the URL lookup ignores
 ``is_active``, so a found source may be one a prior untrack disabled. When
-it is (a retired, dream-created tracked row pins the provenance), the
-re-track RE-ENABLES it and reports ``"re-enabled"``; a disabled source with
-no dream provenance is refused with ``TrackSourceDisabled`` -- never
-adopted, never re-enabled behind the user's back.
+it is (a dream-created tracked row for the subscription pins the
+provenance), the re-track RE-ENABLES it and reports ``"re-enabled"``; a
+disabled source with no dream provenance is refused with
+``TrackSourceDisabled`` -- never adopted, never re-enabled behind the
+user's back. And because a sweep auto-retire leaves the dream-created
+subscription ACTIVE, provenance carries onto the attached wrapper
+(``created_by_dreams=1``, outcome stays ``"attached"``) so a later untrack
+still disables the subscription -- no orphaned active watch.
 
 Scheduling needs no registration here: ``WatchlistProjection`` fabricates
 ``watchlist:<subscription_id>`` tasks straight from subscription rows, so
@@ -191,6 +196,26 @@ def _quiet_retire_count() -> int:
         return int(DREAMS_DEFAULTS["track_quiet_retire_count"])
 
 
+def _dream_owned_subscription(dreams_db: Any, subscription_id: int) -> bool:
+    """True when any tracked row pins dream ownership of a subscription.
+
+    Final review (ruling P10): provenance is a fact about the SUBSCRIPTION,
+    not about one wrapper's lifecycle state, so every status is consulted --
+    a sweep-retired (``event_passed``/``quiet``) or failure-paused row
+    proves ownership exactly as well as an active one. Sync; the caller
+    thread-offloads.
+    """
+    for status in ("active", "paused", "retired"):
+        rows = dreams_db.list_tracked_items(status)
+        if any(
+            int(row.get("subscription_id") or 0) == subscription_id
+            and int(row.get("created_by_dreams") or 0) == 1
+            for row in rows
+        ):
+            return True
+    return False
+
+
 async def track_page(
     subs_service: Any,
     dreams_db: Any,
@@ -226,8 +251,13 @@ async def track_page(
         ``{"tracked_item_id": int, "subscription_id": int,
         "outcome": "created" | "attached" | "re-enabled",
         "watchlist_id": int}``. ``re-enabled`` means the URL resolved to a
-        subscription a prior untrack had disabled (retired dream-created
-        row with this subscription), and it was re-activated.
+        subscription a prior untrack had disabled (a dream-created tracked
+        row for it exists), and it was re-activated. An attach to a source
+        with dream provenance (ruling P10: any dream-created tracked row
+        for the subscription pins it -- active, paused, or retired, e.g.
+        one a sweep auto-retired while leaving the subscription live)
+        wraps the new item ``created_by_dreams=1``, so a later untrack
+        still disables the subscription.
 
     Raises:
         TrackCapReached: When ``count_active_tracked()`` already meets the
@@ -255,7 +285,16 @@ async def track_page(
     if existing is not None:
         subscription_id = int(existing)
         outcome = "attached"
-        created_by_dreams = 0
+        # P10 (final review): dream provenance is pinned by ANY tracked row
+        # for this subscription, whatever its status. Without the carry, a
+        # re-track after a sweep auto-retire (which retires the wrapper but
+        # leaves the dream-created subscription ACTIVE) would wrap the
+        # watch as created_by_dreams=0, and a later untrack would then
+        # (correctly) never disable it -- an orphaned active subscription.
+        dream_owned = await asyncio.to_thread(
+            _dream_owned_subscription, dreams_db, subscription_id
+        )
+        created_by_dreams = 1 if dream_owned else 0
         # P7 (fix round 1): the URL lookup ignores is_active, so a found
         # source may be one this flow disabled on a prior untrack, or a
         # foreign source the user disabled themselves. Attaching to either
@@ -266,26 +305,17 @@ async def track_page(
             # untrack writes (is_active=0, is_paused untouched at 0); an
             # auto-paused source (task-1410, paused=True) keeps its own
             # Resume lifecycle and rides the plain attach branch.
-            retired_rows = await asyncio.to_thread(
-                dreams_db.list_tracked_items, "retired"
-            )
-            dream_owned = any(
-                int(row.get("subscription_id") or 0) == subscription_id
-                and int(row.get("created_by_dreams") or 0) == 1
-                for row in retired_rows
-            )
             if not dream_owned:
                 raise TrackSourceDisabled(
                     "source exists but is disabled (no dream provenance): "
                     f"subscription {subscription_id}"
                 )
-            # WE disabled it on a prior untrack (retired + dream-created +
+            # WE disabled it on a prior untrack (dream-created rows pin
             # this subscription): re-enable and say so.
             await subs_service.update_source(
                 subscription_id, {"active": True}
             )
             outcome = "re-enabled"
-            created_by_dreams = 1
     else:
         # Payload keys are the ones ``_source_batch_rows`` consumes:
         # ``source_type`` (not "type") and ``active`` (not "is_active").

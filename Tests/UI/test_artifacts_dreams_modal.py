@@ -733,6 +733,69 @@ async def test_untrack_on_untracked_story_is_notice_only(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_untrack_on_sweep_retired_story_writes_nothing(
+        tmp_path, monkeypatch):
+    """Final review, ruling P10: ``u`` on an auto-retired story is a no-op.
+
+    The sweep retired the wrapper (``event_passed``) but left the
+    subscription active; the untrack lookup must not resolve that row --
+    re-retiring it would rewrite the sweep's ``retired_reason`` audit data,
+    disable the still-live subscription, and post "Stopped tracking this
+    page." for a watch the user never manually stopped.
+    """
+    _track_settings_defaults(monkeypatch)
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    subs_db, service = _subs_stack(tmp_path)
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")  # fixture: track this story first
+        await pilot.pause()
+        (tracked,) = db.list_tracked_items()
+        # Simulate exactly what the lifecycle sweep writes for a passed
+        # event: retire the wrapper, leave the subscription active.
+        db.set_tracked_status(tracked["id"], "retired",
+                              retired_reason="event_passed")
+        before = db.get_tracked_item(tracked["id"])
+        subscription_id = tracked["subscription_id"]
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        after = db.get_tracked_item(tracked["id"])
+        assert after["retired_reason"] == "event_passed", (
+            "the sweep's audit reason must never be rewritten"
+        )
+        assert after["updated_at"] == before["updated_at"], (
+            "no row write at all -- an auto-retired story is not tracked"
+        )
+        assert int(
+            subs_db.get_subscription(subscription_id)["is_active"]
+        ) == 1, "the still-live subscription must not be touched"
+        assert db.list_tracked_items() == []
+        assert _feedback_kinds(db, story["id"]) == ["tracked"], (
+            "untrack records no feedback of its own"
+        )
+        assert changed == [1], "nothing changed, so no refresh"
+        assert any("not" in n.message and "track" in n.message
+                   for n in app._notifications), (
+            "the gentle not-tracked notice, not 'Stopped tracking'"
+        )
+        assert app.screen is modal, "a no-op untrack must not dismiss or crash"
+
+
+@pytest.mark.asyncio
 async def test_untrack_without_subs_service_degrades_to_notice(tmp_path):
     db = _seed_db(tmp_path)
     story = _story_row(db)

@@ -83,9 +83,11 @@ creates (or adopts) a watchlists subscription for the URL, joins it to a
 shared "Dreams Tracked" watchlist, and pins a change alert — every new
 item the page produces lands in the Watchlists **Notifications** pane.
 Tracking an event-dated story also schedules one reminder a week before
-the event. A question can be tracked too (the scheduled loop asks it as
-a search and has a judge call decide whether the results materially
-changed — an unchanged digest never spends the judge).
+the event. Tracking a *question* is planned as well — the service that
+watches one already ships in this release (the scheduled loop would ask
+it as a search and have a judge call decide whether the results
+materially changed; an unchanged digest never spends the judge), and a
+one-keystroke entry for it is a filed follow-up.
 
 Tracked watches retire on their own: an event-dated watch retires one
 day after its event has passed, and any watch that comes back unchanged
@@ -107,4 +109,4 @@ watch is checked more often than once per
 - Everything is stored locally in the Dreams SQLite database.
 
 —
-*Verified against dev @ 8cb20b929d — 2026-09-22*
+*Verified against feat/dreams-phase-2 @ 732d0b1113 — 2026-09-28*

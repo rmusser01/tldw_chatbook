@@ -668,7 +668,8 @@ class DreamsStoryModal(ModalScreen[None]):
         service degrades to a notice. ``TrackCapReached`` refuses BEFORE any
         write (the service's cap guard is first), so no feedback, no
         refresh; success records ``tracked`` feedback, fires ``on_changed``,
-        and the notice carries the created|attached outcome word.
+        and the notice carries the service's outcome word verbatim
+        (created/attached/re-enabled).
         """
         if self._synthetic:
             self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
@@ -741,21 +742,23 @@ class DreamsStoryModal(ModalScreen[None]):
             self._track_in_flight = False
         if not self._record_feedback("tracked"):
             return
-        # "created"/"attached" is the service's fixed outcome word, never
-        # story-derived text, so this notice never parses markup.
+        # "created"/"attached"/"re-enabled" is the service's fixed outcome
+        # word, never story-derived text, so this notice never parses markup.
         self.notify(f"Tracking this page ({result['outcome']}).", markup=False)
         self._changed()
 
     async def action_untrack(self) -> None:
         """Retire the story's tracked wrapper (Phase 2 Task 6), if any.
 
-        ``find_tracked_by_story`` resolves the wrapper this story's track
-        created; found, ``untrack`` retires it (``retired_reason="manual"``)
-        and disables a dream-created subscription -- a notice confirms, the
-        badge clears, and ``on_changed`` refreshes the screen's rows. No
-        wrapper (never tracked, or the tracked row belongs to another
-        story) is a gentle notice with no write and no refresh. Untrack
-        records NO feedback: removing a watch is not an interest signal.
+        ``find_tracked_by_story`` resolves the ACTIVE wrapper this story's
+        track created; found, ``untrack`` retires it
+        (``retired_reason="manual"``) and disables a dream-created
+        subscription -- a notice confirms, the badge clears, and
+        ``on_changed`` refreshes the screen's rows. No active wrapper
+        (never tracked, the tracked row belongs to another story, or a
+        sweep already auto-retired it) is a gentle notice with no write
+        and no refresh. Untrack records NO feedback: removing a watch is
+        not an interest signal.
         """
         if self._synthetic:
             self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
