@@ -2195,6 +2195,8 @@ async def test_long_theme_names_stay_on_one_row_at_80x24(request, theme):
         assert "▮" in prompt.plain and "active" not in prompt.plain.split("  ")[0]
 
 
+@pytest.mark.asyncio
+@private_profile_test
 async def test_rename_to_taken_name_shows_error_in_dialog_and_keeps_input(request):
     from textual.widgets import Input
 
