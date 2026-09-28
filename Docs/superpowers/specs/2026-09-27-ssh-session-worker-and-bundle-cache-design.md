@@ -1,0 +1,239 @@
+# SSH Session Worker and Bundle Cache — Design
+
+Date: 2026-09-27
+Status: Draft (approved in brainstorming; pending written-spec review)
+Amends: `181-ssh-remote-workspace-bindings` (ADR-181). Interacts with
+`101-one-shot-pinned-workspace-tool-execution` (ADR-101): the per-operation
+process rule still holds; only the process that spawns it changes.
+Builds on: `2026-09-24-ssh-remote-workspace-bindings-design.md`.
+
+## Problem
+
+A warm `fs_*` call on an SSH binding takes ~0.7 s against the user's LAN host
+(192.168.5.84, Debian 13, Python 3.13). Measured breakdown on that link
+(ping RTT 4–76 ms, median ~29 ms, occasional spikes to >1 s):
+
+| Component of one warm call | Cost |
+|---|---|
+| New ssh session over the ControlMaster (channel open, exec, exit) | ~200 ms median, 40–300 ms spread |
+| Shipping the 68 KB compressed bundle on stdin | a few extra RTTs on a jittery link |
+| Remote `python3` startup | tens of ms |
+| Remote decompress + `compile()` + module exec of the bundle | ~40 ms (19 + 20) |
+| The operation itself | a few ms |
+
+Round trips dominate; bundle work is minor. The user's bar: **a warm call
+costs about one network round trip.** 0.7 s is not acceptable.
+
+## Goals
+
+- Warm call ≈ one round trip on the SSH channel (success criteria below).
+- Keep every ADR-181 guarantee: delegated auth, availability (a dead host
+  never blocks the workspace), per-operation root pin, denylist, exclusions,
+  two-tier watchdog, admitted-marker failure bucketing, status-cache rules.
+- Cheap first call per run via a host-side bundle cache.
+
+## Non-goals
+
+- Sharing a worker across bindings, runs, or hosts.
+- A persistent install or any cache outside the user's runtime directory.
+- Transparent retry of a failed in-flight call (ADR-181 rule unchanged).
+- Windows as the laptop OS: not verified by this design.
+- Changing the one-shot path's behaviour; it remains the fallback.
+
+## Decisions (from brainstorming)
+
+1. **Target:** warm call ≈ 1 RTT.
+2. **Sharing unit:** one session per **binding per Console run**. All
+   requests in a session share one root and one permission set.
+3. **Architecture:** a **fork server** — one long-lived parent per session
+   that forks a fresh child per request (rejected: a pool of serial workers —
+   `MaxSessions` pressure and per-worker cold starts; a threaded worker — a
+   GIL-holding regex stalls everyone and a per-request timeout cannot kill a
+   thread).
+4. **Cache without `$XDG_RUNTIME_DIR`:** skip caching; never fall back to
+   `/tmp` or `~/.cache`.
+
+## Architecture
+
+### Host side (shipped in the drift-guarded bundle build)
+
+- **Bootstrap:** unchanged — the fixed, charset-restricted string that reads
+  N bytes from stdin and executes them. It now always receives the
+  **stage-1 loader** (~1 KB) instead of the whole bundle.
+- **Stage-1 loader** (stdlib-only, Python ≥ 3.10):
+  1. Version gate (exit 76) as today.
+  2. Cache lookup: `$XDG_RUNTIME_DIR/tldw-worker/<hash>` is used only if
+     `$XDG_RUNTIME_DIR` is set, the directory and file are owned by the
+     current uid, the file is mode 0600 (directory 0700), and the file's
+     sha256 equals `<hash>`. Otherwise it is a miss.
+  3. On a miss it prints `NEED <hash>`, reads a length-prefixed compressed
+     bundle from stdin (capped at 8 MiB before reading), verifies the sha256,
+     and — only when `$XDG_RUNTIME_DIR` is usable — writes it atomically
+     (temp file + `os.replace`, mode 0600) and deletes other entries under
+     `tldw-worker/`.
+  4. Compiles the bundle (~19 ms), prints `READY <hash>`, and enters `serve`.
+- **`serve` parent:** single-threaded; one `selectors` loop over stdin and
+  its children's pipes.
+  - Reads complete `REQUEST` frames (inbound cap `MAX_REQUEST_BYTES`).
+  - Forks one child per request, up to `max_concurrent_calls` live children;
+    beyond that, requests queue and a `BUSY` frame is sent.
+  - Treats request bytes as opaque and drops its reference after forking.
+    Residual bytes in parent memory may be inherited by later children; this
+    stays within one binding/run trust scope (decision 2), so it is not a
+    cross-boundary leak. The ADR states this explicitly rather than claiming
+    scrubbed memory.
+  - Relays each child's output lines as `LINE` frames in order, reads the
+    child's pipe to EOF, reaps it (`waitpid`), then sends `STATUS`.
+  - Kills a child whose output exceeds `MAX_RESPONSE_BYTES`.
+  - Handles `CANCEL` by SIGKILLing that child (ignored if already gone).
+  - Coalesces a request's `LINE`/`STATUS` frames into one `write()` when they
+    are ready together (Nagle/delayed-ACK mitigation).
+  - Exits on stdin EOF, or when idle for `session_idle_s` — idle meaning no
+    queued requests and no live children — killing any remaining children.
+- **Child:** stdin → `/dev/null`, stdout → pipe to the parent. Runs today's
+  per-operation path unchanged: root pin → admitted marker → dispatch, with
+  the two-tier watchdog (Timer exit 75 + `signal.alarm`) armed from the
+  request's own remaining budget.
+
+### Laptop side
+
+- **`RemoteSessionWorker`** (new, transport layer): one per binding per run.
+  - Owns the long-lived `ssh … -- <python> -I -c '<bootstrap>'` process over
+    the existing ControlMaster, a writer lock, and a reader thread.
+  - The reader thread only parses frames and routes them to per-request-id
+    waiters; it never takes the writer lock or blocks on anything else
+    (no deadlock with large requests/responses in flight).
+  - Request ids are a per-session counter, never reused; frames for
+    abandoned requests are dropped.
+  - Inbound frames over `MAX_RESPONSE_BYTES` are rejected before buffering.
+- **`RemoteWorkspaceToolExecutor`** routes calls to the session when it is up,
+  otherwise to today's one-shot path. Recovery probes and first-selection
+  pings use the session when one is live; a BLOCKED binding's recovery probe
+  uses the one-shot ping.
+- **Lifecycle:** the session starts lazily on the run's first remote call and
+  closes at run end (close hook from run teardown — the exact hook site is
+  verified in planning) or after `session_idle_s` of laptop-side idleness
+  (same idle definition). Closing stdin makes the parent exit.
+
+## Protocol
+
+**Session start.** Laptop spawns the channel and sends the stage-1 loader
+(sized by the bootstrap's N). Loader prints the magic prefix + `NEED <hash>`
+or `READY <hash>`; on `NEED` the laptop sends the length-prefixed bundle and
+awaits `READY <hash>`. Leading stdout noise before the magic is skipped
+(4 KB cap, as today). A `READY` hash that differs from the laptop's bundle
+refuses the session. Cold start: ~2–3 RTTs on a miss, ~1–2 on a hit, once per
+run.
+
+**Frames** (binary, both directions): `u32 length | u32 request_id | u8 kind | body`.
+
+| Direction | Kind | Body |
+|---|---|---|
+| laptop → host | `REQUEST` | today's request JSON, unchanged |
+| laptop → host | `CANCEL` | empty |
+| host → laptop | `LINE` | one worker output line (admitted marker or terminal frame), unchanged |
+| host → laptop | `STATUS` | child exit code or terminating signal |
+| host → laptop | `BUSY` | empty; informational |
+
+**One warm call.** `REQUEST(id)` → child pins and emits the admitted marker →
+dispatch → terminal line → exit → `STATUS`; the host writes these back to
+back, so the call costs ~1 RTT. The laptop resolves on `STATUS`, combining
+admitted marker + terminal frame + exit status into exactly today's taxonomy
+(exit 75 or signal after the marker → `OP_TIMEOUT`, etc.), so the status-cache
+rules and existing expectations are unchanged.
+
+**Deadlines.** The child's watchdog fires first. The laptop's per-request
+deadline sends `CANCEL` and fails the call as `OP_TIMEOUT`. If `STATUS` is
+still missing after a short grace, the parent is presumed stuck: the session
+is killed (handled as "session dies").
+
+## Failure handling
+
+| Situation | Behaviour |
+|---|---|
+| Session start fails transport-class (no marker; 255, connect timeout, 127, 76) | Recorded in the status cache as today; the call fails; no one-shot retry (it would pay a second connect timeout). |
+| Session start fails protocol-class (loader crash, hash mismatch, bad handshake) | This call and the rest of the run use the one-shot path; the session is disabled until the next run; logged once. |
+| Session dies mid-run | In-flight calls: admitted → typed op error, status unchanged; not admitted → classified by the session's ssh exit code. The next call retries session start once, then falls back per the rows above. |
+| Parent stuck (`STATUS` overdue past grace) | Session killed; treated as "session dies". |
+| Root pin fails for one request | `STALE_IDENTITY` as today; the session stays up. |
+| Retargeted destination | `ssh -G` destination check runs before every session start; a mismatch starts no session and records BLOCKED (`DESTINATION_CHANGED`). A live session's connection is fixed to the verified host, so identity re-capture inside it after `STALE_IDENTITY` stays safe. |
+
+## Security posture (ADR-181 amendment text)
+
+- Each operation still runs in a fresh process with its own root pin,
+  remote-home denylist, serialized exclusions, and two-tier watchdog. The
+  spawner changes from `sshd` to a per-session parent.
+- The parent holds the drift-guarded bundle and the run's request frames —
+  all within one binding/run trust scope — never executes request logic,
+  caps its children, and exits on EOF or idle.
+- "Nothing persisted on the server" becomes "nothing outside the user's own
+  runtime directory": the bundle cache lives only in `$XDG_RUNTIME_DIR`
+  (tmpfs, 0700, cleared at logout), is sha256-verified on every load, and is
+  skipped when that directory is absent or not private.
+- The destination is verified before each session start.
+
+## Configuration (`[console_ssh]`)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `session_worker` | `true` | Kill switch; `false` = pure one-shot, exactly today's behaviour |
+| `session_idle_s` | `60` | Idle close (both sides; idle = no queued requests and no live children) |
+| `bundle_cache` | `true` | Host-side cache in `$XDG_RUNTIME_DIR` |
+
+## Observability
+
+Session start/stop, cache hit/miss, fallback reasons, and session deaths are
+logged at debug level without paths. The production diagnostic inventory is
+regenerated after reviewing the new statements (preflight).
+
+## Testing
+
+0. **Spike (plan task 1, throwaway):** a framed echo server over a real ssh
+   channel to 192.168.5.84 through ControlMaster. Measures warm echo RTT
+   (the floor) interleaved with `ping`, n ≥ 50, and fork + pin + trivial-op
+   cost on the host. Detects the Nagle/delayed-ACK stall; if present, choose
+   connection tuning or accept ~2 RTT before building on the protocol.
+1. **Unit:** frame codec on both sides (caps before buffering, id routing,
+   stale-frame drop); loader cache logic (hit only on owner + mode + sha256
+   match; tampered or wrong-mode file → `NEED` + rewrite; atomic write;
+   cleanup of other hashes; no cache without a private `$XDG_RUNTIME_DIR`,
+   including the macOS path); hash/version refusal; laptop classification of
+   every failure-table row.
+2. **Loopback integration** (real bundle via `python -I -c`, no ssh):
+   concurrent requests out of order; `LINE`s before `STATUS`; catastrophic
+   regex killed by its own child watchdog while others complete and the
+   parent survives; `CANCEL`; output-cap kill of one child only; queueing at
+   the child cap; pin failure leaves the session up; idle exit ignores a
+   long-running child; EOF kills live children; no zombies after many
+   requests. **Runs under a real Python 3.10 in CI**, not only compiled.
+3. **Laptop-side:** `RemoteSessionWorker` under concurrent callers (writer
+   lock, per-id waiters, host semaphore); reuse across calls within a run via
+   the real composition path and `close()` at run end; a disabled-for-run
+   session is not retried per call; retargeted destination at session start
+   → no session, BLOCKED.
+4. **Fake-ssh:** session-start transport vs protocol failures; mid-flight
+   death classification; stuck parent killed; kill switch restores pure
+   one-shot; exactly one ssh spawn per session regardless of call count (the
+   deterministic latency proxy — no timing asserts in CI).
+5. **Existing one-shot suites** stay green unchanged.
+6. **Live UAT (opt-in marker, not CI):** the 21 checks through the session;
+   cold miss vs hit; idle exit; no stray processes; cache file only under
+   `/run/user/<uid>/tldw-worker/`; median and p90 recorded in task notes.
+
+## Success criteria
+
+- Warm call median ≤ spike echo median + 15 ms (n ≥ 50, interleaved, same
+  window) on the user's host.
+- Cold start with a cache hit ≤ ~3 RTT + ~40 ms.
+- No regression in the one-shot path; kill switch restores it exactly.
+- Preflight, the ADR-097 boot ratchet (no new UI-ready modules), and the
+  diagnostic inventory pass.
+
+## Rollout
+
+1. Spike (throwaway) and go/no-go on the transport assumption.
+2. Host side: stage-1 loader + cache, `serve` fork server, frame codec —
+   bundle build + drift guard + 3.10 loopback CI.
+3. Laptop side: `RemoteSessionWorker`, executor routing, failure handling,
+   lifecycle hook, config keys.
+4. ADR-181 amendment text, user-guide note, live UAT, CHANGELOG.
