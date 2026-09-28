@@ -629,6 +629,31 @@ async def test_track_check_first_run_is_baseline_notified_zero(
 
 
 @pytest.mark.asyncio
+async def test_track_check_search_is_not_recency_filtered(
+        dreams_db, settings):
+    """Fix round 1, ruling P8: the check search passes ``date_range=None``.
+
+    ``run_queries`` defaults to ``date_range="m"`` (the cycle's recency
+    promise); a track check on a long-lived watch must NOT inherit it --
+    an engine whose results fall outside a one-month window would return
+    empty forever, the check would read ``withheld`` forever, and change
+    detection would silently die without ever anchoring or notifying.
+    """
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    deps = _track_deps(dreams_db, perform_search=search)
+
+    await run_track_check(deps, item_id)
+
+    assert search.calls[0][2]["date_range"] is None, (
+        "the check's search must be unfiltered (date_range=None), not the "
+        "cycle's one-month recency default"
+    )
+
+
+@pytest.mark.asyncio
 async def test_track_check_same_digest_is_unchanged_without_judge(
         dreams_db, settings):
     settings["region"] = "kyoto"
