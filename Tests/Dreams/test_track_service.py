@@ -1,5 +1,6 @@
 # Tests/Dreams/test_track_service.py
-"""``Dreams.track_service`` -- the page track mechanism (Phase 2 Task 3).
+"""``Dreams.track_service`` -- the page track mechanism (Phase 2 Task 3)
+plus the question mechanism and judged change checks (Phase 2 Task 4).
 
 Fixture construction mirrors ``Tests/Subscriptions/test_local_watchlists_
 service.py``'s real-DB pattern: a real ``SubscriptionsDB(tmp_path)`` behind a
@@ -14,10 +15,25 @@ the existing service method that routes into ``SubscriptionsDB.
 update_subscription``'s allowlisted ``is_active`` field -- no raw SQL, no new
 service method. Attached (not dream-created) subscriptions are never touched.
 """
+import hashlib
+import json
+from datetime import UTC, datetime
+
 import pytest
 
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Dreams.cycle_service import CycleDeps
+from tldw_chatbook.Dreams.discovery import normalize_url
+from tldw_chatbook.Dreams.track_service import (
+    TrackCapReached,
+    TrackSourceDisabled,
+    rebaseline_track,
+    run_track_check,
+    track_page,
+    track_question,
+    untrack,
+)
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     NotificationDispatchService,
@@ -25,13 +41,6 @@ from tldw_chatbook.Notifications import (
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
     WatchlistBundleService,
-)
-
-from tldw_chatbook.Dreams.track_service import (
-    TrackCapReached,
-    TrackSourceDisabled,
-    track_page,
-    untrack,
 )
 
 _URL = "https://example.com/flights"
@@ -437,3 +446,571 @@ async def test_retrack_refuses_foreign_disabled_source(
     ) == 0
     assert _count_rows(subs_db, "watchlists") == 0
     assert _count_rows(subs_db, "local_watchlist_alert_rules") == 0
+
+
+# --- question mechanism + judged change checks (Phase 2 Task 4) ---------------
+#
+# ``run_track_check`` runs against a real file-backed ``DreamsDB`` with every
+# external collaborator faked: the ``perform_websearch`` seam (result sets are
+# swapped between checks to move the digest), the ``chat_api_call`` seam
+# (OpenAI-shaped reply), and the notification dispatcher (a recorder). ``now``
+# is fixed so the daily-budget date bucket is deterministic on any machine.
+
+
+NOW = datetime(2026, 9, 22, 8, 0, tzinfo=UTC)
+
+_TEMPLATE = "flights to {region}"
+
+_SET_A = (
+    ("Flights round-up", "https://example.com/flights/roundup",
+     "usual round-up, nothing new"),
+    ("Deal thread", "https://example.com/deals/thread", "prices unchanged"),
+)
+_SET_B = (
+    ("Flights round-up -- new dates", "https://example.com/flights/roundup",
+     "dates moved to Nov"),
+    ("New deal thread", "https://example.com/deals/new-thread",
+     "sale announced"),
+)
+
+
+def _today() -> str:
+    return NOW.astimezone().strftime("%Y-%m-%d")
+
+
+def _expected_digest(results) -> str:
+    return hashlib.sha256("\n".join(
+        normalize_url(url) + title for title, url, _snippet in results
+    ).encode()).hexdigest()
+
+
+class _FakeSearch:
+    """``perform_websearch``-shaped fake whose result set can be swapped."""
+
+    def __init__(self, results=()):
+        self.results = list(results)
+        self.calls: list[tuple] = []
+
+    def __call__(self, engine, query, **kwargs):
+        self.calls.append((engine, query, kwargs))
+        return {"results": [
+            {"title": title, "url": url, "content": snippet}
+            for title, url, snippet in self.results
+        ]}
+
+
+class _FakeChat:
+    """``chat_api_call``-shaped fake recording every call's kwargs."""
+
+    def __init__(self, content='{"changed": true, "note": "new dates announced"}',
+                 raises=False):
+        self.content = content
+        self.raises = raises
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.raises:
+            raise RuntimeError("judge exploded")
+        return {"choices": [{"message": {"content": self.content}}]}
+
+
+class _DispatchRecorder:
+    """``NotificationDispatchService.dispatch``-shaped recorder."""
+
+    def __init__(self, raises=False):
+        self.raises = raises
+        self.dispatched: list[dict] = []
+
+    def dispatch(self, **kwargs):
+        self.dispatched.append(kwargs)
+        if self.raises:
+            raise RuntimeError("dispatch failed")
+
+    def __call__(self):  # usable directly as a dispatch_getter
+        return self
+
+
+def _track_deps(dreams_db, *, perform_search, chat=None, dispatch_getter=None):
+    return CycleDeps(
+        dreams_db=dreams_db,
+        chachanotes_db_getter=lambda: None,
+        media_db_getter=lambda: None,
+        subs_db_getter=lambda: None,
+        pc_service_getter=lambda: None,
+        chat_getter=lambda: chat if chat is not None else _FakeChat(),
+        perform_search=perform_search,
+        now=lambda: NOW,
+        dispatch_getter=dispatch_getter,
+    )
+
+
+# --- track_question -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_track_question_creates_active_question_wrapper_row(
+        dreams_db, settings):
+    item_id = await track_question(
+        dreams_db,
+        query_template=_TEMPLATE,
+        intent="deal",
+        event_date="2026-10-01",
+        origin_story_id=3,
+        cadence_seconds=600,  # below the 12-hour floor
+    )
+
+    item = dreams_db.get_tracked_item(item_id)
+    assert item is not None
+    assert item["mechanism"] == "question"
+    assert item["intent"] == "deal"
+    assert item["query_template"] == _TEMPLATE
+    assert item["subscription_id"] is None, (
+        "a question watch has no page subscription"
+    )
+    assert item["origin_story_id"] == 3
+    assert item["event_date"] == "2026-10-01"
+    assert item["status"] == "active"
+    assert item["cadence_seconds"] == _MIN_INTERVAL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_track_question_cap_guard_blocks_before_any_row(
+        dreams_db, settings):
+    settings["tracked_item_cap"] = 1
+    dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+
+    with pytest.raises(TrackCapReached):
+        await track_question(
+            dreams_db, query_template=_TEMPLATE, intent="topic")
+
+    assert dreams_db.count_active_tracked() == 1
+
+
+@pytest.mark.asyncio
+async def test_track_question_requires_non_empty_template(dreams_db, settings):
+    with pytest.raises(ValueError):
+        await track_question(
+            dreams_db, query_template="   ", intent="topic")
+    assert dreams_db.list_tracked_items() == []
+
+
+# --- run_track_check: baseline / unchanged / changed --------------------------
+
+
+@pytest.mark.asyncio
+async def test_track_check_first_run_is_baseline_notified_zero(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat()
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "baseline", "notified": False}
+    # The template IS the query: rendered with the configured region, no LLM.
+    assert search.calls[0][1] == "flights to kyoto"
+    assert search.calls[0][0] == "duckduckgo"
+    assert search.calls[0][2]["result_count"] == 5
+    assert chat.calls == [], "the first check never invokes the judge"
+    assert recorder.dispatched == []
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert [run["status"] for run in runs] == ["baseline"]
+    assert runs[0]["digest_hash"] == _expected_digest(_SET_A)
+    assert runs[0]["notified"] == 0
+    assert dreams_db.get_tracked_item(item_id)["last_checked"] is not None
+    assert dreams_db.usage_get(_today()) == {"searches": 1, "llm_calls": 0}
+
+
+@pytest.mark.asyncio
+async def test_track_check_same_digest_is_unchanged_without_judge(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat()
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "unchanged", "notified": False}
+    assert chat.calls == [], "an identical digest never invokes the judge"
+    assert recorder.dispatched == []
+    assert [run["status"] for run in
+            dreams_db.list_recent_track_runs(item_id)] == ["unchanged",
+                                                           "baseline"]
+
+
+@pytest.mark.asyncio
+async def test_track_check_changed_digest_notifies_with_captured_dispatch(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat('{"changed": true, "note": "new dates announced"}')
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "changed", "notified": True}
+    assert len(chat.calls) == 1, "exactly one judge call per changed digest"
+    assert len(recorder.dispatched) == 1
+    call = recorder.dispatched[0]
+    assert call["category"] == "dreams_track"
+    assert call["title"] == f"Tracked update: {_TEMPLATE[:50]}"
+    assert call["message"] == "new dates announced"
+    assert call["severity"] == "information"
+    assert call["source_entity_kind"] == "dream_tracked_item"
+    assert call["source_entity_id"] == str(item_id)
+
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "changed"
+    assert runs[0]["notified"] == 1
+    assert runs[0]["verdict_note"] == "new dates announced"
+    assert runs[0]["digest_hash"] == _expected_digest(_SET_B)
+    assert dreams_db.usage_get(_today()) == {"searches": 2, "llm_calls": 1}
+
+    # PRIVACY (binding): the judge payload carries ONLY the query, the
+    # current top snippets, and the JSON-verdict question -- never stored
+    # prior page text (prior state exists only as a digest hash) and never
+    # the digest itself.
+    prompt = chat.calls[0]["messages_payload"][0]["content"]
+    payload = json.loads(prompt)
+    assert set(payload) == {"query", "current_results", "question"}
+    assert payload["query"] == "flights to kyoto"
+    assert [r["title"] for r in payload["current_results"]] == \
+        [title for title, _u, _s in _SET_B]
+    assert "prices unchanged" not in prompt, "prior snippet must not leak"
+    assert _expected_digest(_SET_A) not in prompt
+    assert "JSON" in chat.calls[0]["system_message"]
+
+
+@pytest.mark.asyncio
+async def test_track_check_judge_says_unchanged_is_unchanged_run(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat('{"changed": false, "note": "just reordering"}')
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "unchanged", "notified": False}
+    assert recorder.dispatched == []
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "unchanged"
+    assert runs[0]["verdict_note"] == "just reordering"
+    assert runs[0]["notified"] == 0
+
+
+@pytest.mark.asyncio
+async def test_track_check_template_stray_brace_falls_back_to_literal(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    template = "deals {oops"
+    item_id = await track_question(
+        dreams_db, query_template=template, intent="deal")
+    search = _FakeSearch(_SET_A)
+    deps = _track_deps(dreams_db, perform_search=search)
+
+    await run_track_check(deps, item_id)
+
+    assert search.calls[0][1] == template, (
+        "a stray brace must degrade to the literal template, not crash"
+    )
+
+
+# --- run_track_check: budget / withheld / missing ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_track_check_budget_exhausted_skips_spending_nothing(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    settings["max_searches_per_day"] = 1
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat()
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)  # spends the day's one search
+    assert dreams_db.usage_get(_today()) == {"searches": 1, "llm_calls": 0}
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "skipped", "notified": False}
+    assert dreams_db.usage_get(_today()) == {"searches": 1, "llm_calls": 0}, (
+        "a budget skip must spend nothing"
+    )
+    assert len(search.calls) == 1, "no second search was attempted"
+    assert chat.calls == []
+    assert recorder.dispatched == []
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "skipped"
+    assert runs[0]["verdict_note"] == "budget"
+
+
+@pytest.mark.asyncio
+async def test_track_check_llm_budget_exhausted_skips_too(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    settings["max_llm_calls_per_day"] = 0
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    deps = _track_deps(dreams_db, perform_search=search)
+
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "skipped", "notified": False}
+    assert search.calls == []
+    assert dreams_db.usage_get(_today()) == {"searches": 0, "llm_calls": 0}
+
+
+@pytest.mark.asyncio
+async def test_track_check_search_empty_results_withheld(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch()  # engine returned nothing usable
+    chat = _FakeChat()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat)
+
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "withheld", "notified": False}
+    assert chat.calls == []
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "withheld"
+    assert runs[0]["digest_hash"] is None
+    assert dreams_db.usage_get(_today()) == {"searches": 1, "llm_calls": 0}
+
+
+@pytest.mark.asyncio
+async def test_track_check_missing_item_skips_cleanly(dreams_db, settings):
+    search = _FakeSearch(_SET_A)
+
+    result = await run_track_check(
+        _track_deps(dreams_db, perform_search=search), 424242)
+
+    assert result["status"] == "skipped"
+    assert result["notified"] is False
+    assert search.calls == []
+    assert dreams_db.usage_get(_today()) == {"searches": 0, "llm_calls": 0}
+
+
+# --- run_track_check: judge failure dispositions --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_track_check_judge_raise_is_error_run_spending_llm(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat(raises=True)
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "error", "notified": False}
+    assert recorder.dispatched == []
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "error"
+    assert runs[0]["notified"] == 0
+    assert dreams_db.usage_get(_today()) == {"searches": 2, "llm_calls": 1}, (
+        "an attempted judge call spends the budget either way"
+    )
+
+
+@pytest.mark.asyncio
+async def test_track_check_chat_unresolvable_is_error_run_spending_nothing(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    deps = _track_deps(dreams_db, perform_search=search)
+    deps.chat_getter = _raising_chat_getter
+    # Seed a baseline so the second check reaches the judge stage.
+    await run_track_check(_track_deps(dreams_db, perform_search=search),
+                          item_id)
+    search.results = _SET_B
+
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "error", "notified": False}
+    assert dreams_db.usage_get(_today()) == {"searches": 2, "llm_calls": 0}, (
+        "only the two searches; an unresolvable judge spends no llm budget"
+    )
+    assert dreams_db.list_recent_track_runs(item_id)[0]["status"] == "error"
+
+
+def _raising_chat_getter():
+    raise RuntimeError("Dreams provider/model unavailable")
+
+
+@pytest.mark.asyncio
+async def test_track_check_judge_unparseable_is_error_run(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat("I cannot answer that question.")
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat)
+
+    await run_track_check(deps, item_id)
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "error", "notified": False}
+    assert dreams_db.list_recent_track_runs(item_id)[0]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_track_check_tolerates_verdict_wrapped_in_prose(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat(
+        'Sure! Here is my verdict: {"changed": true, '
+        '"note": "sale announced"} -- hope that helps.')
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "changed", "notified": True}
+    assert recorder.dispatched[0]["message"] == "sale announced"
+
+
+# --- notification degrade paths --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_track_check_dispatch_getter_none_still_writes_changed_run(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=None)
+
+    await run_track_check(deps, item_id)
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "changed", "notified": True}
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "changed"
+    assert runs[0]["notified"] == 1
+    assert "notification unavailable" in runs[0]["verdict_note"], (
+        "the missing dispatcher is noted, never raised"
+    )
+
+
+@pytest.mark.asyncio
+async def test_track_check_dispatch_failure_still_writes_changed_run(
+        dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat()
+    recorder = _DispatchRecorder(raises=True)
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)
+    search.results = _SET_B
+    result = await run_track_check(deps, item_id)
+
+    assert result == {"status": "changed", "notified": True}
+    runs = dreams_db.list_recent_track_runs(item_id)
+    assert runs[0]["status"] == "changed"
+    assert runs[0]["notified"] == 1
+    assert "new dates announced" in runs[0]["verdict_note"]
+    assert "degraded" in runs[0]["verdict_note"]
+
+
+# --- rebaseline_track ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rebaseline_track_anchors_next_comparison(dreams_db, settings):
+    settings["region"] = "kyoto"
+    item_id = await track_question(
+        dreams_db, query_template=_TEMPLATE, intent="deal")
+    search = _FakeSearch(_SET_A)
+    chat = _FakeChat()
+    recorder = _DispatchRecorder()
+    deps = _track_deps(dreams_db, perform_search=search, chat=chat,
+                       dispatch_getter=recorder)
+
+    await run_track_check(deps, item_id)  # baseline over SET_A
+    search.results = _SET_B
+    changed = await run_track_check(deps, item_id)  # alerts once
+    assert changed["status"] == "changed"
+
+    run_id = rebaseline_track(dreams_db, item_id)
+    assert run_id is not None
+    assert dreams_db.list_recent_track_runs(item_id)[0]["status"] == \
+        "rebaselined"
+
+    again = await run_track_check(deps, item_id)  # SET_B is now the anchor
+    assert again == {"status": "unchanged", "notified": False}, (
+        "a rebaselined item must not re-alert on the same change"
+    )
+    assert len(recorder.dispatched) == 1
+    assert len(chat.calls) == 1, (
+        "the rebaselined identical digest short-circuits before the judge"
+    )
+
+
+def test_rebaseline_track_without_baseline_is_noop(dreams_db):
+    item_id = dreams_db.create_tracked_item(
+        mechanism="question", intent="topic", cadence_seconds=3600)
+    dreams_db.insert_track_run(item_id, status="skipped", digest_hash=None,
+                               verdict_note="budget")
+
+    assert rebaseline_track(dreams_db, item_id) is None
+    assert [run["status"] for run in
+            dreams_db.list_recent_track_runs(item_id)] == ["skipped"]

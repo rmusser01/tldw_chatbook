@@ -11317,6 +11317,33 @@ class TldwCli(
         )
         self._start_dreams_boot_catchup()
 
+        # dreams phase 2: the track-check handler rides the same post-
+        # `_ui_ready` seam (ADR-097 boot-census ratchet: deferred import
+        # only, nothing Dreams-shaped at module scope). It reuses the SAME
+        # cycle deps getter with the notification dispatcher attached via
+        # `CycleDeps.dispatch_getter`, so a `changed` track verdict can
+        # reach the shared inbox; a missing dispatcher degrades to a run
+        # row without delivery inside `run_track_check`, never an error.
+        # The loop's handler dict is mutated in place, in the same slice
+        # as the projection attach above -- the scheduler worker cannot
+        # run before this slice yields, so a `dream_track_check` task can
+        # only ever dispatch after its handler exists.
+        from .Scheduling.scheduler.handlers.dream_track_handler import (
+            DreamTrackHandler,
+        )
+
+        def _dreams_track_deps():
+            deps = self._dreams_cycle_deps()
+            if deps is not None:
+                deps.dispatch_getter = (
+                    lambda: self.notification_dispatch_service
+                )
+            return deps
+
+        self.scheduler_loop.handlers["dream_track_check"] = DreamTrackHandler(
+            deps_getter=_dreams_track_deps
+        )
+
     def _get_automation_definition_handler(self) -> Any:
         """Lazily construct and memoize the automation-definition handler.
 
