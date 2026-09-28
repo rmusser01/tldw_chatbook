@@ -35,6 +35,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 )
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
+from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "koboldcpp": frozenset({"/api/v1/generate"}),
@@ -415,6 +416,11 @@ def supports_openai_compatible_model_discovery(
     an OpenAI-compatible API at another configured endpoint.
     """
     provider_key = _normalized_provider_identity(provider_identity)
+    record = RECORDS_BY_KEY.get(provider_key)
+    if record is not None and record.discovery_route is None:
+        # Seeded-only preset (TASK-33126, MiniMax): no documented models
+        # route, so never probe an unlisted URL.
+        return False
     if provider_key == _QWENCLOUD_PROVIDER_KEY:
         try:
             normalize_qwencloud_base_url(normalized_endpoint)

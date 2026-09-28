@@ -12,7 +12,7 @@ import re
 import json
 import math
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Never, Protocol, cast
@@ -167,8 +167,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         allowed_message_keys: frozenset[str] = frozenset(),
         tolerant_top_level_extras: bool = False,
         usage_optional: bool = False,
+        event_check: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         self._records = records
+        # Provider-specific check on each decoded event before parsing
+        # (TASK-33126: MiniMax status envelope); may raise ChatProviderError.
+        self._event_check = event_check
         # A provider whose documented chunk schema has no usage (TASK-33126):
         # [DONE] without usage ends a usage-None turn; nothing else relaxes.
         self._usage_optional = usage_optional
@@ -238,6 +242,8 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             self.close()
             raise HostedChatProtocolError("Hosted Chat stream JSON is malformed.")
         try:
+            if self._event_check is not None:
+                self._event_check(cast(Mapping[str, Any], event))
             safe_event = self._consume_event(cast(Mapping[str, Any], event))
         except (HostedChatProtocolError, ChatProviderError):
             self.close()

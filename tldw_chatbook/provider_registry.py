@@ -111,6 +111,9 @@ class ProviderRecord:
         stream_usage_optional: Accept a stream that ends without usage
             (providers whose chunk schema carries none); a finish reason is
             still required.
+        status_envelope_key: Top-level provider status object checked on
+            every body and stream event; a nonzero ``status_code`` raises a
+            provider error, ``None`` disables the check.
         tolerant_response_extras: Long-tail tolerant profile switch
             (custom family only, fixture-gated): shape-safe unknown
             top/event keys and null-valued unknown choice/message keys are
@@ -130,7 +133,8 @@ class ProviderRecord:
             checkpoints (``"chat_completions"``), or ``None`` when the
             preset builds no checkpoints.
         discovery_route: Route appended to the base URL for model
-            discovery (e.g. ``"models"``).
+            discovery (e.g. ``"models"``), or ``None`` when the provider
+            documents no models route (discovery is refused).
         defaults_settings_section: Legacy ``api_settings`` section the
             engine reads for per-call fallbacks under the legacy handler's
             exact key spellings, or ``None`` to read the ``key``-named
@@ -180,6 +184,11 @@ class ProviderRecord:
     # send byte-identical payloads.
     stream_include_usage: bool = False
     stream_usage_optional: bool = False
+    # Provider status envelope (TASK-33126): the top-level object some
+    # providers attach to every body/stream event (MiniMax ``base_resp``).
+    # A nonzero ``status_code`` is a provider error even when ``choices``
+    # look valid, so the engine checks it before normalizing anything.
+    status_envelope_key: str | None = None
     # Long-tail tolerant profile (custom family only, ADR-179 Phase 2,
     # fixture-gated): shape-safe unknown top/event keys dropped; null-valued
     # unknown choice/message keys dropped (non-null ones still fail closed
@@ -197,7 +206,9 @@ class ProviderRecord:
     # "api_key_header" is the Phase 3 scheme. See ADR-179 spec §3.
     auth_scheme: str = "bearer"
     continuation_protocol: str | None = "chat_completions"
-    discovery_route: str = "models"
+    # ``None`` = the provider documents no models route: discovery is
+    # refused (seeded-only preset) instead of probing an unlisted URL.
+    discovery_route: str | None = "models"
     # Settings-table fallbacks (Phase 2 Task 6): when set, the engine's
     # resolution reads this ``api_settings`` section (instead of a table
     # keyed by ``key``) for per-call sampling/streaming/transport fallbacks
@@ -530,6 +541,8 @@ MINIMAX = ProviderRecord(
         }
     ),
     message_allowances=frozenset({"name", "audio_content"}),
+    status_envelope_key="base_resp",
+    discovery_route=None,  # seeded-only: no documented /models
     stream_include_usage=True,
     reasoning_disposition="proprietary",
     auth_scheme="bearer",

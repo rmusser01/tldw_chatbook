@@ -200,11 +200,17 @@ def _chunk(delta: dict[str, Any], *, finish: str | None = None,
     return json.dumps(event)
 
 
+
 # --- record shape: every value traceable to the docs (see registry comments) ---
 
 
 @pytest.mark.parametrize("key", KEYS)
 def test_record_matches_its_documented_contract(key: str) -> None:
+    """Every record field matches the value its provider documents.
+
+    Args:
+        key: Registry key of one doc-derived preset.
+    """
     record = RECORDS_BY_KEY[key]
     expected = EXPECTED[key]
     assert record.engine_driven is True
@@ -223,6 +229,8 @@ def test_record_matches_its_documented_contract(key: str) -> None:
     assert record.reasoning_disposition == expected["reasoning"]
     assert dict(record.extra_body_fields) == expected["extra_body"]
     assert record.auto_refresh is (expected["models_url"] is not None)
+    assert (record.discovery_route is None) is (expected["models_url"] is None)
+    assert record.status_envelope_key == ("base_resp" if key == "minimax" else None)
     assert "model" not in record.settings_defaults
 
 
@@ -233,12 +241,18 @@ def test_minimax_never_borrows_the_openai_key() -> None:
 
 
 def test_no_per_provider_module_ships() -> None:
+    """The presets are data only: no ``LLM_Calls/<provider>*.py`` module."""
     for key in KEYS:
         assert not list(_LLM_CALLS.glob(f"{key}*.py")), key
 
 
 @pytest.mark.parametrize("key", KEYS)
 def test_dispatch_and_param_map_route_through_the_engine(key: str) -> None:
+    """Each preset dispatches through the engine with the engine param map.
+
+    Args:
+        key: Registry key of one doc-derived preset.
+    """
     from tldw_chatbook.Chat.Chat_Functions import (
         API_CALL_HANDLERS,
         ENGINE_PROVIDER_PARAM_MAP,
@@ -254,6 +268,11 @@ def test_dispatch_and_param_map_route_through_the_engine(key: str) -> None:
 
 @pytest.mark.parametrize("key", KEYS)
 def test_config_tables_mirror_the_record(key: str) -> None:
+    """The shipped ``[api_settings]`` table and ``[providers]`` seed match the record.
+
+    Args:
+        key: Registry key of one doc-derived preset.
+    """
     from tldw_chatbook.config import CONFIG_TOML_CONTENT
 
     record = RECORDS_BY_KEY[key]
@@ -271,6 +290,11 @@ def test_config_tables_mirror_the_record(key: str) -> None:
 
 @pytest.mark.parametrize("key", [k for k in KEYS if EXPECTED[k]["models_url"]])
 def test_default_urls_discover_at_the_documented_models_route(key: str) -> None:
+    """Discovery accepts each default URL and derives the documented models URL.
+
+    Args:
+        key: Registry key of a preset with a models route.
+    """
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         build_models_url,
         supports_openai_compatible_model_discovery,
@@ -281,11 +305,30 @@ def test_default_urls_discover_at_the_documented_models_route(key: str) -> None:
     assert build_models_url(base, key) == EXPECTED[key]["models_url"]
 
 
+@pytest.mark.parametrize("identity", ["minimax", "MiniMax"])
+def test_seeded_only_minimax_refuses_discovery(identity: str) -> None:
+    """MiniMax documents no models route, so discovery never probes one.
+
+    Args:
+        identity: Provider identity spelling as a caller may pass it.
+    """
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        supports_openai_compatible_model_discovery,
+    )
+
+    assert supports_openai_compatible_model_discovery(identity, EXPECTED["minimax"]["base_url"]) is False
+
+
 # --- payloads: the streamed-usage request flag ---
 
 
 @pytest.mark.parametrize("key", KEYS + EXISTING_ENGINE_KEYS)
 def test_stream_options_only_where_the_record_asks(key: str) -> None:
+    """``stream_options`` rides only streaming payloads of records that ask.
+
+    Args:
+        key: Registry key of a doc-derived or pre-existing engine preset.
+    """
     record = RECORDS_BY_KEY[key]
     messages = [{"role": "user", "content": "hi"}]
     streamed = build_hosted_chat_payload(
@@ -304,14 +347,21 @@ def test_stream_options_only_where_the_record_asks(key: str) -> None:
 
 
 def test_existing_presets_keep_their_payload_contract() -> None:
+    """The new flags default off for every preset that predates them."""
     for key in EXISTING_ENGINE_KEYS:
         record = RECORDS_BY_KEY[key]
         assert record.stream_include_usage is False, key
         assert record.stream_usage_optional is False, key
+        assert record.status_envelope_key is None, key
 
 
 @pytest.mark.parametrize("key", ["novita", "minimax"])
 def test_reasoning_split_fields_ride_every_payload(key: str) -> None:
+    """Novita/MiniMax always ask for reasoning in its own field.
+
+    Args:
+        key: Registry key of a preset with reasoning-split body fields.
+    """
     record = RECORDS_BY_KEY[key]
     payload = build_hosted_chat_payload(
         record, resolution=_resolution(record, streaming=False),
@@ -351,6 +401,12 @@ _DOCUMENTED_BODIES["deepinfra"]["usage"]["estimated_cost"] = 0.0000268
 
 @pytest.mark.parametrize("key", KEYS)
 def test_documented_response_shape_parses(key: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A body carrying every documented extra parses into a normal turn.
+
+    Args:
+        key: Registry key of one doc-derived preset.
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     result = _replay(monkeypatch, RECORDS_BY_KEY[key], body=_DOCUMENTED_BODIES[key])
     assert result.terminal_turn.text == "ok"
     assert result.terminal_turn.finish_reason == "stop"
@@ -360,6 +416,12 @@ def test_documented_response_shape_parses(key: str, monkeypatch: pytest.MonkeyPa
 def test_undocumented_top_level_key_still_fails_closed(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Negative control: a field no doc lists is still rejected.
+
+    Args:
+        key: Registry key of one doc-derived preset.
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     body = _body(top={"undocumented_extra": 1})
     with pytest.raises((HostedChatProtocolError, ChatProviderError)):
         _replay(monkeypatch, RECORDS_BY_KEY[key], body=body)
@@ -369,9 +431,71 @@ def test_undocumented_top_level_key_still_fails_closed(
 def test_content_filter_finish_is_a_provider_error(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A documented ``content_filter`` finish is a 502, not a partial reply.
+
+    Args:
+        key: Registry key of a preset that documents ``content_filter``.
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     with pytest.raises(ChatProviderError) as excinfo:
         _replay(monkeypatch, RECORDS_BY_KEY[key], body=_body(finish="content_filter"))
     assert excinfo.value.status_code == 502
+
+
+# --- MiniMax status envelope: an error status never becomes a reply ---
+
+_MINIMAX_ERROR = {"status_code": 1002, "status_msg": "rate limit: prompt text echoed here"}
+
+
+def test_minimax_error_status_with_valid_choices_is_a_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A nonzero ``base_resp`` wins over otherwise valid choices, and the
+    provider-authored status text never reaches the error message.
+
+    Args:
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
+    body = _body(top={"base_resp": _MINIMAX_ERROR})
+    with pytest.raises(ChatProviderError) as excinfo:
+        _replay(monkeypatch, RECORDS_BY_KEY["minimax"], body=body)
+    assert excinfo.value.status_code == 502
+    assert "1002" in str(excinfo.value)
+    assert "echoed" not in str(excinfo.value)
+
+
+def test_minimax_error_status_in_a_stream_event_is_a_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same check runs on every stream event, not just bodies.
+
+    Args:
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
+    import json
+
+    event = json.loads(_chunk({"role": "assistant", "content": "ok"}))
+    event["base_resp"] = _MINIMAX_ERROR
+    stream = _replay(
+        monkeypatch, RECORDS_BY_KEY["minimax"], stream_events=[json.dumps(event), "[DONE]"]
+    )
+    with pytest.raises(ChatProviderError) as excinfo:
+        list(stream)
+    assert "1002" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("envelope", ["oops", {"status_code": "0"}, {"status_code": True}])
+def test_minimax_malformed_status_envelope_fails_closed(
+    envelope: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A status envelope that is not ``{status_code: int}`` is rejected.
+
+    Args:
+        envelope: A malformed ``base_resp`` value.
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
+    with pytest.raises(ChatProviderError):
+        _replay(monkeypatch, RECORDS_BY_KEY["minimax"], body=_body(top={"base_resp": envelope}))
 
 
 # --- streams: usage requested, usage optional, delta-only reasoning ---
@@ -380,6 +504,12 @@ def test_content_filter_finish_is_a_provider_error(
 def test_sambanova_stream_with_delta_reasoning_and_trailing_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """SambaNova's delta-only ``reasoning``/``channel`` are tolerated and the
+    trailing usage chunk is kept.
+
+    Args:
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     import json
 
     events = [
@@ -398,6 +528,11 @@ def test_sambanova_stream_with_delta_reasoning_and_trailing_usage(
 
 
 def test_nvidia_stream_without_usage_completes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NVIDIA's chunk schema has no usage; its stream still completes.
+
+    Args:
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     events = [_chunk({"role": "assistant", "content": "ok"}), _chunk({}, finish="stop"), "[DONE]"]
     stream = _replay(monkeypatch, RECORDS_BY_KEY["nvidia"], stream_events=events)
     list(stream)
@@ -408,6 +543,11 @@ def test_nvidia_stream_without_usage_completes(monkeypatch: pytest.MonkeyPatch) 
 def test_usage_optional_still_requires_a_finish_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Usage-optional relaxes usage only; a missing finish reason still fails.
+
+    Args:
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     events = [_chunk({"role": "assistant", "content": "ok"}), "[DONE]"]
     stream = _replay(monkeypatch, RECORDS_BY_KEY["nvidia"], stream_events=events)
     with pytest.raises(HostedChatProtocolError):
@@ -418,6 +558,12 @@ def test_usage_optional_still_requires_a_finish_reason(
 def test_strict_records_still_reject_a_stream_without_usage(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Every other preset still requires streamed usage.
+
+    Args:
+        key: Registry key of a preset without ``stream_usage_optional``.
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     events = [_chunk({"role": "assistant", "content": "ok"}), _chunk({}, finish="stop"), "[DONE]"]
     stream = _replay(monkeypatch, RECORDS_BY_KEY[key], stream_events=events)
     with pytest.raises(HostedChatProtocolError):
@@ -425,7 +571,11 @@ def test_strict_records_still_reject_a_stream_without_usage(
 
 
 def test_deepinfra_usage_on_the_finish_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """docs.deepinfra.com/chat/streaming: usage rides the finish chunk."""
+    """docs.deepinfra.com/chat/streaming: usage rides the finish chunk.
+
+    Args:
+        monkeypatch: Replaces resolution and transport with canned values.
+    """
     events = [
         _chunk({"role": "assistant", "content": "ok"}),
         _chunk({}, finish="stop", usage=dict(_USAGE, estimated_cost=0.1)),
