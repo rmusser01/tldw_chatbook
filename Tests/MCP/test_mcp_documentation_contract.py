@@ -657,9 +657,10 @@ def test_design_does_not_advertise_unimplemented_standalone_controls() -> None:
     assert "16 in-flight requests" in normalized
     assert "`[mcp] expose_local_tools = false`" in text
     assert (
-        "The only `[mcp]` configuration key consumed by the standalone gateway "
-        "is `expose_local_tools`."
+        "The `[mcp]` configuration keys consumed by the standalone gateway "
+        "are `expose_local_tools` and `expose_character_tools`."
     ) in normalized
+    assert "expose_character_tools = false" in text
 
 
 def test_task_2511_records_truthful_supersession_instead_of_fastmcp_completion():
