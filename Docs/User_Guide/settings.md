@@ -666,7 +666,10 @@ longer a registered theme (the "Launch default missing" case), Revert does not
 write it back: the label reads "Revert to \<theme\> (launch unchanged)" and
 the saved launch default stays as it is. The Revert button hides whenever
 pressing it would change nothing — its theme is already the one running and
-the launch default would not change (e.g. you switched back by hand). Toasts name what happened: Try says
+the launch default would not change (e.g. you switched back by hand). Switching back to a
+theme you used recently in this session (Revert, or returning to an earlier row) is
+faster than the first switch to it: the app keeps the styling it built for your last
+four themes. Toasts name what happened: Try says
 "Trying \<name\> for this
 session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
 the launch default fails, Use still applies the theme for the session and

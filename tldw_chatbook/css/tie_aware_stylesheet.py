@@ -35,11 +35,32 @@
 # Known gap: Textual's dev-mode CSS hot-reload (`App._on_css_change`) swaps in
 # a plain `Stylesheet`, dropping this subclass until the next app start. That
 # path only runs with `watch_css`/dev tooling, never in production or tests.
+#
+# TASK-33120 -- per-theme parse cache. Textual's `App.refresh_css` (every
+# theme switch) calls `set_variables`, which CLEARS the per-instance parse
+# cache, then `reparse`, which parses into a fresh plain `Stylesheet` with an
+# empty cache -- so every switch re-parses the whole ~830 KB bundle (~430 ms,
+# TASK-33075). This subclass keeps one upstream-shaped parse cache per
+# variables dict (a small LRU of them) and hands the matching one to that
+# fresh stylesheet, so returning to a theme skips the parse; a first use still
+# pays it. Correctness of the key: the inner key is Textual's own
+# (css CONTENT, location, is_default, tie_breaker, scope) -- sources are
+# identified by content, so a rebuilt bundle or edited file can never hit a
+# stale parse -- and the outer key is the full variables dict, the only other
+# input `parse()` takes. Parsed RuleSets are shared exactly as upstream
+# already shares them across `parse()` calls on one instance.
 
 from __future__ import annotations
 
+from textual.cache import LRUCache
+from textual.css.parse import RuleSet
 from textual.css.stylesheet import CssSource, Stylesheet
 from textual.css.types import CSSLocation
+
+#: How many themes' parses to keep. One full-bundle parse retains ~15.7 MB of
+#: RuleSets (4,734 rules, tracemalloc, TASK-33120), so 4 bounds it near 63 MB
+#: while still covering Try -> Revert and a short browse of the picker.
+THEME_PARSE_CACHE_SIZE = 4
 
 
 class TieAwareStylesheet(Stylesheet):
@@ -75,6 +96,58 @@ class TieAwareStylesheet(Stylesheet):
     #: the whole bundle inside the first-paint window is exactly the kind of
     #: cost finding 22222 wants visible.
     tie_breaker_lowering_rearm_count: int = 0
+
+    def __init__(self, *, variables: dict[str, str] | None = None) -> None:
+        super().__init__(variables=variables)
+        self._theme_parse_caches: LRUCache[tuple, LRUCache[tuple, list[RuleSet]]] = (
+            LRUCache(THEME_PARSE_CACHE_SIZE)
+        )
+        self._select_theme_parse_cache()
+
+    def _select_theme_parse_cache(self) -> None:
+        """Point `_parse_cache` at the cache for the current variables."""
+        key = tuple(sorted(self._variables.items()))
+        cache = self._theme_parse_caches.get(key)
+        if cache is None:
+            cache = LRUCache(64)  # upstream's per-instance size
+            self._theme_parse_caches[key] = cache
+        self._parse_cache = cache
+
+    def set_variables(self, variables: dict[str, str]) -> None:
+        """Set CSS variables, keeping earlier variables' parses for reuse."""
+        # Upstream clears `_parse_cache` in place; detach it first so the
+        # outgoing theme's cache survives in `_theme_parse_caches`.
+        self._parse_cache = LRUCache(1)
+        super().set_variables(variables)
+        self._select_theme_parse_cache()
+
+    def reparse(self) -> None:
+        """Upstream `Stylesheet.reparse`, but the fresh sheet shares our cache.
+
+        Mirrors textual 8.2.8 line for line except the marked line; the body
+        is pinned by `test_reparse_mirrors_upstream` so an upgrade that
+        changes upstream's reparse fails loudly instead of drifting.
+        """
+        stylesheet = Stylesheet(variables=self._variables)
+        stylesheet._parse_cache = self._parse_cache  # TASK-33120: the only change
+        for read_from, (css, is_defaults, tie_breaker, scope) in self.source.items():
+            stylesheet.add_source(
+                css,
+                read_from=read_from,
+                is_default_css=is_defaults,
+                tie_breaker=tie_breaker,
+                scope=scope,
+            )
+        try:
+            stylesheet.parse()
+        except Exception:
+            self._invalid_css.update(stylesheet._invalid_css)
+            raise
+        else:
+            self._rules = stylesheet.rules
+            self._rules_map = None
+            self.source = stylesheet.source
+            self._require_parse = False
 
     def add_source(
         self,
