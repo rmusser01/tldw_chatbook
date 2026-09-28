@@ -338,7 +338,7 @@ async def test_manual_custody_uses_captured_one_shot_and_preserves_newer_revisio
     assert store.session_one_shot_prefill(session.id) is None
 
 
-def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_value():
+async def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_value():
     store = ConsoleChatStore()
     session = store.create_session(title="Queued prefill", workspace_id="global")
     controller = ConsoleChatController(store=store, provider_gateway=SimpleNamespace())
@@ -351,7 +351,7 @@ def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_valu
     store.set_session_one_shot_prefill(session.id, "queued-old")
     old_revision = store.session_one_shot_prefill_snapshot(session.id)[1]
 
-    first = controller.queue_prompt(
+    first = await controller.queue_prompt(
         session.id,
         text="first queued turn",
         expected_revision=armed.snapshot.revision,
@@ -366,7 +366,7 @@ def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_valu
 
     store.set_session_one_shot_prefill(session.id, "queued-new")
     new_revision = store.session_one_shot_prefill_snapshot(session.id)[1]
-    second = controller.queue_prompt(
+    second = await controller.queue_prompt(
         session.id,
         text="second queued turn",
         expected_revision=first.snapshot.revision,
@@ -480,7 +480,7 @@ async def test_runtime_created_controller_captures_owning_workspace_policy(
                 context_epoch=store.conversation_context_epoch(owner.id),
                 expected_revision=initial.revision,
             )
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 owner.id, text="queued", expected_revision=armed.snapshot.revision
             )
             assert queued.applied

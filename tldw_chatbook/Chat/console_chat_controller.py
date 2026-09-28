@@ -364,6 +364,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Tools.character_tool_service import CharacterReadGuard
@@ -4820,6 +4821,7 @@ class ConsoleChatController:
         canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
+        hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -4954,6 +4956,7 @@ class ConsoleChatController:
         #: mid-session config edit (first-ever ``[hooks]`` entry) is picked
         #: up without rebuilding the controller.
         self._ensure_run_hooks = ensure_run_hooks
+        self._hook_permissions_accessor = hook_permissions_accessor
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
         ] = {}
@@ -6813,7 +6816,25 @@ class ConsoleChatController:
                     self._session_lifecycle_revisions.get(session_id, 0) + 1
                 )
 
-    def queue_prompt(
+    def _hook_admission_reason(self) -> str | None:
+        from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
+        from tldw_chatbook.config import read_hooks_config_snapshot
+        try:
+            if self._hook_permissions_accessor is not None:
+                return self._hook_permissions_accessor().snapshot().blocked_reason
+            saved = read_hooks_config_snapshot()
+            inventory = inspect_hooks_config({"hooks": saved.section} if saved.section_present else {})
+            if not inventory.requires_authority:
+                return None
+            return "Hook review required; permission owner unavailable."
+        except Exception:  # noqa: BLE001 -- unavailable authority must refuse admission
+            return "Hooks unavailable; review or disable hooks before sending."
+
+    async def hook_admission_reason(self) -> str | None:
+        """Read hook authority off-thread before acquiring new draft custody."""
+        return await asyncio.to_thread(self._hook_admission_reason)
+
+    async def queue_prompt(
         self,
         session_id: str,
         *,
@@ -6829,6 +6850,13 @@ class ConsoleChatController:
                 QueueMutationStatus.INVALID,
                 self.prompt_queue_registry.snapshot(session_id),
                 detail=validation_error,
+            )
+        reason = await self.hook_admission_reason()
+        if reason is not None:
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                self.prompt_queue_registry.snapshot(session_id),
+                detail=reason,
             )
         if configuration is None:
             configuration = self.resolve_turn_configuration_snapshot(session_id)
@@ -9784,6 +9812,12 @@ class ConsoleChatController:
             and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
         ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
+        reason = await self.hook_admission_reason()
+        if reason is not None:
+            return ConsoleSubmitResult(
+                False, False, reason, session_id=owner_key,
+                origin=origin, queue_entry_id=queue_entry_id,
+            )
         active_task = asyncio.current_task()
         with self._capture_quiescence_lock:
             if owner_key is not None and self.store.capture_quiescent(owner_key):
@@ -12730,6 +12764,9 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
+            reason = await self.hook_admission_reason()
+            if reason is not None:
+                raise ConsoleDispatchSettlementError(reason)
             assistant = assistant_holder.get("assistant")
             if assistant is None:
                 assistant = self.store.get_message(commit.assistant_message_id)

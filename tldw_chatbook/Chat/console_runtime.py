@@ -3666,6 +3666,7 @@ class ConsoleRuntime:
         # while the optional param's `None` default keeps every direct
         # (controller-only) construction, tests included, unchanged.
         kwargs.setdefault("ensure_run_hooks", self.ensure_run_hooks)
+        kwargs.setdefault("hook_permissions_accessor", self.ensure_hook_permissions)
         kwargs.update(
             chat_dictionary_applier=functools.partial(
                 _apply_chat_dictionaries_for_app, self._app
@@ -3736,7 +3737,7 @@ class ConsoleRuntime:
         wake.start_recovery()
         return self._chat_controller
 
-    def ensure_hook_permissions(self) -> "HookPermissions":
+    def ensure_hook_permissions(self) -> HookPermissions:
         """Return the app-owned consent owner, independent of any view."""
         with self._run_hooks_lock:
             if self._disposed:
@@ -3747,7 +3748,7 @@ class ConsoleRuntime:
                 self._hook_permissions = HookPermissions()
             return self._hook_permissions
 
-    def ensure_run_hooks(self) -> "RunHooksEngine | None":
+    def ensure_run_hooks(self) -> RunHooksEngine | None:
         """Build one engine whose launch authority reads saved config."""
         with self._run_hooks_lock:
             if self._disposed:

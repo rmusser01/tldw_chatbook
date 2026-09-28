@@ -401,7 +401,7 @@ async def test_prompt_queue_drains_through_controller_and_recording_gateway() ->
     )
     await asyncio.wait_for(recorder.stream_started[0].wait(), timeout=1)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    queued = controller.queue_prompt(
+    queued = await controller.queue_prompt(
         session.id,
         text="second prompt",
         expected_revision=snapshot.revision,

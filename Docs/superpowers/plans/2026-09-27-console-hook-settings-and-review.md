@@ -325,7 +325,7 @@ Task 2 evidence: 239 consent/executor/metadata/sensitive-path checks passed, inc
 - Named constructor dependencies: `hook_permissions_accessor: Callable[[], HookPermissions]`, `request_review: Callable[[HookReviewSnapshot, bool, Callable[[], None]], Awaitable[HookReviewResult]]`, `current_session: Callable[[], str]`, `current_stash: Callable[[], ConsoleDraftStash | None]`, `on_state: Callable[[HookReviewSnapshot], None]`, and `notify: Callable[[str, str], None]`. No DOM ownership.
 - `HookReviewResult(kind: Literal["ready", "cancel", "settings"], snapshot: HookReviewSnapshot | None)` is defined in `UI/Console_Modules/hooks.py` in this task; Task 4's modal imports it. A test callback returns the real type, without a modal dependency.
 
-- [ ] **Step 1: Add a real controller rejection/approval control.** Import the Task 2 fixture and existing controller/gateway harness.
+- [x] **Step 1: Add a real controller rejection/approval control.** Import the Task 2 fixture and existing controller/gateway harness.
 
 ```python
 import pytest
@@ -354,7 +354,7 @@ async def test_pending_consent_refuses_before_echo_then_approved_send_succeeds(h
     assert accepted.accepted
 ```
 
-- [ ] **Step 2: Run red, then put the gate before new admission's echo/queue/durable acceptance.** Use the same helper on direct and actual queued/wake submissions. Keep the existing UserPromptSubmit firing later and manual-only; consent preflight is not another lifecycle event.
+- [x] **Step 2: Run red, then put the gate before new admission's echo/queue/durable acceptance.** Use the same helper on direct and actual queued/wake submissions. Keep the existing UserPromptSubmit firing later and manual-only; consent preflight is not another lifecycle event.
 
 ```bash
 .venv/bin/python -m pytest Tests/Chat/test_console_hook_admission.py -q
@@ -405,7 +405,7 @@ Both queue calls in `ConsolePromptQueueUIController.dispatch` and `_stage_normal
 
 Visible queue admission passes through the review controller before the existing dispatcher. Runtime `_run_custodied_turn` calls the same `submit_draft`; retain `_submit_queued_turn`/`_submit_fleet_wake` custody and existing refusal/recovery settlement. Queue execution checks again via the real controller and uses `DISPATCH_REFUSED`. Recovered preparations keep their accepted owner. Leave registry/custody mutations on their existing owner/thread; only readonly consent I/O is offloaded.
 
-- [ ] **Step 3: Implement the DOM-free operation owner and its tests.** Store an incrementing generation and the originating session/stash until dispatch completes. Ignore repeated activation while the attempt is pending. After a Ready response, refresh authority, compare current stash text/edit_serial/generation and session, consume the continuation once, and call the captured dispatcher. Cancel increments generation immediately; later completion may persist an explicit decision but never dispatch.
+- [x] **Step 3: Implement the DOM-free operation owner and its tests.** Store an incrementing generation and the originating session/stash until dispatch completes. Ignore repeated activation while the attempt is pending. After a Ready response, refresh authority, compare current stash text/edit_serial/generation and session, consume the continuation once, and call the captured dispatcher. Cancel increments generation immediately; later completion may persist an explicit decision but never dispatch.
 
 ```python
 from dataclasses import dataclass
@@ -428,7 +428,7 @@ Use this predicate after the modal and before continuation; `capture_draft_for_s
 
 Add controlled-future tests for duplicate Send, duplicate Allow, Escape during write, A-to-B-to-A session return, same-text edit with changed serial, queued refusal/recovery, durable resumed ownership, and wake without a view. Assert accepted/queued counts and current text, not only notification strings.
 
-- [ ] **Step 4: Run green checks, review, and commit.**
+- [x] **Step 4: Run green checks, review, and commit.**
 
 ```bash
 .venv/bin/python -m pytest Tests/Chat/test_console_hook_admission.py Tests/Chat/test_console_run_hooks_regressions.py Tests/Chat/test_console_prompt_queue.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_viewless_hooks.py Tests/UI/test_console_prompt_queue.py -q
@@ -438,6 +438,8 @@ git add tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console
 git add Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_send_gate_queue_race.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_automatic_library_preparation.py Tests/UI/test_console_button_routing.py Tests/UI/test_console_turn_navigation_continuity.py Tests/integration/test_console_library_control_integration.py
 git commit -m "feat: gate Console sends on current hook consent"
 ```
+
+Task 3 evidence: 102 admission/queue checks passed and 38 mounted queue checks passed. The wider custody run passed 224 cases; all 21 failures reproduced against the committed pre-admission sources (baseline control: 21 failures, 4 passes). Guided legacy-ID transfer remains with Task 5, where the writer owns that mapping.
 
 ## Task 4: Native review modal and persistent Console action
 
