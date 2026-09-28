@@ -587,8 +587,13 @@ def _local_tldw_root_classes(path: Path) -> tuple[ast.ClassDef, ...]:
     return tuple(node for _path, node in _tldw_root_classes_with_paths(path))
 
 
-def _package_class_module_path(module: ast.Module, name: str) -> Path | None:
+def _package_class_module_path(
+    module: ast.Module, name: str
+) -> tuple[Path, str] | None:
     """Resolve ``name``'s ``from tldw_chatbook... import`` source file, if any.
+
+    Returns the source file and the class's name THERE: ``name`` may be a
+    local ``as`` alias, and the source module defines the original name.
 
     TASK-33011 moved ``LibraryIngestQueueMixin`` out of ``app.py`` into
     ``app_ingest_queue.py``; following a base class through its package import
@@ -598,7 +603,11 @@ def _package_class_module_path(module: ast.Module, name: str) -> Path | None:
     for node in module.body:
         if not isinstance(node, ast.ImportFrom) or node.module is None:
             continue
-        if not any((alias.asname or alias.name) == name for alias in node.names):
+        imported = next(
+            (alias.name for alias in node.names if (alias.asname or alias.name) == name),
+            None,
+        )
+        if imported is None:
             continue
         if node.level == 1:
             dotted = node.module
@@ -607,8 +616,20 @@ def _package_class_module_path(module: ast.Module, name: str) -> Path | None:
         else:
             return None
         candidate = PRODUCTION_ROOT.joinpath(*dotted.split(".")).with_suffix(".py")
-        return candidate if candidate.is_file() else None
+        return (candidate, imported) if candidate.is_file() else None
     return None
+
+
+def test_package_class_module_path_follows_an_import_alias() -> None:
+    """An ``as``-aliased mixin import resolves to the class's original name."""
+    module = ast.parse(
+        "from tldw_chatbook.app_ingest_queue import LibraryIngestQueueMixin as _Ingest\n"
+    )
+    resolved = _package_class_module_path(module, "_Ingest")
+    assert resolved == (
+        PRODUCTION_ROOT / "app_ingest_queue.py",
+        "LibraryIngestQueueMixin",
+    )
 
 
 def _tldw_root_classes_with_paths(
@@ -642,7 +663,7 @@ def _tldw_root_classes_with_paths(
                 continue
             imported_from = _package_class_module_path(module, base.id)
             if imported_from is not None:
-                add_with_local_bases(imported_from, base.id)
+                add_with_local_bases(*imported_from)
 
     add_with_local_bases(path, "TldwCli")
     return tuple(ordered)
