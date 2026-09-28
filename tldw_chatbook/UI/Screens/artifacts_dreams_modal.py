@@ -8,7 +8,9 @@ read-it-later capture queue (Task 8, via
 ``Dreams.ingest_action.ingest_story_url`` bound to the app's capture
 service), track this page into the watchlists loop (Phase 2 Task 3, via
 ``Dreams.track_service.track_page`` bound to the app's
-``LocalWatchlistsService``), more/less feedback, goals & privacy
+``LocalWatchlistsService``), untrack it again (Phase 2 Task 6, via
+``Dreams.track_service.untrack`` -- no tracked wrapper is a gentle
+notice), more/less feedback, goals & privacy
 (Phase 2 Task 1: pushes ``DreamsGoalsModal``), close.
 
 Modal structure follows this stream's own modal idioms:
@@ -119,6 +121,10 @@ _NO_HTTP_URL_TRACK_NOTICE = (
 _NO_TRACK_BACKEND_NOTICE = (
     "Page tracking is unavailable in this runtime."
 )
+_NOT_TRACKED_NOTICE = (
+    "This story is not being tracked."
+)
+_UNTRACKED_NOTICE = "Stopped tracking this page."
 _TRACK_CAP_NOTICE = (
     "Tracking budget is full: retire a tracked page before adding more."
 )
@@ -271,12 +277,13 @@ class DreamsStoryModal(ModalScreen[None]):
         ("e", "export", "Export"),
         ("i", "ingest", "Ingest"),
         ("t", "track", "Track this"),
+        ("u", "untrack", "Untrack"),
         ("m", "more", "More like this"),
         ("l", "less", "Less like this"),
         ("g", "goals", "Goals & privacy"),
         ("q", "close", "Close"),
         # Hidden: Escape is the safe-dismissal grammar (task-16211), not a
-        # footer-advertised action -- the hint line stays exactly the nine.
+        # footer-advertised action -- the hint line stays exactly the ten.
         Binding("escape", "close", "Close", show=False),
     )
 
@@ -345,6 +352,11 @@ class DreamsStoryModal(ModalScreen[None]):
                         yield Button(
                             "Track this (t)", id="dsm-track-button", compact=True
                         )
+                        # Untrack is Track's inverse on the same gate (an
+                        # untrackable row was never trackable).
+                        yield Button(
+                            "Untrack (u)", id="dsm-untrack-button", compact=True
+                        )
                     yield Button(
                         "More like this (m)", id="dsm-more-button", compact=True
                     )
@@ -353,10 +365,10 @@ class DreamsStoryModal(ModalScreen[None]):
                     )
                 yield Button("Close (q)", id="dsm-close-button", compact=True)
             # ADR-031 rule 4: the hint line advertises EXACTLY the
-            # implemented actions -- all nine for a story with an http(s)
+            # implemented actions -- all ten for a story with an http(s)
             # URL, Close only for a synthetic failed-cycle row, and no
-            # Ingest/Track for a dreams://llm row whose actions are gated
-            # off.
+            # Ingest/Track/Untrack for a dreams://llm row whose actions
+            # are gated off.
             yield Static(self._hints_text(), id="dsm-hints")
 
     def _hints_text(self) -> Text:
@@ -364,7 +376,7 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._synthetic:
             hints.append("k Keep · d Dive deeper · e Export")
             if _ingestable(self._story):
-                hints.append(" · i Ingest · t Track this")
+                hints.append(" · i Ingest · t Track this · u Untrack")
             hints.append(" · m More like this · l Less like this · "
                          "g Goals & privacy · ")
         hints.append("q Close")
@@ -734,6 +746,61 @@ class DreamsStoryModal(ModalScreen[None]):
         self.notify(f"Tracking this page ({result['outcome']}).", markup=False)
         self._changed()
 
+    async def action_untrack(self) -> None:
+        """Retire the story's tracked wrapper (Phase 2 Task 6), if any.
+
+        ``find_tracked_by_story`` resolves the wrapper this story's track
+        created; found, ``untrack`` retires it (``retired_reason="manual"``)
+        and disables a dream-created subscription -- a notice confirms, the
+        badge clears, and ``on_changed`` refreshes the screen's rows. No
+        wrapper (never tracked, or the tracked row belongs to another
+        story) is a gentle notice with no write and no refresh. Untrack
+        records NO feedback: removing a watch is not an interest signal.
+        """
+        if self._synthetic:
+            self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
+            return
+        if self._track_in_flight:
+            # Same in-flight guard as track: the untrack chain is async, and
+            # a second press while it is awaited would double-retire.
+            return
+        subs_service = self._track_service()
+        db = self._db()
+        story_id = self._story_id()
+        if subs_service is None or db is None or story_id is None:
+            self.notify(_NO_TRACK_BACKEND_NOTICE, severity="warning",
+                        markup=False)
+            return
+        from ...Dreams.track_service import untrack
+
+        self._track_in_flight = True
+        try:
+            # Single-row indexed read (``idx_dream_tracked_origin_story``):
+            # direct call, the modal's single-row SQLite discipline.
+            tracked = db.find_tracked_by_story(story_id)
+            if tracked is None:
+                # Gentle refusal: nothing to retire, so nothing is written
+                # and the screen does not refresh.
+                self.notify(_NOT_TRACKED_NOTICE, severity="information",
+                            markup=False)
+                return
+            await untrack(subs_service, db, int(tracked["id"]))
+        except Exception as exc:  # noqa: BLE001 - a failed untrack is a notice
+            logger.warning(f"Dreams untrack failed: {type(exc).__name__}")
+            self.notify(
+                f"Could not untrack this story: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
+            return
+        finally:
+            self._track_in_flight = False
+        self._story["tracked"] = False
+        self.notify(_UNTRACKED_NOTICE, markup=False)
+        self._changed()
+        if self.is_attached:
+            self.refresh(recompose=True)
+
     def action_more(self) -> None:
         """Record ``more`` feedback, notify, dismiss."""
         if self._synthetic:
@@ -798,6 +865,7 @@ class DreamsStoryModal(ModalScreen[None]):
             "dsm-export-button": self.action_export,
             "dsm-ingest-button": self.action_ingest,
             "dsm-track-button": self.action_track,
+            "dsm-untrack-button": self.action_untrack,
             "dsm-more-button": self.action_more,
             "dsm-less-button": self.action_less,
             "dsm-close-button": self.action_close,
@@ -805,7 +873,8 @@ class DreamsStoryModal(ModalScreen[None]):
         handler = dispatch.get(button_id)
         if handler is not None:
             result = handler()
-            # ``action_ingest``/``action_track`` are async (the capture and
-            # track entries are); the rest return None immediately.
+            # ``action_ingest``/``action_track``/``action_untrack`` are
+            # async (the capture and track entries are); the rest return
+            # None immediately.
             if inspect.isawaitable(result):
                 await result
