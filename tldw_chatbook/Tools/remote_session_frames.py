@@ -15,6 +15,11 @@ LINE, STATUS, BUSY = 16, 17, 18
 HEADER = struct.Struct(">IIB")
 _U32_MAX = 2**32 - 1
 
+#: STATUS exit code for a request the host could not start (fork or pipe
+#: refused, e.g. EAGAIN at the process limit): sysexits' EX_OSERR. The
+#: request never ran; the session and every other request carry on.
+HOST_SPAWN_FAILED = 71
+
 
 class FrameError(ValueError):
     """A frame violated the size cap or the header format."""

@@ -4541,6 +4541,7 @@ HELLO, REQUEST, CANCEL = (1, 2, 3)
 LINE, STATUS, BUSY = (16, 17, 18)
 HEADER = struct.Struct('>IIB')
 _U32_MAX = 2 ** 32 - 1
+HOST_SPAWN_FAILED = 71
 
 class FrameError(ValueError):
     """A frame violated the size cap or the header format."""
@@ -4669,7 +4670,12 @@ def _close_fds_above_2(keep: int) -> None:
 
 def _spawn(raw: bytes, request_id: int, run_request: Callable[[bytes, BinaryIO], int]) -> _Child:
     read_fd, write_fd = os.pipe()
-    pid = os.fork()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
     if pid == 0:
         code = _CHILD_CRASH_EXIT
         try:
@@ -4720,7 +4726,10 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     ``max_response_bytes`` is killed and its STATUS still reports the
     kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, a
     value of the wrong type, or a non-finite ``idle_s``) ends the session
-    with exit code 3 rather than raising into the caller. The loop is single-threaded: forking a
+    with exit code 3 rather than raising into the caller. A ``REQUEST``
+    whose fork or pipe the host refuses (process or fd limit) gets
+    ``STATUS`` (``HOST_SPAWN_FAILED``, ``None``) at once; only that
+    request fails, and the session keeps serving. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -4740,9 +4749,10 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
-        OSError: If a low-level file descriptor operation (fork, pipe,
-            read, write) fails for a reason other than the cases already
-            handled above.
+        OSError: If a low-level file descriptor operation (pipe, read,
+            write) fails for a reason other than the cases already
+            handled above. A failed fork or pipe while starting a request
+            never raises here; see the ``HOST_SPAWN_FAILED`` case above.
     """
     reader = FrameReader(max_body=max_request_bytes)
     selector = selectors.DefaultSelector()
@@ -4764,7 +4774,11 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         outbox.clear()
 
     def start(request_id: int, raw: bytes) -> None:
-        child = _spawn(raw, request_id, run_request)
+        try:
+            child = _spawn(raw, request_id, run_request)
+        except OSError:
+            outbox.extend(encode_frame(STATUS, request_id, encode_status(HOST_SPAWN_FAILED, None)))
+            return
         children[child.fd] = child
         by_request[request_id] = child
         selector.register(child.fd, selectors.EVENT_READ, child)
@@ -5206,4 +5220,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("80ade35b467ab74d0902c45a224ef879ba2490ec961b9aaf6721044df7c6c9b9")
+BUNDLE_SHA256 = _enter_worker_exchange("0191dbb98da47a1fa296d96237ff630690913716350f437a29c9a7da7da39e1f")

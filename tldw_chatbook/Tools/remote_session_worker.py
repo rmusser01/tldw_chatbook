@@ -33,6 +33,7 @@ from tldw_chatbook.Tools.remote_binding_locator import RemoteLocator, build_ssh_
 from tldw_chatbook.Tools.remote_session_frames import (
     CANCEL,
     HELLO,
+    HOST_SPAWN_FAILED,
     LINE,
     REQUEST,
     STATUS,
@@ -693,6 +694,18 @@ class RemoteSessionWorker:
             code = self._death_code if self._death_code is not None else -9
         else:
             exit_code, signal_no = pending.status
+            if not admitted and exit_code == HOST_SPAWN_FAILED:
+                # The host could not fork for this request (process limit):
+                # the live session proves reachability, so status-preserving.
+                return RemoteCallResult(
+                    False,
+                    None,
+                    TransportFailure(
+                        TransportFailureKind.REMOTE_OP_FAILED,
+                        exit_code,
+                        "host could not start the operation",
+                    ),
+                )
             code = exit_code if exit_code is not None else -(signal_no or 9)
             refused = exit_code is None and signal_no == signal.SIGKILL
             if (killed or refused) and not admitted:

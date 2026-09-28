@@ -707,3 +707,13 @@ def test_mux_error_at_start_is_classified_mux(worker_factory):
     with pytest.raises(SessionStartError) as err:
         worker.start()
     assert err.value.failure.kind is TransportFailureKind.MUX_ERROR
+
+
+def test_host_spawn_failure_is_status_preserving(worker_factory):
+    from tldw_chatbook.Tools.remote_session_frames import HOST_SPAWN_FAILED
+
+    worker, _ = worker_factory()
+    pending = worker_module._Pending(status=(HOST_SPAWN_FAILED, None))
+    result = worker._result(pending, 5.0, killed=False)
+    assert not result.admitted
+    assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED

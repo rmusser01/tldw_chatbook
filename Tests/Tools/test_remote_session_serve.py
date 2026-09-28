@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Tools.remote_session_frames import (
-    BUSY, CANCEL, HELLO, LINE, REQUEST, STATUS, FrameReader, decode_status, encode_frame,
+    BUSY, CANCEL, HELLO, HOST_SPAWN_FAILED, LINE, REQUEST, STATUS, FrameReader, decode_status,
+    encode_frame,
 )
 
 # `serve` forks; nightly CI runs `pytest ./Tests/` on Windows too.
@@ -49,10 +50,43 @@ HANDLER = textwrap.dedent('''
 ''' % str(REPO))
 
 
-def _session(max_children=4, idle_s=30.0):
-    proc = subprocess.Popen([sys.executable, "-c", HANDLER], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+def _session(max_children=4, idle_s=30.0, prelude=""):
+    script = HANDLER.replace(
+        "from tldw_chatbook.Tools.remote_session_serve import serve",
+        prelude + "\nfrom tldw_chatbook.Tools.remote_session_serve import serve",
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     os.write(proc.stdin.fileno(), encode_frame(HELLO, 0, json.dumps({"max_children": max_children, "idle_s": idle_s}).encode()))
     return proc, FrameReader(max_body=1 << 20)
+
+
+_FAIL_ONCE = textwrap.dedent('''
+    import errno
+    _real, _left = os.{name}, [1]
+    def _once(*args):
+        if _left[0]:
+            _left[0] -= 1
+            raise OSError(errno.{errno}, "refused")
+        return _real(*args)
+    os.{name} = _once
+''')
+
+
+@pytest.mark.parametrize("name,errno_name", [("fork", "EAGAIN"), ("pipe", "EMFILE")])
+def test_failed_spawn_fails_only_that_request(name, errno_name):
+    """TASK-33404: the host at its process/fd limit fails one request, not the session."""
+    proc, reader = _session(prelude=_FAIL_ONCE.format(name=name, errno=errno_name))
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"first") + encode_frame(REQUEST, 2, b"second"))
+        frames = _collect(proc, reader, 2)
+        statuses = {rid: decode_status(body) for kind, rid, body in frames if kind == STATUS}
+        assert statuses[1] == (HOST_SPAWN_FAILED, None)
+        assert statuses[2] == (0, None)
+        assert not any(kind == LINE and rid == 1 for kind, rid, _ in frames)
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 3, b"third"))
+        assert any(kind == STATUS and rid == 3 for kind, rid, _ in _collect(proc, reader, 1))
+    finally:
+        _terminate(proc)
 
 
 def _terminate(proc):

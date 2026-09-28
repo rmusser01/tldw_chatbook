@@ -19,7 +19,7 @@ from collections import deque
 from typing import BinaryIO, Callable
 
 from tldw_chatbook.Tools.remote_session_frames import (
-    BUSY, CANCEL, HELLO, LINE, REQUEST, STATUS, FrameError, FrameReader,
+    BUSY, CANCEL, HELLO, HOST_SPAWN_FAILED, LINE, REQUEST, STATUS, FrameError, FrameReader,
     encode_frame, encode_status,
 )
 
@@ -88,7 +88,12 @@ def _close_fds_above_2(keep: int) -> None:
 
 def _spawn(raw: bytes, request_id: int, run_request: Callable[[bytes, BinaryIO], int]) -> _Child:
     read_fd, write_fd = os.pipe()
-    pid = os.fork()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
     if pid == 0:  # child
         code = _CHILD_CRASH_EXIT
         try:
@@ -148,7 +153,10 @@ def serve(
     ``max_response_bytes`` is killed and its STATUS still reports the
     kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, a
     value of the wrong type, or a non-finite ``idle_s``) ends the session
-    with exit code 3 rather than raising into the caller. The loop is single-threaded: forking a
+    with exit code 3 rather than raising into the caller. A ``REQUEST``
+    whose fork or pipe the host refuses (process or fd limit) gets
+    ``STATUS`` (``HOST_SPAWN_FAILED``, ``None``) at once; only that
+    request fails, and the session keeps serving. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -168,9 +176,10 @@ def serve(
         violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
-        OSError: If a low-level file descriptor operation (fork, pipe,
-            read, write) fails for a reason other than the cases already
-            handled above.
+        OSError: If a low-level file descriptor operation (pipe, read,
+            write) fails for a reason other than the cases already
+            handled above. A failed fork or pipe while starting a request
+            never raises here; see the ``HOST_SPAWN_FAILED`` case above.
     """
     reader = FrameReader(max_body=max_request_bytes)
     selector = selectors.DefaultSelector()
@@ -192,7 +201,13 @@ def serve(
         outbox.clear()
 
     def start(request_id: int, raw: bytes) -> None:
-        child = _spawn(raw, request_id, run_request)
+        try:
+            child = _spawn(raw, request_id, run_request)
+        except OSError:
+            # fork/pipe refused (process or fd limit): only this request
+            # fails; the loop, its children and its queue carry on.
+            outbox.extend(encode_frame(STATUS, request_id, encode_status(HOST_SPAWN_FAILED, None)))
+            return
         children[child.fd] = child
         by_request[request_id] = child
         selector.register(child.fd, selectors.EVENT_READ, child)
