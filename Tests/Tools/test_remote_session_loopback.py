@@ -15,7 +15,10 @@ from pathlib import Path
 import pytest
 
 from Tests.Tools.test_remote_worker_bundle import _python_310_interpreter
-from tldw_chatbook.Tools.remote_workspace_executor import run_session_loopback
+from tldw_chatbook.Tools.remote_workspace_executor import (
+    RemoteWorkspaceLoopbackError,
+    run_session_loopback,
+)
 from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
 
 
@@ -99,8 +102,31 @@ def test_cache_hit_on_second_session(tmp_path: Path) -> None:
     cache.mkdir(mode=0o700)
     run_session_loopback(root, [{"op": "ping"}], cache_dir=cache)
     assert any((cache / "tldw-worker").iterdir())
-    # Must not ask for the bundle again: the harness asserts READY first.
+    # Must not ask for the bundle again: READY without NEED.
+    run_session_loopback(root, [{"op": "ping"}], cache_dir=cache, require_cache_hit=True)
+
+
+def test_tampered_cache_entry_is_refetched(tmp_path: Path) -> None:
+    """A cache file exists but fails the loader's hash check: NEED, the
+    bundle is sent anyway, READY -- the pre-existing file never short-cuts it."""
+    root = _ws(tmp_path)
+    cache = tmp_path / "run"
+    cache.mkdir(mode=0o700)
     run_session_loopback(root, [{"op": "ping"}], cache_dir=cache)
+    (entry,) = (cache / "tldw-worker").iterdir()
+    entry.write_bytes(b"tampered")  # keeps 0o600: only the hash is wrong
+    out = run_session_loopback(root, [{"op": "ping"}], cache_dir=cache)
+    assert out[0][-1]["status"] == (0, None)
+    # The re-sent bundle repaired the entry: the next session is a hit.
+    run_session_loopback(root, [{"op": "ping"}], cache_dir=cache, require_cache_hit=True)
+
+
+def test_require_cache_hit_refuses_a_need(tmp_path: Path) -> None:
+    root = _ws(tmp_path)
+    cache = tmp_path / "run"
+    cache.mkdir(mode=0o700)
+    with pytest.raises(RemoteWorkspaceLoopbackError):
+        run_session_loopback(root, [{"op": "ping"}], cache_dir=cache, require_cache_hit=True)
 
 
 def test_session_executes_on_python_310_floor(tmp_path: Path) -> None:

@@ -476,6 +476,7 @@ def run_session_loopback(
     cache_dir: Path | None = None,
     python: str = sys.executable,
     budget_seconds: float = 60.0,
+    require_cache_hit: bool = False,
 ) -> dict[int, list[dict[str, Any]]]:
     """Run ``requests`` concurrently through ONE loopback bundle session.
 
@@ -489,10 +490,13 @@ def run_session_loopback(
             same host, so identical to what ``ping`` would report).
         requests: Plain op dicts (see ``_session_request``).
         cache_dir: ``XDG_RUNTIME_DIR`` for the loader cache; ``None``
-            removes the variable and disables caching. When it already
-            holds this bundle, the loader's first line MUST be ``READY``.
+            removes the variable and disables caching. The bundle is sent
+            whenever the loader answers ``NEED``, cache file or not (the
+            loader rejects a tampered or wrong-mode entry).
         python: Interpreter running the remote side (3.10 floor tests).
         budget_seconds: Whole-session wall-clock ceiling.
+        require_cache_hit: The loader's first line MUST be ``READY`` (a
+            ``NEED`` fails with ``protocol_failure``).
 
     Returns:
         Request index -> parsed LINE dicts, then ``{"status": (exit,
@@ -513,7 +517,6 @@ def run_session_loopback(
     bundle_hash = hashlib.sha256(compressed).hexdigest()
     magic = RESPONSE_MAGIC
     ready_line = magic + b"READY " + expected_bundle_stamp(bundle).encode() + b"\n"
-    cached = cache_dir is not None and (cache_dir / "tldw-worker" / bundle_hash).is_file()
 
     env = dict(os.environ)
     env.pop("XDG_RUNTIME_DIR", None)
@@ -534,7 +537,11 @@ def run_session_loopback(
         process.stdin.write(loader + header.encode() + b"\n")
         process.stdin.flush()
         line = _read_line(out_fd, deadline)
-        if line == magic + b"NEED " + bundle_hash.encode() + b"\n" and not cached:
+        if line == magic + b"NEED " + bundle_hash.encode() + b"\n":
+            if require_cache_hit:
+                raise RemoteWorkspaceLoopbackError(
+                    "protocol_failure", "expected a cache hit, got NEED"
+                )
             process.stdin.write(len(compressed).to_bytes(4, "big") + compressed)
             process.stdin.flush()
             line = _read_line(out_fd, deadline)
