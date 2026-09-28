@@ -45,7 +45,7 @@ you touch them; some are read-only and point you elsewhere.
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls stay in MCP and ACP". |
 | **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (10)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its ten rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. |
 | **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
-| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme editor** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
+| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme picker** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
 | **Footer** | This category's live shortcut hints (see [Keyboard & commands](#keyboard--commands)). |
 
 Moving around: **click** a rail row, or **Tab** from the nav bar to drop focus
@@ -64,8 +64,9 @@ named one (typing a category's own name just opens the category); **Esc** just
 clears it. The filter knows every rendered setting's visible label, on every
 category. Some pages also
 carry jump buttons: **Open Providers & Models** and **Open Advanced Config** on
-Privacy & Security, five guided-path chips on Advanced Config, and **Open Theme
-editor** on Overview and Appearance.
+Privacy & Security, five guided-path chips on Advanced Config, **Open Theme
+editor** on Overview, and **Open Theme** (which lands on the Theme picker) on
+Appearance.
 
 ## Features & controls
 
@@ -83,8 +84,7 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 | **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Web Search, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
-| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces, [My Profile](settings/personal-context-profile.md) |
-| **Managed in editor** | The editor's own **Apply** / **Save** / **Reset** persist things. | Theme |
+| **Applies immediately** | Each action takes effect at once; no draft to save or revert. On Theme, **Use** / **Try** / **Revert** and, for your own themes, **Rename** / **Delete** / **Export** act at once from the picker, and **Save** / **Save as…** in the editor (behind **Clone** / **New** / **Edit**) store a theme file. | Workspaces, [My Profile](settings/personal-context-profile.md), Theme |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
 | **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Diagnostics, and the eight view-only Domain Defaults pages |
@@ -153,8 +153,8 @@ page links to each backend's setup guide and displays these restrictions.
 | Core | **Providers & Models** | Default provider, model, and readiness shared with Console. | Draft — save with s |
 | Core | **Web Search** | Shared basic/deep search default, backend credentials, local setup checks, and explicit saved-settings test. | Draft — save with s |
 | Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
-| Interface | **Appearance** | Theme, density, and visual defaults shared with the app shell. | Draft — save with s |
-| Interface | **Theme** | Full theme editor, custom colors, presets, and live preview. | Managed in editor |
+| Interface | **Appearance** | Density and visual defaults shared with the app shell, plus a read-only theme row that links to the Theme picker. | Draft — save with s |
+| Interface | **Theme** | A filterable picker of every theme (yours, shipped, Textual's) with live preview, Use/Try/Revert, Edit/Rename/Delete/Export for your own, and an editor behind Clone/New/Edit. | Applies immediately |
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
@@ -195,10 +195,10 @@ The biggest page, and where to start.
 | Group | What's in it |
 |---|---|
 | **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider"), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
-| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." |
+| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
-| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text; fields a provider doesn't support are hidden, not greyed. Global fallbacks live under Console Behavior. |
+| **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, Summary, Verbosity."). Global fallbacks live under Console Behavior. |
 
 Use **Tab** to reach the discovered-model list, arrow keys to move, and
 **Space** to check a model. Checked rows survive leaving this category and
@@ -212,7 +212,14 @@ operation cannot replace the new form’s results or Model value.
 
 Open **Generation defaults** to edit overrides for the selected provider and
 model. Supported controls remain reachable with **Tab**; unsupported controls
-are hidden. Leave an override blank and save to remove it and inherit the
+are hidden. "Supported" is the same answer Console uses: the provider's
+capability rules (reasoning and thinking follow the model, e.g. a Claude model
+that rejects a fixed thinking budget hides **Think budget**) narrowed to the
+fields that provider's request actually sends. A value saved earlier for a
+field that is now hidden stays in `config.toml` untouched, and it is never
+sent. Searching **/** for a hidden field (say "seed" with Anthropic) opens
+this category and says the field is hidden for this provider and model. Leave
+an override blank and save to remove it and inherit the
 fallback. Invalid or non-finite numbers keep the draft for correction. **Revert**
 lets you keep editing or discard the draft. The section remembers whether
 you opened or closed it while moving between Settings categories; resizing or
@@ -229,6 +236,8 @@ Changing these controls does not record startup consent.
 providers also get a short endpoint or model-listing probe. The result separates
 configuration readiness, endpoint/model-listing evidence, and whether generation
 was tested. A successful model listing does not prove that generation works.
+Running it again replaces the previous probe result: while the new probe runs
+the result says "model listing checking", and each fact appears once.
 If the tested values change, run **Test Provider** again.
 
 Model and Endpoint edits stay as a draft when you visit another destination and
@@ -242,8 +251,11 @@ A clean form follows changes to the saved default provider, model and endpoint
 when you return. An unsaved edit stays attached to the provider and model you
 were editing, even if another action changes the defaults. This also applies
 to API mode, credential-source and generation-profile edits. **Discard changes**
-loads the latest saved defaults. Existing Console chats retain their own session
-selection; new chats inherit the saved defaults.
+loads the latest saved defaults. New Console chats take the saved defaults, and
+so does an open chat you have not touched yet: no messages and no edited
+settings. It follows the next time Console shows it, even when its provider
+already reads Ready, and Console tells you if its provider changed. A chat that
+holds any work keeps its own settings.
 
 #### QwenCloud
 
@@ -349,6 +361,72 @@ duplicates, enter a nonblank model and an absolute HTTP(S) base without
 credentials in the URL, then correct timeout/retry/streaming types in
 **Advanced Config**. Test the draft again before saving.
 
+#### Databricks (AI Gateway)
+
+**Databricks** serves the external models configured on your workspace's AI
+Gateway through the OpenAI-compatible Chat Completions surface, with your
+Databricks token as the credential. There is no API mode selector.
+
+| Credential | Workspace base URL | Default model |
+|---|---|---|
+| `DATABRICKS_TOKEN` (or a Settings-saved key) | your workspace host, e.g. `https://adb-1234567890123456.7.azuredatabricks.com` | none shipped |
+
+Databricks is per-account, so Settings ships no endpoint or model. Set
+`api_base_url` to your workspace host; the `/openai/v1` path is appended
+automatically when you paste the bare host, and a full
+`https://<workspace-host>/openai/v1` URL is kept exactly as entered. A pasted
+terminal `/chat/completions` URL is rejected with guidance. Readiness reports
+the provider blocked until both the token and the workspace URL exist; the
+blocked-send copy names the exact setting, section, and an example host.
+
+The provider model list starts empty because gateway model availability is
+workspace-dependent. Fill it with **Discover models** (authenticated
+`GET {base}/models` reusing the chat credential) or by seeding
+`[providers].Databricks` manually. Function tools are exposed for the
+gateway models that support them. Model-specific pricing is usually
+workspace-configured; unpriced models show **pricing unknown**, which means
+no verified rate, not a free call.
+
+If Test Provider reports invalid settings, keep exactly one canonical
+`[api_settings.databricks]` table, set the token and an absolute HTTP(S)
+workspace URL without credentials in the URL, then correct
+timeout/retry/streaming types under **Advanced Config**. Test the draft again
+before saving.
+
+#### Inference clouds (Together, Fireworks, Cerebras)
+
+**Together**, **Fireworks**, and **Cerebras** are engine presets: each one is
+a provider registry record served through the shared strict hosted-provider
+engine (the same path Databricks uses), not a per-provider adapter. There is
+no API mode selector for any of them.
+
+| Provider | Default base URL | Credential env var |
+|---|---|---|
+| **Together** | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
+| **Fireworks** | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
+| **Cerebras** | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+
+All three are **discovery-first**: no models ship in the config because each
+account serves a different catalog. The provider model list starts empty —
+fill it with **Discover models** (an authenticated `GET {base}/models` that
+reuses the chat credential) or by seeding `[providers].Together` /
+`[providers].Fireworks` / `[providers].Cerebras` manually. Until a model is
+set, readiness blocks sends with the model named as the missing piece.
+
+Function tools are exposed for the models that support them. Reasoning
+differs by provider: Together and Cerebras have no reasoning-effort control,
+while **Fireworks keeps R1-family model reasoning private** — the server
+reasons behind its own API surface and does not stream it with the reply, so
+reasoning does not appear in transcripts (any `reasoning_content` the server
+does return gets Z.ai's private treatment: kept off the live stream). That is
+provider behavior, not the app dropping output.
+
+If Test Provider reports invalid settings, keep exactly one canonical
+`[api_settings.together]` / `[api_settings.fireworks]` /
+`[api_settings.cerebras]` table, set the API key (or its env var), and leave
+the shipped `api_base_url` unless your account documents a different one.
+Test the draft again before saving.
+
 #### Custom endpoints
 
 A **custom endpoint** is a named endpoint entry you can template off any
@@ -360,7 +438,7 @@ behaves exactly like that built-in provider pointed at another origin:
 | Family | Behavior |
 |---|---|
 | **llama.cpp** | The direct llama.cpp path, with llama-style base-URL normalization. |
-| **OpenAI-compatible** | The generic OpenAI-compatible path the built-in `custom` slot uses. |
+| **OpenAI-compatible** | The strict hosted-provider engine (see below) pointed at your URL — the same engine Databricks and the inference clouds use. |
 | **Ollama** | The Ollama path, including its model-discovery fallback. |
 
 Entries show in the Console provider list under their display name (their
@@ -369,6 +447,53 @@ Sampling and generation settings are never copied from a template — they
 stay governed by the per-provider defaults chain. Credentials follow the
 usual precedence — `api_key_env` (a variable name; the safer form) wins over
 a stored `api_key` — and endpoint displays never show the key.
+
+**The strict engine behind OpenAI-compatible.** OpenAI-compatible
+custom-endpoint entries — the `custom-ep:<slug>` registry entries — execute
+through the shared strict hosted-provider engine rather than the old
+per-provider handler. The built-in `custom`/`custom_2` slots are not part
+of this swap: they keep the legacy handler regardless of the switch below.
+The base URL, credential, saved sessions, and reasoning behavior are
+unchanged — what changed is response validation and request strictness:
+
+- **Tolerant parsing, only where long-tail servers proved it.** Unknown
+  shape-safe extra fields at the top level of a response or stream event are
+  ignored; unknown extra keys on a choice or message are ignored when their
+  value is `null`; and exactly two non-null choice extras are allowlisted
+  (`logprobs` as an object or null, `stop_reason` as a scalar). Anything
+  else that deviates from the OpenAI shape — a malformed `choices` list, a
+  message that is not an object, a broken tool call — still fails closed
+  with a clear error instead of returning a half-parsed reply.
+- **Keyless servers keep working.** An entry with no credential sends no
+  `Authorization` header at all (the engine's keyless mode); an entry with
+  a resolved key sends it as a bearer token, exactly as before.
+- **Your `[api_settings.custom]` fallbacks still apply**, including the
+  defaults when the section is silent: `streaming = false` and
+  `max_tokens = 4096` (plus timeout/retry values). Sampler and generation
+  keys (`temperature`, `top_p`, `top_k`, `min_p`, `max_tokens`, `seed`,
+  `stop`, `response_format`, and the legacy `temp`/`maxp`/`topk`/`minp`
+  spellings) are read from the section, and explicit per-send values win.
+- **Stricter request handling than the legacy path.** Sampler values are
+  validated to the `[0, 1]` range — an out-of-range `temperature` is
+  rejected with an error instead of forwarded. When no `[api_settings.custom]`
+  value supplies a temperature, the payload omits the sampler entirely (the
+  server default applies) — the legacy path sent `temperature = 0.7`.
+  `top_logprobs` without `logprobs = true` is an error (the legacy path
+  silently dropped it).
+  String spellings like `streaming = "true"` are no longer coerced — use a
+  real boolean. And the section-level `tools`, `tool_choice`, `logit_bias`,
+  `presence_penalty`, `frequency_penalty`, `n`, and `user` keys are no
+  longer read from the config section on this path (per-send values still
+  work); move any pinned section values into the chat defaults chain.
+- **Rollback switch.** If a long-tail server misbehaves under the engine,
+  set `custom_endpoints_use_engine = false` under `[console]` in
+  `config.toml` to return every OpenAI-compatible custom-endpoint entry to
+  the legacy handler. The built-in `custom`/`custom_2` slots never execute
+  through the engine, so the switch does not affect them. It defaults to
+  `true`; any value other than an unquoted `true`/`false` (for example
+  `"false"` in quotes) also selects the legacy handler and logs a warning; flip it only to isolate a suspected engine regression, and please
+  report the server's response shape so the tolerant profile can be widened
+  with evidence.
 
 **Creating one.** In the Console settings modal, the **New endpoint…**
 button sits with **Base URL** (it appears for providers that take a base
@@ -438,7 +563,14 @@ Speech & TTS resolves this draft: save or discard first" (task-2708).
 ### Interface — Appearance
 
 "Settings owns launch visual defaults. Open the Theme category for full theme
-editing and deeper visual preview." **Global visual defaults** holds **Theme**,
+editing and deeper visual preview." **Global visual defaults** leads with a
+read-only **Theme** row — "\<Launch theme\> (launch default) · active: \<Active
+theme\>" (or "launch default missing: \<id\> · active: …" if that theme is no
+longer registered — the Theme picker shows the same case above its list, as
+"Launch default missing: \<id\> — Use any theme to fix it") — and an **Open
+Theme** button that jumps straight to the
+Theme picker, highlighting the launch default (not whatever's merely active,
+if the two differ); Appearance itself no longer sets or saves a theme. Below that:
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
 and scrolling** holds **Character expressions**, an **Animations** checkbox,
 and **Reduce motion**, **ASCII glyphs**, and **Smooth scrolling** toggles. **Shared Library rail**
@@ -454,40 +586,216 @@ rail or canvas and provide **‹ Library** (or **< Library** with ASCII glyphs)
 to return. Responsive compression, collapse, resizing, and mode changes are
 temporary and never saved.
 **Preview and boundary**
-summarises what a save will touch. **Preview** applies runtime-safe values for
-this session only and persists nothing ("Appearance preview applied for this
-session only.") — it is the only way to see *this pane's* theme selection
-without restarting.
+summarises what a save will touch. **Preview** checks the draft — density and
+the other non-theme fields — and persists nothing ("Appearance defaults are
+valid; Save persists them. Try themes in Settings ▸ Theme."). It no longer
+touches the theme: to try a theme without saving, use **Try** on the Theme
+picker instead.
 Some launch-only fields are less immediate than they look (see
 [Quirks](#quirks--troubleshooting)); Library layout changes refresh mounted
 Library readers after a successful save.
 
 ### Interface — Theme
 
-A full editor with its own save model. **Theme Library**: a **Name** box (live
-for anything but the two Textual built-ins), a **Dark theme** On/Off toggle,
-the **New / Clone / Delete / Export** row, and a **Themes** tree that lists
-**Your themes** first and open, then **Built-in**, then the **Shipped themes**
-catalog collapsed. Selecting a theme in the tree only loads it for editing; it
-never changes the running app. **Actions** come next: **Apply** applies the
-palette **for this session only** and writes nothing; **Save** stores it as a
-TOML file in your profile's `themes/` folder and registers it at once, so it
-appears in **Appearance** → **Theme** and in the palette's "Theme: Switch
-to…" list without a restart (built-ins can't be overwritten, and saving over
-another saved theme asks first); **Reset** reloads it as last saved; **Generate
-from Primary** derives a palette from the primary colour; **Set as launch
-default** writes the saved theme's name to `general.default_theme` so it
-loads at startup. Appearance reflects that saved default immediately while
-retaining any explicitly staged theme choice or other unsaved Appearance edits.
-**Color Palette** is ten hex boxes, Primary through Error,
-each with a swatch showing the colour and its hex; an invalid value marks the
-box and the swatch reads "invalid". **Color Presets** fill the colour chosen in
-the **Presets fill** box (Primary by default), by click or by focusing a swatch
-and pressing Enter or Space. The **Live Preview** is a Console-shaped stub that
-repaints as you type. **New** starts a theme from the palette currently loaded;
-**Clone** does the same and appends `_copy` to the name. **Delete** removes a
-saved theme after confirmation; **Export** writes it to your Downloads folder
-and asks before replacing an earlier export.
+Theme now opens on a **picker**, not the editor. A **Filter themes** box
+narrows the list live, by display name or id. Below it, one grouped,
+scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then
+**TEXTUAL** (Textual's own built-ins) — each group's heading shows a count
+while you're filtering (e.g. "SHIPPED (12)"). Every row paints a seven-colour
+strip plus word markers, never colour alone: **active** on the theme running
+right now, **launch** on the configured launch default, and **overrides
+shipped** / **overrides textual** when one of your saved themes shadows a
+built-in name of the same id. Moving the highlight (mouse or **↑**/**↓**)
+repaints the **preview card** on the right — a title line ("\<name\> ·
+dark/light · yours/shipped/textual") and a live swatch preview — without
+touching the app you're actually using. The list takes all the height the
+detail pane has (at full-screen sizes it no longer stops at 24 rows), and the
+highlighted row is filled in the theme's primary text colour as well as bold.
+When the picker is narrower than 100 columns (a mid-width terminal), the card
+moves below the list instead of squeezing both. If the configured launch default no
+longer exists (its file was deleted or renamed outside the app), a notice
+appears above the list — "Launch default missing: \<id\> — Use any theme to
+fix it" — the same wording Appearance's summary row uses; using any theme
+clears it.
+
+**Keys**, active while the list has focus: **Enter** (or the **Use this
+theme** button) — switch to the highlighted theme now *and* save it as the
+launch default; **t** — **Try** it for this session only, without saving
+anything; **c** — **Clone**, **n** — **New**, both of which open the full
+editor below, pre-loaded from the highlighted theme; **i** — **Import…**,
+which prompts for an external theme file's path; **↑** on the list's very
+top row returns focus to the filter box instead of wrapping to the bottom.
+When the highlighted theme is one of **yours**, three more keys work: **e** —
+**Edit** it in place (no `_copy` suffix, unlike Clone), **r** — **Rename**,
+and **Delete** — remove it. These three, plus **Export**, have no effect on a
+shipped or Textual theme (Clone or New it first to make your own copy).
+While the list has focus the footer lists these keys; **F1** lists them too.
+**F6** / **Shift+F6** cycle focus through rail → detail pane → Scope Inspector
+as everywhere else on this screen. With no match, the list shows "No themes
+match '\<text\>'" and Enter does nothing; **New** (**n**) still works and
+starts from the theme you are running.
+
+A **Try** or **Use** reveals a **Revert** button labelled "Revert to \<theme\>"
+— the theme that was active before that change (chained across repeated
+Try/Use, so one Revert always lands back where you started); it disappears
+once pressed. Renaming a theme the pending Revert would return to makes it
+return to the new name instead, and deleting that theme drops the Revert
+button, so it never targets a theme that no longer exists. When a persisted Use captures a moment where the active theme
+and the launch default already disagreed (e.g. an earlier Try left the
+active theme unsaved), the label also names the launch default: "Revert to
+\<theme\> (launch: \<launch theme\>)". If that earlier launch default is no
+longer a registered theme (the "Launch default missing" case), Revert does not
+write it back: the label reads "Revert to \<theme\> (launch unchanged)" and
+the saved launch default stays as it is. The Revert button hides whenever
+pressing it would change nothing — its theme is already the one running and
+the launch default would not change (e.g. you switched back by hand). Toasts name what happened: Try says
+"Trying \<name\> for this
+session"; Use says "\<name\> is now your theme (was: \<previous\>)"; if saving
+the launch default fails, Use still applies the theme for the session and
+says so ("\<name\> applied; the launch default was not saved") — nothing
+crashes and Revert stays available. If the save lands but the in-process
+config cache fails to refresh, Use's toast instead adds "; configuration
+refresh failed — reopen Settings to refresh". One shared helper builds this
+toast, so the command palette's "Switch to \<theme\>" command — which also
+persists like Use — shows the exact same wording, cache-refresh warning
+included.
+
+The card's buttons come in three groups, a blank row apart: switching —
+**Use this theme** and **Try**, with **Revert** under them when it applies;
+creating — **Clone**, **New** and **Import…**; and, for **your themes** only,
+**Edit**, **Rename**, **Export** and **Delete**. Each group is one row when the
+card is at least 48 columns wide; on a narrower card (always at compact
+width) every button takes its own full-width row. The your-theme group is
+visible only when the highlighted theme is one of yours (a shipped or Textual theme shows neither
+the row's buttons nor its keys; Clone or New it first). An empty YOUR THEMES
+group shows a disabled "(none yet)" row instead. The themes folder is read in
+the background: the first time the picker opens, YOUR THEMES shows a disabled
+"Loading your themes…" row until the read finishes, and after a file action
+or Back from the editor the previous list stays up until the new one arrives.
+**Edit** opens the full
+editor on the saved file, in place — unlike Clone, it does not append
+`_copy`. **Rename** and **Delete** ask first: Rename opens a name prompt
+("Rename theme '\<old\>'"); a name already in use answers "Name taken:
+'\<new\>'" and changes nothing. Renaming your launch default updates the
+saved launch default to the new name without changing the theme you are
+running (if it is the running theme, the app follows it to the new name). **Delete** confirms ("Delete the saved theme
+'\<name\>'? This removes the theme file and cannot be undone."); if the
+deleted theme is both the launch default and the one on screen, the launch
+default and the running theme both reset to Textual Dark and the toast says
+so; if it is the launch default but not the one on screen, only the launch
+default setting resets to Textual Dark — the running theme is left alone —
+and the toast says "launch default reset to Textual Dark"; if it was merely
+active (not the launch default) it switches to your launch default instead;
+and either way, deleting a saved theme that reuses a shipped or built-in
+name (say `nord`) brings the original back. **Export** writes the saved
+file to your Downloads folder and asks before replacing an earlier export;
+on success the card shows "Exported to \<full path\>" with a **Copy path**
+button (copies the path to the clipboard and confirms "Path copied") — the
+row clears the next time you highlight a different theme.
+
+A saved file that can't be read — invalid TOML, a missing or unparseable
+primary colour, a `[colors]` key that isn't one of the ten base colours, a
+colour that isn't `#RGB`, `#RRGGBB` or `#RRGGBBAA` ("invalid colour 'secondary'"), or
+a name containing control characters ("name has control characters"), a
+name starting with a reserved prefix ("reserved name"), a symlinked or
+hard-linked file ("not a regular file"), or a second file claiming a name
+another file already holds ("duplicate of '\<name\>'"; the app uses the
+later file) — is not hidden: it appears under YOUR THEMES as "\<name\> (unreadable)", with
+the reason as both a short label on the card and every disabled button's
+tooltip. It is listed even when its file name matches a shipped or Textual
+theme (a corrupted `nord.toml` shows as "Nord (unreadable)" beside Nord).
+Use, Try, Clone, New, Edit, Rename and Export are all disabled on that row;
+pressing one of their keys shows the reason instead. Only **Delete** works,
+so a broken file can always be cleared — except a symlinked (even a
+dangling symlink) or hard-linked one, which the app never writes through or
+replaces: Delete, Save, Save as, Import and Rename onto that name all say
+"'\<name\>.toml' is a link, not a regular file; remove it outside the app".
+Such a file is also skipped at startup, so it never registers a theme —
+a linked `nord.toml` shows only as "Nord (unreadable)" under YOUR THEMES,
+next to the shipped Nord it would otherwise have replaced. That one file no
+longer makes the whole themes folder read as unavailable. Control characters in anything a
+theme file puts on screen — an error, a key, a value — show as `?`.
+
+**Import…** (the button beside New, or the **i** key) brings a theme file
+from outside the app into YOUR THEMES. A modal ("Import theme — full path to a .toml file") prompts for its path —
+typed, pasted (quoted or not), or dropped from Finder or a terminal, which
+unescapes every backslash-escaped character a drop pastes on macOS
+(`My\ \&\ Theme.toml`). The file must be a real `.toml` under 64 KB with a valid
+`[colors].primary`, using only the ten base colour keys — a stray
+`variables` or `dark` entry under `[colors]`, a colour that isn't `#RGB`,
+`#RRGGBB` or `#RRGGBBAA` (the editor's own rule: "background: 'blue' is not
+#RGB, #RRGGBB or #RRGGBBAA" — no names or `rgb(…)`), invalid TOML, or a name that isn't
+filename-safe, contains `[`, contains control characters, or starts with
+`custom_` or `unreadable:` each refuse with a specific reason and write
+nothing. A `[variables]` entry that isn't a colour
+(or `auto NN%`, or a text style) is dropped with a warning instead, the same
+as Save. Importing a name you already have asks first ("Replace the saved
+theme '\<name\>'?"); Cancel leaves the existing file byte-for-byte
+unchanged. On success the picker highlights the new theme and shows
+"Imported '\<name\>'".
+
+**Clone**, **New** or **Edit** swap in the full editor below, behind a **Back
+to themes** button; the editor no longer has its own theme list — the header
+says what you're editing ("Editing \<name\> · copy of \<source\>" for Clone,
+"· new" for New, "· saved theme" for Edit). It keeps a **Name** box (live for
+anything but the two Textual built-ins) and a **Dark theme** On/Off toggle.
+**Actions**: **Try** previews the palette **for this session only** and
+writes nothing (no Save needed); **Save** stores it as a TOML file in your
+profile's `themes/` folder, registers it at once — so it appears in the
+picker's YOUR THEMES group and the palette's "Theme: Switch to…" list without
+a restart — and returns you to the picker with that theme highlighted (built-
+ins can't be overwritten, and saving over another saved theme asks first); if
+the theme you just saved is the one currently running, it repaints live so it
+is never stale. Save no longer sets the launch default itself — use the
+picker's **Use** for that. **Save as…** prompts for a new name ("Save theme
+as", pre-filled `\<current\>_copy`) and always confirms an overwrite, even of
+the loaded theme's own name, since Save as always means a new file. Save, Save as and Rename refuse a name
+starting with `custom_` or `unreadable:` ("names starting with 'custom_' or
+'unreadable:' are reserved") — the app uses those prefixes for its own
+entries; like
+Save, it then returns you to the picker with the new theme highlighted, not
+back into the editor. **Reset** reloads it as last saved;
+**Generate from Primary** derives a palette from the primary colour. **Color
+Palette** is ten hex boxes, Primary through Error, each with a swatch showing
+the colour and its hex; an invalid value marks the box and the swatch reads
+"Invalid — use #RRGGBB". **Color Presets** fill the colour chosen in the
+**Presets fill** box (Primary by default), by click or by focusing a swatch
+and pressing Enter or Space. The **Live Preview** is a Console-shaped stub
+that repaints as you type; on a wide window it sits beside the palette so
+your edits show without scrolling (narrow windows stack it below). A theme cloned from a shipped one keeps that
+theme's extra readability colours (muted text, footer keys, input selection)
+through Try, Save and Export — they are stored in a `[variables]` table in
+the TOML. They are tuned for that palette, so once you change any base
+colour or the dark flag they are dropped and derived from your colours
+instead. A `[variables]` entry that is not a colour (or `auto NN%`, or a text
+style) is skipped with a warning when the theme loads. **Back** — or **Esc**
+twice (the first releases the field you're typing in, the second acts as
+Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
+(Escape stays) — the same prompt appears if you switch to a different
+Settings category while the editor is open, or leave Settings altogether
+(the tab bar, the command palette or a shortcut) or quit the app, and a Save that needs an
+overwrite confirmation or a valid name keeps you on the editor either way.
+Changing only the **Name** box counts as an unsaved edit. The editor's
+**Try** lasts only while you're in the editor: leaving it any way but
+**Save** — **Back** with nothing unsaved, **Discard**, a category switch or
+leaving Settings — puts back the theme that was running when you opened
+the editor (unless you switched themes elsewhere since, e.g. from the
+command palette; that choice stays). After **Save** or **Save as…**, the
+saved theme is the one applied, under its saved name.
+While the editor has unsaved edits, the rail shows **Theme \***, and the Scope
+Inspector's header and its "Unsaved theme changes" row both say so.
+
+While a backup or recovery holds the theme files, YOUR THEMES shows a
+disabled "Theme files unavailable while backup/recovery is in progress" row
+beneath the saved themes it last listed (they stay grouped as yours), and
+Edit, Rename, Delete, Export and Import (list keys and picker buttons alike)
+are disabled with that same reason as a tooltip — Use
+and Try still work, and so does the editor's Try, but the editor's Save and
+Save as are disabled with the same tooltip too, since both write a file. The
+card's buttons are bracketed chips — Try, Save, Reset and (on the picker)
+Delete keep their colour as label and brackets even when focused — and each
+preset swatch is framed by thin side rules that thicken into brackets when it
+has focus, so a preset close to the card colour still reads as a cell.
 
 ### Interface — Splash Screen
 
@@ -544,8 +852,8 @@ problem and choose **Retry**. The previously saved choice remains active until a
 write succeeds. If the file was saved but live settings could not refresh, restart
 Chatbook or reload the configuration before relying on the new choice.
 
-Global sampling fallbacks reach **new or default sessions**, not a conversation
-already open. Context defaults follow the conversation's existing override
+Global sampling fallbacks reach **new chats and untouched open chats**, not a
+chat that already holds work. Context defaults follow the conversation's existing override
 precedence. The target percentage must stay at least 15 points below the trigger;
 invalid ratios and frame rates stay in the draft until corrected or reverted.
 
@@ -822,12 +1130,15 @@ a note on what would have to exist before Settings could own a default.
    Saving only validates and stores the defaults — to actually hear a voice,
    test a connection, or refresh a provider's model list, press **Open Speech
    Lab**; this pane never contacts a server.
-3. **Change the theme and make it stick.** Open **Appearance**, choose a
-   **Theme**, press **Preview** for a look (this session only), then **s** to
-   save the draft — the theme is applied at the next launch. If you built the
-   theme yourself in the **Theme** editor, press **Save** there and then **Set
-   as launch default**; saved themes also appear in **Appearance** → **Theme**
-   as "<Name> (saved)".
+3. **Change the theme and make it stick.** Open **Theme**, type a few letters
+   in the filter to narrow the list, highlight a row, and press **Enter** (or
+   **Use this theme**) — it switches now and is saved as the launch default in
+   one step. To try it first without committing, press **t** (**Try**); a
+   **Revert** button appears either way if you change your mind. To build your
+   own palette, press **c** (**Clone**) or **n** (**New**) to open the editor,
+   adjust the colours, and press **Save** — it stores the file, registers it,
+   and returns you to the picker with it highlighted; press **Use** there to
+   make it the launch default.
 4. **Move a database to a new location.** Open **Storage**, edit that database's
    path box, and press **Check Storage** — you want "ready", not "missing,
    create before restart" (Settings will not create the folder for you). Press
@@ -870,17 +1181,20 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
 | Tab | From the nav bar, drop focus into the rail at **Overview**; then walk on into the detail pane |
-| j / k / ↑ / ↓ | Move up and down the rail (while a category row has focus) |
+| ↑ / ↓ | Move up and down the rail (while a category row has focus) |
+| j / k | Move up and down the rail — while the rail has focus, or with nothing focused. Inert in the detail and inspector panes, so they never pull focus out of an editor (task-32944) |
 | Enter | Open the focused category; in the filter, jump to the top match; on an action button, press it |
 | a / c / b | RAG only — set active, clone, backfill. See [RAG defaults](settings/rag.md) |
+| F6 | Move to the next pane: category rail, then detail pane, then inspector, then back to the rail. Works from inside a text field and leaves its text alone. Entering the rail lands on the active category's row (on the filter when a search hides that row); the detail pane and inspector land on their first control (an inspector with no control takes focus itself, so the arrow keys scroll it) |
+| Shift+F6 | The same ring, backwards |
 
-**F6 does nothing on this screen.** Settings has no pane-cycle target, so it
-only shows a notice — use **Tab**, the rail keys, or the mouse. **F1** opens
-the active category's help: a "How this category works" section (its save
-contract, scope, runtime owner, whether writes are allowed, boundary, and
+**F1** opens the active category's help: a "How this category works"
+section (its save contract, scope, runtime owner, whether writes are allowed,
+boundary, and
 recovery — the same contract the State banner and Scope Inspector carry)
 followed by the category's working shortcut keys, with the RAG-only keys shown
-only while on RAG. Every category has a non-empty help body; one without
+only while on RAG and Theme's list keys (Enter, t, c, n, i, e, r, Del) listed
+for Theme. Every category has a non-empty help body; one without
 category-specific keys says so.
 
 Command palette (**Ctrl+P**) entries that land here: "Settings & Preferences:
@@ -923,13 +1237,16 @@ not open an editor.
   **Palette limit (themes)** is read only by a legacy window, not the command
   palette. **Web font size (px)** applies to the browser terminal when you serve
   the app over the web — it changes **nothing** in the TUI.
-- **The theme didn't change after saving.** The Appearance **Theme** field is
-  applied once, at launch; **Preview** shows it this session. Two other routes
-  do apply a theme immediately: the Theme editor's **Apply** (this session
-  only), and the command palette's "Theme: Switch to \<name\>", which applies
-  it *and* rewrites the launch default. A theme you **Save** in the Theme
-  editor is stored and registered but not applied — press **Set as launch
-  default** there, or pick it in **Appearance**.
+- **Appearance no longer has a theme field.** It shows a read-only summary
+  (launch default + active theme) and an **Open Theme** button; switching or
+  previewing a theme happens on the **Theme** category itself, via **Use**
+  (switches and saves the launch default), **t**/**Try** (switches for this
+  session only, saves nothing), the Theme editor's **Try** (session only), or
+  the command palette's "Theme: Switch to \<name\>" (applies *and* rewrites
+  the launch default). A theme you **Save** in the Theme editor is stored,
+  registered, and repaints live if it happens to be the theme already
+  running, but it is not made the launch default — press **Use** on it from
+  the picker (where Save leaves you, highlighted) for that.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
   read back, so it looks unchanged when you return (backlog task-2706).
@@ -938,9 +1255,9 @@ not open an editor.
   category's Save/Revert draft, while Arm/Disarm changes process memory only.
 - **"Open Config File" didn't open anything.** By design — that palette command
   only prints the file's location.
-- **A Console setting didn't take.** Global fallbacks reach *new or default*
-  sessions; a conversation already open keeps what it resolved, and a session or
-  provider+model setting outranks them. Rail presentation is different: after a
+- **A Console setting didn't take.** Global fallbacks reach new chats and open
+  chats you have not touched; a chat with messages or edited settings keeps
+  what it resolved, and a session or provider+model setting outranks them. Rail presentation is different: after a
   successful Save, return to a freshly opened Console screen to see it; no app
   restart is required.
 - **Save Raw TOML is greyed out.** Validate the current text. If the file changed
@@ -972,6 +1289,9 @@ saved in the editor now registers at once, appears in Appearance → Theme and
 the palette, and loads at the next launch via **Set as launch default**;
 swatches, the Dark toggle and the preset target are painted; Actions sit above
 the palette; the rest of this page's content unchanged from the prior stamp).*
+*Interface — Theme amended on fix/theme-harden — 2026-09-24 (tasks 32940-32942:
+shipped-theme variables carried, leave guard, backup-pause state; covered by
+automated tests, not re-driven live).*
 *Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
 80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
 menu now leaves the strip scrolled so "F4 Settings" is visible and
@@ -1043,3 +1363,203 @@ this page's content unchanged from the prior stamp.)*
 (task-32290): the model `shell_exec` card's session choice is labelled
 **All shell · session** (`_RAW_SHELL_DECISION_OPTIONS`), not the longer
 sentence this page quoted.*
+
+*Verified against `fix/theme-keyboard-labels` (off dev @ 6ddc582839) —
+2026-09-24 (tasks 32943–32946): F6/Shift+F6 cycle the three panes; j/k are
+rail-scoped; Appearance labels Textual themes "(Textual)" and only file-backed
+themes "(saved)"; the Theme tree's Built-in group lists all Textual themes;
+the invalid-colour swatch reads "Invalid — use #RRGGBB". Pinned by pilot tests,
+not driven live.*
+
+*Verified against `fix/theme-contrast` @ dev 6ddc582839 — 2026-09-24
+(task-32947): Theme card chips, swatch frames and the Dark-theme off glyph
+measured from painted cells at 190x55 under textual-dark, textual-light,
+gruvbox_dark and solarized_light.*
+
+*Verified against feat/theme-picker-pr1 @ fe8db09bd3 — 2026-09-25 (TASK-32948
+PR 1): pinned by pilot tests at 80x24 and 190x55; driven live in a scratch
+profile at both sizes — filter plus Enter Enter used a theme, Try then
+Revert restored the pre-Try/Use state (chained back through a second
+Use), Clone opened the editor and Back with an edit showed the Stay /
+Discard / Save prompt, Appearance's read-only row and Open Theme button
+landed on the picker, and a full relaunch loaded the theme a prior session
+had Used.*
+
+*Verified against `feat/theme-picker-pr2` @ ed7c9f1cc7 — 2026-09-25
+(TASK-32948 PR 2, Task 5): the command palette's toast now matches the
+picker's wording and gains a cache-refresh-failed warning; Appearance's
+Open Theme highlights the launch default, not merely the active theme;
+the Revert chip names the launch default too when a persisted change left
+it disagreeing with the active theme. Pinned by pilot tests, not driven
+live.*
+
+*Verified against `feat/theme-picker-pr2` @ 7690d30c35 — 2026-09-25
+(TASK-32948 PR 2, Task 5, fix round 1): the Use toast and the palette's
+"Switch to \<theme\>" toast — cache-refresh warning included — now come
+from one shared helper (`theme_catalog.use_theme_toast`), so the picker's
+own Use button carries the same cache-refresh-failed warning the palette
+does; fixes the prior stamp's palette-only framing. Pinned by pilot tests,
+not driven live.*
+
+*Verified against `feat/theme-picker-pr2` @ 100ecd9e24 — 2026-09-25
+(TASK-32948 PR 2, Task 6): this section's Edit/Rename/Delete/Export
+paragraph, the reworked editor actions/header, and the pause copy above are
+rewritten for what PR 2 shipped. Driven live in a scratch profile at both
+80x24 and 190x55: Clone opened the editor on a copy, editing Primary and
+pressing Save wrote the file, returned to the picker with the new theme
+highlighted under YOUR THEMES, and showed "Theme '\<name\>' saved"; Rename
+prompted and renamed with "Renamed '\<old\>' to '\<new\>'"; Edit re-opened
+the saved file in place (header "Editing \<name\> · saved theme", the
+edited colour still applied — not a fresh clone); Save as… prompted
+"\<name\>_copy" and saved a second file; Use made that theme active and the
+launch default ("\<name\> is now your theme (was: Textual Dark)"); Delete
+then confirmed and removed it with "Deleted '\<name\>'; launch default and
+theme reset to Textual Dark" (AC #8's fallback); Export wrote a
+`<name>_theme.toml` file, and the toast named the scratch profile's own
+Downloads path. The real `~/.config/tldw_cli/config.toml` mtime and the
+real `~/.config/tldw_cli/themes/` directory were checked before and after
+both passes and never changed; both Export toasts pointed at the scratch
+HOME's Downloads, confirmed on disk, never the real `~/Downloads`.*
+
+*Verified against `feat/theme-picker-pr3` @ fa8b892c97 — 2026-09-25
+(TASK-32948 PR 3, Task 3): the picker now shows its own "Launch default
+missing: \<id\> — Use any theme to fix it" notice above the list, matching
+Appearance's read-only row; Export's card shows "Exported to \<full path\>"
+with a Copy path button (copies to the clipboard, "Path copied"), clearing
+on the next highlight. Pinned by pilot tests at 80x24 and 190x55, not
+driven live.*
+
+*Verified against `feat/theme-picker-pr3` @ abff12e1b4 — 2026-09-25
+(TASK-32948 PR 3, Task 5 — this section rewritten as one section for the
+finished PR 3 design, covering Import and the unreadable/launch-missing
+states this stamp adds, in addition to everything the prior stamps above
+already verified). Driven live in an isolated scratch profile at 190x55
+and 80x24, splash disabled: importing a valid `.toml` from a typed, quoted
+path registered and highlighted it ("Imported '\<name\>'"); importing one
+missing `[colors].primary` refused with that exact reason and wrote
+nothing; a garbage file dropped straight into the themes directory showed
+as "\<name\> (unreadable)" with "not valid TOML" on the card after
+reopening Theme, and Delete removed it from disk; using theme A then
+Trying theme B, then deleting A (the launch default, not on screen) showed
+"Deleted 'a'; launch default reset to Textual Dark" while B stayed active
+on screen, confirmed by a fresh highlight afterward — the 2026-09-25 user
+decision that a launch-default delete changes only the setting when that
+theme isn't the one running; Export then Copy path showed "Exported to
+\<full path\>" and "Path copied", with the file confirmed on disk under the
+scratch profile's own Downloads; and a theme named `x[/]`, present at
+startup so the app's own loader registered it, rendered literally in the
+list row, the card title and the Use toast at both sizes, with no
+MarkupError. The real `~/.config/tldw_cli/config.toml` mtime and the real
+(empty) `~/.config/tldw_cli/themes/` directory were checked before the
+first launch and after the last one: unchanged; the real `~/Downloads`
+tail was unchanged throughout. One live finding not covered by the section
+text above: a theme file dropped into the themes directory while the app
+is already running does not appear in the picker's YOUR THEMES group until
+either Import (which registers it explicitly) or a restart (which runs the
+startup loader) — a bare drop alone needs one of those two to take effect,
+which is by design, not a defect.*
+
+*Verified against `feat/theme-picker-pr3` (final-review fixes, off 868e9cc526)
+— 2026-09-25 (TASK-32948 R39/R40): Import accepts only `#RGB`/`#RRGGBB`/`#RRGGBBAA`
+colours; control characters in a theme file's name refuse it (import) or
+list it as unreadable (saved file), and every file-derived error shows them
+as `?`; a saved file's colours, like Import's, must be `#RGB`/`#RRGGBB`/`#RRGGBBAA`
+or the file is unreadable and skipped at startup (R41); a broken file named
+like a shipped theme is listed and deletable;
+blocked keys on an unreadable row say why; the Import prompt names what it
+wants. Pinned by pilot and unit tests, not driven live.*
+
+*Verified against `feat/theme-picker-pr3` @ 6c8bc4ea65 — 2026-09-25
+(TASK-32948 Qodo review fixes, TASK-32949): reserved `custom_`/`unreadable:`
+names are refused; a symlinked or hard-linked theme file is one "not a
+regular file" row, not an unavailable folder; a second file claiming a name
+is a "duplicate of" row; New works with a filter that matches nothing;
+leaving Settings or quitting with unsaved theme edits asks Stay / Discard /
+Save (one prompt at a time); linked theme files are never replaced and are
+skipped at startup (R43). Pinned by pilot and unit tests, not driven live.*
+
+*Verified against feat/model-config-p1-root-fixes @ c28979b31d + TASK-33001.2
+— 2026-09-26: Generation defaults show only the rows the provider + model
+request carries. Driven live at 211x44 on a scratch profile (Anthropic /
+claude-sonnet-4-5): Min P, Seed, Presence and Frequency are hidden and the
+summary reads "Hidden for Anthropic: Min P, Seed, Presence, Frequency,
+Reasoning, Summary, Verbosity."; Temperature, Top P, Top K, Response max
+tokens, Thinking, Think budget and Streaming stay. Fix round 1 (mounted
+tests, not driven live): "/" for a hidden field lands in Providers & Models
+with "'Seed' is hidden for this provider and model: its requests do not carry
+it."; Moonshot and Z.ai reasoning defaults now save. The rest of this page's
+content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 465f1a5a88 + TASK-33001.3
+— 2026-09-26: a second **Test Provider** run on an unchanged llama.cpp draft
+shows only the new probe. Driven live at 211x50 on a scratch profile: with the
+endpoint down the result read "model listing failed (connection refused) |
+model unconfirmed | generation not tested"; with a stub `/v1/models` up, the
+next run read "model listing reached | selected model confirmed | generation
+not tested", with no failure beside it and "generation not tested" once in the
+result and once in the toast. The in-flight "checking" line is pinned by a
+mounted test, not seen live. The rest of this page's content unchanged from
+the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 8e8a2f309f + TASK-33001.4
+— 2026-09-26: F6 and Shift+F6 cycle the three panes. Driven live at 211x44 on
+a scratch profile: from the nav bar, F6 went to the Overview rail row, then
+Backup & Restore in the detail pane, then Open Theme editor in the inspector,
+then back to Overview; Shift+F6 walked the same ring backwards. After Down
+and Enter opened Appearance, F6 from the Palette limit field moved to the
+inspector with the field still reading 1, and the next F6 landed on the
+Appearance row. The focus line under the panes and the focus tint named each
+stop, and "No workbench pane focus target is available." never appeared. The
+rest of this page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes @ 7335d3edad + TASK-33001.5
+— 2026-09-26: an untouched open Console chat follows a Providers & Models
+save. Driven live at 211x44 on a scratch profile whose llama.cpp endpoint had
+nothing listening, so Console read Ready. Saving Model "qwen-next-d1" here and
+returning moved Chat 1's status line from "Model: qwen" to "Model:
+qwen-next-d1". After a draft was typed into Chat 1 and Ctrl+T opened Chat 2, a
+second save (the field read "qwenqwen-thir" after a key race in the drive)
+moved Chat 2 to that model, while Chat 1 kept "qwen-next-d1". The rest of this
+page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes + TASK-33001.7 — 2026-09-27:
+endpoint URLs paint exactly as stored, and a keyless save writes no unused
+credential routing. Driven live at 211x44 on a scratch profile (llama.cpp,
+legacy section carrying the shipped `api_key_env_var = "LLAMA_CPP_API_KEY"`,
+variable unset): the Endpoint row's capture holds no zero-width character
+(TASK-33001.5's capture of the same row read `http<U+200B>://…`; only
+textual-web still gets that invisible autolink break). Saving Model
+`qwen-t7` wrote the model, removed `api_key_env_var` and recorded
+`credential_source = "none"`; the Env var field then read "No credential
+required". The rest of this page's content unchanged from the prior stamp.*
+
+*Verified against feat/model-config-p1-root-fixes + TASK-33001.7 fix round 1
+— 2026-09-27: after that save the app was quit, and 12 s later
+`config.toml` held the shipped `api_key_env_var` again next to
+`credential_source = "none"` (quitting writes the shipped defaults back).
+Relaunched from that file through `tldw-serve` in headless Chromium at
+212x44, Providers & Models read Env var "LLAMA_CPP_API_KEY" and "API key
+source: not required for this provider". The Endpoint row carried the
+zero-width autolink break (`http<U+200B>://127.0.0.1:18777`), and hovering
+it raised no link. The Conversation settings modal's plain Base URL field
+(`http://127.0.0.1:18777`, no break) did underline as a link on hover.*
+
+*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001
+final fix wave, merged with dev 88b61879b9). Dev's task-32943 had landed a
+second F6 handler for this screen; the merge keeps one (TASK-33001.4's), so
+the keys table has one F6 row and one Shift+F6 row. A category whose
+inspector holds no control (Theme) takes F6 on the inspector itself rather
+than skipping it; pinned by a mounted key-press test, which also checks that
+Settings binds Shift+F6 once and leaves F6 to the app. Generation defaults
+for a named endpoint (`custom-ep:<slug>`) now hide the rows that endpoint's
+family request drops, as Console does (an ollama-family endpoint hides Min
+P); pinned by a real-rebase comparison test. Not driven live. The rest of
+this page's content unchanged from the prior stamp.*
+
+*Verified against `fix/theme-crit3-lane-b` (off dev @ ae8cb2783c) — 2026-09-27
+(TASK-33061/33064/33065): Theme ▸ Revert with a missing launch default,
+the hidden no-op Revert, the full-height list and grouped card buttons
+(measured in-process at 211x44, 235x52, 150x40, 120x36 and 80x24), and the
+highlighted-row fill (measured from painted cells under textual-dark,
+textual-light, gruvbox_dark and solarized_light). Pinned by pilot tests,
+not driven live.*

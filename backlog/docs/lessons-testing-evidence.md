@@ -1,5 +1,42 @@
 # Lessons: what counts as evidence a change works
 
+## A config section code reads from `app_config` must be copied in `load_settings()`
+
+**TASK-32954, 2026-09-25.** The built-in skills' off switch reads
+`[skills] disabled_builtins` from the in-memory `app_config`. The Library
+**Enabled** switch updated that dict and saved `config.toml`, and every unit
+test passed -- they all seeded `app_config["skills"]` by hand. Only the Task 7
+live restart check caught it: a disabled built-in came back after restart,
+because `_load_settings_uncached` builds `app_config` from an explicit list of
+sections and `[skills]` was not in it, so the saved value was on disk but never
+loaded. Adding `"skills": copy.deepcopy(toml_config_data.get("skills", {}))`
+fixed it, pinned by `Tests/Skills/test_builtin_skills.py::
+test_persisted_disabled_builtins_reach_app_config_after_restart` (writes the
+TOML, reloads, reads the setting). When new code reads a section from `app_config`, check the section is
+in `load_settings()`'s returned dict and test through a real save-then-load, not
+a hand-seeded dict.
+
+## Tests/UI `RecoveryRequired` at setup is a profile-selection trip, not a broken test
+
+**TASK-32954, 2026-09-25.** Task 5's `Tests/UI/test_personas_character_changed.py`
+failed at fixture setup with `RecoveryRequired: raw_source_selection_changed`
+(ADR-126) before any test body ran: `Tests/UI/conftest.py`'s autouse fixture
+imported `tldw_chatbook.app` for the first time inside the per-test
+`isolate_test_environment` sandbox, where the bound config selection no longer
+matches. Importing `tldw_chatbook.app` at module scope (collection time) fixed
+it. That is not a bypass of the guard: it moves WHEN the import-time config
+reads happen to before the per-test redirect, exactly what the root
+`Tests/conftest.py` already does for `tldw_chatbook.Chunking` (TASK-32908).
+It is not enough for a mounted app, though. Task 8's mounted Console UAT still
+tripped inside the test body, because `_build_test_app` calls `load_settings()`
+and `load_cli_config_and_ensure_existence(force_reload=True)` re-reads config
+under the sandbox -- the same failure `test_console_watchlists_mounted_uat.py`
+shows on clean `origin/dev`. Wrapping the test in `Tests/private_profile.py`'s
+`@private_profile_test` (a fresh profile selected before a child pytest
+collects) made it run and pass locally. Pick the cheapest fix that matches
+where the config read happens: collection-time import for import-time reads,
+`@private_profile_test` for tests that build or reload app config.
+
 ## Executable QA documentation can retain removed production imports
 
 **TASK-32882, 2026-09-21.** A native MCP launch stopped before app startup because
@@ -1730,6 +1767,21 @@ released, and a writer still completes while the snapshot is open. A passing
 shredding test obtained by changing journal mode is not sufficient evidence.
 
 ---
+
+## An empty WAL reader can invalidate a content-free negative cache forever
+
+**TASK-31504, 2026-09-05.** Personal Context's first absent-status cache compared
+all DB/WAL/SHM metadata. A real WAL-mode regression closed the last SQLite reader
+between sends: opening recreated an empty WAL and SHM, and closing retired them.
+Every send therefore invalidated the cache even though no profile had been set up.
+Normalizing empty WAL/journal artifacts and excluding SHM coordination metadata
+from the change token fixed the regression while retaining sidecar owner/privacy
+checks. A second test pinned a reader while another service created the profile;
+the main DB mtime stayed unchanged and the WAL change correctly invalidated absence.
+
+**What to do.** Test negative caches with both last-reader cleanup and committed
+WAL-only writes. Coordination-file churn is not a committed-data change, but
+database-only metadata misses real committed state.
 
 ## An outer SQLite rollback cannot undo a write committed by another database
 
@@ -16253,6 +16305,41 @@ scheduled animations and asserts the unchanged Pilot mouse click actually hits.
 No retry or direct-handler bypass is involved. Also assert a Failed outcome in
 redaction tests: absence-only checks had accepted the empty, never-run result.
 
+### A sibling asymmetry is not a defect until you read the odd one out's contract (TASK-32902)
+
+**What happened.** The tier-2 review filed three P3s of the shape "this call
+site does X and its siblings do Y". Three times the recommended Y would have
+broken something:
+
+- `Notes/notes_sync_executor._run_keep_both` omits the
+  `_persist_attention_best_effort(..., "cancelled_after_admission")` its two
+  sibling run paths do on `CancelledError`. Adding it turned
+  `test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_resumes`
+  [binding_update] and [final_verification] red with
+  `RuntimeError("recovery_authority_changed")`: keep-both carries its late
+  progress in `operation.state`, and `reconstruct_request` only tolerates a
+  binding that no longer matches the reviewed one while that state is
+  `BINDING_UPDATED`/`VERIFIED`. Writing `NEEDS_ATTENTION` over it makes a
+  cancelled late-substage operation unresumable.
+- `Media/local_media_reading_service.save_reading_item` commits the media row
+  and the read-it-later flag in two transactions; "wrap both in one
+  `db.transaction()`" looks like a four-line fix, because
+  `MediaDatabase.transaction()` is nesting-aware. But
+  `add_media_with_keywords` dispatches post-ingest callbacks **after** its
+  transaction commits, by documented contract. An outer transaction runs every
+  registered callback on uncommitted data.
+- `Notes/file_notes_replica._utc_now` should "adopt `Utils.timestamps.utc_now_iso`".
+  Measured: canonical is `...563Z`, the replica writes `...563880+00:00`, and
+  `'Z' (0x5A) > '8' (0x38)`, so every new row sorts after every old row in the
+  `ORDER BY deleted_at` that `list_deleted` runs. Adopting the helper without a
+  read-side migration *creates* the mixed-shape column ADR-173 exists to prevent.
+
+**What to do.** Before "making it consistent", grep for the tests that pin the
+odd one out and read what the *other* side of its contract requires — a state
+machine it feeds, a post-commit callback, a stored shape something orders by.
+The asymmetry is often the thing holding the contract up. And when a proposed
+fix turns a passing test red, the test is the default winner until you can say
+precisely why it is wrong.
 ## `git stash push <path>` + `git stash pop` is not a safe revert-and-restore (task-32901)
 
 **Incident.** Watching a test go red before a fix means running it against the
@@ -16469,3 +16556,190 @@ the artifact, before claiming the engine works. For a new provider in an
 existing pipeline, drive one request through the real admission and
 persistence layers: both defects above lived in code the provider's own tests
 never touched.
+
+### A timing assertion can fail consistently without being your regression (TASK-18930)
+
+**What happened.** Adding the Prompts DB v5 Draft Shelf migration prompted a
+broader `Tests/Prompts_DB` run. The legacy
+`test_concurrent_updates_to_same_prompt` failed because both unversioned
+updates succeeded; five immediate reruns on the feature branch failed the same
+way. That looked like a schema regression until the exact base commit
+(`461668df00`) was checked out in a detached worktree: the same test failed
+5/5 there too. A different, older developer checkout passed 5/5, which would
+have been misleading baseline evidence because it was not the branch point.
+
+**What to do.** Compare suspicious regression failures against the exact base
+commit, not whichever checkout is convenient. For concurrency tests, also
+inspect whether the test supplies an explicit version/barrier at the mutation
+boundary or merely hopes two operations overlap. This test passes no
+`expected_version`; a scheduler may legitimately let the second transaction
+read the first transaction's committed version, so its conflict expectation
+is timing-dependent. Record the exact-base result, exclude only that named
+baseline case for the remaining regression sweep, and do not broaden the
+feature to repair unrelated concurrency semantics.
+
+### A model-default save test through `apply_console_default_intent` is red in a clean worktree (TASK-33001.2)
+
+**What happened.** The first AC#9 test for TASK-33001.2 wrote a scratch
+`config.toml`, pointed `TLDW_CONFIG_PATH` at it and called
+`apply_console_default_intent`. It failed with `file_replaced is False`, and so
+does the existing `test_quick_save_patches_only_temperature_and_streaming` at
+BASE: the log says `Configuration mutation failed (phase=lock, ...,
+error_type=RecoveryRequired)`. It is the ADR-126 admission gate, not the
+feature. The failure looks like "the writer refused the save", so it is easy to
+misread as RED evidence for a writer change.
+
+**What to do.** Drive the writer at its gate-free seam: build the mutation with
+`console_settings_defaults._build_locked_default_mutation(intent, provider,
+model, AtomicLiteralMutationSnapshot(generation=1, raw_values=cfg,
+effective_values=cfg))`, then merge it into a deep copy with
+`config._apply_literal_mutation_unlocked(copy, mutation)`. That is the same
+builder and the same merge the locked transaction runs, so the resulting dict is
+what the file would hold. Keep the full `apply_console_default_intent` tests for
+CI, and never count their local `False is True` as RED. The same session found
+a fourth copy of the "is this field supported" decision hiding in Settings'
+form reader (`_provider_form_values_from_widgets` blanked reasoning effort for
+every provider but OpenAI; read from the code, Moonshot and Z.ai reasoning
+edited in Settings was never saved, and a saved value was dropped by the next
+save). When you replace a duplicated projection, grep for every
+place that answers the question, not just the functions named after it.
+
+### A drift guard that drives an unreferenced builder stays green while production drifts (TASK-33001.2 fix round 1)
+
+**What happened.** TASK-33001.2's AC#7 table test, and the "never sent" halves
+of its AC#9/#10 tests, measured `ConsoleProviderGateway._chat_api_kwargs`. Their
+docstrings said "the real send path". `grep -rn "_chat_api_kwargs\b"
+tldw_chatbook` finds only the `def`: real sends build kwargs in
+`_chat_api_kwargs_from_prepared` and `_auxiliary_chat_api_kwargs`. The three
+builders carried identical lines that day, so every assertion was right, and
+the guard was still blind: after rewiring it to the production builders,
+dropping `"minp"` from `_chat_api_kwargs_from_prepared` fails 99 cases,
+dropping it from the auxiliary builder fails 11, and dropping it from the
+unreferenced builder fails none.
+
+**What to do.** Before a test claims to measure the real path, grep the
+production call sites of the function it drives, and run one mutant on the
+production function to prove the test sees it.
+
+### "CI-only" mounted Settings tests run locally under the file's own wrapper (TASK-33001.2 fix round 1)
+
+**What happened.** TASK-33001.2 rewrote three mounted pins in
+`Tests/UI/test_settings_configuration_hub.py` and reported them as CI-only,
+because they fail locally at `_build_test_app()` with ADR-126
+`RecoveryRequired: raw_source_selection_changed`. The same file already
+imports `private_profile_test` and uses it on 29 tests. Adding
+`@private_profile_test` and a `request` parameter ran all three locally
+(3 passed in 16 s), and restoring the old writer's `pop` made the Anthropic pin
+fail, so the wrapper runs the real assertions.
+
+**What to do.** When a Tests/UI case fails with `raw_source_selection_changed`
+in setup, check whether its file already uses `private_profile_test` before
+calling it CI-only. The wrapper adds isolation (a fresh profile in a child
+pytest); it does not bypass the gate.
+
+### A config seeded into `app.app_config` in place stops being the config after Console mounts (TASK-33001.5)
+
+**What happened.** TASK-33001.5 removed the readiness gates from the
+untouched-chat refresh, which re-derives defaults from the fresh-config seam
+(`_provider_readiness_app_config` -> `load_settings()`). Fifteen mounted
+Console tests went red. In eleven, an untouched chat showed the template's
+`OpenAI / gpt-5.6-terra` instead of the provider the test had seeded with
+`app.app_config["chat_defaults"] = ...`. The seed lived only in
+the snapshot. Console writes its rail state to the config file on mount, that
+write swaps `load_settings()`'s cache, and from then on every fresh-config
+seam reads the file. The old gates hid this: a Ready chat, or a blocked chat whose template
+target could not send either, was never re-derived. `Tests/UI/app_factory.py`'s own docstring already names this
+"one seam in that armour".
+
+Two details cost a round each. Deleting a key from the file does not make it
+absent: `load_settings()` merges the shipped template under the file, so a
+seeded `chat_defaults` with no `model` came back with the template's model.
+Seed an empty string instead. The other four were mounted first-chat tests
+whose snapshot was monkeypatched away from the real config, and they showed a
+real interplay: the refresh moved the handoff's freshly created target inside
+the handoff's own transaction, so its rollback fence no longer matched. That
+one was a production fix, not a fixture fix.
+
+A whole-file comparison also flagged two unrelated tests. The cause was a
+side change that made the 0.2 s draft-sync poll cheaper, which exposed their
+timing races. Reverting that change cleared both.
+
+**What to do.** When a mounted test needs a provider, persist it
+(`persist_seeded_config(app, "chat_defaults", "api_settings.<p>")`, or the
+`_persist_console_provider_config` helper in `test_console_native_chat_flow.py`)
+rather than seeding the snapshot. When a change makes a fresh-config seam
+matter more, expect this class of failure and measure it over whole files:
+export BASE and HEAD to scratch trees, wrap every module-level test in
+`private_profile_test` there, and compare failing-name sets. Keep
+`Tests/ProductionApp/` out of that pytest invocation: its conftest binds
+config at startup and every Tests/UI module then fails collection with
+`RecoveryRequired`.
+
+### "CI's unwrapped run is the final word" is false for Tests/ProductionApp (TASK-33001.6 fix round 1)
+
+**What happened.** TASK-33001.6 rewrote two tests in
+`Tests/ProductionApp/test_provider_selection_ownership.py`. Run on its own, the
+file does not collect. Its conftest rewrites `TLDW_CONFIG_PATH` at import, so
+the module-scope `import tldw_chatbook.app` raises `RecoveryRequired`. So the
+tests were run only as wrapped scratch copies, and the review deferred to "CI's
+unwrapped shard". Reproducing CI's order locally showed that shard proves
+nothing. Pass `Tests` as the root argument, with every directory but `App` and
+`ProductionApp` ignored and `-k` selecting the file, so the app is imported
+before this conftest loads. The file then collects, and all 3 tests fail in
+`_production_app` setup (`save_values` returns False, log `Configuration
+mutation failed (phase=lock, ..., error_type=RecoveryRequired)`). That result is
+identical at BASE and HEAD. Adding the `bootstrap_profile` marker in scratch made
+all 3 pass (rider TASK-33001.11).
+
+**What to do.** Before deferring a test to CI, run it in CI's collection order,
+not as a lone file: explicit file arguments load every named directory's conftest
+at startup, which changes what fails. If CI fails it in setup at BASE too, CI is
+not evidence. Then the wrapped copy is the only evidence, so prove it runs the
+real assertions: diff the copy against the original (only the wrapper lines may
+differ), then make one production mutant per test and watch each copy fail on
+its own assertion.
+
+### A config section read right after a save is not the durable state (TASK-33001.7 fix round 1)
+
+**What happened.** TASK-33001.7 made a keyless llama.cpp save drop the shipped
+template's `api_key_env_var = "LLAMA_CPP_API_KEY"`. The real-writer test read
+the TOML back right after the save, and the live run copied the section in
+the same second as the save toast: both showed the name gone. Re-inspecting
+the scratch profile in the review round found `config.toml` rewritten 12 s
+later, at quit, with the name back. The runtime config is the shipped template deep-merged
+under the file (`config.py`, `deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, ...)`),
+and `persist_cli_config_for_shutdown` writes that merge back to disk. So a
+deleted template key reappears in memory at the next reload and on disk at the
+next quit, and Settings showed "Env var: LLAMA_CPP_API_KEY" again after a
+restart. Only the explicit `credential_source = "none"` kept the name inert
+for `resolve_provider_credential`. With that line stripped after the save, the
+name came back, the variable was exported, and the key resolved:
+`('sk-exported-later', 'env:LLAMA_CPP_API_KEY')`.
+
+**What to do.** When a fix deletes a config key, check the key against the
+template (`config.py` `CONFIG_TOML_CONTENT`). If the template ships it, the
+deletion cannot stick. The fix has to be an explicit value that outranks it.
+Pin that value after `persist_cli_config_for_shutdown()` and a
+`load_cli_config_and_ensure_existence(force_reload=True)`, not only after the
+save, and read the live profile's config after the app quits, not only after
+the toast.
+
+### "Still asks under Allow" was never true for an explicit Allow (TASK-32956, 2026-09-27)
+
+**What happened.** The TASK-32954 spec listed "`mutates` save still asks under
+Allow" as a provider test, and TASK-32956's AC#3 called it "mutates floor
+unchanged". No test covered it. `permission_store.resolve_effective_state`
+floors only an INHERITED allow ("Explicit tool-level allow is never floored"),
+and ADR-183 keeps explicit grants authoritative. The gap stayed hidden because
+the character tools had no Hub row, so nobody could set an explicit Allow on
+them. TASK-32956 added the rows, and the new end-to-end test showed an
+explicit Allow on `character_save` returning `pending_gate_for(...) is None`,
+so the save ran with no card. `ALWAYS_ASK_TOOLS` in `permission_store.py` now
+floors that one tool.
+
+**What to do.** A claim that a floor holds "under Allow" has two cases,
+inherited Allow and explicit tool-level Allow. They take different branches,
+so test both. Drive the explicit case through the Hub's own write path
+(`service.set_tool_state(..., tool=row)`), then through the Console provider's
+own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
+built-ins and inherited defaults, not an explicit override.

@@ -71,6 +71,8 @@ BUILTIN_TOOL_NAMES = [
     "create_note",
     "search_notes",
     "list_characters",
+    "create_character",
+    "update_character",
     "get_conversation_history",
     "export_conversation",
 ]
@@ -1327,6 +1329,7 @@ async def _assert_local_refusal(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_running_adapter_reloads_permissions_and_kill_switch_each_call(
     tmp_path,
 ) -> None:

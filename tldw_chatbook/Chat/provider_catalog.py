@@ -14,10 +14,13 @@ from __future__ import annotations
 PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "anthropic": "Anthropic",
     "aphrodite": "Aphrodite Engine",
+    "cerebras": "Cerebras",
     "cohere": "Cohere",
     "custom": "Custom OpenAI-compatible",
     "custom_2": "Custom OpenAI-compatible #2",
+    "databricks": "Databricks",
     "deepseek": "DeepSeek",
+    "fireworks": "Fireworks",
     "google": "Google Gemini",
     "groq": "Groq",
     "huggingface": "Hugging Face",
@@ -38,6 +41,7 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "openrouter": "OpenRouter",
     "qwencloud": "QwenCloud",
     "tabbyapi": "TabbyAPI",
+    "together": "Together",
     "vllm": "vLLM",
     "zai": "Z.ai",
 }

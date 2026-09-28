@@ -44,6 +44,14 @@ class RuntimeBindingKind(str, Enum):
     """Runtime resource type attached to a workspace."""
 
     LOCAL_FILESYSTEM = "local-filesystem"
+    # SSH remote directory bound with LOCAL_FILESYSTEM-style agent
+    # semantics (same tools, admission, consent flows). A distinct kind —
+    # not the reserved REMOTE_RUNTIME, which means "the agent *runtime*
+    # executes remotely" (future VM/container runtimes). Spec:
+    # ``Docs/superpowers/specs/2026-09-24-ssh-remote-workspace-bindings-design.md``
+    # ("Binding model & data layer"); no schema migration — the registry
+    # stores ``binding_kind`` as text.
+    SSH_FILESYSTEM = "ssh-filesystem"
     GIT_WORKTREE = "git-worktree"
     CONTAINER = "container"
     VM = "vm"

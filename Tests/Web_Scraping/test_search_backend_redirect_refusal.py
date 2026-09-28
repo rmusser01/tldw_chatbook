@@ -49,6 +49,13 @@ class FakeResponse:
     headers = {"Content-Type": "application/json"}
     text = ""
     content = b"{}"
+    is_redirect = False
+
+    def iter_content(self, chunk_size: int = 65536):
+        yield self.content
+
+    def close(self) -> None:
+        return None
 
     def json(self) -> dict:
         return _PAYLOAD
@@ -157,6 +164,12 @@ _CREDENTIALED = (
 )
 
 
+#: The shared transport the credentialed backends route through (#2800). A
+#: call to it counts as refusing redirects only because the helper itself
+#: passes the literal kwarg -- which the census checks too.
+_HELPER = "_credentialed_search_request"
+
+
 def _request_calls(func_name: str) -> list[ast.Call]:
     source = inspect.getsource(getattr(WebSearch_APIs, func_name))
     tree = ast.parse(source.lstrip())
@@ -164,10 +177,31 @@ def _request_calls(func_name: str) -> list[ast.Call]:
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"get", "post"}
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr in {"get", "post"})
+            or (isinstance(node.func, ast.Name) and node.func.id == _HELPER)
+        )
         and any(kw.arg == "headers" for kw in node.keywords)
     ]
+
+
+def _passes_allow_redirects_false(node: ast.Call) -> bool:
+    kwarg = next((kw for kw in node.keywords if kw.arg == "allow_redirects"), None)
+    return (
+        kwarg is not None
+        and isinstance(kwarg.value, ast.Constant)
+        and kwarg.value.value is False
+    )
+
+
+def test_the_shared_transport_refuses_redirects() -> None:
+    tree = ast.parse(inspect.getsource(getattr(WebSearch_APIs, _HELPER)))
+    transport = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _passes_allow_redirects_false(node)
+    ]
+    assert transport, f"{_HELPER} no longer passes allow_redirects=False"
 
 
 @pytest.mark.parametrize("func_name", _CREDENTIALED)
@@ -175,8 +209,8 @@ def test_every_credentialed_call_site_passes_the_kwarg(func_name: str) -> None:
     calls = _request_calls(func_name)
     assert calls, f"{func_name}: no headers-carrying request call found"
     for node in calls:
-        kwarg = next(
-            (kw for kw in node.keywords if kw.arg == "allow_redirects"), None
+        if isinstance(node.func, ast.Name) and node.func.id == _HELPER:
+            continue  # pinned by test_the_shared_transport_refuses_redirects
+        assert _passes_allow_redirects_false(node), (
+            f"{func_name}:{node.lineno} has no allow_redirects=False"
         )
-        assert kwarg is not None, f"{func_name}:{node.lineno} has no allow_redirects"
-        assert isinstance(kwarg.value, ast.Constant) and kwarg.value.value is False

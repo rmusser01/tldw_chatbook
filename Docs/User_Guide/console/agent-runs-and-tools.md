@@ -103,11 +103,30 @@ when the call finishes. Missing usage and an explicit provider count of zero
 show no segment. Live counts do not include a price estimate and are separate
 from the completed run's budget-token accounting.
 
-**In the transcript** — inline `Tool` rows appear between your message and the
-reply:
+**In the transcript** — each complete primary tool call appears inside its
+Assistant turn as soon as the model proposes it. The same row changes from
+**Queued** to **Awaiting approval** when a decision is actually pending, then
+**Running** with elapsed execution time. Completion shows the outcome and a
+short result preview immediately, without waiting for the assistant's final
+answer. Denied, failed, timed-out, and stopped calls remain visible.
 
-- `⚙ toolname → result preview` — a tool call and a preview of its result,
-  truncated with an `… (+N chars)` suffix past the display cap.
+The collapsed preview takes at most three wrapped lines, including an omission
+hint when needed. Click the row, or focus it and press **Enter** or **Space**, to
+expand **Arguments** and **Result** together. Details stay open as the call
+finishes; existing full-output and file-diff actions remain available. **Review
+approval** takes you to the existing approval card. Calls with the same tool
+name keep separate rows.
+
+Arguments and timing are live-session details; reopened runs show the facts
+already retained by the existing capture policy. Output chunks from ordinary
+tools are not streamed in this version. Raw shell commands keep their existing
+process status and live output details. Expanded shell calls also show the resolved
+shell, working directory, elapsed time, exit code, truncation, and cleanup status.
+If a run ends before a shell result arrives, its row stops updating and explains
+that process cleanup is unknown; any received executor result remains visible.
+
+Other activity rows include:
+
 - `⤷ spawned sub-agent: …` — the agent delegated work to a sub-agent.
 - `⚠ …` — an error summary.
 
@@ -1871,6 +1890,59 @@ appears above the transcript:
   **Deny**, and the note: "It runs with a scrubbed environment in a temporary
   folder (not the skill's own folder); only its output comes back."
 
+### Creating and editing characters
+
+Ask in plain words: "make me a character who runs a night market stall", or
+"make Aria more sarcastic and give her a new avatar". The built-in
+**Character Creator** skill (`$character-creator`, on by default — see
+Library ▸ Skills) steers the assistant: for a new character it asks up to
+five short questions, drafts every field (description, personality,
+scenario, first message, example messages, optional system prompt), shows
+you the whole draft, and revises until you say it is good. For an edit it
+finds the card, reads it, proposes a before/after, and changes only what you
+asked for.
+
+Three tools do the work:
+
+- `character_search` — find or list your character cards.
+- `character_get` — read one card's editable fields. A field longer than
+  about 1,000 characters is shortened in the full-card read and read in
+  pages; the assistant cannot change such a field until it has read all of
+  it.
+- `character_save` — create a card, or update one. An update names the card's
+  version, so a card changed elsewhere since the assistant read it is never
+  silently overwritten ("re-read with character_get").
+
+**Every save asks for approval.** The card shows create or update, the
+character's name, which fields change and their sizes, and the avatar action
+— never the field text itself; you already read the draft in the chat. The
+save keeps asking even if you set it to Allow, and its card offers only
+**Approve once** and **Deny** — no "This session" or "Always", so the next
+save asks again. The two read tools use your
+normal permission level (Ask by default, so each read also shows a card); to
+stop that, set `character_search` and `character_get` to **Allow** in
+**MCP ▸ Permissions** (local tools group).
+
+**Avatars.** The assistant can generate an avatar with your configured Image
+Generation backend (the card notes that paid backends may cost money), use an
+image file you name, or remove the current one. If the avatar fails, the text
+is still saved and the reply says what went wrong.
+
+**Local only.** Character tools edit the characters on this computer. In a
+chat whose runtime is a tldw server they refuse: "Character editing is
+local-only; switch this chat to local to create or edit characters."
+
+After a save, the character is ready in Roleplay; if the Personas screen is
+open on that character it reloads it. If you have unsaved edits there, it
+keeps them and says the character was changed from the Console: **Cancel**
+loads the new version, and **Save** is refused once ("Save again to overwrite
+that version with your edits") so the Console's change is never overwritten
+silently.
+
+**Turning them off.** The tools are gated by `character_tools_enabled` under
+`[tools]` (default on). The switch is also in the MCP hub: Servers ▸ built-in
+source ▸ Tool gates ▸ **Character cards (character_\*)**.
+
 ### Chat creation tools (fork_chat / new_chat)
 
 An agent can prepare a parallel workstream for you instead of tangling two
@@ -2799,3 +2871,11 @@ by the targeted sweep: `Tests/Agents/test_agent_chat_create_tools.py`,
 live-tmux walkthrough: live verification of the rendered card, the toast,
 and the restart draft persistence remains open and is recorded as such in
 the task's notes.)*
+
+*Verified against feat/character-card-tools @ d35ffeaa04 — 2026-09-25
+(TASK-32954: "Creating and editing characters" added — the `character_*`
+tools, approval-per-save with a text-free summary card, avatars, local-only
+refusal, and the `[tools] character_tools_enabled` gate; confirmed by the
+mounted run `Tests/UI/test_console_character_tools_mounted_uat.py`, which
+drives search → save → approve through the real Console and checks the saved
+card, its avatar, and the Personas refresh message.)*

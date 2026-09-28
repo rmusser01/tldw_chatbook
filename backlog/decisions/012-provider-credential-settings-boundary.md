@@ -1,6 +1,6 @@
 # ADR 012: Provider Credential Settings Boundary
 
-Status: Accepted
+Status: Accepted (amended 2026-09-26: explicit key check by model listing)
 Date: 2026-06-30
 Related Task: [backlog/tasks/task-145 - Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md](../tasks/task-145%20-%20Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md)
 Supersedes: N/A
@@ -143,9 +143,91 @@ is untouched.
 assertion. It was rewritten to the ruling rather than deleted, and a
 companion test pins the fallback, so both halves of the order are asserted.
 
+## Amendment 2026-09-26: explicit key check by model listing (model-config redesign, D2)
+
+The model-configuration review of 2026-09-26 found that Settings "Test
+Provider" never checks a cloud key. For OpenAI it reports:
+
+    OpenAI configuration is complete. Credential is present; provider
+    acceptance has not been tested.
+
+That text comes from `settings_screen.py:15247-15251`, and a fake key passes.
+Only URL-based providers get a live probe: `_provider_live_probe_base_url`
+returns "" for everything else. The behaviour is by design. This ADR's
+Consequences exclude provider-specific secret validation, and TASK-386's copy
+calls the action a local readiness check. The button still says "Test",
+though, and a test that cannot fail on a wrong key is the Settings surface's
+worst status problem (`qa/model-config-ux-review-2026-09-26/report.md`).
+
+**Ruling: in Settings ▸ Providers & Models, `t` on a cloud provider runs one
+explicit, non-generating, authenticated model listing and reports what it
+proved: "key accepted (models listed); generation not tested". Cloud providers
+are never probed automatically.**
+
+This narrows the Consequences sentence "This ADR does not introduce ...
+provider-specific secret validation" without removing it. The check is the
+provider's own authentication of one listing request, made when the user asks
+for it. It is not a local validator of key format. Encrypted storage and
+keyring migration stay out of scope.
+
+The rules:
+
+- **Explicit only.**
+  - The check runs only when the user presses `t` or its button.
+  - Nothing else triggers it: not opening Settings, not editing or saving the
+    key, not opening the Console model switcher, not startup.
+  - ADR-020's consent-gated catalog refresh is unchanged, and it is not a key
+    check. Its results never show a key as verified.
+- **Non-generating.**
+  - One model-listing request goes through the existing discovery client,
+    `LLM_Provider_Catalog/openai_compatible_model_discovery.py`. That client
+    already sends Anthropic's `x-api-key` and maps 401/403 (`:726-737`).
+  - There is no completion call. The paid 1-token test stays a separate,
+    consented action.
+- **Same destination, same credential.**
+  - The request goes to the endpoint the spend path would use for the draft
+    under test, with the credential that path would use, resolved by the
+    precedence in the 2026-09-19 amendment. The key goes nowhere a send would
+    not already take it.
+  - The check never saves the draft.
+- **Honest words.** The result carries the shared readiness vocabulary:
+
+  | Outcome | Shown as |
+  |---|---|
+  | The listing returns models | `Ready · verified HH:MM`, with "key accepted (models listed); generation not tested" |
+  | 401 or 403 | `Not ready · key rejected` |
+  | Connection refused or timed out | a distinct `Not ready` reason |
+  | The listing needs no key (OpenRouter's catalog is public, per ADR-020) | "models listed; key not checked". Never "accepted" |
+  | The provider has no listing endpoint | today's local readiness check, labelled as local |
+- **Nothing persists.**
+  - The result lives only in process memory, keyed by the draft identity, and
+    any semantic edit invalidates it.
+  - No result, key or response body is persisted, logged or displayed.
+    Messages stay closed and secret-safe, as for the web search Test above.
+
+Alternatives rejected:
+- **Keep the local-only check under a "Test" label.** The label promises a key
+  check that never happens.
+- **Probe automatically on edit, save or switcher open.** That spends provider
+  rate limits and contacts a third party without a user action. ADR-020
+  needed a consent gate for exactly this.
+- **Use a 1-token generation as the key check.** It costs money and needs
+  consent, and a listing proves the key without generating anything.
+- **Validate the key's format locally.** That says nothing about whether the
+  provider accepts the key.
+
+Unchanged:
+- Settings remains the only place credentials are entered. Owner decision D4
+  of the same redesign reaffirms this: there is no inline key entry in
+  Console.
+- Console still only surfaces blockers and routes recovery to the exact
+  Settings credential control.
+- Key precedence (2026-09-19) is unchanged.
+
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-06-30-provider-credentials-console-setup-polish-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-06-30-provider-credentials-console-setup-polish.md)
 - [ADR 006: Provider-Aware Generation Settings](006-provider-aware-generation-settings.md)
 - [ADR 011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
+- [Model configuration redesign spec (2026-09-26 amendment)](../docs/spec-2026-09-26-model-config-redesign.md)

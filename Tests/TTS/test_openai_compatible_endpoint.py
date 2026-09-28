@@ -477,10 +477,20 @@ async def test_none_auth_does_not_read_or_send_any_credentials(monkeypatch) -> N
     def reject_lookup(*_args, **_kwargs):
         raise AssertionError("credential lookup is forbidden in none mode")
 
-    monkeypatch.setattr("tldw_chatbook.TTS.backends.openai.os.getenv", reject_lookup)
+    # TASK-32894: the backend stopped hand-rolling its lookup (it read
+    # `os.getenv` first, inverting ADR-012's precedence) and now calls the
+    # shared `config.get_api_key`. That accessor is the seam to poison here;
+    # `os.getenv` is no longer imported by this module at all.
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.backends.openai.get_api_key", reject_lookup
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.backends.openai.resolve_provider_api_key", reject_lookup
+    )
     monkeypatch.setattr(
         "tldw_chatbook.TTS.backends.openai.get_cli_setting", reject_lookup
     )
+    monkeypatch.setattr("os.getenv", reject_lookup)
     monkeypatch.setattr(
         "tldw_chatbook.config.load_cli_config_and_ensure_existence", reject_lookup
     )

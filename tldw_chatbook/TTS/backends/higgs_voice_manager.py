@@ -11,7 +11,6 @@ from tldw_chatbook.TTS.backends.voice_manager_base import VoiceManagerBase
 #
 # Imports
 import json
-import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
@@ -485,72 +484,6 @@ class HiggsVoiceProfileManager(VoiceManagerBase):
             logger.error(f"Error restoring backup: {e}")
             return False, f"Error: {str(e)}"
 
-
-# Utility functions for command-line usage
-async def create_voice_profile_cli(
-    manager: HiggsVoiceProfileManager,
-    profile_name: str,
-    audio_path: str,
-    display_name: Optional[str] = None,
-    language: str = "en",
-    description: Optional[str] = None,
-):
-    """Command-line interface for creating voice profile"""
-    success, message = manager.create_profile(
-        profile_name=profile_name,
-        reference_audio_path=audio_path,
-        display_name=display_name,
-        language=language,
-        description=description,
-    )
-    print(message)
-    return success
-
-
-async def list_voice_profiles_cli(
-    manager: HiggsVoiceProfileManager, tags: Optional[List[str]] = None
-):
-    """Command-line interface for listing voice profiles"""
-    profiles = manager.list_profiles(tags=tags)
-
-    if not profiles:
-        print("No voice profiles found")
-        return
-
-    print(f"\nFound {len(profiles)} voice profile(s):\n")
-    for profile in profiles:
-        print(f"  {profile['name']} - {profile['display_name']}")
-        print(f"    Language: {profile['language']}")
-        if profile["description"]:
-            print(f"    Description: {profile['description']}")
-        if profile["tags"]:
-            print(f"    Tags: {', '.join(profile['tags'])}")
-        if profile["audio_duration"] > 0:
-            print(f"    Duration: {profile['audio_duration']:.1f}s")
-        print()
-
-
-# Example usage
-if __name__ == "__main__":
-    # Example of using the voice manager
-    async def main():
-        manager = HiggsVoiceProfileManager(
-            Path("~/.config/tldw_cli/higgs_voices").expanduser()
-        )
-
-        # List profiles
-        await list_voice_profiles_cli(manager)
-
-        # Example of creating a profile (commented out)
-        # await create_voice_profile_cli(
-        #     manager,
-        #     profile_name="my_voice",
-        #     audio_path="/path/to/reference.wav",
-        #     display_name="My Custom Voice",
-        #     description="A friendly voice for general use"
-        # )
-
-    asyncio.run(main())
 
 #
 # End of higgs_voice_manager.py

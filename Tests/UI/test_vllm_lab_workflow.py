@@ -2753,7 +2753,7 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         assert app.current_tab == TAB_CHAT
         assert type(app.screen).__name__ == "ChatScreen"
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
-        assert app.screen.current_console_provider_for_command() == "vllm"
+        assert app.screen._session._active_console_session_settings().provider == "vllm"
 
         # TASK-31809 (Qodo): the fresh-screen profile load blocks a worker
         # thread on release_second_load until the mid-test set() below. If any

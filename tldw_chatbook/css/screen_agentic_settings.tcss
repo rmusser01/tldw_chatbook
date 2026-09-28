@@ -206,6 +206,7 @@ $ds-widgets-skeleton-title-share: 60%;
 $ds-messages-scroll-cap: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 $ds-console-frame: #6f7782;
+$ds-tool-preview-max-height: 3;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -615,9 +616,19 @@ Button.settings-category-group-toggle:focus {
     margin: $ds-space-0;
 }
 
+/* TASK-32948: Appearance's read-only Theme summary shares its row with the
+   Open Theme button; a full-width detail row would push the button past the
+   card edge (under the inspector, unclickable). */
+#settings-appearance-theme-summary {
+    width: $ds-width-fill;
+}
+
 /* Interface subviews must grow with their forms so the detail pane owns
-   scrolling, including stacked Theme actions and the Splash gallery. */
+   scrolling, including stacked Theme actions and the Splash gallery.
+   TASK-32948: the editor now sits in the ThemePane's editor view, which
+   must grow with it too (a 1fr Vertical there clips the editor). */
 #settings-theme-editor,
+#settings-theme-editor-view,
 #settings-splash-screen-viewer {
     height: auto;
 }
@@ -651,10 +662,6 @@ Button.settings-category-group-toggle:focus {
 .settings-workbench-compact #settings-appearance-card > .settings-input-row > Select,
 .settings-workbench-compact #settings-splash-default-select {
     width: $ds-width-full;
-}
-
-.settings-workbench-compact #settings-theme-tree {
-    height: $ds-size-8;
 }
 
 /* A stacked gallery gives compact terminals a useful card list and preview

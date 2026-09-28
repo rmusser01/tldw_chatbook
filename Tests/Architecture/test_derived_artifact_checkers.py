@@ -25,12 +25,6 @@ def _inventory(**overrides) -> dict:
         "scope": "tldw_chatbook/**/*.py",
         "classification_rules": {"TASK-492": {"prefixes": ["tldw_chatbook/Chat/"]}},
         "reviewed_exclusions": [],
-        "summary": {
-            "owner_files": 2,
-            "task_492_calls": 3,
-            "task_494_calls": 4,
-            "persistent_sink_files": 1,
-        },
         "owners": [
             {
                 "path": "tldw_chatbook/Chat/a.py",
@@ -74,7 +68,6 @@ def test_added_diagnostic_names_the_file_and_the_delta():
     rebuilt = copy.deepcopy(committed)
     rebuilt["owners"][1]["call_count"] = 6
     rebuilt["owners"][1]["diagnostic_digest"] = "dddddddddddddddddddd"
-    rebuilt["summary"]["task_494_calls"] = 6
 
     report = _diff(committed, rebuilt)
 
@@ -609,3 +602,34 @@ def test_statements_on_relative_traversal_does_not_read_outside_the_repo(capsys)
 def test_statements_still_works_for_a_real_in_repo_path():
     """The fix must not regress the ordinary case: a relative in-repo path."""
     assert inventory._run_statements(["scripts/check_backlog_task_ids.py"], None) == 0
+
+
+def test_inventory_summary_derives_every_total_from_rows():
+    assert inventory.inventory_summary(_inventory()) == {
+        "owner_files": 2,
+        "task_492_calls": 3,
+        "task_31551_calls": 0,
+        "task_494_calls": 4,
+        "persistent_sink_files": 1,
+        "path_privacy_candidate_calls": 0,
+    }
+
+
+def test_inventory_summary_tolerates_rows_missing_counts():
+    """A hand-edited or corrupted committed row must not crash the report."""
+    broken = _inventory()
+    del broken["owners"][1]["call_count"]
+
+    assert inventory.inventory_summary(broken)["task_494_calls"] == 0
+
+
+def test_old_schema_committed_file_reports_the_schema_change():
+    """An open PR still carrying a schema-3 file (with stored totals) must get
+    a reviewable drift report naming the schema change, not a crash."""
+    committed = _inventory(schema_version=3, summary={"owner_files": 2})
+    rebuilt = _inventory(schema_version=4)
+
+    report = _diff(committed, rebuilt)
+
+    assert "~ schema_version:" in report
+    assert "--write" in report

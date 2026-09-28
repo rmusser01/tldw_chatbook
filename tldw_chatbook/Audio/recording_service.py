@@ -471,20 +471,9 @@ class AudioRecordingService:
                 logger.warning(f"Sounddevice status: {status}")
 
             if self.is_recording:
-                # Convert float32 to int16
-                if NUMPY_AVAILABLE and np is not None:
-                    audio_data = (indata * 32767).astype(np.int16).tobytes()
-                else:
-                    # Fallback: manual conversion
-                    import struct
-
-                    samples = struct.unpack(
-                        f"{frames * self.channels}f", indata.tobytes()
-                    )
-                    audio_data = b"".join(
-                        struct.pack("h", int(min(32767, max(-32768, sample * 32767))))
-                        for sample in samples
-                    )
+                # __init__ refuses to construct without numpy, so there is no
+                # no-numpy path to fall back to (tier-2 review, slice S07).
+                audio_data = (indata * 32767).astype(np.int16).tobytes()
                 self._process_audio_chunk(audio_data)
 
         try:

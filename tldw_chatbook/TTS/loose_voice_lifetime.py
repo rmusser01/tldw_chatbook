@@ -311,8 +311,22 @@ def copy(receiver, source, destination):
         destination,
         external=not lexical_path(destination).is_relative_to(_root(receiver)),
     )
+    # Bounded at the read, not only at the caller's pre-copy `stat`. The
+    # ceiling `VoiceManagerBase.validate_audio_file` enforces is checked
+    # against a snapshot taken before this reopen, so a source that grew or
+    # was replaced in between would still be pulled whole into one in-memory
+    # payload. Receivers without the attribute (the backends, which copy
+    # files this app already adopted) are unbounded exactly as before.
+    limit = getattr(receiver, "max_reference_audio_bytes", None)
     with open_private_binary(source) as opened:
-        payload = opened.stream.read()
+        if limit is None:
+            payload = opened.stream.read()
+        else:
+            payload = opened.stream.read(limit + 1)
+            if len(payload) > limit:
+                raise ValueError(
+                    f"reference audio exceeds {limit} bytes at copy time"
+                )
     atomic_private_write_bytes(selected, payload)
     operation.changed += 1
     return str(selected)

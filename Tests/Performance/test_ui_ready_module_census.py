@@ -147,7 +147,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Snapshot refreshed via ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
 # TASK-32856: Media_Generation core adds 2 ui-ready residents (measured
 # 1030); limit = measured + the documented +/-1 warm-boot wobble.
-MAX_TLDW_MODULES_AT_UI_READY = 1031
+# ADR-179 (PR #2828): tldw_chatbook.provider_registry is resident at boot
+# (config.py needs CLOUD_PROVIDER_CONFIG_KEYS at import; stdlib-only leaf).
+# hosted_provider_engine was deferred off this path in the same PR; dev
+# measured 1031, this branch 1032. Owner-approved ADR-097 exception.
+#: 1032 -> 1033 (2026-09-27, PR #2838, TASK-33009): owner-approved ADR-097
+#: exception for Tools.remote_root_types, the SSH bindings' LocalRoot |
+#: RemoteRoot descriptors (pure dataclasses; stdlib-only imports). Four
+#: already-resident modules (console_chat_controller, tool_catalog,
+#: workspace_file_roots, project_instruction_resolver/runtime) type-check
+#: against it at ~50 sites, so deferring it is lazy-import surgery in hot
+#: Console code for a microsecond-scale import -- the 1022 -> 1023 reasoning.
+#: The SSH locator module WAS deferred off this path (registry_service).
+MAX_TLDW_MODULES_AT_UI_READY = 1033
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
@@ -163,6 +175,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # TASK-33011: process entry points; reached only via cli.py / `python -m`.
+    "tldw_chatbook.app_entry",
     # Serving metadata discovery is first-use work; pure capacity defaults are not.
     "tldw_chatbook.Chat.console_context_window",
     # Parsing imported notes and assigning settings controls are first-use work.

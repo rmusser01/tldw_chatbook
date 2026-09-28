@@ -730,6 +730,27 @@ def test_provider_source_ui_honors_persisted_explicit_keyless_decision():
     assert screen._provider_current_credential_source("custom") == "none"
 
 
+def test_provider_source_keeps_a_resolving_stored_key_over_a_populated_env_var(
+    monkeypatch,
+):
+    """TASK-33001.13 (Qodo #2847): an untouched legacy section's stored key
+    outranks the template's populated env var (ADR-012), so it reads "stored"."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-unit-canary-33001")
+    screen = _bare_settings_screen(
+        {
+            "api_settings": {
+                "openai": {
+                    "api_key": "sk-stored-unit-canary-33001",
+                    "api_key_env_var": "OPENAI_API_KEY",
+                }
+            }
+        }
+    )
+    screen._provider_draft = lambda: None
+
+    assert screen._provider_current_credential_source("openai") == "stored"
+
+
 def test_findings_show_draft_endpoint_tagged():
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:9099"}}}
     screen = _bare_settings_screen(app_config)
