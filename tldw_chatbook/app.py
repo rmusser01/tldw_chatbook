@@ -124,7 +124,6 @@ from pathlib import Path, PurePath
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_artifact_ownership import (
     CitationArtifactOwnershipCoordinator,
 )
@@ -133,10 +132,6 @@ from tldw_chatbook.Chat.citation_service_factory import (
 )
 from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
-)
-from tldw_chatbook.Chat.console_live_work import (
-    ConsoleLiveWorkLaunch,
-    resolve_console_live_work_primary_action,
 )
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
@@ -185,10 +180,6 @@ from tldw_chatbook.Constants import (
     TAB_WATCHLISTS_COLLECTIONS,
     TAB_WORKFLOWS,
     TAB_WRITING,
-    WATCHLISTS_NAV_CONTEXT_BACKEND,
-    WATCHLISTS_NAV_CONTEXT_RUN_ID,
-    WATCHLISTS_NAV_CONTEXT_SECTION,
-    WATCHLISTS_SECTION_RUNS,
     WIDE_VIEWPORT_COLUMNS,
     get_tab_display_label,
 )
@@ -213,7 +204,6 @@ from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
-    HomeControlResultStatus,
     LocalNotificationHomeActiveWorkAdapter,
     UnavailableHomeActiveWorkAdapter,
 )
@@ -509,7 +499,6 @@ from .Scheduling.scheduler.handlers.briefing_handler import BriefingJobHandler
 from .Scheduling.services.watchlist_projection import WatchlistProjection
 from .Scheduling.services.briefing_projection import BriefingProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
-from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
 # chat_message_enhanced is deliberately NOT imported at module scope
@@ -529,7 +518,6 @@ from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
 from .UI.Navigation.pending_handoff_store import (
     HandoffChannel,
-    HandoffValueError,
     PendingHandoffStore,
 )
 from .UI.Navigation.screen_state_store import (
@@ -552,9 +540,7 @@ from .UI.Navigation.shell_destinations import (
     get_shell_destination,
 )
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
-from .UI.Screens.study_scope_models import StudyScopeContext
 from .UI.stable_command_palette import StableCommandPalette
-from .Prompt_Management.prompt_variables import PromptVariableApplication
 
 # task-24458: import the MESSAGE, not the deprecated window. Importing
 # `Tools_Settings_Window` here dragged `Agents.local_tool_provider` ->
@@ -778,7 +764,28 @@ else:
 if TYPE_CHECKING:
     from .Workflows.session import WorkflowSession
 
+# Annotation-only for the cluster D stubs (TASK-33011); the bodies that use
+# these at runtime live in ``app_destinations``.
+if TYPE_CHECKING:
+    from .ACP_Interop.runtime_session import ACPRuntimeSessionState
+    from .Chat.chat_handoff_models import ChatHandoffPayload
+    from .Prompt_Management.prompt_variables import PromptVariableApplication
+    from .UI.Screens.study_scope_models import StudyScopeContext
+
 _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
+
+
+def _destinations():
+    """Import ``app_destinations`` on first use (never at boot; ADR-097).
+
+    TldwCli's destination launchers, handoffs, Home controls, Roleplay
+    character-conversation activation and Personal Context launchers are thin
+    stubs that delegate here (TASK-33011). Tests that patch a module-level
+    name those bodies use must patch it on ``tldw_chatbook.app_destinations``.
+    """
+    from tldw_chatbook import app_destinations
+
+    return app_destinations
 
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
@@ -8895,155 +8902,56 @@ class TldwCli(
     def server_credential_store_unavailable_reason(self, reason: str | None) -> None:
         self._server_credential_store_unavailable_reason = reason
 
+    # Cluster D (TASK-33011): destination launchers, typed handoffs and Home
+    # controls. Each stub delegates to the same-named ``app_destinations``
+    # function; the ``_local_*_count`` Home providers stay here because the
+    # boot-time wiring hands them to the Home adapter.
     def open_study_screen(
         self,
-        scope_context: Optional[StudyScopeContext] = None,
+        scope_context: "StudyScopeContext | None" = None,
         *,
-        initial_section: Optional[str] = None,
-        origin: Optional[str] = None,
+        initial_section: str | None = None,
+        origin: str | None = None,
     ) -> None:
-        """Stage Study handoffs and navigate to the Study screen.
-
-        Args:
-            scope_context: Scoped study context to apply, or None to clear
-                any pending scope.
-            initial_section: Study section to land on, or None to clear any
-                pending section.
-            origin: Where the user is coming FROM (``STUDY_ORIGINS``:
-                "home" or "library"), threaded to StudyScreen so its
-                breadcrumb and Escape target name the actual origin
-                (task-4011). None clears the channel and StudyScreen falls
-                back to its historical Library default (task-2854's one
-                considered origin).
-        """
-        if scope_context is None:
-            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_SCOPE)
-        elif not self._stage_handoff(
-            HandoffChannel.STUDY_SCOPE,
+        return _destinations().open_study_screen(
+            self,
             scope_context,
-            recovery="Study scope could not be opened. Try again.",
-        ):
-            return
-
-        if initial_section is None:
-            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_INITIAL_SECTION)
-        elif not self._stage_handoff(
-            HandoffChannel.STUDY_INITIAL_SECTION,
-            initial_section,
-            recovery="Study section could not be opened. Try again.",
-        ):
-            return
-
-        if origin is None:
-            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_ORIGIN)
-        elif not self._stage_handoff(
-            HandoffChannel.STUDY_ORIGIN,
-            origin,
-            recovery="Study could not be opened. Try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_STUDY))
+            initial_section=initial_section,
+            origin=origin,
+        )
 
     def open_notes_workspace(
         self,
         workspace_id: str,
         subview: Any = None,
     ) -> None:
-        """Return to Library's Notes list after leaving it for another screen.
-
-        The standalone Notes tab's per-workspace scope has no equivalent in
-        Library, which browses notes as a flat list -- this always re-opens
-        the shared Library Notes list rather than any workspace-scoped view.
-
-        Args:
-            workspace_id: The retired Notes tab's workspace identifier.
-                Accepted for backward compatibility with existing callers
-                (e.g. Study's "back to workspace" action) but no longer
-                applied.
-            subview: The retired Notes tab's workspace subview. Accepted for
-                backward compatibility; no longer applied.
-        """
-        self.post_message(
-            NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"})
-        )
+        return _destinations().open_notes_workspace(self, workspace_id, subview)
 
     def open_conversation_archive(
         self, query: str = "", archive_scope: str = "archived"
     ) -> None:
-        """Open Library conversation search with an explicit archive scope.
-
-        Args:
-            query: Initial title/message search text; empty lists the scope.
-            archive_scope: "active", "archived" (default), or "all" saved chats.
-        """
-        self.post_message(
-            NavigateToScreen(
-                TAB_LIBRARY,
-                {
-                    LIBRARY_NAV_CONTEXT_MODE: "conversations",
-                    "conversation_archive_scope": archive_scope,
-                    "conversation_query": query,
-                },
-            )
-        )
+        return _destinations().open_conversation_archive(self, query, archive_scope)
 
     def resume_console_conversation(self, conversation_id: str) -> None:
-        """Review restoration scope and resume the original local conversation."""
-        from .UI.Console_Modules.archive import request_conversation_resume
-
-        self.run_worker(
-            request_conversation_resume(self, conversation_id),
-            name="resume-saved-conversation",
-            group="resume-saved-conversation",
-            exclusive=True,
-        )
+        return _destinations().resume_console_conversation(self, conversation_id)
 
     def open_chat_with_handoff(
         self,
-        payload: ChatHandoffPayload,
+        payload: "ChatHandoffPayload",
         *,
         action_label: str = "Use in Chat",
     ) -> None:
-        """Stage a handoff payload for Chat and navigate there.
-
-        Args:
-            payload: The handoff payload to stage as pending Chat context.
-            action_label: The calling surface's own action label (e.g. "Use
-                in Chat" for the legacy MediaWindow_v2/search_rag_window
-                surfaces, "Use in Console" for Library). Currently unused
-                inside this method -- it previously fed the retired
-                chat-tabs gate's blocked notify (task-577 U5, which removed
-                the gate so handoffs proceed unconditionally); kept for
-                caller-signature compatibility.
-        """
-        if not self._stage_handoff(
-            HandoffChannel.CHAT,
+        return _destinations().open_chat_with_handoff(
+            self,
             payload,
-            recovery="Chat context could not be staged. Try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_CHAT))
+            action_label=action_label,
+        )
 
     def stage_console_prompt_insert(
         self,
-        application: PromptVariableApplication,
+        application: "PromptVariableApplication",
     ) -> None:
-        """Stage a guarded Prompt application and then navigate to Console.
-
-        The typed, memory-only application carries the final selected lanes
-        plus destination/session/staleness guards. Console remains the only
-        owner allowed to settle the claim and mutate its active draft.
-
-        Args:
-            application: Validated Prompt application to stage.
-        """
-        if not self._stage_handoff(
-            HandoffChannel.CONSOLE_PROMPT_INSERT,
-            application,
-            recovery="Console prompt could not be staged. Review it and try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_CHAT))
+        return _destinations().stage_console_prompt_insert(self, application)
 
     def open_console_for_live_work(
         self,
@@ -9055,21 +8963,15 @@ class TldwCli(
         recovery: str | None = None,
         action_label: str | None = None,
     ) -> None:
-        """Open Console for live work launched from another destination."""
-        if not self._stage_handoff(
-            HandoffChannel.CONSOLE_LIVE_WORK,
-            {
-                "source": source,
-                "title": title,
-                "payload": payload,
-                "status": status,
-                "recovery": recovery,
-                "action_label": action_label,
-            },
-            recovery="Console live work could not be staged. Try again.",
-        ):
-            return
-        self.post_message(NavigateToScreen(TAB_CHAT))
+        return _destinations().open_console_for_live_work(
+            self,
+            source=source,
+            title=title,
+            payload=payload,
+            status=status,
+            recovery=recovery,
+            action_label=action_label,
+        )
 
     def _stage_handoff(
         self,
@@ -9078,75 +8980,13 @@ class TldwCli(
         *,
         recovery: str,
     ) -> bool:
-        """Stage one typed handoff without exposing its value in recovery."""
-        try:
-            self.pending_handoffs.stage(channel, value)
-        except HandoffValueError:
-            self.notify(recovery, severity="warning")
-            return False
-        return True
+        return _destinations()._stage_handoff(self, channel, value, recovery=recovery)
 
-    def get_acp_runtime_session_state(self) -> ACPRuntimeSessionState:
-        """Return current ACP runtime/session state for ACP and Console surfaces."""
-        explicit_state = getattr(self, "acp_runtime_session_state", None)
-        normalized_state = ACPRuntimeSessionState.from_any(explicit_state)
-        if normalized_state.runtime_configured:
-            return normalized_state
-        manager = getattr(self, "acp_runtime_process_manager", None)
-        snapshot = getattr(manager, "snapshot", None)
-        if callable(snapshot):
-            return ACPRuntimeSessionState.from_any(snapshot())
-        return normalized_state
+    def get_acp_runtime_session_state(self) -> "ACPRuntimeSessionState":
+        return _destinations().get_acp_runtime_session_state(self)
 
     def open_console_live_work_primary_action(self, launch: Any) -> bool:
-        """Follow through on a supported Console live-work status-card action."""
-        normalized_launch = ConsoleLiveWorkLaunch.from_pending(launch)
-        if normalized_launch is None:
-            self.notify(
-                "Console action is unavailable for this live-work item.",
-                severity="warning",
-            )
-            return False
-
-        action = resolve_console_live_work_primary_action(normalized_launch)
-        if action is None:
-            self.notify(
-                "Console action is unavailable for this live-work item.",
-                severity="warning",
-            )
-            return False
-
-        if action.target_route == TAB_WATCHLISTS_COLLECTIONS:
-            self.post_message(
-                NavigateToScreen(
-                    TAB_WATCHLISTS_COLLECTIONS,
-                    self._watchlists_run_navigation_context(action.target_id),
-                )
-            )
-            return True
-
-        if action.target_route == TAB_ARTIFACTS:
-            if not self._stage_handoff(
-                HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
-                action.target_id,
-                recovery="Console action target could not be opened. Try again.",
-            ):
-                return False
-            self.post_message(NavigateToScreen(TAB_ARTIFACTS))
-            return True
-
-        if action.target_route == TAB_ACP:
-            if not self._stage_handoff(
-                HandoffChannel.ACP_SESSION_TARGET,
-                action.target_id,
-                recovery="Console action target could not be opened. Try again.",
-            ):
-                return False
-            self.post_message(NavigateToScreen(TAB_ACP))
-            return True
-
-        self.notify("Console action route is not available yet.", severity="warning")
-        return False
+        return _destinations().open_console_live_work_primary_action(self, launch)
 
     def _handle_home_control_action(
         self,
@@ -9155,153 +8995,40 @@ class TldwCli(
         target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
-        adapter = getattr(
-            self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter()
+        return _destinations()._handle_home_control_action(
+            self,
+            action,
+            target_id=target_id,
+            target_route=target_route,
         )
-        if target_id is None and target_route is None:
-            result = adapter.handle_control(action)
-        else:
-            result = adapter.handle_control(
-                action,
-                target_id=target_id,
-                target_route=target_route,
-            )
-        # B3 (task-282): approve/reject/pause/resume/retry can change the
-        # watchlist-run/notification state the adapter's short-TTL cache
-        # holds -- invalidate so the next Home read is not stale for up to
-        # the TTL window. Defensive getattr: the honest-unavailable adapter
-        # and test doubles don't implement this hook.
-        invalidate_cache = getattr(adapter, "invalidate_active_work_cache", None)
-        if callable(invalidate_cache):
-            invalidate_cache()
-        self.notify(result.message, severity=result.severity)
-        return result
 
     def approve_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Approve the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.APPROVE, target_id=target_id
-        )
+        return _destinations().approve_active_home_item(self, target_id=target_id)
 
     def reject_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Reject the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.REJECT, target_id=target_id
-        )
+        return _destinations().reject_active_home_item(self, target_id=target_id)
 
     def pause_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Pause the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.PAUSE, target_id=target_id
-        )
+        return _destinations().pause_active_home_item(self, target_id=target_id)
 
     def resume_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Resume the active Home item through the configured adapter."""
-        return self._handle_home_control_action(
-            HomeControlAction.RESUME, target_id=target_id
-        )
+        return _destinations().resume_active_home_item(self, target_id=target_id)
 
     def retry_active_home_item(
         self, *, target_id: str | None = None
     ) -> HomeControlResult:
-        """Retry the active Home item through the configured adapter.
-
-        Library ingest targets (``local:ingest:<job_id>``) use the ingest
-        retry seam instead of the generic Home adapter. Ordinary jobs retain
-        synchronous registry requeueing; Research-owned jobs schedule their
-        durable catalog-stage retry and report Research Workspace recovery.
-        Non-ingest targets are unaffected and still route through the adapter.
-        """
-        if target_id is not None and str(target_id).startswith("local:ingest:"):
-            job_id = str(target_id)[len("local:ingest:") :]
-            source = self.library_ingest_jobs.get_job(job_id)
-            operation_id = str(
-                getattr(source, "research_source_operation_id", "") or ""
-            ).strip()
-            research_retry_requested = bool(
-                source is not None
-                and operation_id
-                and self._schedule_research_source_catalog_retry(
-                    source,
-                    operation_id=operation_id,
-                    notify_unavailable=False,
-                )
-            )
-            requeued = None if operation_id else self.retry_library_ingest_job(job_id)
-            if research_retry_requested:
-                basename = escape_markup(
-                    Path(str(source.source_path)).name or str(source.source_path)
-                )
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.HANDLED,
-                    message=f"Research source retry requested for {basename}.",
-                    recovery_route=TAB_RESEARCH_WORKSPACE,
-                    target_id=target_id,
-                    target_route=TAB_RESEARCH_WORKSPACE,
-                )
-            elif operation_id:
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.UNAVAILABLE,
-                    message=self._RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY,
-                    severity="warning",
-                    recovery_route=TAB_RESEARCH_WORKSPACE,
-                    target_id=target_id,
-                    target_route=TAB_RESEARCH_WORKSPACE,
-                )
-            elif requeued is None:
-                # Unknown job id, or the job is no longer FAILED (e.g. it
-                # was already retried/finished by the time the button was
-                # pressed) -- ``requeue`` is a documented no-op in that case.
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.UNAVAILABLE,
-                    message="This import job can no longer be retried.",
-                    severity="warning",
-                    recovery_route="library",
-                    target_id=target_id,
-                )
-            else:
-                # The basename is a user-controlled filename (arbitrary
-                # source path picked in the Library ingest form) that flows
-                # straight into a Home toast, which parses Rich markup --
-                # same hazard class as the open-details title fix. Escape
-                # defensively.
-                basename = escape_markup(
-                    Path(str(requeued.source_path)).name or str(requeued.source_path)
-                )
-                result = HomeControlResult(
-                    action=HomeControlAction.RETRY,
-                    status=HomeControlResultStatus.HANDLED,
-                    message=f"Retry queued for {basename}.",
-                    recovery_route="library",
-                    target_id=f"local:ingest:{requeued.job_id}",
-                    target_route="library",
-                )
-            self.notify(result.message, severity=result.severity)
-            return result
-        return self._handle_home_control_action(
-            HomeControlAction.RETRY, target_id=target_id
-        )
+        return _destinations().retry_active_home_item(self, target_id=target_id)
 
     def open_home_flashcards_review(self) -> None:
-        """Open the Study screen directly on the flashcards review surface.
-
-        task-4011: this is the one entry into Study that does NOT come from
-        Library's staging canvas, so it declares its origin -- StudyScreen's
-        breadcrumb reads "Home ▸ Study" and Escape returns to Home instead
-        of a Library canvas the user never visited.
-        """
-        self.open_study_screen(initial_section="flashcards", origin="home")
+        return _destinations().open_home_flashcards_review(self)
 
     def _local_flashcards_due_count(self) -> int | None:
         """Count due flashcards for the Home mirror; None when the DB is absent."""
@@ -9382,56 +9109,17 @@ class TldwCli(
         target_id: str | None = None,
         target_route: str = TAB_CHAT,
     ) -> HomeControlResult:
-        """Open active Home item details through the configured adapter."""
-        result = self._handle_home_control_action(
-            HomeControlAction.OPEN_DETAILS,
+        return _destinations().open_active_home_item_details(
+            self,
             target_id=target_id,
             target_route=target_route,
         )
-        if result.status is HomeControlResultStatus.HANDLED and result.target_route:
-            if result.target_route in {
-                "subscriptions",
-                TAB_WATCHLISTS_COLLECTIONS,
-            }:
-                self.post_message(
-                    NavigateToScreen(
-                        TAB_WATCHLISTS_COLLECTIONS,
-                        self._watchlists_run_navigation_context(
-                            result.target_id or target_id
-                        ),
-                    )
-                )
-            elif result.target_route == "library" and str(
-                result.target_id or target_id or ""
-            ).startswith("local:ingest:"):
-                # Home's ingest-jobs Running/Needs Attention rows one-hop
-                # back to the Library ingest canvas via the nav-context
-                # contract instead of a bare route (mirrors the
-                # subscriptions staging special-case above). Navigation
-                # always composes a fresh Library screen, so the deep link
-                # lands on a cleanly mounted, repainted ingest canvas.
-                self.post_message(
-                    NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
-                )
-            else:
-                self.post_message(NavigateToScreen(result.target_route))
-        return result
 
     @staticmethod
     def _watchlists_run_navigation_context(
         target_id: str | None,
     ) -> dict[str, object]:
-        """Build the destination-owned context for a Watchlists run deep link."""
-        context: dict[str, object] = {
-            WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_RUNS
-        }
-        if target_id:
-            target_id_text = str(target_id)
-            context[WATCHLISTS_NAV_CONTEXT_RUN_ID] = target_id_text
-            backend = target_id_text.partition(":watchlist_run:")[0]
-            if backend in {"local", "server"}:
-                context[WATCHLISTS_NAV_CONTEXT_BACKEND] = backend
-        return context
+        return _destinations()._watchlists_run_navigation_context(target_id)
 
     def open_active_home_item_in_console(
         self,
@@ -9439,29 +9127,11 @@ class TldwCli(
         target_id: str | None = None,
         target_route: str = TAB_CHAT,
     ) -> HomeControlResult:
-        """Open active Home item in Console only when the adapter supplies launch context."""
-        result = self._handle_home_control_action(
-            HomeControlAction.OPEN_IN_CONSOLE,
+        return _destinations().open_active_home_item_in_console(
+            self,
             target_id=target_id,
             target_route=target_route,
         )
-        if (
-            result.status is HomeControlResultStatus.HANDLED
-            and result.console_launch is not None
-        ):
-            launch_kwargs = {
-                "source": result.console_launch.source,
-                "title": result.console_launch.title,
-                "payload": dict(result.console_launch.payload or {}),
-            }
-            if result.console_launch.status is not None:
-                launch_kwargs["status"] = result.console_launch.status
-            if result.console_launch.recovery is not None:
-                launch_kwargs["recovery"] = result.console_launch.recovery
-            if result.console_launch.action_label is not None:
-                launch_kwargs["action_label"] = result.console_launch.action_label
-            self.open_console_for_live_work(**launch_kwargs)
-        return result
 
     def _wire_character_persona_services(self) -> None:
         from .Backup_Recovery.chat_source_participants import (
@@ -12723,161 +12393,28 @@ class TldwCli(
             self._reusable_screen_instances = cache
         cache[current_tab_value] = (runtime_identity, screen)
 
+    # Cluster K2 (TASK-33011): Roleplay-to-Console character-conversation
+    # activation, delegated to ``app_destinations``.
     async def activate_character_conversation_from_roleplay(
         self,
         request: object,
         cancellation: asyncio.Event,
         phase_changed: Callable[[str], None],
     ) -> object:
-        """Own an exact Roleplay-to-Console activation without losing its caller.
-
-        The reusable Console workspace performs cancellable preflight while
-        Roleplay remains the current screen. Once that check settles, the
-        operation enters its non-cancellable finishing phase and mounts Console
-        for the final atomic revalidation/hydration.  Failure restores the exact
-        mounted Roleplay caller; only ``OPENED`` replaces it.
-        """
-
-        from tldw_chatbook.Chat.console_conversation_activation import (
-            CharacterConversationActivationRequest,
-            ConsoleActivationResultKind,
-            ConsoleConversationActivationResult,
+        return await _destinations().activate_character_conversation_from_roleplay(
+            self,
+            request,
+            cancellation,
+            phase_changed,
         )
-
-        if not isinstance(request, CharacterConversationActivationRequest):
-            raise TypeError("request must be a character activation request")
-        cancelled_result = ConsoleConversationActivationResult(
-            ConsoleActivationResultKind.CANCELLED_PRECOMMIT,
-            request.target,
-            False,
-        )
-        if cancellation.is_set():
-            return cancelled_result
-        runtime = getattr(self, "console_runtime", None)
-        lane = getattr(runtime, "character_conversation_activation_lock", None)
-        if not isinstance(lane, asyncio.Lock):
-            raise RuntimeError("Console activation lane is unavailable")  # noqa: TRY004 - unavailable runtime ownership, not a public input type check
-        admission: asyncio.Task[bool] | None = None
-        cancelled: asyncio.Task[bool] | None = None
-        preflight: asyncio.Task[Any] | None = None
-        lane_acquired = False
-        commit_started = False
-        candidate = None
-        try:
-            # These children are owned from creation: cancellation of this
-            # outer worker must never leave an orphan that later acquires the
-            # app-lifetime lane.
-            admission = asyncio.create_task(lane.acquire())
-            cancelled = asyncio.create_task(cancellation.wait())
-            done, _pending = await asyncio.wait(
-                {admission, cancelled}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if cancelled in done and cancellation.is_set():
-                return cancelled_result
-            lane_acquired = bool(await admission)
-            if cancellation.is_set():
-                return cancelled_result
-
-            _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
-            if screen_class is None:
-                return ConsoleConversationActivationResult(
-                    ConsoleActivationResultKind.FAILED, request.target, False
-                )
-            runtime_identity = self._current_runtime_identity()
-            candidate = self._reusable_navigation_screen(TAB_CHAT, runtime_identity)
-            if candidate is None:
-                candidate = self._create_navigation_screen(TAB_CHAT, screen_class)
-            preflight = asyncio.create_task(
-                candidate._workspace.preflight_character_conversation_activation(
-                    request
-                )
-            )
-            if cancelled is not None and not cancelled.done():
-                cancelled.cancel()
-                await asyncio.gather(cancelled, return_exceptions=True)
-            cancelled = asyncio.create_task(cancellation.wait())
-            done, _pending = await asyncio.wait(
-                {preflight, cancelled}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if cancelled in done and cancellation.is_set():
-                preflight.cancel()
-                await asyncio.gather(preflight, return_exceptions=True)
-                return cancelled_result
-            cancelled.cancel()
-            await asyncio.gather(cancelled, return_exceptions=True)
-            preflight_result = await preflight
-            if preflight_result is not None:
-                return ConsoleConversationActivationResult(
-                    preflight_result, request.target, False
-                )
-            if cancellation.is_set():
-                return cancelled_result
-
-            # The app-wide lane and final revalidation are both owned here.
-            # Publishing Finishing is the atomic commit acknowledgement; only
-            # after it is visible does the surviving Console touch the stack.
-            phase_changed("finishing")
-            commit_started = True
-            caller = self.screen
-            post_commit = asyncio.create_task(
-                TldwCli._complete_character_conversation_post_commit(
-                    self, candidate, caller, request, runtime_identity
-                ),
-                name="character_conversation_post_commit",
-            )
-            return await TldwCli._await_character_conversation_post_commit(
-                post_commit
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - admission failures return typed outcomes and drain owned tasks
-            logger.opt(exception=True).warning(
-                "Roleplay character-conversation activation failed"
-            )
-            return ConsoleConversationActivationResult(
-                ConsoleActivationResultKind.FAILED,
-                request.target,
-                commit_started,
-            )
-        finally:
-            children = tuple(
-                task
-                for task in (admission, cancelled, preflight)
-                if task is not None
-            )
-            for child in children:
-                if not child.done():
-                    child.cancel()
-            child_results = (
-                await asyncio.gather(*children, return_exceptions=True)
-                if children
-                else ()
-            )
-            if not lane_acquired and admission is not None:
-                admission_index = children.index(admission)
-                lane_acquired = child_results[admission_index] is True
-            if lane_acquired:
-                lane.release()
 
     @staticmethod
     async def _await_character_conversation_post_commit(
         operation: asyncio.Task[Any],
     ) -> Any:
-        """Delay caller cancellation until app-owned commit work settles."""
-
-        cancellation: asyncio.CancelledError | None = None
-        while True:
-            try:
-                result = await asyncio.shield(operation)
-            except asyncio.CancelledError as error:
-                if operation.cancelled():
-                    raise
-                cancellation = cancellation or error
-                continue
-            break
-        if cancellation is not None:
-            raise cancellation
-        return result
+        return await _destinations()._await_character_conversation_post_commit(
+            operation,
+        )
 
     async def _complete_character_conversation_post_commit(
         self,
@@ -12886,151 +12423,31 @@ class TldwCli(
         request: Any,
         runtime_identity: Any,
     ) -> Any:
-        """Mount, hydrate, transfer, or roll back one committed activation."""
-
-        from tldw_chatbook.Chat.console_conversation_activation import (
-            ConsoleActivationResultKind,
-            ConsoleConversationActivationResult,
+        return await _destinations()._complete_character_conversation_post_commit(
+            self,
+            candidate,
+            caller,
+            request,
+            runtime_identity,
         )
-
-        transferred = False
-
-        async def finalize_visible() -> None:
-            nonlocal transferred
-            await TldwCli._transfer_pushed_console_to_content(
-                self, candidate, caller
-            )
-            transferred = True
-
-        # A cached Console resumes instead of mounting. Its ordinary registry
-        # reconciliation must not compete with this exact target's transaction.
-        prior_resume_gate = getattr(
-            candidate, "_resume_navigation_startup_in_progress", False
-        )
-        candidate._resume_navigation_startup_in_progress = True
-        try:
-            await self.push_screen(candidate)
-            result = (
-                await candidate._workspace.activate_character_conversation_after_commit(
-                    request,
-                    finalize_visible=finalize_visible,
-                )
-            )
-            if result.kind is ConsoleActivationResultKind.OPENED and transferred:
-                if not self.is_screen_installed(candidate):
-                    self._retain_reusable_navigation_screen(
-                        TAB_CHAT, runtime_identity, candidate
-                    )
-                self.current_tab = TAB_CHAT
-                return result
-            if getattr(self, "screen", None) is candidate:
-                await self.pop_screen()
-            if result.kind is ConsoleActivationResultKind.OPENED:
-                return ConsoleConversationActivationResult(
-                    ConsoleActivationResultKind.FAILED, request.target, True
-                )
-            return result
-        except Exception:  # noqa: BLE001 - restore caller after any committed mount or transfer failure
-            logger.bind(
-                operation_id=id(request), candidate_token=id(candidate),
-                caller_token=id(caller), stage="commit_screen",
-            ).opt(exception=True).warning(
-                "Committed Roleplay character-conversation activation failed"
-            )
-            if getattr(self, "screen", None) is candidate:
-                try:
-                    await self.pop_screen()
-                except Exception:  # noqa: BLE001 - report caller restoration without losing typed outcome
-                    logger.bind(
-                        operation_id=id(request), candidate_token=id(candidate),
-                        caller_token=id(caller), stage="restore_caller",
-                    ).opt(exception=True).error(
-                        "Could not restore Roleplay after Console mount failure"
-                    )
-            return ConsoleConversationActivationResult(
-                ConsoleActivationResultKind.FAILED, request.target, True
-            )
-        finally:
-            candidate._resume_navigation_startup_in_progress = prior_resume_gate
 
     async def _transfer_pushed_console_to_content(
         self,
         candidate: Any,
         caller: Any,
     ) -> None:
-        """Promote the proved pushed Console while replacing its Roleplay caller."""
-
-        stack = self._screen_stack
-        if (
-            len(stack) < 2
-            or stack[-1] is not candidate
-            or stack[-2] is not caller
-        ):
-            raise RuntimeError("Console activation stack ownership changed")
-
-        original_stack = tuple(stack)
-        candidate_callbacks = tuple(candidate._result_callbacks)
-        caller_callbacks = tuple(caller._result_callbacks)
-
-        # The proved candidate is already current, mounted, and owns its push
-        # callback. Remove only the caller beneath it; unlike switch_screen,
-        # this never exposes a state where Textual has popped both screens.
-        try:
-            stack.pop(-2)
-            caller._pop_result_callback()
-            await self._remove_promoted_screen_caller(caller)
-        except BaseException:
-            # Restore exact membership/callback ownership even if the removal
-            # seam failed after changing the current stack. A normal pop then
-            # resumes Roleplay and unmounts the attempt-owned candidate.
-            stack[:] = original_stack
-            candidate._result_callbacks[:] = candidate_callbacks
-            caller._result_callbacks[:] = caller_callbacks
-            try:
-                if not caller.is_running:
-                    restored_caller, await_mount = self._get_screen(caller)
-                    if restored_caller is not caller:
-                        raise RuntimeError("Roleplay screen identity changed during restore")
-                    await await_mount
-                await self.pop_screen()
-            except BaseException:  # noqa: BLE001 - fallback restores ownership even when cleanup is cancelled
-                logger.bind(
-                    candidate_token=id(candidate), caller_token=id(caller),
-                    stage="restore_caller",
-                ).opt(exception=True).error(
-                    "Could not atomically restore Roleplay after Console promotion"
-                )
-                stack[:] = original_stack[:-1]
-                caller._result_callbacks[:] = caller_callbacks
-                candidate._result_callbacks[:] = candidate_callbacks[:-1]
-                try:
-                    if not caller.is_running:
-                        restored_caller, await_mount = self._get_screen(caller)
-                        if restored_caller is not caller:
-                            raise RuntimeError(
-                                "Roleplay screen identity changed during fallback restore"
-                            )
-                        await await_mount
-                    if (
-                        candidate.is_running
-                        and candidate.parent is self
-                        and not self.is_screen_installed(candidate)
-                    ):
-                        await candidate.remove()
-                except BaseException:  # noqa: BLE001 - final attempt-owned cleanup must not replace original failure
-                    logger.bind(
-                        candidate_token=id(candidate), caller_token=id(caller),
-                        stage="cleanup_candidate",
-                    ).opt(exception=True).error(
-                        "Could not clean failed Console promotion candidate"
-                    )
-            raise
+        return await _destinations()._transfer_pushed_console_to_content(
+            self,
+            candidate,
+            caller,
+        )
 
     async def _remove_promoted_screen_caller(self, caller: Any) -> None:
-        """Unmount the former content screen after its stack slot is removed."""
+        return await _destinations()._remove_promoted_screen_caller(self, caller)
 
-        await caller.remove()
-
+    # Cluster K3 (TASK-33011): Personal Context launchers, delegated to
+    # ``app_destinations``. ``_load_personal_context_sync_runtime`` and
+    # ``get_personal_context_service`` stay here: startup wiring reaches them.
     def prepare_personal_context_interview_request(
         self,
         *,
@@ -13041,70 +12458,18 @@ class TldwCli(
         workspace_label: str = "",
         source: str | None = None,
     ):
-        """Resolve one canonical scope without touching workspace ownership."""
-
-        from tldw_profile_core import ScopeKind
-
-        from .Personal_Context.interview_launch import ProfileInterviewLaunchRequest
-
-        if kind not in {"personal", "workspace"}:
-            raise ValueError("Unknown Personal Context interview kind.")
-        if mode not in {"fixed", "adaptive"}:
-            raise ValueError("Unknown Personal Context interview mode.")
-        if source not in {None, "setup", "workspace", "settings"}:
-            raise ValueError("Unknown Personal Context interview source.")
-        service = self.get_personal_context_service(retry_locked=True)
-        status = service.status()
-        if status.state.value == "absent":
-            service.create_profile()
-        elif status.state.value in {"locked", "removed"}:
-            raise ValueError("Personal Context is unavailable.")
-        scopes = service.list_scopes()
-        if scope_id is not None:
-            scope = next((item for item in scopes if item.scope_id == scope_id), None)
-            expected = ScopeKind.GLOBAL if kind == "personal" else ScopeKind.WORKSPACE
-            if scope is None or scope.kind is not expected:
-                raise ValueError("Personal Context scope does not match interview.")
-        elif kind == "personal":
-            scope = next(
-                (item for item in scopes if item.kind is ScopeKind.GLOBAL), None
-            )
-            if scope is None:
-                raise ValueError("Global Personal Context scope is unavailable.")
-        else:
-            local_workspace_id = str(local_workspace_id or "").strip()
-            if not local_workspace_id:
-                raise ValueError("Workspace interview requires a local workspace.")
-            bindings = service.list_workspace_bindings()
-            scope = next(
-                (
-                    item
-                    for item in scopes
-                    if item.kind is ScopeKind.WORKSPACE
-                    and bindings.get(item.scope_id, {}).get("local_workspace_id")
-                    == local_workspace_id
-                ),
-                None,
-            )
-            if scope is None:
-                scope = service.create_workspace_scope(
-                    local_workspace_id,
-                    workspace_label or "Workspace",
-                )
-        return ProfileInterviewLaunchRequest(
+        return _destinations().prepare_personal_context_interview_request(
+            self,
             kind=kind,
-            scope_id=scope.scope_id,
-            local_workspace_id=local_workspace_id,
             mode=mode,
+            scope_id=scope_id,
+            local_workspace_id=local_workspace_id,
+            workspace_label=workspace_label,
             source=source,
         )
 
     def build_personal_context_interview_screen(self, request):
-        """Build a fresh profile interview screen for one resolved request."""
-
-        from .Personal_Context.interview_launch import build_profile_interview_screen
-
-        return build_profile_interview_screen(self, request)
+        return _destinations().build_personal_context_interview_screen(self, request)
 
     def launch_personal_context_interview(
         self,
@@ -13112,48 +12477,18 @@ class TldwCli(
         scope_id: str,
         mode: str = "fixed",
     ) -> None:
-        """Settings re-interview seam over the shared post-commit launcher."""
-
-        from .Personal_Context.interview_launch import (
-            launch_profile_interview_after_commit,
-        )
-
-        request = self.prepare_personal_context_interview_request(
-            kind=kind,
-            scope_id=scope_id,
-            mode=mode,
-            source="settings",
-        )
-        launch_profile_interview_after_commit(
+        return _destinations().launch_personal_context_interview(
             self,
-            request,
-            lambda: TldwCli._reload_personal_context_settings_panel(self),
+            kind,
+            scope_id,
+            mode,
         )
 
     def _reload_personal_context_settings_panel(self) -> None:
-        """Reload the mounted My Profile panel after a re-interview returns."""
-
-        from .Widgets.Settings_Widgets.personal_context_panel import (
-            PersonalContextSettingsPanel,
-        )
-
-        try:
-            panel = self.query_one(
-                "#personal-context-settings-panel", PersonalContextSettingsPanel
-            )
-        except QueryError:
-            return
-        panel.load_records(retry_locked=True)
+        return _destinations()._reload_personal_context_settings_panel(self)
 
     def launch_personal_context_link(self) -> None:
-        """Open the reviewed home-server link flow from canonical Settings."""
-
-        self.run_worker(
-            self._run_personal_context_link(),
-            group="personal-context-first-link",
-            exclusive=True,
-            exit_on_error=False,
-        )
+        return _destinations().launch_personal_context_link(self)
 
     def _load_personal_context_sync_runtime(
         self,
@@ -13195,170 +12530,7 @@ class TldwCli(
         self.local_first_sync_service.personal_context_service = service
 
     async def _run_personal_context_link(self) -> None:
-        """Plan, review, and apply one content-safe first-link attempt."""
-
-        import platform
-
-        from .Personal_Context.link_key_custody import (
-            KeyringPersonalContextLinkKeyCustodian,
-            KeyringPersonalContextWrappingKeyProvider,
-        )
-        from .Personal_Context.link_service import (
-            PersonalContextLinkAttentionRequired,
-            PersonalContextLinkService,
-        )
-        from .Personal_Context.key_protector import ProfileLockedError
-        from .Personal_Context.paths import get_personal_context_db_path
-        from .Personal_Context.repository import (
-            release_first_link_freeze_for_recovery,
-        )
-        from .Widgets.Settings_Widgets.personal_context_link_modal import (
-            PersonalContextLinkModal,
-        )
-
-        scope = self._server_notification_event_scope()
-        server_profile_id = scope.get("server_profile_id")
-        if not server_profile_id:
-            self.notify(
-                "Choose and authenticate a home server before linking your profile.",
-                severity="warning",
-            )
-            return
-        try:
-            wrapping_provider = KeyringPersonalContextWrappingKeyProvider()
-            key_custodian = KeyringPersonalContextLinkKeyCustodian()
-            existing = self.sync_state_repository.get_personal_context_link_state(
-                server_profile_id=str(server_profile_id),
-                authenticated_principal_id=scope.get("authenticated_principal_id"),
-            )
-            recovered_apply = False
-            if existing is not None and existing["state"] == "applying":
-                binding = PersonalContextLinkService._key_binding(existing)
-                try:
-                    staged_integrity_key = key_custodian.load(**binding)
-                    from .Personal_Context.bootstrap import (
-                        bootstrap_personal_context_service,
-                    )
-
-                    recovered_service = bootstrap_personal_context_service(
-                        recovery_integrity_key=staged_integrity_key,
-                        expected_recovery_profile_id=str(existing["profile_id"]),
-                    )
-                except (ProfileLockedError, ValueError):
-                    recovered_service = None
-                if (
-                    recovered_service is not None
-                    and recovered_service.status().state.value == "ready"
-                ):
-                    self._personal_context_service = recovered_service
-                    recovered_apply = True
-            coordinator = PersonalContextLinkService(
-                personal_context_service=self.get_personal_context_service(
-                    retry_locked=True
-                ),
-                server_sync_service=self.server_sync_service,
-                state_repository=self.sync_state_repository,
-                wrapping_key_provider=wrapping_provider,
-                key_custodian=key_custodian,
-                freeze_release_fallback=lambda plan_id: (
-                    release_first_link_freeze_for_recovery(
-                        get_personal_context_db_path(), plan_id=plan_id
-                    )
-                ),
-                local_first_sync_service=self.local_first_sync_service,
-                server_profile_id=str(server_profile_id),
-                authenticated_principal_id=scope.get("authenticated_principal_id"),
-                display_name=platform.node() or "Chatbook",
-            )
-            if existing is not None and existing["state"] == "complete":
-                await coordinator.resume()
-                # task-33081: this restore reads the link storage key from
-                # the OS keyring (D-Bus SecretService on Linux) -- run it
-                # off the UI event loop.
-                await asyncio.to_thread(
-                    self._load_personal_context_sync_runtime,
-                    server_profile_id=str(server_profile_id),
-                    authenticated_principal_id=scope.get("authenticated_principal_id"),
-                )
-                self.notify("Profile is already linked. Sync is ready.")
-                self._reload_personal_context_settings_panel()
-                return
-            if recovered_apply:
-                await coordinator.resume_after_local_activation(
-                    rebaseline_version=(
-                        self.get_personal_context_service()
-                        .first_link_rebaseline_version()
-                    )
-                )
-                self.notify("Profile link completed.")
-                self._reload_personal_context_settings_panel()
-                return
-            if existing is not None and existing["state"] == "applying":
-                active_reader = getattr(
-                    coordinator,
-                    "authenticated_committed_rebaseline_version",
-                    None,
-                )
-                active_version = active_reader() if callable(active_reader) else None
-                if active_version is not None:
-                    await coordinator.resume_after_local_activation(
-                        rebaseline_version=active_version
-                    )
-                    self.notify("Profile link completed.")
-                    self._reload_personal_context_settings_panel()
-                    return
-                if not coordinator.abandon_uncommitted_apply():
-                    mark_attention = getattr(
-                        coordinator, "mark_ambiguous_apply_attention", None
-                    )
-                    if callable(mark_attention):
-                        mark_attention()
-                    raise ProfileLockedError(
-                        "Interrupted Personal Context link recovery is pending."
-                    )
-            if existing is not None and existing["state"] in {
-                "local_rebaseline_complete",
-                "reconciling",
-            }:
-                await coordinator.resume()
-                self.notify("Profile link completed.")
-                self._reload_personal_context_settings_panel()
-                return
-            while True:
-                manifest = self.get_personal_context_service().get_manifest()
-                try:
-                    plan = await coordinator.plan(
-                        expected_purge_generation=manifest.purge_generation
-                    )
-                except PersonalContextLinkAttentionRequired as exc:
-                    attention_result = await self.push_screen_wait(
-                        PersonalContextLinkModal.for_bootstrap_attention(
-                            exc.attention,
-                            retry_callback=True,
-                        )
-                    )
-                    if attention_result is not None and attention_result.retry:
-                        continue
-                    return
-                result = await self.push_screen_wait(
-                    PersonalContextLinkModal(plan, retry_callback=True)
-                )
-                if result is None:
-                    coordinator.cancel(plan.plan_id)
-                    return
-                if result.retry:
-                    coordinator.cancel(plan.plan_id)
-                    continue
-                await coordinator.apply(result.plan_id, result.decisions)
-                break
-        except Exception:
-            self.notify(
-                "Profile linking needs attention. No profile content was shown; retry from Settings.",
-                severity="error",
-            )
-            return
-        self.notify("Profile linked to the home server.")
-        self._reload_personal_context_settings_panel()
+        return await _destinations()._run_personal_context_link(self)
 
     def get_personal_context_service(self, *, retry_locked: bool = False):
         """Return the app-owned service, explicitly retrying a locked facade."""

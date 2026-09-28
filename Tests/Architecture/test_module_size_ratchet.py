@@ -61,8 +61,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: them to silence a failure — see the module docstring.
 _BUDGETS: dict[str, int] = {
     # TASK-33011 decomposition: lowered as each extraction PR lands
-    # (entry tail -> app_entry.py: 21,234 measured -> 20,484).
-    "tldw_chatbook/app.py": 20484,
+    # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
+    # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658).
+    "tldw_chatbook/app.py": 19682,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
