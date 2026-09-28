@@ -70,6 +70,19 @@ def serialize_character_cards_for_backup(characters: list[dict[str, Any]]) -> st
     data-URI form `export_character_card_to_json` embeds, because the import
     chain (`parse_v1_card` -> `import_and_save_character_from_file*`)
     b64decodes the raw string, so a prefixed value would not round-trip.
+
+    Args:
+        characters: Character-card rows as ``list_character_cards`` returns
+            them, image BLOBs included.
+
+    Returns:
+        Indented JSON string of the serialized rows, with ``image`` BLOBs
+            replaced by ``image_base64`` strings.
+
+    Raises:
+        TypeError: If a row carries a value ``json.dumps`` cannot serialize
+            and that is not a ``date``/``datetime`` (deliberate: garbage
+            columns fail loudly instead of shipping silently).
     """
     serializable: list[dict[str, Any]] = []
     for card in characters:
@@ -132,7 +145,17 @@ def unlink_backup_artifact(
 def build_backup_manifest_publication(
     backup_dir: Path,
 ) -> BackupManifestPublication:
-    """Build a path-only token for a same-directory manifest stage."""
+    """Build a path-only token for a same-directory manifest stage.
+
+    Args:
+        backup_dir: Existing directory the manifest will be staged in; the
+            token points at ``.backup_info.json.tmp`` (stage) and
+            ``backup_info.json`` (final) inside it.
+
+    Returns:
+        Immutable ``BackupManifestPublication`` naming both paths; nothing
+            is created on disk.
+    """
 
     return BackupManifestPublication(
         stage_path=backup_dir / ".backup_info.json.tmp",
@@ -145,7 +168,24 @@ def write_backup_manifest(
     backed_up: tuple[tuple[str, Path], ...],
     publication: BackupManifestPublication,
 ) -> BackupManifestPublication:
-    """Serialize and sync a staged manifest without publishing it."""
+    """Serialize and sync a staged manifest without publishing it.
+
+    Args:
+        timestamp: Backup timestamp string embedded in the manifest.
+        backed_up: ``(name, path)`` pairs of the databases actually copied.
+        publication: Stage/final path token from
+            ``build_backup_manifest_publication``.
+
+    Returns:
+        The same publication token, after the stage file exists on disk and
+            is fsynced; the final path is still untouched.
+
+    Raises:
+        RuntimeError: ``backup_manifest_write_failed`` if serialization or
+            the staged write fails for any reason (including cooperative
+            Textual-worker cancellation); a failed stage is unlinked unless
+            cleanup itself is unwinding control flow.
+    """
 
     stage_created = False
     completed = False
