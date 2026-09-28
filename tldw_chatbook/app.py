@@ -1145,6 +1145,9 @@ class ThemeProvider(Provider):
         sharing the picker's numbered write queue (``ThemePicker._persist_
         use``) so ordering with a picker Use/Revert holds and quit waits
         for it (``wait_for_theme_quit_work``).
+
+        Args:
+            theme_name: The registered theme to show and keep, e.g. ``"nord"``.
         """
         from .css.Themes.theme_catalog import queue_launch_default, use_theme
 
