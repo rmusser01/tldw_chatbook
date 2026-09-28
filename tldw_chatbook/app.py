@@ -13886,11 +13886,17 @@ class TldwCli(
             # ControlPersist remains the crash backstop, so a failure here
             # degrades to an eventually-expiring master and must never
             # block the quit.
+            # Session workers close first: closing their stdin lets the
+            # remote parents exit before the masters go away.
             try:
+                from tldw_chatbook.Tools.remote_session_registry import (
+                    close_all_remote_sessions,
+                )
                 from tldw_chatbook.Tools.remote_workspace_transport import (
                     get_master_manager,
                 )
 
+                await asyncio.to_thread(close_all_remote_sessions)
                 await asyncio.to_thread(get_master_manager().close_all)
             except Exception as error:
                 self.loguru_logger.warning(

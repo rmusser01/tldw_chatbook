@@ -11,6 +11,10 @@ and this project adheres to Some kind of Versioning
 - SSH remote workspace bindings (ADR-181): a named workspace can bind a folder
   on a remote host over SSH. Agent `fs_*` tools run there through a transient
   worker; nothing is installed on the host.
+- SSH workspace tool calls reuse a per-run session (about one round trip
+  each instead of a new ssh exchange per call); the worker is cached in the
+  host's `$XDG_RUNTIME_DIR`. `[console_ssh] session_worker = false` turns
+  it off.
 
 ### Changed
 - Agent `fs_read`, `fs_write`, `fs_edit` and `fs_patch` results now end with

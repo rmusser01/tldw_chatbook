@@ -250,6 +250,7 @@ def _compose(
     executors: dict[str, _StubRemoteExecutor] | None = None,
     project_selection=None,
     project_authority_guard=None,
+    remote_session_key: str | None = None,
 ):
     return capture_run_admitted_workspace_roots(
         session=_Session("ws"),
@@ -260,6 +261,7 @@ def _compose(
         remote_executor_factory=(
             _stub_factory(executors) if executors is not None else None
         ),
+        remote_session_key=remote_session_key,
     )
 
 
@@ -323,6 +325,83 @@ def test_blocked_remote_and_local_ready_composes_local_only(tmp_path, monkeypatc
     )
     assert "remote binding unreachable — excluded this run" in note
     assert "ssh-b1" in note
+
+
+def test_injected_factory_without_session_key_still_composes_with_run_key(
+    tmp_path, monkeypatch
+):
+    """A run key never reaches an injected factory (its signature has none)."""
+    from tldw_chatbook.Tools.remote_binding_status import RemoteBindingStatusCache
+
+    cache = RemoteBindingStatusCache()
+    _blocked_cache(cache, "ssh-b1")
+    stub = _StubRemoteExecutor("ssh-b1", _host_key(), cache)
+    registry = _Registry(_local_binding(tmp_path), _ssh_binding())
+    roots = _compose(
+        registry, cache, executors={"ssh-b1": stub}, remote_session_key="msg-1"
+    )
+    assert [root.alias for root in roots] == ["folder-1"]
+    assert stub.probe_runs == 1
+
+    ready = RemoteBindingStatusCache()
+    admitted = _compose(
+        _Registry(_ssh_binding()),
+        ready,
+        executors={"ssh-b1": _StubRemoteExecutor("ssh-b1", _host_key(), ready)},
+        remote_session_key="msg-1",
+    )
+    assert len(admitted) == 1 and is_remote(admitted[0].root)
+
+
+def test_default_factories_share_the_run_key(monkeypatch):
+    from pathlib import PurePosixPath
+
+    from tldw_chatbook.Chat.console_chat_controller import (
+        _default_remote_instruction_executor,
+        _default_remote_run_executor_factory,
+    )
+    from tldw_chatbook.Tools.remote_binding_status import RemoteBindingStatusCache
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceToolExecutor,
+    )
+
+    seen = []
+    monkeypatch.setattr(
+        RemoteWorkspaceToolExecutor,
+        "for_ssh",
+        classmethod(
+            lambda cls, *a, **k: seen.append(k.get("session_key")) or object()
+        ),
+    )
+    # Hermetic: the real master manager reads the machine's config.
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.remote_workspace_transport.get_master_manager",
+        lambda: object(),
+    )
+    row = SimpleNamespace(
+        binding_id="b1",
+        locator="ssh://devbox/srv/www",
+        metadata={"python": "python3", "canonical_fingerprint": "a" * 64},
+    )
+    selection = SimpleNamespace(
+        binding=row,
+        root=RemoteRoot(
+            alias="b1",
+            canonical_locator="ssh://devbox/srv/www",
+            root=PurePosixPath("/srv/www"),
+            binding_id="b1",
+        ),
+    )
+    cache = RemoteBindingStatusCache()
+    _default_remote_run_executor_factory(
+        row, "b1", status_cache=cache, sensitive_exclusions=lambda: (),
+        session_key="msg-1",
+    )
+    _default_remote_instruction_executor(
+        selection, "b1", status_cache=cache, sensitive_exclusions=lambda: (),
+        session_key="msg-1",
+    )
+    assert seen == ["msg-1", "msg-1"]
 
 
 # ---------------------------------------------------------------------------
