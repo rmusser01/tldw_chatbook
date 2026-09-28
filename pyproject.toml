@@ -691,6 +691,7 @@ markers = [
     "local_server_probe: opts out of the autouse _no_local_server_probes guard (Tests/conftest.py) to exercise the real /v1/models probe against an injected httpx.MockTransport client",
     "owned_http_client: opts out of the autouse _console_gateway_http_client_is_offline guard (Tests/conftest.py) for tests that are ABOUT the gateway's real owned httpx client",
     "live: marks tests that call real paid external APIs (require key files + TLDW_LIVE_SEARCH_TESTS=1 + --run-live)",
+    "live_ssh: opt-in live SSH UAT against a real host (skipped unless TLDW_LIVE_SSH_HOST is set)",
 ]
 
 [tool.mypy]

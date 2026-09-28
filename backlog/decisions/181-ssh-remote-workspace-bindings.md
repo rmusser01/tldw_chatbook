@@ -104,6 +104,7 @@ tool permission. Server prerequisites: sshd with exec, and `python3` ≥ 3.10
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-09-24-ssh-remote-workspace-bindings-design.md)
+- [Session worker and bundle cache design (2026-09-27 amendment)](../../Docs/superpowers/specs/2026-09-27-ssh-session-worker-and-bundle-cache-design.md)
 - [ADR-005](005-console-workspace-server-readiness.md)
 - [ADR-028](028-settings-workspaces-category-and-folder-roots.md)
 - [ADR-032](032-local-agent-tool-permission-boundary.md)
@@ -112,3 +113,99 @@ tool permission. Server prerequisites: sshd with exec, and `python3` ≥ 3.10
 - [ADR-102](102-console-run-admitted-local-path-authority.md)
 - [ADR-174](174-workspace-binding-exclusions.md)
 - [ADR-175](175-one-strict-json-acceptance-contract.md)
+
+## Amendment 2026-09-27: session worker and bundle cache
+
+Design: [SSH Session Worker and Bundle Cache — Design](../../Docs/superpowers/specs/2026-09-27-ssh-session-worker-and-bundle-cache-design.md).
+Motivation: a warm `fs_*` call cost ~0.7 s on a LAN host, almost all of it
+round trips (a new ssh channel per call plus shipping the bundle). The
+target is a warm call of about one round trip.
+
+- **One fork-server session per binding per Console run.** The first remote
+  call of a run starts one long-lived `ssh … <python> -I -c '<bootstrap>'`
+  channel over the existing ControlMaster; the host side is a
+  single-threaded parent (`serve`) that forks one child per request. The
+  per-operation rule of ADR-101 still holds: **each operation still runs in
+  a fresh child process** with its own root pin, remote-home denylist,
+  serialized exclusions, and two-tier watchdog (Timer exit 75 +
+  `signal.alarm`), armed from that request's own remaining budget. Only the
+  spawner changes, from `sshd` to the per-session parent. Children get
+  stdin from `/dev/null` and close every other inherited descriptor, so a
+  lingering child can neither hold the channel open nor write unframed
+  bytes into it. The run's tool executor and its AGENTS.md reader share the
+  one session; sessions are never shared across bindings, runs, or hosts.
+- **What the parent holds.** The drift-guarded bundle and the run's request
+  frames. It never executes request logic, caps its live children, and
+  exits on stdin EOF or after `session_idle_s` idle (no queued requests, no
+  live children), killing any remaining children. It drops its reference
+  to each request after forking, but **residual request bytes in parent
+  memory may be inherited by later children of the same session**. That
+  stays inside one binding/run trust scope (same root, same permission
+  set), so it is not a cross-boundary leak; this ADR does not claim the
+  memory is scrubbed.
+- **"Nothing persisted on the server" becomes "nothing outside the user's
+  own runtime directory".** A ~1 KB stage-1 loader replaces the bundle on
+  the session's stdin and may cache the compressed bundle at
+  `$XDG_RUNTIME_DIR/tldw-worker/<sha256>` (tmpfs, cleared at logout). The
+  entry is used only when `$XDG_RUNTIME_DIR` is set, both it and
+  `tldw-worker/` are directories owned by the current uid with no group or
+  other access, the entry is a regular file (opened `O_NOFOLLOW`) owned by
+  the current uid with mode 0600, and its sha256 matches its name; anything
+  else is a miss. Cache writes are best-effort: a failed write still runs
+  the verified bundle from memory.
+  On a miss the laptop sends the bundle (capped at 8 MiB before reading),
+  the loader verifies its sha256, writes it atomically (temp file +
+  `os.replace`, 0600), and deletes other entries in that directory. With no
+  usable private runtime directory (e.g. macOS hosts) nothing is cached —
+  never a fallback to `/tmp` or `~/.cache`. The loader then checks the
+  bundle's own stamp (`READY <stamp>`) against the laptop's expected stamp
+  and refuses a mismatch.
+- **Cache threat model, stated honestly.** The checks protect against
+  corruption, partial writes, and stale versions. They do **not** defend
+  against another process running as the same user: such a process can
+  already run code as that user, so a same-uid attacker is out of scope.
+- **Destination check before every session start.** The `ssh -G`
+  re-resolution runs before each session start; a mismatch starts no
+  session and records BLOCKED (`destination_changed`). A live session's
+  connection is fixed to the verified host, so re-capturing identity inside
+  it after `STALE_IDENTITY` stays safe.
+- **Failure classification (same taxonomy, same status-cache rules).** A
+  session reports the same result shape as a one-shot call, so admitted →
+  typed op error with status unchanged still holds. Session-specific rows:
+  - A request whose deadline passes with no admitted marker while the
+    session is still alive is `OP_TIMEOUT` (status-preserving): a live
+    channel proves reachability, so a slow host queue never flips the
+    binding to BLOCKED.
+  - A session the laptop ended (stuck-parent kill, decode-error kill, run
+    close, or a call arriving on an already-closed session) fails its
+    unadmitted calls as `REMOTE_OP_FAILED` (status-preserving). Only a
+    natural death (EOF, ssh exited on its own) classifies unadmitted calls
+    through the transport taxonomy, using the session's real ssh exit code.
+  - A natural death with ssh exit code 0 (host idle-exit, clean EOF) is a
+    benign session end, never a transport failure: its unadmitted calls get
+    `REMOTE_OP_FAILED` and the next call starts a fresh session without
+    spending the run's single restart. The laptop reaps an idle session at
+    `session_idle_s`; the host idles out later (`session_idle_s` + grace),
+    so the laptop retires a session before the host would.
+  - Session start failing transport-class (no marker; 255, connect timeout,
+    127, 76) is the call's result — recorded as today, no one-shot retry.
+    Protocol-class start failures (loader crash, hash or stamp mismatch,
+    bad handshake) switch this run's binding to the one-shot path. A second
+    mid-run death does the same.
+  - A root pin failure is `STALE_IDENTITY` as before; the session stays up.
+- **Run scoping.** The session key is unique per Console run invocation
+  (message id + a fresh uuid), so regenerate and recovery re-runs never
+  share a session. Run end closes the key's sessions and **tombstones** the
+  key (last 1024 kept): a later call under a closed key — a surviving
+  sub-agent, a Stop straggler — uses one-shot calls rather than reopening
+  an unowned session. App exit closes every session.
+- **Kill switch.** `[console_ssh] session_worker = false` restores pure
+  one-shot behaviour exactly; `session_idle_s` (default 60) sets the idle
+  close; `bundle_cache = false` disables the host cache (the bundle is then
+  sent on every session start).
+- **Measured (2026-09-27, LAN Wi-Fi host, Python 3.13).** Warm `fs_read`
+  median 13.3 ms / p90 28.5 ms over 420 back-to-back calls, against a
+  same-window ICMP ping median of 9.4 ms (spike echo floor 7.5 ms; target
+  ≤ floor + 15 ms). A cache-hit session start costs 110–420 ms (median
+  192 ms), dominated by opening the ssh channel over the ControlMaster;
+  a miss costs ~500 ms. Both are paid once per run per binding.

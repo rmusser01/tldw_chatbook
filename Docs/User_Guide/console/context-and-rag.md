@@ -369,15 +369,27 @@ target. Connections run in BatchMode: Chatbook never supplies or stores
 a password, and never prompts for one; if your key needs a passphrase,
 load it into ssh-agent first.
 
-**Nothing is installed on the server.** Each tool call streams a tiny
-stdlib-only worker over the SSH session's own stdin, the worker performs
-the pinned, confined operation server-side, and it vanishes when the
-call ends. A shared ControlMaster connection (sockets on your machine,
-never the server) keeps consecutive calls warm; the
-`[console_ssh]` config section tunes it (`control_persist`,
-`enable_multiplexing`, `connect_timeout_s`, `max_concurrent_calls`,
-and the per-run session worker keys `session_worker`, `session_idle_s`,
-`bundle_cache`).
+**Nothing is installed on the server.** A stdlib-only worker arrives over
+the SSH connection's own stdin; each operation runs in a fresh process on
+the server that pins the bound folder, performs the confined operation,
+and exits. A shared ControlMaster connection (sockets on your machine,
+never the server) keeps the connection warm, and the first remote call of
+a Console run opens one **session** per SSH binding that the rest of that
+run's calls reuse — a warm call then costs about one network round trip
+instead of a fresh ssh exchange. The session closes when the run ends or
+after it sits idle. To make that first call cheap, the server caches the
+worker in `$XDG_RUNTIME_DIR/tldw-worker/` (a private, per-user tmpfs
+directory that is cleared at logout), checking it against its sha256 on
+every use; when that directory is missing or not private (for example on
+a macOS server) nothing is cached and the worker is sent each time.
+Nothing is written anywhere else on the server.
+
+The `[console_ssh]` config section tunes all of this: `control_persist`,
+`enable_multiplexing`, `connect_timeout_s`, and `max_concurrent_calls`
+for the connection; `session_worker` (default `true`; set `false` to go
+back to one ssh exchange per call), `session_idle_s` (default `60`
+seconds before an idle session closes), and `bundle_cache` (default
+`true`; set `false` to never cache the worker on the server).
 
 **Adding a binding.** Press **F9 → Workspaces**, select the workspace,
 and use the **SSH folders** editor: a target (`user@host[:port]` or an
@@ -974,7 +986,7 @@ exports, and snapshots can retain bytes. Full details are in
   `connect_timeout_s`, and `max_concurrent_calls`; plus the per-run session
   worker: `session_worker` (default `true`; `false` = one ssh exchange per
   call), `session_idle_s` (default `60`), and `bundle_cache` (default
-  `true`; host-side bundle cache in `$XDG_RUNTIME_DIR`).
+  `true`; server-side worker cache in `$XDG_RUNTIME_DIR/tldw-worker/`).
 - [Settings ▸ RAG](../settings/rag.md) — the profile that both auto- and
   manual Library RAG retrieval read for search mode and result depth.
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
