@@ -1521,6 +1521,18 @@ a stale object. If mouse behavior is the contract, capture before/after regions
 and the widget at the old coordinate first so a compositor race is distinguished
 from a product interaction failure.
 
+**Same trap, scroll variant (TASK-33211, 2026-09-28).** The only failing test in
+84 PR Fast Lane runs was an MCP Workbench test that clicked Run with a bare
+`await pilot.click(run_button)` right after a focus scroll. Under load the
+scroll was still animating, the button moved (`y=8 -> y=5`), and the click missed
+(`pilot.click` returned False, service never called). The failure surfaced three
+steps later as "expected an error toast, got []", which pointed at the product.
+Commit 86efdced97 had already moved 20 sibling tests onto a settle-then-click
+helper that asserts `await pilot.click(...)`, but the sweep missed this one call
+inside a `try/finally`. When a harness wraps a flaky call, grep for every raw
+call site, not just the obvious ones. Always assert a pilot click's return value,
+so a miss fails at the click.
+
 ---
 
 ## A restored bounded reader needs a mount-time request re-kick
