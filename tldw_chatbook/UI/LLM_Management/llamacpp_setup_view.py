@@ -13,6 +13,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static
+from textual.css.query import QueryError
 
 from tldw_chatbook.LLM_Management.llamacpp_connection import (
     canonical_base_url,
@@ -306,11 +307,17 @@ class LlamaCppSetupView(Vertical):
                 if action == "save"
                 else "Profile deleted; current tuning kept as a draft."
             )
-        except (LlamaCppProfileError, ValueError, OSError):
+        except (LlamaCppProfileError, ValueError, OSError, QueryError):
+            # QueryError: TASK-32800.1 contract -- a post-await lookup can
+            # find the subtree removed; treat it as the action ending with
+            # the view gone rather than letting NoMatches exit the app.
             if self.is_mounted:
-                self.query_one("#llamacpp-profile-status", Static).update(
-                    "Profile action failed. Check values and name, then Reload before retrying. Existing profiles were preserved."
-                )
+                try:
+                    self.query_one("#llamacpp-profile-status", Static).update(
+                        "Profile action failed. Check values and name, then Reload before retrying. Existing profiles were preserved."
+                    )
+                except QueryError:
+                    pass
         finally:
             self._profile_busy = False
             if self.is_mounted:
