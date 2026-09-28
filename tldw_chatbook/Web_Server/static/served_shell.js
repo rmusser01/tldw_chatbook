@@ -12,6 +12,7 @@
   let latest = null;
   let userClosed = false;
   let pollTimer = null;
+  let canvasDisabled = false;
 
   // The terminal websocket is always same-origin. The server-substituted
   // absolute URL (from public_url, default localhost) only matches the page
@@ -61,6 +62,11 @@
   }
 
   function disableCanvas() {
+    // Latch before anything else: an older refreshCanvasState() request may
+    // still be in flight and resolve with a "ready" state AFTER the
+    // disabling 404, and with the poll stopped nothing would correct the
+    // state -- applyState must ignore it permanently (PR #2856 Qodo #5).
+    canvasDisabled = true;
     latest = null;
     userClosed = false;
     // A 404 from /canvas/api/session means Canvas is unavailable at the
@@ -81,6 +87,7 @@
   }
 
   function applyState(detail) {
+    if (canvasDisabled) return;
     if (!detail || typeof detail !== "object") return;
     if (detail.status === "ready") {
       const url = safeCanvasPath(detail.url);
