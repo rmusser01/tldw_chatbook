@@ -459,6 +459,10 @@ def test_estimate_target_frames_fallback_anchor() -> None:
     # "Hello world" weight = 10.2 → raw 25·10.2/16.1 ≈ 15.84.
     # 15.84 < low_threshold 50 → boost: 50·(15.84/50)^(1/3) ≈ 34.08 → 34.
     assert estimate_target_frames("Hello world") == 34
+    # Fallback ref: "Nice to meet you." = 18 chars → weight 16.4
+    # (15 latin=1.0 + 2 spaces=0.2 + 1 period=0.5); ref_frames 25.
+    # "Hello world" weight 10.4 → 25 * 10.4/16.4 ≈ 15.85 → 15.
+    assert estimate_target_frames("Hello world") == 15
 
 
 def test_estimate_target_frames_clone_ratio_and_speed() -> None:

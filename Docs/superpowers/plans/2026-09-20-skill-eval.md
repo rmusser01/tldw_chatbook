@@ -858,6 +858,8 @@ def test_unmeasurable_dimensions_are_excluded_and_renormalized():
     # output_quality/robustness have zero static weight -> excluded, weights
     # renormalized over the measurable seven -> perfect static scores hit 100.
     assert report.composite == pytest.approx(100.0)
+    raw = sum(d.blended * d.weight for d in report.dimensions)
+    assert report.composite == pytest.approx(raw * 0.90 * 100)  # two 5% penalties
 
 
 def test_build_report_degrades_confidence_when_judge_failed():
@@ -989,6 +991,9 @@ def blend_dimension(name: str, *, static: Optional[float],
     if total_w == 0:  # no layer can produce this dimension at this depth
         return DimensionScore(name=name, weight=DIMENSION_WEIGHTS[name],
                               blended=0.0, available_layers=())
+    if total_w == 0:  # no layer produced this dimension at all
+        pairs = [("static", 1.0, 0.0)]
+        total_w = 1.0
     blended = sum(w * v for _, w, v in pairs) / total_w
     return DimensionScore(name=name, weight=DIMENSION_WEIGHTS[name],
                           blended=round(blended, 4),
@@ -1013,6 +1018,7 @@ def build_report(subject_provenance: dict, depth: SkillEvalDepth,
     measurable = [d for d in dims if d.available_layers]
     weight_sum = sum(d.weight for d in measurable) or 1.0
     raw = sum(d.blended * (d.weight / weight_sum) for d in measurable)
+    raw = sum(d.blended * d.weight for d in dims)
     penalty = 1.0
     for finding in static.findings:
         penalty -= finding.penalty
@@ -1969,6 +1975,7 @@ class _Chat:
             import json
             return json.dumps({"prompts": [f"q{i}" for i in range(10)]})
         if "Invent exactly 10" in text:  # judge synthesis
+        if "Invent exactly 10" in text:
             import json
             return json.dumps({"prompts": [
                 {"text": f"p{i}", "should_trigger": i < 5} for i in range(10)]})
@@ -1976,6 +1983,9 @@ class _Chat:
             return '{"task": "t", "rating": 4, "rationale": "ok"}'
         if "Rate how well" in text or "right-sized" in text:
             return '{"rating": 4, "rationale": "ok"}'
+        if "Invent exactly 10 short user requests" in text or "varied" in text:
+            import json
+            return json.dumps({"prompts": [f"q{i}" for i in range(10)]})
         return '{"skill": "csv-cleaner", "reason": "r"}'
 
 
@@ -2245,6 +2255,9 @@ def test_bench_save_load_round_trip(db):
     assert loaded.bench_id == bench_id
     from dataclasses import replace
     cfg2 = replace(loaded, name="renamed")
+    assert loaded == cfg
+    assert loaded.bench_id == bench_id
+    cfg2 = _config(name="renamed")
     assert storage.save_skill_eval_bench(db, cfg2) == bench_id
     assert db.get_task(bench_id)["name"] == "renamed"
 
@@ -2876,3 +2889,4 @@ Add the button in the same compose block as `evals-rail-new-character-bench` (~l
 8. **Errata (controller ruling, Task 6 fix round 1):** the Task 6 brief's `one_selection` passed `err if verdict is None else None` to `record` — equivalent to plain `err`, which is `None` on every successful call. A selection reply that parses as a JSON dict but yields an indeterminate verdict from `parse_selection_reply` (e.g. `{"skill": 123}` — non-string, non-null) produced an artifact with NO `failed` entry and NO tp/fp/fn contribution, so production F1 could be computed over 9 of 10 selections with no visible signal. Ruling: a parseable-but-indeterminate selection reply is a FAILED cell per the spec ("anything else is a retry-then-fail cell"), exactly like an unparseable reply after retry — the sample_id MUST land in `failed` with error reason "indeterminate" while the artifact still records `{"selected": None, "should": ...}`. Implemented in `judge.py` (`one_selection` computes the effective error as `None` only when the call succeeded AND the verdict is determinate); pinned by `test_judge_layer_indeterminate_selection_is_failed_not_dropped`. Do not collapse the error expression back to `err` alone.
 9. **Errata (controller ruling, Task 7 fix round 1):** the Task 7 brief's runner wired the outer `progress` callback so it only ever emitted `(0, total)`: the judge layer received `progress=lambda d, t: tick(0)` (re-emitting the unchanged count), layer completions were bare `done += N` additions with no emission, and `run_simulation_layer` got no progress argument at all — any UI progress bar built on it would show 0/N until the run ended. Ruling: the runner emits live, monotonic, per-call progress — layer-internal cumulative counters (judge: successful calls; sim: recorded cells) are forwarded as deltas (`forward(layer)` with a per-layer `prev` counter, `tick(delta)` on positive deltas), the sim-prompt generation call gets `tick(1)`, and there are NO post-layer completion bumps; a full uninterrupted run's last emitted pair is exactly `(estimate_calls(depth, deep_sim_total), same)` with every intermediate value monotonic non-decreasing. Implemented in `runner.py` (`run()`); pinned by `test_progress_is_live_and_monotonic`. Do not revert to layer-end-only accounting or re-introduce post-layer `done += N` bumps alongside internal forwarding.
 10. **Errata (final whole-branch review, fix wave):** six cross-seam defects found after Task 11, all fixed in one wave. (a) **Plan defect — no subject picker:** Task 9/10 shipped the panel's subject as display-only while `subject_ref` started empty, so spec §10's "subject picker listing skills with trust tiers" was absent and every draft run died in `SubjectError`; fixed with a `Select` (fed by `set_subjects` from the screen's `store_skill_names` call site, labels `name (trust)`) plus a directory-path `Input`, a `SubjectChanged(subject_ref, subject_kind)` message, and screen-side persistence (`load → replace → save`); the two controls follow a documented last-touched-wins rule (a store pick clears the Input, a typed path resets the Select). (b) **Self-collision:** the worker built `reserved_names = skill_names | builtin_names` with the subject's own name inside `skill_names`, flagging every store-sourced subject `NAME_COLLISION` (−5%); fixed by the extracted `skill_eval_launch.reserved_names_for(subject_name, skill_names, builtin_names)` excluding the subject. (c) **Body cap dropped:** spec §11's size cap was never implemented, so an oversize SKILL.md went wholesale into up to 67 prompts; controller ruling: cap at 8,000 chars inside `prompts._wrap` (truncate, append `[BODY TRUNCATED AT 8000 CHARS]` INSIDE the data fence) and append the report warning `body truncated to 8000 chars in prompts (oversize skill body)`. (d) **Unmarked sim-prompt path:** `runner._generate_sim_prompts` embedded the subject name/description with no `<<<..._START/END>>>` fence while the system prompt asserted only marked text is untrusted; fixed with a `<<<SKILL_UNDER_TEST_START/END>>>` description-only fence. (e) **`sim_usable` gate:** `sim.activation is not None` let an all-error deep run (provider outage, every cell unparsed, activation 0.0) certify; a usable sim layer now additionally requires at least one parsed cell (`activated is not None`), and a ran-but-zero-parsed layer degrades confidence one level with the warning `simulation layer produced no parseable responses; scores renormalized without it`. (f) **`layer_summaries` never rendered:** the detail view showed only an artifact count over the persisted judge/sim stats; `SkillEvalDetail` now renders a "Layer statistics" block (judge rubrics + trigger F1/precision/recall line; sim activation/consistency/failure lines with CIs; `None` blocks skipped).
+4. **Placeholder scan:** the two instruction-level deferrals (`store_skill_names` dir resolution; copying the UI test harness from an existing file) reference concrete in-repo precedents with file paths — resolved during execution, never shipped as gaps.

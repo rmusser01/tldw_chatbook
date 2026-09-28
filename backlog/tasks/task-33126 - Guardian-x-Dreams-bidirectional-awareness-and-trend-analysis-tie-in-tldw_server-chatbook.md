@@ -1,5 +1,9 @@
 ---
+<<<<<<<< HEAD:backlog/tasks/task-33126 - Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md
 id: TASK-33126
+========
+id: TASK-33150
+>>>>>>>> 167d500b0e (feat: land the llama.cpp management milestone (tasks-32721..32745)):backlog/tasks/task-33150 - Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md
 title: >-
   Guardian x Dreams - bidirectional awareness and trend-analysis tie-in
   (tldw_server <-> chatbook)
@@ -14,6 +18,11 @@ labels:
 dependencies: []
 priority: low
 ---
+
+> Renumbering provenance: filed as task-32902 on the pre-divergence docs
+> line; dev's older task-32902 (Work-stream the tier-2 P3 polish,
+> 2026-09-21) keeps the ID per the 2026-08-21 owner rule (TASK-19601).
+
 
 ## Description
 
