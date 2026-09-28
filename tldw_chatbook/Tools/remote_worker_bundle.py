@@ -4612,6 +4612,7 @@ then sends STATUS. Single-threaded by design: forking a threaded
 process is unsafe, and the per-request watchdog lives in the child.
 """
 import json
+import math
 import os
 import selectors
 import signal
@@ -4619,6 +4620,9 @@ import time
 from collections import deque
 from typing import BinaryIO, Callable
 _CHILD_CRASH_EXIT = 70
+_MAX_IDLE_S = 1000000.0
+_QUEUE_PER_CHILD = 4
+_QUEUE_BYTES_FACTOR = 2
 
 class _Child:
     __slots__ = ('pid', 'fd', 'request_id', 'partial', 'sent', 'capped')
@@ -4690,7 +4694,9 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     Reads frames from ``in_fd``. The first inbound frame must be ``HELLO``
     carrying a JSON body ``{"max_children": int, "idle_s": float}`` that
     sets the concurrency cap and the idle-exit timeout; ``max_children``
-    is clamped to at least 1 and ``idle_s`` to at least 1.0 second. Any
+    is clamped to at least 1 and ``idle_s`` to ``[1.0, _MAX_IDLE_S]``
+    seconds (``max_children`` must be a JSON integer and ``idle_s`` a
+    finite JSON number; a boolean is neither). Any
     ``REQUEST`` received before ``HELLO`` is silently dropped. Each
     ``REQUEST`` forks a child that runs ``run_request(body, out)`` with
     stdin bound to ``/dev/null`` and stdout bound to a pipe back to this
@@ -4698,15 +4704,23 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     once the child exits a ``STATUS`` frame reports its exit code and
     signal. A ``REQUEST`` received while ``max_children`` children are
     already running is queued and echoed back as a ``BUSY`` frame; it
-    starts once a slot frees up. A ``CANCEL`` kills the matching live
+    starts once a slot frees up. The queue is bounded to
+    ``_QUEUE_PER_CHILD * max_children`` requests and
+    ``_QUEUE_BYTES_FACTOR * max_request_bytes`` bytes of queued bodies; a
+    ``REQUEST`` past either bound, or one whose id is already running or
+    queued, is refused at once with ``STATUS`` (exit ``None``, signal
+    ``SIGKILL``) -- the same encoding as a cancelled queued request, which
+    the laptop maps to an unadmitted OP_TIMEOUT (R8) -- and never runs; a
+    duplicate never replaces the first request's cancellation mapping. A
+    ``CANCEL`` kills the matching live
     child with SIGKILL, or -- if the request is still queued -- drops it
     from the queue and immediately sends its ``STATUS`` (exit ``None``,
     signal ``SIGKILL``), since it never ran and so will never trigger the
     normal child-exit path. A child whose combined output exceeds
     ``max_response_bytes`` is killed and its STATUS still reports the
-    kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, or a
-    value of the wrong type) ends the session with exit code 3 rather than
-    raising into the caller. The loop is single-threaded: forking a
+    kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, a
+    value of the wrong type, or a non-finite ``idle_s``) ends the session
+    with exit code 3 rather than raising into the caller. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -4736,6 +4750,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     children: dict[int, _Child] = {}
     by_request: dict[int, _Child] = {}
     queue: deque[tuple[int, bytes]] = deque()
+    queued_bytes = 0
     max_children, idle_s, hello = (8, 60.0, False)
     last_activity = clock()
     outbox = bytearray()
@@ -4755,6 +4770,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         selector.register(child.fd, selectors.EVENT_READ, child)
 
     def finish(child: _Child) -> None:
+        nonlocal queued_bytes
         selector.unregister(child.fd)
         os.close(child.fd)
         if child.partial and (not child.capped):
@@ -4766,7 +4782,12 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         del children[child.fd]
         by_request.pop(child.request_id, None)
         while queue and len(children) < max_children:
-            start(*queue.popleft())
+            request_id, raw = queue.popleft()
+            queued_bytes -= len(raw)
+            start(request_id, raw)
+
+    def refuse(request_id: int) -> None:
+        outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
 
     def kill_all() -> None:
         for child in list(children.values()):
@@ -4795,16 +4816,25 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                         if kind == HELLO:
                             try:
                                 limits = json.loads(body)
-                                max_children = max(1, int(limits['max_children']))
-                                idle_s = max(1.0, float(limits['idle_s']))
-                            except (ValueError, KeyError, TypeError):
+                                raw_children = limits['max_children']
+                                raw_idle = limits['idle_s']
+                                if type(raw_children) is not int or type(raw_idle) not in (int, float) or (not math.isfinite(raw_idle)):
+                                    raise ValueError('HELLO limits out of range')
+                                max_children = max(1, raw_children)
+                                idle_s = min(_MAX_IDLE_S, max(1.0, float(raw_idle)))
+                            except (ValueError, KeyError, TypeError, OverflowError):
                                 return 3
                             hello = True
                         elif kind == REQUEST and hello:
-                            if len(children) < max_children:
+                            if request_id in by_request or any((item[0] == request_id for item in queue)):
+                                refuse(request_id)
+                            elif len(children) < max_children:
                                 start(request_id, body)
+                            elif len(queue) >= _QUEUE_PER_CHILD * max_children or queued_bytes + len(body) > _QUEUE_BYTES_FACTOR * max_request_bytes:
+                                refuse(request_id)
                             else:
                                 queue.append((request_id, body))
+                                queued_bytes += len(body)
                                 outbox.extend(encode_frame(BUSY, request_id, b''))
                         elif kind == CANCEL:
                             child = by_request.get(request_id)
@@ -4819,6 +4849,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                                     outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
                                 queue.clear()
                                 queue.extend(remaining)
+                                queued_bytes = sum((len(item[1]) for item in queue))
                 else:
                     child: _Child = key.data
                     try:
@@ -5175,4 +5206,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("cb4b42cc98a002197d07fa9f6ec476ff2ad457eb9d467b06eff810a6e1dcddda")
+BUNDLE_SHA256 = _enter_worker_exchange("80ade35b467ab74d0902c45a224ef879ba2490ec961b9aaf6721044df7c6c9b9")

@@ -282,3 +282,101 @@ def test_close_fds_above_2_closes_extras_quickly():
     assert leaked_flag == "0", "helper left an extra descriptor open in the child"
     elapsed = float(elapsed_s)
     assert elapsed < 0.1, f"fork+close took {elapsed * 1000:.1f} ms -- looks like the SC_OPEN_MAX regression"
+
+
+@pytest.mark.parametrize(
+    "bad_body",
+    [
+        b'{"max_children": 4, "idle_s": 1e309}',  # json -> inf
+        b'{"max_children": 4, "idle_s": Infinity}',
+        b'{"max_children": 4, "idle_s": NaN}',
+        b'{"max_children": 4, "idle_s": -Infinity}',
+        b'{"max_children": true, "idle_s": 1.0}',
+        b'{"max_children": 4, "idle_s": false}',
+        b'{"max_children": 4.5, "idle_s": 1.0}',
+        pytest.param(b'{"max_children": 4, "idle_s": 1' + b"0" * 400 + b"}", id="int-overflows-float"),
+        b"[4, 1.0]",
+    ],
+)
+def test_hello_limits_rejected_before_conversion(bad_body):
+    proc = subprocess.Popen([sys.executable, "-c", HANDLER], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(HELLO, 0, bad_body))
+        assert proc.wait(5) == 3, (bad_body, proc.stderr.read())
+    finally:
+        _terminate(proc)
+
+
+def test_huge_finite_idle_is_clamped_not_a_crash():
+    proc = subprocess.Popen([sys.executable, "-c", HANDLER], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    reader = FrameReader(max_body=1 << 20)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(HELLO, 0, b'{"max_children": 4, "idle_s": 1e300}'))
+        time.sleep(0.2)  # the idle wait now runs with the clamped timeout
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"fast"))
+        frames = _collect(proc, reader, 1, timeout=5)
+        assert [decode_status(b) for k, _, b in frames if k == STATUS] == [(0, None)]
+    finally:
+        _terminate(proc)
+
+
+def _statuses_for(proc, reader, rid, want, timeout):
+    """Collect frames until ``want`` STATUS frames for ``rid`` arrive (duplicates counted)."""
+    frames, end, fd = [], time.monotonic() + timeout, proc.stdout.fileno()
+    while sum(1 for k, r, _ in frames if k == STATUS and r == rid) < want:
+        remaining = end - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            break
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        frames.extend(reader.feed(chunk))
+    return frames
+
+
+def test_duplicate_request_id_is_refused_and_first_stays_cancellable():
+    proc, reader = _session()
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:30"))
+        time.sleep(0.2)
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"fast"))
+        frames = _statuses_for(proc, reader, 1, 1, timeout=5)
+        assert [decode_status(b) for k, _, b in frames if k == STATUS] == [(None, 9)]
+        assert not [b for k, _, b in frames if k == LINE], "the duplicate must never run"
+        os.write(proc.stdin.fileno(), encode_frame(CANCEL, 1, b""))
+        frames += _statuses_for(proc, reader, 1, 1, timeout=5)
+        statuses = [decode_status(b) for k, _, b in frames if k == STATUS]
+        assert len(statuses) == 2 and statuses[1][1] == 9, "CANCEL must still reach the first child"
+    finally:
+        _terminate(proc)
+
+
+def test_queue_count_bound_refuses_the_excess_at_once():
+    proc, reader = _session(max_children=1)
+    try:
+        # 1 runs, 2..5 fill the queue (4 x max_children), 6 is refused.
+        wire = b"".join(encode_frame(REQUEST, i, b"sleep:30" if i == 1 else b"fast") for i in range(1, 7))
+        os.write(proc.stdin.fileno(), wire)
+        frames = _statuses_for(proc, reader, 6, 1, timeout=5)
+        statuses = {r: decode_status(b) for k, r, b in frames if k == STATUS}
+        assert statuses == {6: (None, 9)}
+        assert {r for k, r, _ in frames if k == BUSY} == {2, 3, 4, 5}
+        os.write(proc.stdin.fileno(), encode_frame(CANCEL, 1, b""))
+        frames = _collect(proc, reader, 5)
+        assert {r for k, r, _ in frames if k == STATUS} == {1, 2, 3, 4, 5}
+    finally:
+        _terminate(proc)
+
+
+def test_queue_byte_bound_refuses_the_excess_at_once():
+    proc, reader = _session(max_children=1)
+    try:
+        body = b"x" * (700 * 1024)  # cap is 2 x max_request_bytes (1 MiB) = 2 MiB queued
+        wire = encode_frame(REQUEST, 1, b"sleep:30")
+        wire += b"".join(encode_frame(REQUEST, i, body) for i in (2, 3, 4))
+        os.write(proc.stdin.fileno(), wire)
+        frames = _statuses_for(proc, reader, 4, 1, timeout=5)
+        assert {r: decode_status(b) for k, r, b in frames if k == STATUS} == {4: (None, 9)}
+        assert {r for k, r, _ in frames if k == BUSY} == {2, 3}
+    finally:
+        _terminate(proc)

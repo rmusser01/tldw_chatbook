@@ -10,6 +10,7 @@ process is unsafe, and the per-request watchdog lives in the child.
 from __future__ import annotations
 
 import json
+import math
 import os
 import selectors
 import signal
@@ -23,6 +24,13 @@ from tldw_chatbook.Tools.remote_session_frames import (
 )
 
 _CHILD_CRASH_EXIT = 70
+#: Upper clamp on HELLO's ``idle_s``: a larger timeout overflows the
+#: selector (kqueue rejects ~1e12 s; epoll takes an int of milliseconds).
+_MAX_IDLE_S = 1_000_000.0
+#: Queue bounds: at most this many queued REQUESTs per allowed child, and
+#: at most this many ``max_request_bytes`` of queued bodies in aggregate.
+_QUEUE_PER_CHILD = 4
+_QUEUE_BYTES_FACTOR = 2
 
 
 class _Child:
@@ -114,7 +122,9 @@ def serve(
     Reads frames from ``in_fd``. The first inbound frame must be ``HELLO``
     carrying a JSON body ``{"max_children": int, "idle_s": float}`` that
     sets the concurrency cap and the idle-exit timeout; ``max_children``
-    is clamped to at least 1 and ``idle_s`` to at least 1.0 second. Any
+    is clamped to at least 1 and ``idle_s`` to ``[1.0, _MAX_IDLE_S]``
+    seconds (``max_children`` must be a JSON integer and ``idle_s`` a
+    finite JSON number; a boolean is neither). Any
     ``REQUEST`` received before ``HELLO`` is silently dropped. Each
     ``REQUEST`` forks a child that runs ``run_request(body, out)`` with
     stdin bound to ``/dev/null`` and stdout bound to a pipe back to this
@@ -122,15 +132,23 @@ def serve(
     once the child exits a ``STATUS`` frame reports its exit code and
     signal. A ``REQUEST`` received while ``max_children`` children are
     already running is queued and echoed back as a ``BUSY`` frame; it
-    starts once a slot frees up. A ``CANCEL`` kills the matching live
+    starts once a slot frees up. The queue is bounded to
+    ``_QUEUE_PER_CHILD * max_children`` requests and
+    ``_QUEUE_BYTES_FACTOR * max_request_bytes`` bytes of queued bodies; a
+    ``REQUEST`` past either bound, or one whose id is already running or
+    queued, is refused at once with ``STATUS`` (exit ``None``, signal
+    ``SIGKILL``) -- the same encoding as a cancelled queued request, which
+    the laptop maps to an unadmitted OP_TIMEOUT (R8) -- and never runs; a
+    duplicate never replaces the first request's cancellation mapping. A
+    ``CANCEL`` kills the matching live
     child with SIGKILL, or -- if the request is still queued -- drops it
     from the queue and immediately sends its ``STATUS`` (exit ``None``,
     signal ``SIGKILL``), since it never ran and so will never trigger the
     normal child-exit path. A child whose combined output exceeds
     ``max_response_bytes`` is killed and its STATUS still reports the
-    kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, or a
-    value of the wrong type) ends the session with exit code 3 rather than
-    raising into the caller. The loop is single-threaded: forking a
+    kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, a
+    value of the wrong type, or a non-finite ``idle_s``) ends the session
+    with exit code 3 rather than raising into the caller. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -160,6 +178,7 @@ def serve(
     children: dict[int, _Child] = {}          # fd -> child
     by_request: dict[int, _Child] = {}
     queue: deque[tuple[int, bytes]] = deque()
+    queued_bytes = 0
     max_children, idle_s, hello = 8, 60.0, False
     last_activity = clock()
     outbox = bytearray()
@@ -179,6 +198,7 @@ def serve(
         selector.register(child.fd, selectors.EVENT_READ, child)
 
     def finish(child: _Child) -> None:
+        nonlocal queued_bytes
         selector.unregister(child.fd)
         os.close(child.fd)
         if child.partial and not child.capped:
@@ -194,7 +214,13 @@ def serve(
         del children[child.fd]
         by_request.pop(child.request_id, None)
         while queue and len(children) < max_children:
-            start(*queue.popleft())
+            request_id, raw = queue.popleft()
+            queued_bytes -= len(raw)
+            start(request_id, raw)
+
+    def refuse(request_id: int) -> None:
+        # Never ran: the same STATUS a cancelled queued request gets.
+        outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
 
     def kill_all() -> None:
         for child in list(children.values()):
@@ -224,18 +250,38 @@ def serve(
                         if kind == HELLO:
                             try:
                                 limits = json.loads(body)
-                                max_children = max(1, int(limits["max_children"]))
-                                idle_s = max(1.0, float(limits["idle_s"]))
-                            except (ValueError, KeyError, TypeError):
+                                raw_children = limits["max_children"]
+                                raw_idle = limits["idle_s"]
+                                # type() not isinstance(): bool is an int.
+                                if (
+                                    type(raw_children) is not int
+                                    or type(raw_idle) not in (int, float)
+                                    or not math.isfinite(raw_idle)
+                                ):
+                                    raise ValueError("HELLO limits out of range")
+                                max_children = max(1, raw_children)
+                                idle_s = min(_MAX_IDLE_S, max(1.0, float(raw_idle)))
+                            except (ValueError, KeyError, TypeError, OverflowError):
                                 # `finally` below still reaps/kills any
                                 # children and closes the selector.
                                 return 3
                             hello = True
                         elif kind == REQUEST and hello:
-                            if len(children) < max_children:
+                            if request_id in by_request or any(
+                                item[0] == request_id for item in queue
+                            ):
+                                refuse(request_id)  # duplicate id: keep the first's mapping
+                            elif len(children) < max_children:
                                 start(request_id, body)
+                            elif (
+                                len(queue) >= _QUEUE_PER_CHILD * max_children
+                                or queued_bytes + len(body)
+                                > _QUEUE_BYTES_FACTOR * max_request_bytes
+                            ):
+                                refuse(request_id)  # queue full
                             else:
                                 queue.append((request_id, body))
+                                queued_bytes += len(body)
                                 outbox.extend(encode_frame(BUSY, request_id, b""))
                         elif kind == CANCEL:
                             child = by_request.get(request_id)
@@ -257,6 +303,7 @@ def serve(
                                     ))
                                 queue.clear()
                                 queue.extend(remaining)
+                                queued_bytes = sum(len(item[1]) for item in queue)
                 else:
                     child: _Child = key.data
                     try:
