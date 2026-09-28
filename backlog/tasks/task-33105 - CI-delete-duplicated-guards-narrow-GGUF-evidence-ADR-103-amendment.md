@@ -32,9 +32,9 @@ coverage for the bundle and backlog-id checks is pinned by
 `test_bundle_and_backlog_checks_run_on_push_events` (`Tests/CI/test_ci_queue_pressure_contract.py`).
 
 GGUF evidence was narrowed, then partly restored after Qodo review on PR #2860. `pyproject.toml`
-and the shared test-harness paths (`Tests/conftest.py`, `Tests/UI/conftest.py`,
-`Tests/UI/app_factory.py`, `Tests/private_profile.py`, `Tests/UI/consolidated_css.py`) are back in
-both GGUF workflows' `on.pull_request.paths`; `tldw_chatbook/app.py`, `tldw_chatbook/config.py` and
+and the shared test-harness paths are back in the GGUF workflows' `on.pull_request.paths`: `pyproject.toml`,
+`Tests/conftest.py` and `Tests/UI/conftest.py` in both; `Tests/UI/consolidated_css.py` in 2062.1 only;
+`Tests/private_profile.py` and `Tests/UI/app_factory.py` in 2062.2 only. `tldw_chatbook/app.py`, `tldw_chatbook/config.py` and
 `tldw_chatbook/css/**` stay excluded, which removes the triggers behind about 244 of the PR merges
 that fired these workflows in 30 days. **This is a deviation from the approved spec's C2 list**
 (the spec's C2 narrowed all of them) -- decided by the controller as a partial accept of Qodo's

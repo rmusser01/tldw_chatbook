@@ -14,8 +14,9 @@
 - **GGUF trigger partial-restore, a deviation from C2.** Post-Qodo review on PR #2860,
   `pyproject.toml` and the shared test-harness paths (`Tests/conftest.py`, `Tests/UI/conftest.py`,
   `Tests/UI/app_factory.py`, `Tests/private_profile.py`, `Tests/UI/consolidated_css.py`) were
-  restored to both GGUF workflows' triggers; `app.py`, `config.py` and `css/**` stay excluded.
-  This keeps roughly 244 of the original 30-day trigger volume removed rather than the full C2 list.
+  restored to the GGUF workflows' triggers (`pyproject.toml` and both conftests in both; `consolidated_css.py` in
+  2062.1 only; `private_profile.py` and `app_factory.py` in 2062.2 only). `app.py`, `config.py` and `css/**` stay
+  excluded, which removes the triggers behind about 244 PR merges in 30 days, rather than the full C2 list's.
 - **Lessons-file conflicts deferred.** The design's replay found `backlog/docs/lessons-*.md` among
   the top conflict sources; no change here reduces that -- it is not addressed by this rollout.
 - **Nightly disabled.** `nightly-deep.yml` was disabled with `gh workflow disable` on 2026-09-27

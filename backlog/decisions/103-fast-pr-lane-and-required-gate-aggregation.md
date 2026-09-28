@@ -13,6 +13,9 @@ their sources` context; comprehensive test coverage runs on `main`, manual
 events, and a dedicated default-branch-owned nightly workflow instead of every
 pull-request update.
 
+   (Clarified 2026-09-27: since TASK-32908 the fast test runs as two parallel jobs,
+   PR Fast Lane and UI Fast Lane; see Consequences.)
+
 ## Amendment (2026-08-30, TASK-25705) — adopted
 
 The `dev` protection rule applies the existing required context to
@@ -98,9 +101,9 @@ cron entry on `dev`.
 
 - The existing required job name remains unchanged, so branch protection needs
   no migration and existing PRs are not stranded.
-- The fast-test job and derived-artifact job remain separate. The required job
-  declares the fast lane as a prerequisite, runs with `always()`, and fails
-  explicitly on pull requests unless the prerequisite result is `success`.
+- The fast-test jobs and derived-artifact job remain separate. The required job
+  declares both fast lanes as prerequisites, runs with `always()`, and fails
+  explicitly on pull requests unless both prerequisite results are `success`.
 - The required workflow runs its two fast lanes in parallel (at most two
   runners at a time), then the install-free derived-artifact checks. With
   one routine path-scoped guard (perf-guard), an ordinary unlabeled, non-GGUF PR has a
