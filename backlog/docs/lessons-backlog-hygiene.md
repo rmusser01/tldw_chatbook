@@ -1134,3 +1134,15 @@ for a full-tree baseline: `git worktree add --detach /tmp/baseline <sha>`, measu
 **The general rule.** In a repo with concurrent worktrees, treat anything under `.git/` that is not
 per-worktree as shared mutable state: `refs/stash`, `refs/heads`, `rr-cache`, `config`. A command that
 writes to one of them affects every worktree, including other people's.
+
+## Check task syntax guard findings against YAML (PR #2026, 2026-09-27)
+
+While rebasing PR #2026 onto current `dev`, its task-file guard flagged eight
+new files. PyYAML confirmed seven malformed frontmatter headers, but the eighth
+was valid: a multiline quoted value ended with a quote on an unindented line.
+The guard had assumed every continuation line must be indented. A regression
+test reproduced that false positive before the guard was fixed.
+
+When a lightweight task-file checker flags existing records, compare the
+result with a real YAML parser before editing those records. Keep a regression
+test for any syntax the lightweight checker misreads.
