@@ -36,12 +36,46 @@ class _Child:
 
 
 def _close_fds_above_2(keep: int) -> None:
-    try:
-        max_fd = os.sysconf("SC_OPEN_MAX")
-    except (AttributeError, ValueError, OSError):
-        max_fd = 1024
+    """Close every open fd above 2 except ``keep``, in a forked child.
+
+    Enumerates the process's actual open descriptors via ``/proc/self/fd``
+    (Linux) or ``/dev/fd`` (macOS/BSD) and closes only those, instead of
+    calling ``close()`` on every integer up to ``SC_OPEN_MAX`` -- with a
+    large (or misreported, e.g. ``-1``) nofile limit that is one syscall
+    per fd number and dominates fork latency (measured ~134 ms per fork
+    here with ``SC_OPEN_MAX`` = 1048576, vs ~1.5 ms for a bare fork).
+
+    Args:
+        keep: The one fd above 2 to leave open (everything else above 2
+            is closed unconditionally).
+    """
+    for fd_dir in ("/proc/self/fd", "/dev/fd"):
+        try:
+            names = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for name in names:
+            try:
+                fd = int(name)
+            except ValueError:
+                continue
+            if fd <= 2 or fd == keep:
+                continue
+            # `fd_dir` was itself opened (and already closed again) just to
+            # read this listing, so its own fd number can appear here even
+            # though it is already gone (observed on Linux) -- closing an
+            # already-closed fd just raises OSError, which is ignored below
+            # like every other fd this loop cannot close for other reasons.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        return
+    # Neither directory is readable (e.g. a locked-down container) -- fall
+    # back to a bounded range rather than iterating a possibly-huge
+    # SC_OPEN_MAX.
     os.closerange(3, keep)
-    os.closerange(keep + 1, max(max_fd, keep + 2))
+    os.closerange(keep + 1, 4096)
 
 
 def _spawn(raw: bytes, request_id: int, run_request: Callable[[bytes, BinaryIO], int]) -> _Child:
@@ -79,20 +113,26 @@ def serve(
 
     Reads frames from ``in_fd``. The first inbound frame must be ``HELLO``
     carrying a JSON body ``{"max_children": int, "idle_s": float}`` that
-    sets the concurrency cap and the idle-exit timeout; frames before
-    ``HELLO`` are ignored. Each ``REQUEST`` forks a child that runs
-    ``run_request(body, out)`` with stdin bound to ``/dev/null`` and
-    stdout bound to a pipe back to this loop; every line the child writes
-    is relayed as a ``LINE`` frame, and once the child exits a ``STATUS``
-    frame reports its exit code and signal. A ``REQUEST`` received while
-    ``max_children`` children are already running is queued and echoed
-    back as a ``BUSY`` frame; it starts once a slot frees up. A ``CANCEL``
-    kills the matching live child (or drops it from the queue) with
-    SIGKILL. A child whose combined output exceeds ``max_response_bytes``
-    is killed and its STATUS still reports the kill signal. The loop is
-    single-threaded: forking a multi-threaded process is unsafe, and any
-    per-request timeout is the child's own responsibility, not the
-    parent's.
+    sets the concurrency cap and the idle-exit timeout; ``max_children``
+    is clamped to at least 1 and ``idle_s`` to at least 1.0 second. Any
+    ``REQUEST`` received before ``HELLO`` is silently dropped. Each
+    ``REQUEST`` forks a child that runs ``run_request(body, out)`` with
+    stdin bound to ``/dev/null`` and stdout bound to a pipe back to this
+    loop; every line the child writes is relayed as a ``LINE`` frame, and
+    once the child exits a ``STATUS`` frame reports its exit code and
+    signal. A ``REQUEST`` received while ``max_children`` children are
+    already running is queued and echoed back as a ``BUSY`` frame; it
+    starts once a slot frees up. A ``CANCEL`` kills the matching live
+    child with SIGKILL, or -- if the request is still queued -- drops it
+    from the queue and immediately sends its ``STATUS`` (exit ``None``,
+    signal ``SIGKILL``), since it never ran and so will never trigger the
+    normal child-exit path. A child whose combined output exceeds
+    ``max_response_bytes`` is killed and its STATUS still reports the
+    kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, or a
+    value of the wrong type) ends the session with exit code 3 rather than
+    raising into the caller. The loop is single-threaded: forking a
+    multi-threaded process is unsafe, and any per-request timeout is the
+    child's own responsibility, not the parent's.
 
     Args:
         in_fd: Readable file descriptor carrying inbound frames.
@@ -107,7 +147,7 @@ def serve(
 
     Returns:
         ``0`` on a clean stdin EOF or idle exit, ``3`` if an inbound frame
-        violates the codec's size cap.
+        violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
         OSError: If a low-level file descriptor operation (fork, pipe,
@@ -143,6 +183,10 @@ def serve(
         os.close(child.fd)
         if child.partial and not child.capped:
             outbox.extend(encode_frame(LINE, child.request_id, bytes(child.partial)))
+        # Blocking is fine here: EOF on child.fd only happens once the child
+        # has exited (it never closes fd 1 early), so it is already a
+        # zombie or about to be and this reap returns immediately.
+        # (Deferred: WNOHANG.)
         _, status = os.waitpid(child.pid, 0)
         exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else None
         signal_no = os.WTERMSIG(status) if os.WIFSIGNALED(status) else None
@@ -178,9 +222,14 @@ def serve(
                     last_activity = clock()
                     for kind, request_id, body in reader.feed(data):
                         if kind == HELLO:
-                            limits = json.loads(body)
-                            max_children = max(1, int(limits["max_children"]))
-                            idle_s = max(1.0, float(limits["idle_s"]))
+                            try:
+                                limits = json.loads(body)
+                                max_children = max(1, int(limits["max_children"]))
+                                idle_s = max(1.0, float(limits["idle_s"]))
+                            except (ValueError, KeyError, TypeError):
+                                # `finally` below still reaps/kills any
+                                # children and closes the selector.
+                                return 3
                             hello = True
                         elif kind == REQUEST and hello:
                             if len(children) < max_children:
@@ -195,9 +244,19 @@ def serve(
                                     os.kill(child.pid, signal.SIGKILL)
                                 except ProcessLookupError:
                                     pass
-                            remaining = [item for item in queue if item[0] != request_id]
-                            queue.clear()
-                            queue.extend(remaining)
+                                # STATUS follows the normal child-exit path
+                                # (finish()) once its pipe hits EOF.
+                            else:
+                                remaining = [item for item in queue if item[0] != request_id]
+                                if len(remaining) != len(queue):
+                                    # Cancelled before it ever ran: it will
+                                    # never hit finish(), so send its STATUS
+                                    # here or the caller waits forever.
+                                    outbox.extend(encode_frame(
+                                        STATUS, request_id, encode_status(None, signal.SIGKILL),
+                                    ))
+                                queue.clear()
+                                queue.extend(remaining)
                 else:
                     child: _Child = key.data
                     try:
@@ -216,10 +275,17 @@ def serve(
                         os.kill(child.pid, signal.SIGKILL)
                         continue
                     child.partial += chunk
-                    while b"\n" in child.partial:
-                        line, _, rest = bytes(child.partial).partition(b"\n")
+                    # One split per chunk instead of a partition-per-line
+                    # loop: the old loop re-scanned (and re-copied, via
+                    # bytes(child.partial)) the shrinking remainder once per
+                    # line, which is O(n^2) on a chunk containing many
+                    # lines. split() finds them all in a single O(n) pass;
+                    # the last element (no trailing newline) is the new
+                    # partial, in the same order as before.
+                    lines = bytes(child.partial).split(b"\n")
+                    child.partial = bytearray(lines[-1])
+                    for line in lines[:-1]:
                         outbox.extend(encode_frame(LINE, child.request_id, line + b"\n"))
-                        child.partial = bytearray(rest)
             if outbox:
                 flush()
     except FrameError:

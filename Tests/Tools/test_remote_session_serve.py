@@ -1,8 +1,14 @@
-import json, os, subprocess, sys, textwrap, time
+import json, os, select, subprocess, sys, textwrap, time
 from pathlib import Path
+
+import pytest
+
 from tldw_chatbook.Tools.remote_session_frames import (
     BUSY, CANCEL, HELLO, LINE, REQUEST, STATUS, FrameReader, decode_status, encode_frame,
 )
+
+# `serve` forks; nightly CI runs `pytest ./Tests/` on Windows too.
+pytestmark = pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX fork server")
 
 REPO = Path(__file__).resolve().parents[2]
 HANDLER = textwrap.dedent('''
@@ -42,96 +48,237 @@ HANDLER = textwrap.dedent('''
     sys.exit(serve(0, 1, run_request=run_request, max_request_bytes=1 << 20, max_response_bytes=1 << 16))
 ''' % str(REPO))
 
+
 def _session(max_children=4, idle_s=30.0):
     proc = subprocess.Popen([sys.executable, "-c", HANDLER], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     os.write(proc.stdin.fileno(), encode_frame(HELLO, 0, json.dumps({"max_children": max_children, "idle_s": idle_s}).encode()))
     return proc, FrameReader(max_body=1 << 20)
 
+
+def _terminate(proc):
+    """Guarantee a test never leaks a live/zombie subprocess on assertion failure."""
+    try:
+        if proc.stdin and not proc.stdin.closed:
+            proc.stdin.close()
+    except OSError:
+        pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.wait(5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def _collect(proc, reader, want_status, timeout=10.0):
+    """Read frames until `want_status` distinct STATUS ids arrive or the deadline passes.
+
+    Uses `select` with the remaining deadline before every read so a child
+    that never produces output cannot block this helper forever (a bare
+    `os.read` has no timeout of its own).
+    """
     done, frames, end = set(), [], time.monotonic() + timeout
-    while len(done) < want_status and time.monotonic() < end:
-        for kind, rid, body in reader.feed(os.read(proc.stdout.fileno(), 65536)):
+    fd = proc.stdout.fileno()
+    while len(done) < want_status:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            break
+        ready, _, _ = select.select([fd], [], [], remaining)
+        if not ready:
+            break
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        for kind, rid, body in reader.feed(chunk):
             frames.append((kind, rid, body))
             if kind == STATUS:
                 done.add(rid)
     return frames
 
+
 def test_concurrent_requests_complete_out_of_order_lines_before_status():
     proc, reader = _session()
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:0.5") + encode_frame(REQUEST, 2, b"fast"))
-    frames = _collect(proc, reader, 2)
-    order = [rid for kind, rid, _ in frames if kind == STATUS]
-    assert order == [2, 1]
-    for rid in (1, 2):
-        kinds = [k for k, r, _ in frames if r == rid]
-        assert kinds[-1] == STATUS and LINE in kinds and kinds.index(LINE) < kinds.index(STATUS)
-    proc.stdin.close(); assert proc.wait(5) == 0
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:0.5") + encode_frame(REQUEST, 2, b"fast"))
+        frames = _collect(proc, reader, 2)
+        order = [rid for kind, rid, _ in frames if kind == STATUS]
+        assert order == [2, 1]
+        for rid in (1, 2):
+            kinds = [k for k, r, _ in frames if r == rid]
+            assert kinds[-1] == STATUS and LINE in kinds and kinds.index(LINE) < kinds.index(STATUS)
+        proc.stdin.close(); assert proc.wait(5) == 0
+    finally:
+        _terminate(proc)
+
 
 def test_cancel_kills_only_that_child():
     proc, reader = _session()
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:30") + encode_frame(REQUEST, 2, b"fast"))
-    time.sleep(0.3)
-    os.write(proc.stdin.fileno(), encode_frame(CANCEL, 1, b""))
-    frames = _collect(proc, reader, 2)
-    statuses = {rid: decode_status(body) for kind, rid, body in frames if kind == STATUS}
-    assert statuses[1][1] == 9 and statuses[2] == (0, None)
-    proc.stdin.close(); proc.wait(5)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:30") + encode_frame(REQUEST, 2, b"fast"))
+        time.sleep(0.3)
+        os.write(proc.stdin.fileno(), encode_frame(CANCEL, 1, b""))
+        frames = _collect(proc, reader, 2)
+        statuses = {rid: decode_status(body) for kind, rid, body in frames if kind == STATUS}
+        assert statuses[1][1] == 9 and statuses[2] == (0, None)
+    finally:
+        _terminate(proc)
+
+
+def test_cancel_of_queued_request_sends_status_promptly():
+    proc, reader = _session(max_children=1)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:1") + encode_frame(REQUEST, 2, b"sleep:30"))
+        time.sleep(0.1)  # let request 1 start and request 2 queue (BUSY)
+        os.write(proc.stdin.fileno(), encode_frame(CANCEL, 2, b""))
+        frames = _collect(proc, reader, 2, timeout=5)
+        order = [rid for kind, rid, _ in frames if kind == STATUS]
+        assert order == [2, 1], "the queued cancel must resolve before request 1 finishes its sleep"
+        statuses = {rid: decode_status(body) for kind, rid, body in frames if kind == STATUS}
+        assert statuses[2] == (None, 9)
+        assert statuses[1] == (0, None)
+    finally:
+        _terminate(proc)
+
 
 def test_output_cap_kills_the_flooding_child_only():
     proc, reader = _session()
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"flood") + encode_frame(REQUEST, 2, b"fast"))
-    frames = _collect(proc, reader, 2)
-    statuses = {rid: decode_status(body) for kind, rid, body in frames if kind == STATUS}
-    assert statuses[1][1] == 9 and statuses[2] == (0, None)
-    assert sum(len(b) for k, r, b in frames if r == 1 and k == LINE) <= (1 << 16) + 65537
-    proc.stdin.close(); proc.wait(5)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"flood") + encode_frame(REQUEST, 2, b"fast"))
+        frames = _collect(proc, reader, 2)
+        statuses = {rid: decode_status(body) for kind, rid, body in frames if kind == STATUS}
+        assert statuses[1][1] == 9 and statuses[2] == (0, None)
+        assert sum(len(b) for k, r, b in frames if r == 1 and k == LINE) <= (1 << 16) + 65537
+    finally:
+        _terminate(proc)
+
 
 def test_child_cap_queues_and_reports_busy():
     proc, reader = _session(max_children=1)
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:0.3") + encode_frame(REQUEST, 2, b"fast"))
-    frames = _collect(proc, reader, 2)
-    assert (BUSY, 2, b"") in frames
-    proc.stdin.close(); proc.wait(5)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:0.3") + encode_frame(REQUEST, 2, b"fast"))
+        frames = _collect(proc, reader, 2)
+        assert (BUSY, 2, b"") in frames
+        order = [rid for kind, rid, _ in frames if kind == STATUS]
+        assert order == [1, 2], "request 2 is queued behind 1 (max_children=1); its STATUS must arrive after 1's"
+    finally:
+        _terminate(proc)
+
 
 def test_child_holds_no_channel_fds():
     proc, reader = _session()
-    # A live sibling's pipe must still be open in the parent when the
-    # fdprobe child forks, otherwise the probe has nothing real to catch --
-    # see the comment on `fdprobe` in HANDLER above.
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:2"))
-    time.sleep(0.2)
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 2, b"fdprobe"))
-    frames = _collect(proc, reader, 1, timeout=5)  # only rid=2 (fdprobe) finishes here
-    fdprobe_lines = [body for kind, rid, body in frames if kind == LINE and rid == 2]
-    assert any(b"clean" in body for body in fdprobe_lines), fdprobe_lines
-    os.write(proc.stdin.fileno(), encode_frame(CANCEL, 1, b""))
-    proc.stdin.close(); proc.wait(5)
+    try:
+        # A live sibling's pipe must still be open in the parent when the
+        # fdprobe child forks, otherwise the probe has nothing real to catch --
+        # see the comment on `fdprobe` in HANDLER above.
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:2"))
+        time.sleep(0.2)
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 2, b"fdprobe"))
+        frames = _collect(proc, reader, 1, timeout=5)  # only rid=2 (fdprobe) finishes here
+        fdprobe_lines = [body for kind, rid, body in frames if kind == LINE and rid == 2]
+        assert any(b"clean" in body for body in fdprobe_lines), fdprobe_lines
+        os.write(proc.stdin.fileno(), encode_frame(CANCEL, 1, b""))
+    finally:
+        _terminate(proc)
+
 
 def test_eof_kills_live_children_and_exits():
     proc, reader = _session()
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:30"))
-    time.sleep(0.3); proc.stdin.close()
-    assert proc.wait(5) == 0
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:30"))
+        time.sleep(0.3); proc.stdin.close()
+        assert proc.wait(5) == 0
+    finally:
+        _terminate(proc)
+
 
 def test_idle_exit_ignores_a_long_running_child():
     proc, reader = _session(idle_s=0.5)
-    os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:1.5"))
-    frames = _collect(proc, reader, 1, timeout=5)
-    assert any(k == STATUS for k, _, _ in frames), "idle timer fired under a live child"
-    assert proc.wait(5) == 0  # then idles out
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"sleep:1.5"))
+        frames = _collect(proc, reader, 1, timeout=5)
+        assert any(k == STATUS for k, _, _ in frames), "idle timer fired under a live child"
+        assert proc.wait(5) == 0  # then idles out
+    finally:
+        _terminate(proc)
+
 
 def test_no_zombies_after_many_requests():
     proc, reader = _session()
-    for i in range(1, 51):
-        os.write(proc.stdin.fileno(), encode_frame(REQUEST, i, b"fast"))
-    _collect(proc, reader, 50)
-    # Portable zombie check: `ps --ppid` (Linux-only) and `ps -g` (wrong
-    # semantics on macOS) aren't both available, so list every process and
-    # filter columns in Python instead -- works the same on Linux and macOS.
-    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat="], capture_output=True, text=True).stdout
-    zombies = [
-        line for line in out.splitlines()
-        if len(line.split()) >= 3 and line.split()[1] == str(proc.pid) and "Z" in line.split()[2]
-    ]
-    assert not zombies, zombies
-    proc.stdin.close(); proc.wait(5)
+    try:
+        for i in range(1, 51):
+            os.write(proc.stdin.fileno(), encode_frame(REQUEST, i, b"fast"))
+        frames = _collect(proc, reader, 50, timeout=15)
+        statuses = {rid for kind, rid, _ in frames if kind == STATUS}
+        assert statuses == set(range(1, 51)), f"missing STATUS for {set(range(1, 51)) - statuses}"
+        # Portable zombie check: `ps --ppid` (Linux-only) and `ps -g` (wrong
+        # semantics on macOS) aren't both available, so list every process
+        # and filter columns in Python instead -- works the same on both.
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat="], capture_output=True, text=True).stdout
+        zombies = [
+            line for line in out.splitlines()
+            if len(line.split()) >= 3 and line.split()[1] == str(proc.pid) and "Z" in line.split()[2]
+        ]
+        assert not zombies, zombies
+    finally:
+        _terminate(proc)
+
+
+def test_malformed_hello_exits_with_status_3():
+    for bad_body in (b"not json", b'{"max_children": 4}', b'{"max_children": "x", "idle_s": 1.0}'):
+        proc = subprocess.Popen([sys.executable, "-c", HANDLER], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        try:
+            os.write(proc.stdin.fileno(), encode_frame(HELLO, 0, bad_body))
+            assert proc.wait(5) == 3, bad_body
+        finally:
+            _terminate(proc)
+
+
+_FD_HELPER_SCRIPT = textwrap.dedent('''
+    import os, sys, time
+    sys.path.insert(0, %r)
+    from tldw_chatbook.Tools.remote_session_serve import _close_fds_above_2
+    def _fd_open(fd):
+        try:
+            os.fstat(fd); return True
+        except OSError:
+            return False
+    result_r, result_w = os.pipe()
+    extras = [os.pipe() for _ in range(3)]  # fds the helper must close
+    start = time.monotonic()
+    pid = os.fork()
+    if pid == 0:
+        os.close(result_r)
+        _close_fds_above_2(keep=result_w)
+        leaked = any(_fd_open(fd) for pair in extras for fd in pair)
+        os.write(result_w, b"1" if leaked else b"0")
+        os._exit(0)
+    os.close(result_w)
+    for r, w in extras:
+        os.close(r); os.close(w)
+    payload = os.read(result_r, 1)
+    os.waitpid(pid, 0)
+    elapsed = time.monotonic() - start
+    sys.stdout.write(payload.decode() + " " + str(elapsed))
+''' % str(REPO))
+
+
+def test_close_fds_above_2_closes_extras_quickly():
+    """Unit test for the `_close_fds_above_2` helper in isolation.
+
+    Runs in a freshly exec'd, single-threaded subprocess (not forked from
+    the pytest process itself, which may be multi-threaded under xdist --
+    forking that would be exactly the hazard `serve`'s own docstring warns
+    about). The helper must close every fd above 2 other than `keep`, and
+    do so fast: the old `closerange(3, SC_OPEN_MAX)` approach measured
+    ~134 ms per fork on this machine (one close() syscall per fd number, up
+    to a million of them); the fix enumerates real open fds via /proc or
+    /dev instead.
+    """
+    out = subprocess.run([sys.executable, "-c", _FD_HELPER_SCRIPT], capture_output=True, text=True, timeout=10)
+    assert out.returncode == 0, out.stderr
+    leaked_flag, elapsed_s = out.stdout.strip().split()
+    assert leaked_flag == "0", "helper left an extra descriptor open in the child"
+    elapsed = float(elapsed_s)
+    assert elapsed < 0.1, f"fork+close took {elapsed * 1000:.1f} ms -- looks like the SC_OPEN_MAX regression"
