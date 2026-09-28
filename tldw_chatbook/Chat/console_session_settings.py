@@ -38,6 +38,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
     provider_config_key,
+    safe_provider_label,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_test_evidence import (
@@ -2165,15 +2166,22 @@ def _custom_endpoint_missing_key_readiness(
         return None
     if env_key is not None or stored_key is not None:
         return None
+    # Lazy import: custom_endpoint_registry imports this module.
+    from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
+
+    # TASK-33002.12: a name the record cannot carry reads as the entry's id.
+    label = safe_provider_label(
+        entry.display_name, f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}"
+    )
     if entry.api_key_env:
         recovery = (
             f"Set {entry.api_key_env} or update the stored api_key for the "
-            f"'{entry.display_name}' endpoint."
+            f"'{label}' endpoint."
         )
     else:
-        recovery = f"Update the stored api_key for the '{entry.display_name}' endpoint."
+        recovery = f"Update the stored api_key for the '{label}' endpoint."
     return ProviderReadiness(
-        provider=entry.display_name,
+        provider=label,
         provider_key=provider_key,
         requires_api_key=True,
         ready=False,

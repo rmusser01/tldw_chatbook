@@ -198,6 +198,28 @@ def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
         raise ValueError(f"{label} is invalid.")
 
 
+def safe_provider_label(text: str, fallback: str) -> str:
+    """Return ``text`` when ``ProviderReadiness.provider`` can carry it.
+
+    An ADR-146 entry's ``display_name`` is user text the registry accepts
+    but the record rejects (a no-break space, a ZWJ emoji, a tab), and a
+    rejected record is an unhandled ValueError that kills Settings on open
+    (TASK-33002.12), so such a name reads as ``fallback`` instead.
+
+    Args:
+        text: Candidate user-facing provider label.
+        fallback: Label to use when ``text`` is not carriable.
+
+    Returns:
+        ``text`` or ``fallback``.
+    """
+    try:
+        _validate_safe_text(text, label="Provider", max_chars=_MAX_PROVIDER_CHARS)
+    except ValueError:
+        return fallback
+    return text
+
+
 def _validate_provider_key(provider_key: object) -> None:
     if type(provider_key) is not str:
         raise ValueError("Provider key is invalid.")
@@ -600,6 +622,8 @@ def _custom_endpoint_readiness(
     # Lazy: the registry imports console_session_settings, which imports this module.
     from .console_session_settings import _custom_endpoint_missing_key_readiness
     from .custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        SLUG_PATTERN,
         canonical_custom_endpoint_id,
         entry_for,
         family_execution_key,
@@ -610,8 +634,12 @@ def _custom_endpoint_readiness(
         return None
     entry = entry_for(app_config, registry_id)
     if entry is None:
+        # A hand-edited id is echoed only when it is a real slug.
+        slug = registry_id.removeprefix(CUSTOM_ENDPOINT_ID_PREFIX)
         return ProviderReadiness(
-            provider=registry_id,
+            provider=(
+                registry_id if SLUG_PATTERN.fullmatch(slug) else "Custom endpoint"
+            ),
             provider_key="custom",
             requires_api_key=False,
             ready=False,
@@ -635,8 +663,11 @@ def _custom_endpoint_readiness(
         missing_key = _custom_endpoint_missing_key_readiness(entry, family_key, environ)
         if missing_key is not None:
             return missing_key
-        family = replace(family, api_key=None, api_key_source=None)
-    return replace(family, provider=entry.display_name)
+        # The slot's env var is not the entry's either (the Test row printed it).
+        family = replace(family, api_key=None, api_key_source=None, env_var=None)
+    return replace(
+        family, provider=safe_provider_label(entry.display_name, registry_id)
+    )
 
 
 def get_provider_readiness(
