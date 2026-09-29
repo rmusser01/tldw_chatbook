@@ -419,9 +419,10 @@ class SshMasterManager:
         Deliberately NO ``ServerAlive*`` and NO ``ControlPersist``: the
         master owns the connection's keepalive and lifetime; a client only
         multiplexes it (see module docstring). When multiplexing is
-        disabled — or no usable control dir fits sun_path — there is no
-        shared connection to name, so no ``ControlPath``/``ControlMaster``
-        options at all: per-call direct connections.
+        disabled — or no usable control dir fits sun_path, or
+        :meth:`close_all` has run — there is no shared connection to name,
+        so no ``ControlPath``/``ControlMaster`` options at all: per-call
+        direct connections.
 
         Args:
             loc: A validated locator.
@@ -435,7 +436,7 @@ class SshMasterManager:
             "-o",
             f"ConnectTimeout={self._connect_timeout_s}",
         ]
-        control_path = self._control_path_option(loc)
+        control_path = None if self._closed else self._control_path_option(loc)
         if control_path is not None:
             options += [
                 "-o",
@@ -468,6 +469,11 @@ class SshMasterManager:
             return
         key = _host_key(loc)
         with self._lock_for(key):
+            if self._closed:
+                # close_all ran while this caller waited for the lock. A
+                # caller past this check holds the lock until its spawn is
+                # recorded, which close_all's barrier waits for.
+                return
             try:
                 control_dir = self.control_path_for(loc)
             except OSError as exc:
@@ -495,8 +501,8 @@ class SshMasterManager:
                 # starting ours would race for the same %C path.
                 return
             if self._closed:
-                # ponytail: a start that passed the entry check just before
-                # close_all can still spawn here; ControlPersist bounds it.
+                # close_all began during the check above: skip the spawn so
+                # its barrier (and app quit) need not wait for a handshake.
                 return
             self._spawn_master(loc, key, control_dir)
 
@@ -520,6 +526,8 @@ class SshMasterManager:
             return False  # sun_path-degraded: no mux to restart
         key = _host_key(loc)
         with self._lock_for(key):
+            if self._closed:
+                return False  # close_all ran while this waited for the lock
             if self._master_alive(loc):
                 return False
             known = self._sockets.get(key)
@@ -536,12 +544,25 @@ class SshMasterManager:
         """Send ``ssh -O exit`` for every registered host key; idempotent.
 
         Registrations are snapshotted and cleared first, so a second call
-        (or a concurrent one) issues nothing. Each exit is bounded and its
-        failure is logged-and-swallowed: app quit must never hang or fail
-        here, and ControlPersist bounds any master this fails to reach.
+        (or a concurrent one) issues nothing. Before the snapshot it takes
+        and releases every host lock (a barrier bounded by the in-lock
+        subprocess timeouts), so a master spawn already in flight is
+        recorded and exited rather than left detached. Each exit is bounded
+        and its failure is logged-and-swallowed: app quit must never hang or
+        fail here, and ControlPersist bounds any master this fails to reach.
         """
         with self._registry_lock:
             self._closed = True
+            host_locks = list(self._locks.values())
+        # Barrier: an ensure_master past its in-lock _closed check holds its
+        # host lock until the spawn is recorded, so after this every master
+        # that will ever exist is in the snapshot below; later callers see
+        # _closed inside the lock and never spawn. No lock is held while
+        # waiting, and host locks are never taken under the registry lock.
+        for lock in host_locks:
+            with lock:
+                pass
+        with self._registry_lock:
             keys = list(self._registrations)
             self._registrations.clear()
             sockets = {key: self._sockets.pop(key) for key in keys if key in self._sockets}

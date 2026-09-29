@@ -8,6 +8,9 @@ from typing import Callable
 
 from loguru import logger
 
+from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
+from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+
 #: How many closed run keys stay tombstoned (R12). A closed key never
 #: reopens a session; the oldest tombstone is evicted past this bound.
 _CLOSED_KEYS_MAX = 1024
@@ -16,9 +19,6 @@ _CLOSED_KEYS_MAX = 1024
 #: A close still running after this finishes on its daemon thread; at app
 #: exit the master's ``-O exit`` ends its channel anyway.
 _CLOSE_JOIN_S = 5.0
-
-from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
-from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
 
 
 def _close_workers(workers: list[RemoteSessionWorker], *, wait: float | None) -> None:
