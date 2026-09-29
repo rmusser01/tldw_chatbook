@@ -362,7 +362,12 @@ class _QuiescentSQLiteConnection(sqlite3.Connection):
 
     def _observe_transaction_state(self, *, boundary: bool = False) -> None:
         listener = self._transaction_boundary_listener
-        in_transaction = self.in_transaction
+        try:
+            in_transaction = self.in_transaction
+        except sqlite3.ProgrammingError:
+            # Closed: no transaction survives, so an open one reads as ended
+            # (a boundary, which fails closed) and the caller's own error wins.
+            in_transaction = False
         if listener is not None and (
             boundary or in_transaction != self._observed_in_transaction
         ):
@@ -507,53 +512,48 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         if self.description is None:
             self._release_use()
 
-    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
-        """Hold one use reservation through result consumption."""
+    def _tracked(
+        self, run: Callable[..., sqlite3.Cursor], *args: object, script: bool = False
+    ) -> sqlite3.Cursor:
+        """Run one statement call holding a use reservation, observing boundaries.
+
+        Both observations sit inside the handler that releases the reservation,
+        so a failure in either (a cursor kept past its connection's close) can
+        never leave the quiescence registry pinned.
+        """
 
         self._begin_use()
         connection = self._quiescent_connection
-        connection._observe_transaction_state()
         try:
-            result = super().execute(sql, parameters)
+            connection._observe_transaction_state()
+            try:
+                result = run(*args)
+            finally:
+                connection._observe_transaction_state(boundary=script)
         except BaseException:
             self._release_use()
             raise
-        finally:
-            connection._observe_transaction_state()
         self._release_if_no_results()
         return result
+
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        """Hold one use reservation through result consumption."""
+
+        return self._tracked(super().execute, sql, parameters)
 
     def executemany(self, sql: str, seq_of_parameters: object) -> sqlite3.Cursor:
         """Hold one use reservation through repeated execution."""
 
-        self._begin_use()
-        connection = self._quiescent_connection
-        connection._observe_transaction_state()
-        try:
-            result = super().executemany(sql, seq_of_parameters)
-        except BaseException:
-            self._release_use()
-            raise
-        finally:
-            connection._observe_transaction_state()
-        self._release_if_no_results()
-        return result
+        return self._tracked(super().executemany, sql, seq_of_parameters)
 
     def executescript(self, sql_script: str) -> sqlite3.Cursor:
-        """Hold one use reservation through script execution."""
+        """Hold one use reservation through script execution.
 
-        self._begin_use()
-        connection = self._quiescent_connection
-        connection._observe_transaction_state()
-        try:
-            result = super().executescript(sql_script)
-        except BaseException:
-            self._release_use()
-            raise
-        finally:
-            connection._observe_transaction_state(boundary=True)
-        self._release_if_no_results()
-        return result
+        A script always reports a boundary: it can COMMIT and BEGIN again
+        without changing ``in_transaction``.
+        """
+
+        return self._tracked(super().executescript, sql_script, script=True)
 
     def fetchone(self) -> sqlite3.Row | tuple[object, ...] | None:
         """Release the reservation after the result set is exhausted."""

@@ -170,3 +170,67 @@ def test_commit_outside_python_method_is_seen_before_the_next_statement(
         assert message_id
     finally:
         db.close_connection()
+
+
+def test_a_script_that_ends_and_restarts_a_transaction_reports_a_boundary() -> None:
+    """``in_transaction`` is True before and after, yet the transaction changed."""
+    conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
+    try:
+        conn.execute("CREATE TABLE t(x)")
+        conn.execute("BEGIN")
+        boundaries: list[bool] = []
+        conn.set_transaction_boundary_listener(lambda: boundaries.append(True))
+        # executescript commits the pending transaction first; the script
+        # then opens a new one.
+        conn.executescript("BEGIN; INSERT INTO t VALUES (1);")
+        assert conn.in_transaction
+        assert boundaries, "a COMMIT+BEGIN inside one script went unreported"
+    finally:
+        conn.close()
+
+
+def test_a_script_boundary_advances_the_managed_guard_generation(
+    tmp_path: Path,
+) -> None:
+    """The same script on a managed connection starts a new guard generation."""
+    db = CharactersRAGDB(tmp_path / "script-boundary.sqlite", "script-boundary")
+    try:
+        _seed_traced_message(db)
+        conn = db.get_connection()
+        authorization = db._semantic_mutation_authorization_for_coordinator(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        generation = authorization._transaction_generation
+        conn.executescript("BEGIN IMMEDIATE; SELECT 1;")
+        try:
+            assert conn.in_transaction
+            assert authorization._transaction_generation != generation
+        finally:
+            conn.execute("ROLLBACK")
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("execute", ("SELECT 1",)),
+        ("executemany", ("SELECT ?", [(1,)])),
+        ("executescript", ("SELECT 1;",)),
+    ],
+)
+def test_a_cursor_used_after_close_does_not_pin_the_quiescence_registry(
+    method: str, args: tuple[object, ...]
+) -> None:
+    """A stale cursor's failed call releases its use token, so maintenance can drain."""
+    conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
+    registry = base_db.SQLiteConnectionQuiescenceRegistry()
+    conn.attach_quiescence_registry(registry)
+    conn.set_transaction_boundary_listener(lambda: None)
+    cursor = conn.cursor()
+    conn.close()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        getattr(cursor, method)(*args)
+
+    token = registry.begin_quiescence(timeout_seconds=0.2)
+    registry.end_quiescence(token)
