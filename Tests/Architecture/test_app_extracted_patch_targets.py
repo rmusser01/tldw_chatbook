@@ -62,6 +62,7 @@ EXTRACTED_MODULES = (
     "app_speech",
     "app_lifecycle",
     "app_navigation",
+    "app_command_providers",
 )
 
 #: Rule 2 exemptions: (test file, name) -> why a bare app-module patch is right.
