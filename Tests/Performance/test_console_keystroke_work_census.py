@@ -760,9 +760,16 @@ MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK = {
     "helper_spawns": 1,
     "os_opens": 715.375,
 }
+#: Visit admissions re-measured when #2888 was rebased onto dev 6423c4fbd1
+#: (2026-09-29; pinned 37/107 at 9cd9aad65f). Config admissions are steady at
+#: 39. Storage admissions read 110-115 across runs: the 1 Hz legacy
+#: trace-maintenance tick and the credential poll land a varying number of
+#: ticks inside the visit window, so the pin is the observed maximum + 1.
+#: PERF-10 (parks trace maintenance) and PERF-06 (warm config reads) remove
+#: those sources and tighten both numbers.
 MAX_VISIT_STORAGE_UNITS = {
-    "config_admissions": 37,
-    "storage_admissions": 107,
+    "config_admissions": 39,
+    "storage_admissions": 116,
     "helper_spawns": 9,
     "os_opens": 35_351,
 }

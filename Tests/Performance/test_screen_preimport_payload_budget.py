@@ -99,8 +99,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: LOC moves with every line edited in those 554 modules -- so the guard can
 #: run as a PR gate. The paydown back under the old limits is owned by
 #: TASK-33276 (PERF-17, boot import diet + pre-import ratchet paydown); that
-#: PR lowers these constants again.
-MAX_PASS_ADDED_MODULES = 554
+#: PR lowers these constants again. Modules re-pinned 554 -> 556 on 2026-09-29
+#: when #2888 was rebased onto dev 6423c4fbd1: dev had added
+#: ``Widgets.Settings_Widgets`` and ``speech_tts_panel_types`` to the Settings
+#: route after the first measurement (owner approved 556; ADR-097 ledger).
+MAX_PASS_ADDED_MODULES = 556
 
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
