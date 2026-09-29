@@ -115,7 +115,8 @@ app.local_llm_provider_catalog_service = SimpleNamespace(refresh_stale_configure
 app._init_providers_models = lambda: None
 app.post_message = lambda *a: None
 app.notify = lambda *a, **k: None
-module.load_settings = lambda: {'model_catalog': {'auto_refresh_enabled': True, 'refresh_consent_recorded': True}}
+import tldw_chatbook.app_feature_glue as glue_module
+glue_module.load_settings = lambda: {'model_catalog': {'auto_refresh_enabled': True, 'refresh_consent_recorded': True}}
 
 async def main():
     if scenario == 'speech':

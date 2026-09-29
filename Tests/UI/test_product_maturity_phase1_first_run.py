@@ -12,7 +12,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Input, OptionList, Static
 
-from Tests.app_module_patches import patch_app_global
+from Tests.app_module_patches import patch_app_global, set_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli, setup_owns_startup_networking
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
@@ -144,8 +144,8 @@ class _CatalogRefreshScheduleHost:
 
 
 def _pin_consented_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "tldw_chatbook.app.load_settings",
+    set_app_global(
+        monkeypatch, "load_settings",
         lambda: {"model_catalog": {"refresh_consent_recorded": True}},
     )
 
@@ -194,7 +194,7 @@ def test_unconsented_startup_shows_consent_modal_instead_of_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ADR-020 amendment: no consent on file means a dialog, not network I/O."""
-    monkeypatch.setattr("tldw_chatbook.app.load_settings", lambda: {})
+    set_app_global(monkeypatch, "load_settings", lambda: {})
     host = _CatalogRefreshScheduleHost(
         {"first_run": {"setup_completed": True}}
     )

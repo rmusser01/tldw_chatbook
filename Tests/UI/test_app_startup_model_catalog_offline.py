@@ -47,7 +47,7 @@ def _pin_consented_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         settings["model_catalog"] = section
         return settings
 
-    monkeypatch.setattr(app_module, "load_settings", load_settings_consented)
+    set_app_global(monkeypatch, "load_settings", load_settings_consented)
 
 
 def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:

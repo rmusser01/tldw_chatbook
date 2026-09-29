@@ -43,6 +43,7 @@ APP_GLOBAL_MODULES: tuple[str, ...] = (
     "tldw_chatbook.app_lifecycle",
     "tldw_chatbook.app_navigation",
     "tldw_chatbook.app_command_providers",
+    "tldw_chatbook.app_feature_glue",
 )
 
 

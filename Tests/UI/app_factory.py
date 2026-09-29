@@ -361,9 +361,9 @@ def _build_test_app(
 
     with ExitStack() as stack:
         for ctx in (
-            patch("tldw_chatbook.app.load_settings", return_value=fake_app_config),
+            patch_app_global("load_settings", return_value=fake_app_config),
             patch_app_global("get_cli_setting", side_effect=fake_cli_setting),
-            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None),
+            patch_app_global("get_chachanotes_db_lazy", return_value=None),
             # task-32059: `__init__` stamps `[library.rail_state] lifecycle
             # = "unknown"` for a profile this run created, and the sandbox
             # creates one per test. A factory app that goes on to CLEAR

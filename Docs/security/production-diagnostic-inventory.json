@@ -4264,8 +4264,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 133,
-      "diagnostic_digest": "972dd8f1cc9119fe862a",
+      "call_count": 119,
+      "diagnostic_digest": "0dd6af7a42adf4a0b555",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4289,6 +4289,13 @@
       "diagnostic_digest": "3ee90cdaafc682f9f563",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_entry.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 14,
+      "diagnostic_digest": "7c7a2f952e80b15b9358",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_feature_glue.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10624,57 +10631,12 @@
     {
       "candidates": [
         {
-          "call_digest": "223c765bca0719fa",
-          "method": "error",
-          "path_expressions": [
-            "db_path"
-          ],
-          "scope": "TldwCli._backfill_subscription_items_fts_owned",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "43b25b09e349343b",
-          "method": "error",
-          "path_expressions": [
-            "db_path"
-          ],
-          "scope": "TldwCli._backfill_subscription_items_fts_owned",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "4e8bde470b2be502",
-          "method": "warning",
-          "path_expressions": [
-            "db_path"
-          ],
-          "scope": "TldwCli._backfill_subscription_items_fts_owned",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "261de4eb5d0ecc0d",
           "method": "info",
           "path_expressions": [
             "media_db_path"
           ],
           "scope": "TldwCli._init_media_db",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "1dbb7451cea17971",
-          "method": "error",
-          "path_expressions": [
-            "cache_path"
-          ],
-          "scope": "TldwCli._init_model_catalog_disk_store",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "0ae58a4de8c785a6",
-          "method": "warning",
-          "path_expressions": [
-            "cache_path"
-          ],
-          "scope": "TldwCli._init_model_catalog_disk_store",
           "status": "legacy_unreviewed"
         },
         {
@@ -10729,6 +10691,56 @@
         }
       ],
       "path": "tldw_chatbook/app_entry.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "223c765bca0719fa",
+          "method": "error",
+          "path_expressions": [
+            "db_path"
+          ],
+          "scope": "FeatureGlueMixin._backfill_subscription_items_fts_owned",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "43b25b09e349343b",
+          "method": "error",
+          "path_expressions": [
+            "db_path"
+          ],
+          "scope": "FeatureGlueMixin._backfill_subscription_items_fts_owned",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "4e8bde470b2be502",
+          "method": "warning",
+          "path_expressions": [
+            "db_path"
+          ],
+          "scope": "FeatureGlueMixin._backfill_subscription_items_fts_owned",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "1dbb7451cea17971",
+          "method": "error",
+          "path_expressions": [
+            "cache_path"
+          ],
+          "scope": "FeatureGlueMixin._init_model_catalog_disk_store",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "0ae58a4de8c785a6",
+          "method": "warning",
+          "path_expressions": [
+            "cache_path"
+          ],
+          "scope": "FeatureGlueMixin._init_model_catalog_disk_store",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/app_feature_glue.py"
     },
     {
       "candidates": [
