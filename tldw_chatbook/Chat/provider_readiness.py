@@ -36,6 +36,7 @@ from ..config import (
 from ..config import (
     resolve_provider_api_key as _valid_api_key,
 )
+from ..provider_registry import RECORDS_BY_KEY
 from .Chat_Deps import ChatConfigurationError
 from .provider_test_evidence import (
     ConfigurationFacet,
@@ -507,6 +508,12 @@ def default_api_key_env_var(provider_key: str) -> str | None:
     """
     if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
         return None
+    # An engine preset documents its own variable (Vercel AI_GATEWAY_API_KEY,
+    # BytePlus ARK_API_KEY, ...), which is what the engine reads; derive it
+    # from the registry so readiness never looks elsewhere (TASK-33511).
+    record = RECORDS_BY_KEY.get(provider_key)
+    if record is not None and record.engine_driven and record.api_key_env_var:
+        return record.api_key_env_var
     return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(
         provider_key, f"{provider_key.upper()}_API_KEY"
     )

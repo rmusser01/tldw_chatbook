@@ -10,6 +10,8 @@ from typing import Literal
 from unicodedata import category
 from urllib.parse import urlsplit, urlunsplit
 
+from ..provider_registry import ALL_RECORDS, ProviderRecord
+
 EndpointForm = Literal[
     "origin",
     "api_base",
@@ -67,6 +69,13 @@ _PROVIDER_ALIASES = {
     "local llama.cpp": "local_llamacpp",
     "OpenRouter": "openrouter",
     "local-llamacpp": "local_llamacpp",
+}
+#: Engine presets resolve around their own API base (TASK-33510);
+#: ``custom-hosted`` is an execution key, never a configured provider.
+_ENGINE_PRESETS = {
+    record.key: record
+    for record in ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
 }
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
@@ -224,6 +233,13 @@ def resolve_provider_endpoint(
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
 
+    netloc = _normalized_netloc(canonical_host, port)
+    preset = _ENGINE_PRESETS.get(provider_key)
+    if preset is not None:
+        return _engine_preset_resolution(
+            preset, provider_key, scheme, netloc, canonical_host, segments
+        )
+
     suffix = _terminal_suffix(
         segments, allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS
     )
@@ -233,7 +249,6 @@ def resolve_provider_endpoint(
         )
     prefix_segments, form = suffix
 
-    netloc = _normalized_netloc(canonical_host, port)
     prefix_path = f"/{'/'.join(prefix_segments)}" if prefix_segments else ""
     root = urlunsplit((scheme, netloc, prefix_path, "", ""))
     normalized_path = f"/{'/'.join(segments)}" if segments else ""
@@ -258,6 +273,71 @@ def resolve_provider_endpoint(
         models_display=models_url,
         form=form,
         warnings=warnings,
+    )
+
+
+def _engine_preset_resolution(
+    preset: ProviderRecord,
+    provider_key: str,
+    scheme: str,
+    netloc: str,
+    host: str,
+    segments: tuple[str, ...],
+) -> ProviderEndpointResolution:
+    """Resolve an engine preset's endpoint around its own API base.
+
+    Engine presets' bases are not all ``.../v1`` (BytePlus ``/api/v3``, Kilo
+    ``/api/gateway``, Qianfan ``/v2``, DeepInfra ``/v1/openai``), so the
+    generic ``/v1`` suffix model would rewrite or reject them (TASK-33510).
+    The entered path IS the base, minus a pasted ``/chat/completions`` or
+    ``/models``; a bare host gets the record's suffix (Azure/Databricks
+    ``/openai/v1``), the documented path when it is the preset's own host,
+    or ``/v1``.
+
+    Args:
+        preset: The provider's registry record.
+        provider_key: Canonical provider key.
+        scheme: Validated URL scheme.
+        netloc: Normalized network location.
+        host: Canonical host name.
+        segments: Canonical, validated path segments.
+
+    Returns:
+        The resolution whose chat URL is ``<base>/chat/completions``.
+    """
+    form: EndpointForm = "api_base"
+    if segments[-2:] == ("chat", "completions"):
+        segments, form = segments[:-2], "chat_url"
+    elif segments[-1:] == ("models",):
+        segments, form = segments[:-1], "models_url"
+    if not segments:
+        form = "origin"
+        default = urlsplit(preset.default_base_url or "")
+        if preset.base_url_suffix:
+            base_path = preset.base_url_suffix
+        elif default.hostname == host and default.path:
+            base_path = default.path
+        else:
+            base_path = "/v1"
+        segments = tuple(segment for segment in base_path.split("/") if segment)
+    base = urlunsplit((scheme, netloc, f"/{'/'.join(segments)}", "", ""))
+    chat_url = f"{base}/chat/completions"
+    models_url = f"{base}/models"
+    return ProviderEndpointResolution(
+        provider_key=provider_key,
+        normalized_input=base,
+        persisted_endpoint=chat_url,
+        chat_url=chat_url,
+        models_url=models_url,
+        persisted_display=chat_url,
+        chat_display=chat_url,
+        models_display=models_url,
+        form=form,
+        warnings=(
+            (_REMOTE_HTTP_WARNING,)
+            if scheme == "http" and not _is_loopback_host(host)
+            else ()
+        ),
     )
 
 

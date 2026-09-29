@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@Robert'
 created_date: '2026-09-29 19:25'
-updated_date: '2026-09-29 20:03'
+updated_date: '2026-09-29 20:41'
 labels:
   - providers
   - engine
@@ -38,4 +38,6 @@ CoreWeave's serverless inference is W&B Inference, an OpenAI Chat Completions AP
 
 <!-- SECTION:NOTES:BEGIN -->
 WANDB record (key wandb, config WandB): api.inference.wandb.ai/v1, Bearer WANDB_API_KEY (the W&B API key the service documents), discovery on (/v1/models), reasoning field allowlisted, streamed usage requested and optional. New engine capability config_headers (record: header -> api_settings key): resolve_hosted_request reads the setting, sends nothing when unset/blank, fails closed on a non-string, a CR/LF/NUL or >256 chars, and passes the headers to the transport (which already rejects reserved names). W&B maps OpenAI-Project <- [api_settings.wandb] project. Tests pin resolution, transport delivery and that only wandb/cloudflare declare headers. Discovery sends no project header (optional; listings use the default entity).
+
+Qodo round: config-header values are validated by a Pydantic TypeAdapter (strict str, stripped, <=256 chars, no CR/LF/NUL) per the repo's Pydantic-at-boundaries rule; same behavior, pinned by the existing header tests.
 <!-- SECTION:NOTES:END -->

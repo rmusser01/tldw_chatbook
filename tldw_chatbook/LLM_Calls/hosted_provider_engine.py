@@ -115,11 +115,19 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from urllib.parse import urlsplit
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Strict,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
 from tldw_chatbook.Chat.provider_continuation import (
@@ -494,6 +502,17 @@ def resolve_hosted_request(
     )
 
 
+#: A config-sourced header value goes on the wire: a strict, single-line
+#: string of at most 256 characters (surrounding whitespace dropped).
+_HEADER_VALUE = TypeAdapter(
+    Annotated[
+        str,
+        Strict(),
+        StringConstraints(strip_whitespace=True, max_length=256, pattern=r"^[^\r\n\x00]*$"),
+    ]
+)
+
+
 def _resolve_config_headers(
     record: ProviderRecord, settings: Mapping[str, object]
 ) -> dict[str, str]:
@@ -515,17 +534,16 @@ def _resolve_config_headers(
     headers: dict[str, str] = {}
     for header, setting in record.config_headers.items():
         value = settings.get(setting)
-        if value is None or (isinstance(value, str) and not value.strip()):
+        if value is None:
             continue
-        if (
-            not isinstance(value, str)
-            or len(value) > 256
-            or any(char in value for char in "\r\n\x00")
-        ):
+        try:
+            checked = _HEADER_VALUE.validate_python(value)
+        except ValidationError:
             raise _validators_for(record).configuration_error(
                 f"{record.display_name} api_settings.{record.key}.{setting} is invalid."
-            )
-        headers[header] = value.strip()
+            ) from None
+        if checked:
+            headers[header] = checked
     return headers
 
 

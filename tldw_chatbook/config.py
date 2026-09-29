@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
-from tldw_chatbook.provider_registry import CLOUD_PROVIDER_CONFIG_KEYS
+from tldw_chatbook.provider_registry import ALL_RECORDS, CLOUD_PROVIDER_CONFIG_KEYS
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -1584,7 +1584,20 @@ def normalize_provider_config_key(provider: object) -> str:
         underscores.
     """
     normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
-    return "zai" if normalized == "z.ai" else normalized
+    if normalized == "z.ai":
+        return "zai"
+    return _ENGINE_CONFIG_KEY_ALIASES.get(normalized, normalized)
+
+
+#: An engine preset's display config key may not normalize to its registry
+#: key ("OllamaCloud" -> "ollamacloud", not "ollama_cloud"), which made
+#: readiness answer "Unknown provider" (TASK-33511). Derived from the
+#: registry; identity for every other preset.
+_ENGINE_CONFIG_KEY_ALIASES = {
+    record.config_key.lower(): record.key
+    for record in ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+}
 
 
 class ProviderSettingsError(ValueError):

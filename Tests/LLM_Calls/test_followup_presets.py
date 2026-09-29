@@ -73,8 +73,10 @@ def _record_resolution(key: str, *, streaming: bool = False) -> Any:
 
 @pytest.mark.parametrize("key", KEYS)
 def test_record_matches_its_documented_contract(key: str) -> None:
-    """Args:
-    key: Registry key of one follow-up preset.
+    """Every record field matches the value its provider documents.
+
+    Args:
+        key: Registry key of one follow-up preset.
     """
     record = RECORDS_BY_KEY[key]
     e = EXPECTED[key]
@@ -93,8 +95,10 @@ def test_record_matches_its_documented_contract(key: str) -> None:
 
 @pytest.mark.parametrize("key", KEYS)
 def test_dispatch_readiness_and_catalog_lists_carry_the_preset(key: str) -> None:
-    """Args:
-    key: Registry key of one follow-up preset.
+    """Each preset is wired into dispatch, readiness, tools and the catalog.
+
+    Args:
+        key: Registry key of one follow-up preset.
     """
     from tldw_chatbook.Agents.native_tools import NATIVE_TOOLS_PROVIDERS
     from tldw_chatbook.Chat.Chat_Functions import (
@@ -138,6 +142,7 @@ def test_config_tables_mirror_the_record(key: str) -> None:
 
 
 def test_only_wandb_discovers_models() -> None:
+    """Only W&B has a usable models route; the other four refuse discovery."""
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         build_models_url,
         supports_openai_compatible_model_discovery,
@@ -156,6 +161,7 @@ def test_only_wandb_discovers_models() -> None:
 
 
 def test_azure_resource_host_gets_the_v1_path_and_cloudflare_url_is_kept() -> None:
+    """Azure appends /openai/v1 to a bare host; Cloudflare's full URL is kept."""
     azure = resolve_hosted_request(
         RECORDS_BY_KEY["azure"], explicit_api_key="secret", explicit_model="my-deployment",
         app_config={"api_settings": {"azure": {"api_base_url": _AZURE_HOST}}}, environ={},
@@ -173,11 +179,13 @@ def test_azure_resource_host_gets_the_v1_path_and_cloudflare_url_is_kept() -> No
     ("Cloudflare", "cloudflare", "Missing account URL", "/accounts/<account-id>/ai/v1"),
 ])
 def test_readiness_asks_for_the_per_account_url(provider: str, key: str, reason: str, example: str) -> None:
-    """Args:
-    provider: Config display key.
-    key: Registry key.
-    reason: Expected blocking reason.
-    example: A fragment of the example URL the recovery copy must show.
+    """Azure and Cloudflare block with their own URL copy until the URL is set.
+
+    Args:
+        provider: Config display key.
+        key: Registry key.
+        reason: Expected blocking reason.
+        example: A fragment of the example URL the recovery copy must show.
     """
     missing = get_provider_readiness(provider, {"api_settings": {key: {"api_key": "sk-canary-1234"}}}, environ={})
     assert missing.ready is False
@@ -194,6 +202,7 @@ def test_readiness_asks_for_the_per_account_url(provider: str, key: str, reason:
 
 
 def test_azure_sends_max_completion_tokens_and_others_keep_max_tokens() -> None:
+    """Only Azure renames max_tokens to max_completion_tokens."""
     azure = build_hosted_chat_payload(
         RECORDS_BY_KEY["azure"], resolution=_record_resolution("azure"),
         messages_payload=[{"role": "user", "content": "hi"}], max_tokens=128,
@@ -212,10 +221,12 @@ def test_azure_sends_max_completion_tokens_and_others_keep_max_tokens() -> None:
     ("cloudflare", "gateway_id", "cf-aig-gateway-id"),
 ])
 def test_config_header_is_sent_only_when_set(key: str, setting: str, header: str) -> None:
-    """Args:
-    key: Registry key.
-    setting: The ``api_settings`` field holding the header value.
-    header: The header name the provider documents.
+    """A config-sourced header is sent when set, skipped when unset, refused when unsafe.
+
+    Args:
+        key: Registry key.
+        setting: The ``api_settings`` field holding the header value.
+        header: The header name the provider documents.
     """
     record = RECORDS_BY_KEY[key]
     base = {"api_base_url": _CF_URL} if key == "cloudflare" else {}
@@ -235,6 +246,7 @@ def test_config_header_is_sent_only_when_set(key: str, setting: str, header: str
 
 
 def test_config_headers_reach_the_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolved headers are handed to the HTTP transport."""
     record = RECORDS_BY_KEY["wandb"]
     resolution = replace(_record_resolution("wandb"), extra_headers={"OpenAI-Project": "team/project"})
     monkeypatch.setattr(hosted_provider_engine, "resolve_hosted_request", lambda _r, **_k: resolution)
@@ -252,6 +264,7 @@ def test_config_headers_reach_the_transport(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_no_other_preset_sends_config_headers() -> None:
+    """Only W&B and Cloudflare declare config-sourced headers."""
     declared = {r.key for r in ALL_RECORDS if r.config_headers}
     assert declared == {"wandb", "cloudflare"}
 
@@ -260,6 +273,7 @@ def test_no_other_preset_sends_config_headers() -> None:
 
 
 def test_allowlisted_values_may_be_an_empty_list_but_not_a_filled_one() -> None:
+    """The value rule accepts an empty list but still rejects a filled one."""
     assert _level_allowance_value_is_valid([]) is True
     assert _level_allowance_value_is_valid([{"type": "url_citation"}]) is False
 
@@ -270,6 +284,7 @@ _AZURE_FILTER = {"hate": {"filtered": False, "severity": "safe"}}
 
 
 def test_azure_captured_response_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A captured Azure non-streaming reply with filter annotations parses."""
     body = _body(
         top={"prompt_filter_results": [{"prompt_index": 0, "content_filter_results": _AZURE_FILTER}]},
         choice={"content_filter_results": _AZURE_FILTER, "logprobs": None},
@@ -280,6 +295,7 @@ def test_azure_captured_response_parses(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_azure_filled_annotations_still_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-empty annotations list is still rejected."""
     body = _body(message={"annotations": [{"type": "url_citation"}]})
     with pytest.raises((HostedChatProtocolError, ChatProviderError)):
         _replay(monkeypatch, RECORDS_BY_KEY["azure"], body=body)
@@ -305,6 +321,7 @@ def _azure_stream() -> list[str]:
 
 
 def test_azure_captured_stream_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A captured Azure stream, leading filter frame included, parses."""
     stream = _replay(monkeypatch, RECORDS_BY_KEY["azure"], stream_events=_azure_stream())
     list(stream)
     assert stream.terminal_turn.text == "ok"
@@ -320,6 +337,7 @@ def test_annotation_frame_needs_the_record_key(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_azure_content_filter_finish_is_a_provider_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An Azure content_filter finish is a 502 provider error."""
     with pytest.raises(ChatProviderError) as excinfo:
         _replay(monkeypatch, RECORDS_BY_KEY["azure"], body=_body(finish="content_filter"))
     assert excinfo.value.status_code == 502
@@ -335,10 +353,12 @@ def test_azure_content_filter_finish_is_a_provider_error(monkeypatch: pytest.Mon
     ("commandcode", _body(message={"refusal": None, "annotations": []})),
 ])
 def test_documented_response_shape_parses(key: str, body: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    """Args:
-    key: Registry key.
-    body: A response carrying the provider's documented extras.
-    monkeypatch: Replaces resolution and transport with canned values.
+    """A reply carrying the provider's documented extras parses.
+
+    Args:
+        key: Registry key.
+        body: A response carrying the provider's documented extras.
+        monkeypatch: Replaces resolution and transport with canned values.
     """
     record = RECORDS_BY_KEY[key]
     resolution = _record_resolution(key)
@@ -352,9 +372,11 @@ def test_documented_response_shape_parses(key: str, body: dict[str, Any], monkey
 
 @pytest.mark.parametrize("key", KEYS)
 def test_undocumented_top_level_key_still_fails_closed(key: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Args:
-    key: Registry key.
-    monkeypatch: Replaces resolution and transport with canned values.
+    """An undocumented top-level field is still rejected.
+
+    Args:
+        key: Registry key.
+        monkeypatch: Replaces resolution and transport with canned values.
     """
     with pytest.raises((HostedChatProtocolError, ChatProviderError)):
         _replay(monkeypatch, RECORDS_BY_KEY[key], body=_body(top={"undocumented_extra": 1}))
