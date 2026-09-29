@@ -2,7 +2,8 @@
 
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
-**Base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
+**Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
+**Integration base:** latest fetched dev 6423c4fbd1460952dd8cb5df04e51c4e0e7e0d0b.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -48,4 +49,4 @@ All four are in the authorized burn-down; run targeted checks and independent re
 
 ## September 29 review checkpoint
 
-All 13 tasks are Done with checked acceptance criteria and implementation notes. Durable progress passes 247 affected checks, 82 final native/modal/hydration checks and 74 final report/tool/queue checks; these overlapping selections are not summed. Independent final review approves all four worker cache corrections with 13 checks and actual participant drain. Routing/UI and schema/ledger selections pass 116 and 137 checks. Changed-code static verification passes; existing size-ratchet and source debt remain disclosed. Final latest-dev integration and draft PR publication follow this local completion.
+All 13 tasks are Done with checked acceptance criteria and implementation notes. Durable progress passes 247 affected checks, 82 final native/modal/hydration checks and 74 final report/tool/queue checks; these overlapping selections are not summed. Independent final review approves all four worker cache corrections with 13 checks and actual participant drain. Routing/UI and schema/ledger selections pass 116 and 137 checks. Changed-code static verification passes; existing size-ratchet and source debt remain disclosed. The clean latest-dev rebase passes 217 targeted provider/search/routing/sampling/startup checks in 87.14s; changed-code checks remain clean. Delivery is through a draft PR against dev. No merge is claimed.
