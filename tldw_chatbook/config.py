@@ -1896,7 +1896,24 @@ def _normalize_legacy_provider_api_key(
     return None
 
 
-@_config_participants.guarded
+def _settings_cache_hit(active_config_path: Path) -> dict | None:
+    """Return the installed settings for ``active_config_path``, or None.
+
+    One short lock, no I/O. Shared by the unguarded warm paths and the
+    guarded rebuild's re-check.
+    """
+    global _SETTINGS_CACHE_LOCK
+
+    if _SETTINGS_CACHE_LOCK is None:
+        import threading
+
+        _SETTINGS_CACHE_LOCK = threading.Lock()
+    with _SETTINGS_CACHE_LOCK:
+        if _SETTINGS_CACHE is not None and _SETTINGS_CACHE_SOURCE == active_config_path:
+            return _SETTINGS_CACHE
+    return None
+
+
 def load_settings(
     force_reload: bool = False,
     *,
@@ -1904,9 +1921,12 @@ def load_settings(
 ) -> Dict:
     """Return the merged application settings, rebuilding at most once.
 
-    Thin wrapper over :func:`_load_settings_uncached` that serializes the
-    cache-miss rebuild (task-3503). The cache-hit path is unchanged: one
-    short lock, no rebuild lock taken at all.
+    PERF-06 (TASK-33265): a warm hit is served here, ahead of the ADR-126
+    admission handshake. It is a pure in-memory read and paid ~650
+    ``open()`` calls per call (the 4 Hz Console poll, every composer
+    keystroke). A miss or forced reload runs the guarded
+    :func:`_load_settings_guarded`, exactly as before; this mirrors
+    TASK-32804.1's ``_warm_config_cache_hit`` for ``get_cli_setting``.
 
     Args:
         force_reload: Rebuild even on a cache hit.
@@ -1921,23 +1941,44 @@ def load_settings(
     Returns:
         The merged settings mapping.
     """
-    global _SETTINGS_CACHE_LOCK
+    if not force_reload:
+        cached = _settings_cache_hit(_get_effective_config_path())
+        if cached is not None:
+            return cached
+    return _load_settings_guarded(
+        force_reload=force_reload,
+        reload_bootstrap=reload_bootstrap,
+    )
 
-    if _SETTINGS_CACHE_LOCK is None:
-        import threading
 
-        _SETTINGS_CACHE_LOCK = threading.Lock()
+@_config_participants.guarded
+def _load_settings_guarded(
+    force_reload: bool = False,
+    *,
+    reload_bootstrap: bool | None = None,
+) -> dict:
+    """Guarded body of :func:`load_settings`: serialize the cache-miss rebuild.
 
+    Thin wrapper over :func:`_load_settings_uncached` that serializes the
+    cache-miss rebuild (task-3503).
+
+    Args:
+        force_reload: Rebuild even on a cache hit.
+        reload_bootstrap: Whether the rebuild also force-reloads the CLI
+            bootstrap config from disk. ``None`` (default) follows
+            ``force_reload``, preserving the historical behavior. TASK-21124:
+            ``_publish_runtime_config_unlocked`` passes ``False`` because it
+            has already installed a fresh bootstrap cache under the write
+            lock -- re-reading and re-parsing the file it just wrote was one
+            of the write path's redundant TOML parses.
+
+    Returns:
+        The merged settings mapping.
+    """
     active_config_path = _get_effective_config_path()
 
     def _cache_hit():
-        with _SETTINGS_CACHE_LOCK:
-            if (
-                _SETTINGS_CACHE is not None
-                and _SETTINGS_CACHE_SOURCE == active_config_path
-            ):
-                return _SETTINGS_CACHE
-        return None
+        return _settings_cache_hit(active_config_path)
 
     if not force_reload:
         cached = _cache_hit()
@@ -7523,12 +7564,34 @@ def get_runtime_config_generation() -> int:
     return _CONFIG_GENERATION
 
 
-@_config_participants.guarded
 def get_runtime_config_snapshot(
     *,
     force_reload: bool = False,
 ) -> RuntimeConfigSnapshot:
-    """Return a defensive current runtime config view."""
+    """Return a defensive current runtime config view.
+
+    PERF-06 (TASK-33265): a warm snapshot is served without the ADR-126
+    admission handshake (a deep copy of the installed settings under the
+    same two in-process locks). A miss or forced reload runs the guarded
+    :func:`_get_runtime_config_snapshot_guarded`, exactly as before.
+    """
+
+    if not force_reload:
+        with _settings_rebuild_lock(), _config_file_lock():
+            if _settings_cache_hit(_get_effective_config_path()) is not None:
+                return RuntimeConfigSnapshot(
+                    generation=_CONFIG_GENERATION,
+                    values=copy.deepcopy(load_settings()),
+                )
+    return _get_runtime_config_snapshot_guarded(force_reload=force_reload)
+
+
+@_config_participants.guarded
+def _get_runtime_config_snapshot_guarded(
+    *,
+    force_reload: bool = False,
+) -> RuntimeConfigSnapshot:
+    """Guarded body of :func:`get_runtime_config_snapshot` (miss or reload)."""
 
     with _settings_rebuild_lock(), _config_file_lock():
         values = load_settings(force_reload=force_reload)

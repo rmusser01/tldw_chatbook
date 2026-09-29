@@ -662,12 +662,22 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
         ]
     )
 
-    assert empty == loaded, (
+    # TASK-33374: ``context_estimate_max_rows`` is the largest input to any
+    # context-estimate call, and whether Textual coalesces a one-row draft
+    # repaint into the counting window is timing-dependent -- it read 1 for
+    # the EMPTY transcript and 0 for 400 messages, the opposite of scaling.
+    # The O(N) signal is that count reaching the transcript size, which the
+    # <= 1 bounds below catch; every other key must match exactly.
+    timing_bound_key = "context_estimate_max_rows"
+    exact_empty = {k: v for k, v in empty.items() if k != timing_bound_key}
+    exact_loaded = {k: v for k, v in loaded.items() if k != timing_bound_key}
+    assert exact_empty == exact_loaded, (
         f"per-keystroke work differs with transcript length: empty={empty}, "
         f"400 messages={loaded}. Something on the keystroke path is O(N) in "
         "the number of messages, which is what makes long conversations feel "
         "slower to type in than new ones."
     )
+    assert empty[timing_bound_key] <= 1
 
     for key in (
         "snapshot_rows",
