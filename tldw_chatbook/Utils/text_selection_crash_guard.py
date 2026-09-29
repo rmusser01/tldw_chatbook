@@ -1,4 +1,10 @@
-"""App-level guard for Textual's text-selection MouseDown crash (task-14903).
+"""App-level guards for Textual defects, composed into ``TextualAppGuards``.
+
+Two guards live here, and ``TldwCli`` carries both through the one
+``TextualAppGuards`` base: ``TextSelectionCrashGuard`` (task-14903, this
+docstring) and ``ThreadWorkerContextGuard`` (TASK-33264, see its class). They
+share a module so a new App-level guard costs neither another ``app.py`` line
+(size ratchet) nor another boot-path module (ADR-097 census).
 
 The bug (present in Textual 8.2.8, the newest 8.x at the time of writing --
 no fixed patch release exists inside this app's ``>=8.0.0,<9`` pin):
@@ -49,14 +55,20 @@ eating unknown errors. The pinned reproduction test breaks alongside it.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import FrameType
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 from textual import events
 
 __all__ = [
+    "FreshContextExecutor",
     "TextSelectionCrashGuard",
+    "TextualAppGuards",
+    "ThreadWorkerContextGuard",
     "match_selection_begin_container_crash",
 ]
 
@@ -136,3 +148,43 @@ class TextSelectionCrashGuard:
                 "parent). The click was not delivered; the app stays alive "
                 "(task-14903)."
             )
+
+
+class FreshContextExecutor(ThreadPoolExecutor):
+    """A ThreadPoolExecutor whose jobs never share a ``contextvars`` context."""
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future:
+        return super().submit(contextvars.Context().run, fn, *args, **kwargs)
+
+
+class ThreadWorkerContextGuard:
+    """App mixin: stop thread workers pinning departed screens (TASK-33264).
+
+    Textual 8.2.8's ``Worker._run_threaded`` runs a sync callable as
+    ``active_worker.set(self); return work()`` on the loop's default executor
+    -- in the pool thread's OWN ``contextvars`` context -- and never resets it.
+    Each pool thread therefore keeps its last Worker alive, and the Worker
+    holds ``_node`` (the screen or widget that started it) and ``_work``. The
+    2026-09-27 audit measured 6 of 10 departed PersonasScreens retained this
+    way (~14 MB each); the ceiling is the pool size, and every
+    ``thread=True`` worker is exposed, not one call site.
+
+    So the fix sits where every thread worker routes through, the default
+    executor: :class:`FreshContextExecutor` runs each job in a new, empty
+    context -- what a job on a freshly started thread sees anyway -- and
+    whatever the job sets is dropped when it returns. ``asyncio.to_thread``
+    is unaffected: it already submits a ``Context.run`` partial carrying the
+    caller's copied context. ``Load`` is the first event an App dispatches on
+    its running loop, before any screen can start a worker.
+    """
+
+    def on_load(self) -> None:
+        # "asyncio" keeps asyncio's own thread names (asyncio_0, ...), which
+        # the boot thread census allowlists.
+        asyncio.get_running_loop().set_default_executor(
+            FreshContextExecutor(thread_name_prefix="asyncio")
+        )
+
+
+class TextualAppGuards(TextSelectionCrashGuard, ThreadWorkerContextGuard):
+    """Every guard in this module; add BEFORE ``App`` in the base list."""

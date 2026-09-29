@@ -390,6 +390,11 @@ class ThemePicker(Vertical):
         launch_default_signal(self.app).subscribe(self, lambda _name: self.refresh_catalog(rescan=False))
         self.refresh_catalog(highlight=str(self.app.theme))
 
+    def on_unmount(self) -> None:
+        # TASK-33264: the app-level signal would otherwise pin this widget
+        # (and through its parents the whole Settings screen).
+        self.app.theme_changed_signal.unsubscribe(self)
+
     # -- catalog -------------------------------------------------------
     def refresh_catalog(self, highlight: str | None = None, *, rescan: bool = True) -> None:
         """Rebuild the list from the registered themes and the saved files.

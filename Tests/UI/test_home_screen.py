@@ -1255,6 +1255,48 @@ async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker()
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_chatbook_snapshot_completion_syncs_in_place_without_recompose(
+    monkeypatch, request
+):
+    """PERF-05 (TASK-33264): the reused Home screen whole-screen recomposed
+    every time its chatbook-artifact snapshot worker finished -- once per
+    visit, ~68 ms against ~3 ms for the targeted ``_sync_home_triage()`` --
+    and each recompose left the discarded tree pinned in the screen's
+    ``query_one`` cache (keyed by the child-list generation it bumps).
+    """
+    app = _build_test_app()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+        rail = home.query_one("#home-rail")
+        syncs = []
+        original_sync = home._sync_home_triage
+
+        def recording_sync():
+            syncs.append(True)
+            original_sync()
+
+        monkeypatch.setattr(home, "_sync_home_triage", recording_sync)
+
+        for _ in range(3):  # one completion per warm visit
+            home._refresh_after_chatbook_artifact_snapshot()
+            await pilot.pause(HOME_MOUNT_PAUSE)
+            home.query_one("#home-rail")  # what a later triage sync looks up
+
+        assert home.query_one("#home-rail") is rail, "Home recomposed"
+        cache = home._query_one_cache
+        cached = [cache.get(key) for key in list(cache.keys())]
+        assert all(node.is_attached for node in cached), (
+            "the query_one cache pins widgets that left the DOM"
+        )
+        # >= : Home's own content/active-work workers may also sync once.
+        assert len(syncs) >= 3, "each completion must sync the triage in place"
+
+
+@pytest.mark.asyncio
 async def test_pending_console_launch_does_not_create_home_live_work_controls():
     app = _build_test_app()
     app.pending_handoffs.stage(
