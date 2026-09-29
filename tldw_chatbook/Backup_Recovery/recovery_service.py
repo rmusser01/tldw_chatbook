@@ -1278,7 +1278,8 @@ class RecoveryService:
                     captured, destination, password=password, cancel=cancel
                 )
                 complete = (
-                    archive_reader._manifest(
+                    captured.inventory.complete
+                    and archive_reader._manifest(
                         archive.manifest_bytes, limits, password is not None
                     ).consistency
                     == "coherent"

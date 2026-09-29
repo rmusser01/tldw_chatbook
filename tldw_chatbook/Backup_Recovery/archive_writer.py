@@ -26,6 +26,7 @@ from .archive_models import SealedArchive
 from .bootstrap import default_bootstrap_root
 from .capture import CaptureResult
 from .crypto import transform
+from .inventory import BLOCKING
 from .limits import ArchiveLimits
 from .native_files import (
     create_private_directory,
@@ -181,7 +182,20 @@ def write_archive(
     if len(capture.manifest_bytes) > limits.manifest_bytes:
         raise ValueError("manifest_limit")
     doc = reader._manifest(capture.manifest_bytes, limits, password is not None)
-    if doc.consistency == "coherent" and not capture.inventory.complete:
+    manual_only = (
+        bool(capture.inventory.issues)
+        and all(
+            issue.startswith("credential_manual_recovery_required:")
+            for issue in capture.inventory.issues
+        )
+        and not any(
+            item.status in BLOCKING or item.owner == "unknown"
+            for item in capture.inventory.items
+        )
+    )
+    if doc.consistency == "coherent" and not (
+        capture.inventory.complete or manual_only
+    ):
         raise ValueError("incomplete_capture")
     expanded = len(capture.manifest_bytes) + sum(item.size for item in doc.files)
     if expanded > limits.expanded_bytes or any(
