@@ -133,6 +133,22 @@ print('replacement identity consumed by ordinary config')
         assert child.returncode != 0 and "record_version" in child.stderr
 
 
+def profile_provider(store):
+    """Exercise the app namespace used by the fixture's selected local profile."""
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
+
+    return RuntimeServerContextProvider(
+        runtime_context=SimpleNamespace(),
+        target_store=SimpleNamespace(),
+        credential_store=store,
+        app_config={},
+        credential_profile_id=os.environ["TLDW_CONFIG_PATH"],
+    )
+
+
 def _credential_candidate(case, tmp_path, monkeypatch, *, retain=False):
     """Capture actual owned keyring material, encrypt/acquire it, and stage it."""
     import hashlib
@@ -310,7 +326,9 @@ def _credential_candidate(case, tmp_path, monkeypatch, *, retain=False):
     current.parent.mkdir(mode=0o700, parents=True)
     current.write_bytes(target_bytes)
     current.chmod(0o600)
-    store.set_secret("peer", "api_key", "current-shared-secret")
+    profile_provider(store).store_scoped_credential(
+        "peer", "api_key", "current-shared-secret"
+    )
     target = replace(
         plan.target,
         items=(
@@ -449,8 +467,14 @@ def test_outer_credentials_are_remapped_before_hashes_and_journaled_before_value
             "auth_reference"
         ].removeprefix("keyring:")
         assert purpose.startswith("recovery_")
-        assert store.get_secret("peer", purpose) == "captured-new-secret"
-        assert store.get_secret("peer", "api_key") == "current-shared-secret"
+        assert (
+            profile_provider(store)._get_credential_secret("peer", purpose)
+            == "captured-new-secret"
+        )
+        assert (
+            profile_provider(store)._get_credential_secret("peer", "api_key")
+            == "current-shared-secret"
+        )
         assert (candidate / "payload" / "targets").read_bytes() == original
         assert "captured-new-secret" not in repr([row.evidence for row in rows])
         assert "current-shared-secret" not in repr([row.evidence for row in rows])
@@ -595,7 +619,7 @@ def test_credential_drift_leaves_original_files_and_foreign_scopes_unchanged(
             "purpose"
         ]
         changed = "api_key" if change == "source" else purpose
-        store.set_secret("peer", changed, "foreign-edit")
+        profile_provider(store).store_scoped_credential("peer", changed, "foreign-edit")
         before = {path: path.read_bytes() for path in (case[4], case[5], current)}
         with pytest.raises(ValueError, match="credential_scope_changed"):
             replacement.replace(
@@ -606,7 +630,10 @@ def test_credential_drift_leaves_original_files_and_foreign_scopes_unchanged(
                 cancel=Event(),
             )
         assert all(path.read_bytes() == data for path, data in before.items())
-        assert store.get_secret("peer", changed) == "foreign-edit"
+        assert (
+            profile_provider(store)._get_credential_secret("peer", changed)
+            == "foreign-edit"
+        )
         pending, _ = bootstrap._records(tmp_path / "bootstrap")
         journal = Journal(tmp_path / "control", pending[0]["operation_id"])
         with journal._locked(exclusive=False) as parent:
@@ -846,7 +873,10 @@ def test_unsupported_secret_is_explicitly_retained_encrypted_and_inactive(
             == "retained-config-secret"
         )
         assert b"retained-config-secret" not in case[5].read_bytes()
-        assert store.get_secret("peer", "api_key") == "current-shared-secret"
+        assert (
+            profile_provider(store)._get_credential_secret("peer", "api_key")
+            == "current-shared-secret"
+        )
         journal = Journal(tmp_path / "control", operation)
         with journal._locked(exclusive=False) as parent:
             rows = journal._records(parent)
@@ -965,9 +995,11 @@ def test_completed_credential_drift_refuses_before_publication(
 
         def drift():
             if change == "source":
-                store.set_secret("peer", "api_key", "changed-after-completion")
+                profile_provider(store).store_scoped_credential(
+                    "peer", "api_key", "changed-after-completion"
+                )
             else:
-                store.delete_secret("peer", purpose)
+                profile_provider(store).delete_scoped_credential("peer", purpose)
 
         def completed(*args, **kwargs):
             apply(*args, **kwargs)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import importlib.metadata
 import json
 import os
@@ -15,7 +16,8 @@ import struct
 import subprocess  # nosec B404 - fixed local commands and arguments only
 import sys
 import tarfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from contextlib import closing
 from pathlib import Path
 
 from defusedxml import ElementTree as ET
@@ -222,6 +224,12 @@ _SELECTABLE_GROUP_TESTS = (
     "Tests/UI/test_backup_data_groups.py",
 )
 _PRODUCT_SELECTIONS = {
+    "native-credentials-source": (
+        "Tests/ProductionApp/test_native_credential_recovery.py::test_native_credential_source",
+    ),
+    "native-credentials-destination": (
+        "Tests/ProductionApp/test_native_credential_recovery.py::test_native_credential_destinations",
+    ),
     "full": (
         *_PRODUCT_TESTS,
         "Tests/Backup_Recovery/test_default_service_replacement.py",
@@ -350,6 +358,89 @@ _ALLOWED_ENVIRONMENT = frozenset(
         "WINDIR",
     }
 )
+_NATIVE_CREDENTIAL_BACKENDS = {
+    "Darwin": "keyring.backends.macOS.Keyring",
+    "Linux": "keyring.backends.SecretService.Keyring",
+    "Windows": "keyring.backends.Windows.WinVaultKeyring",
+}
+_NATIVE_CREDENTIAL_ENVIRONMENT = (
+    "PYTHON_KEYRING_BACKEND",
+    "TLDW_NATIVE_CREDENTIAL_ROOT",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "KEYRING_PROPERTY_PREFERRED_COLLECTION",
+    "TLDW_CREDENTIAL_TRANSFER_ROOT",
+    "RUNNER_ENVIRONMENT",
+    "RUNNER_OS",
+)
+_LINUX_CREDENTIAL_COLLECTION = "/org/freedesktop/secrets/collection/login"
+
+
+def validate_native_credential_environment() -> str:
+    """Refuse personal stores, fallback backends and foreign SecretService buses.
+
+    This check performs no credential writes and never creates or unlocks a
+    collection. Call it in every fixture-writing process before native access.
+    """
+    environment = os.environ
+    system = platform.system()
+    expected = _NATIVE_CREDENTIAL_BACKENDS.get(system)
+    if expected is None or environment.get("PYTHON_KEYRING_BACKEND") != expected:
+        raise RuntimeError("native_credential_backend_selection_required")
+    if system == "Linux":
+        root_value = environment.get("TLDW_NATIVE_CREDENTIAL_ROOT", "")
+        root = Path(root_value)
+        if not root_value or not root.is_absolute() or root.resolve() != root:
+            raise RuntimeError("native_credential_private_session_required")
+        info = root.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            raise RuntimeError("native_credential_session_not_private")
+        address = environment.get("DBUS_SESSION_BUS_ADDRESS", "")
+        if not re.fullmatch(
+            re.escape(f"unix:path={root / 'bus'}") + r"(?:,guid=[0-9a-f]{32})?",
+            address,
+        ):
+            raise RuntimeError("native_credential_foreign_session_bus")
+        bus = (root / "bus").lstat()
+        if not stat.S_ISSOCK(bus.st_mode) or bus.st_uid != os.getuid():
+            raise RuntimeError("native_credential_foreign_session_socket")
+        if (
+            environment.get("KEYRING_PROPERTY_PREFERRED_COLLECTION")
+            != _LINUX_CREDENTIAL_COLLECTION
+        ):
+            raise RuntimeError("native_credential_private_collection_required")
+        import secretstorage
+
+        with closing(secretstorage.dbus_init()) as connection:
+            collection = secretstorage.Collection(
+                connection, _LINUX_CREDENTIAL_COLLECTION
+            )
+            if collection.is_locked():
+                raise RuntimeError("native_credential_session_locked")
+    elif not (
+        environment.get("GITHUB_ACTIONS") == "true"
+        and environment.get("RUNNER_ENVIRONMENT") == "github-hosted"
+        and environment.get("RUNNER_OS")
+        == {"Darwin": "macOS", "Windows": "Windows"}[system]
+    ):
+        raise RuntimeError("native_credential_disposable_runner_required")
+
+    import keyring
+
+    module, name = expected.rsplit(".", 1)
+    backend = keyring.get_keyring()
+    if type(backend) is not getattr(importlib.import_module(module), name):
+        raise RuntimeError("native_credential_fallback_backend_refused")
+    if backend.priority <= 0:
+        raise RuntimeError("native_credential_backend_unavailable")
+    if system == "Linux" and (
+        getattr(backend, "preferred_collection", None) != _LINUX_CREDENTIAL_COLLECTION
+    ):
+        raise RuntimeError("native_credential_collection_continuity_lost")
+    return expected
 
 
 def _sha256(path: Path) -> str:
@@ -637,7 +728,9 @@ def _windows_ancestor_receipt(workspace: Path, private_root: Path) -> dict[str, 
     return receipt
 
 
-def _private_environment(workspace: Path, private_root: Path) -> dict[str, str]:
+def _private_environment(
+    workspace: Path, private_root: Path, *, native_credentials: bool = False
+) -> dict[str, str]:
     """Build a credential-free, offline environment rooted below runner temp."""
     environment = {
         key: value
@@ -680,6 +773,15 @@ def _private_environment(workspace: Path, private_root: Path) -> dict[str, str]:
         HF_HUB_DISABLE_TELEMETRY="1",
         TRANSFORMERS_OFFLINE="1",
     )
+    if native_credentials:
+        validate_native_credential_environment()
+        environment.update(
+            {
+                name: os.environ[name]
+                for name in _NATIVE_CREDENTIAL_ENVIRONMENT
+                if name in os.environ
+            }
+        )
     return environment
 
 
@@ -711,9 +813,7 @@ def _sanitize_file(
                 path_value.replace("\\", "/"),
                 path_value.replace("/", "\\"),
             }
-            variants.update(
-                value.replace("\\", "\\\\") for value in tuple(variants)
-            )
+            variants.update(value.replace("\\", "\\\\") for value in tuple(variants))
             for value in sorted(variants, key=len, reverse=True):
                 content = content.replace(value, replacement)
     destination.write_text(
@@ -752,6 +852,7 @@ def _run_pytest_phase(
     tests: tuple[str, ...],
     noconftest: bool,
     timeout_seconds: int,
+    native_credentials: bool = False,
 ) -> dict[str, object]:
     """Run one fixed pytest phase and retain its sanitized log and JUnit receipt."""
     prefix = "native-" if phase == "native" else ""
@@ -763,14 +864,25 @@ def _run_pytest_phase(
         "keyring.set_keyring(Keyring()); import pytest, sys; "
         "raise SystemExit(pytest.main(sys.argv[1:]))"
     )
+    if native_credentials:
+        bootstrap = (
+            "from Tests.network_guard import install; install(); "
+            "from Tests.Backup_Recovery.run_platform_product import "
+            "validate_native_credential_environment; "
+            "validate_native_credential_environment(); import pytest, sys; "
+            "raise SystemExit(pytest.main(sys.argv[1:]))"
+        )
     command = [sys.executable, "-c", bootstrap]
     if noconftest:
         command.append("--noconftest")
+    if environment.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD") == "1":
+        command.extend(("-p", "pytest_asyncio.plugin", "-p", "pytest_timeout"))
     command.extend(
         (
             *tests,
             "-vv",
-            "--tb=long",
+            "--tb=no" if native_credentials else "--tb=long",
+            *(("--show-capture=no",) if native_credentials else ()),
             "--timeout=2400",
             f"--basetemp={private_root / f'{phase}-pytest'}",
             f"--junitxml={raw_junit}",
@@ -793,10 +905,14 @@ def _run_pytest_phase(
             output.write(f"\n{phase.upper()} PYTEST PHASE TIMED OUT\n")
             pytest_returncode = 124
 
-    _sanitize_file(raw_log, artifacts / raw_log.name, private_root=private_root)
+    if not native_credentials:
+        _sanitize_file(raw_log, artifacts / raw_log.name, private_root=private_root)
     junit = {"collected": 0, "skipped": [], "failed": [], "parse_error": None}
     if raw_junit.is_file():
-        _sanitize_file(raw_junit, artifacts / raw_junit.name, private_root=private_root)
+        if not native_credentials:
+            _sanitize_file(
+                raw_junit, artifacts / raw_junit.name, private_root=private_root
+            )
         try:
             junit.update(_junit_result(raw_junit))
         except (OSError, ET.ParseError) as error:
@@ -808,6 +924,116 @@ def _run_pytest_phase(
         "pytest_returncode": pytest_returncode,
         "junit": junit,
     }
+
+
+def _native_runtime_receipt(source: Mapping[str, object]) -> dict[str, object]:
+    """Validate and project only public native runtime and artifact identity."""
+    fields = (
+        "schema",
+        "status",
+        "system",
+        "release",
+        "machine",
+        "python",
+        "backend",
+        "revision",
+        "wheel_sha256",
+    )
+    receipt = {name: source[name] for name in fields}
+    if (
+        type(receipt["schema"]) is not int
+        or receipt["schema"] != 1
+        or receipt["status"] != "passed"
+        or receipt["system"] not in _NATIVE_CREDENTIAL_BACKENDS
+        or receipt["backend"] != _NATIVE_CREDENTIAL_BACKENDS[receipt["system"]]
+    ):
+        raise RuntimeError("invalid_native_credential_runtime_receipt")
+    for name in ("release", "machine", "python"):
+        if not isinstance(receipt[name], str) or not re.fullmatch(
+            r"[A-Za-z0-9_.+()-]{1,128}", receipt[name]
+        ):
+            raise RuntimeError("invalid_native_credential_runtime_field")
+    for name, length in (("revision", 40), ("wheel_sha256", 64)):
+        if not isinstance(receipt[name], str) or not re.fullmatch(
+            rf"[0-9a-f]{{{length}}}", receipt[name]
+        ):
+            raise RuntimeError("invalid_native_credential_identity_hash")
+    return receipt
+
+
+def _publish_native_credential_artifacts(
+    transfer_root: Path, artifacts: Path, product_selection: str
+) -> int:
+    """Publish encrypted synthetic transfers and strict value-free receipts only."""
+    outbound = transfer_root / "outbound"
+    if product_selection == "native-credentials-source":
+        pending = []
+        for system in _NATIVE_CREDENTIAL_BACKENDS:
+            basename = f"source-{system.lower()}"
+            path = outbound / f"{basename}.json"
+            if not path.is_file():
+                continue
+            archive = outbound / f"{basename}.age"
+            if path.is_symlink() or archive.is_symlink() or not archive.is_file():
+                raise RuntimeError("unsafe_native_credential_transfer")
+            source = json.loads(path.read_text(encoding="utf-8"))
+            receipt = _native_runtime_receipt(source)
+            if receipt["system"] != system or source["archive"] != archive.name:
+                raise RuntimeError("native_credential_transfer_identity_mismatch")
+            digest = _sha256(archive)
+            with archive.open("rb") as stream:
+                encrypted = stream.read(22) == b"age-encryption.org/v1\n"
+            if not encrypted or source["archive_sha256"] != digest:
+                raise RuntimeError("native_credential_transfer_not_verified_encrypted")
+            receipt.update(archive=archive.name, archive_sha256=digest)
+            pending.append((archive, path, receipt))
+        for archive, path, receipt in pending:
+            shutil.copyfile(archive, artifacts / archive.name)
+            _write_json(artifacts / path.name, receipt)
+        return len(pending)
+
+    path = outbound / "destination-results.json"
+    if not path.is_file():
+        return 0
+    if path.is_symlink():
+        raise RuntimeError("unsafe_native_credential_destination_receipt")
+    source = json.loads(path.read_text(encoding="utf-8"))
+    receipt = _native_runtime_receipt(source)
+    results = []
+    for result in source["results"]:
+        source_system = result["source_system"]
+        if (
+            source_system not in _NATIVE_CREDENTIAL_BACKENDS
+            or result["destination_system"] != receipt["system"]
+            or not isinstance(result["archive_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", result["archive_sha256"])
+        ):
+            raise RuntimeError("invalid_native_credential_direction_receipt")
+        projected = {
+            name: result[name]
+            for name in ("source_system", "destination_system", "archive_sha256")
+        }
+        for name in ("isolated", "original_retained", "replacement", "rollback"):
+            if result[name] is not True:
+                raise RuntimeError("invalid_native_credential_equality_receipt")
+            projected[name] = result[name]
+        for name in ("captured", "manual_required", "unavailable"):
+            if type(result[name]) is not int or result[name] < 0:
+                raise RuntimeError("invalid_native_credential_count_receipt")
+            projected[name] = result[name]
+        if result["captured"] == 0 or result["unavailable"] != 0:
+            raise RuntimeError("native_credential_capture_not_complete")
+        results.append(projected)
+    if (
+        len(results) != 3
+        or {row["source_system"] for row in results} != set(_NATIVE_CREDENTIAL_BACKENDS)
+        or type(source["negative_checks"]) is not int
+        or source["negative_checks"] < 0
+    ):
+        raise RuntimeError("incomplete_native_credential_destination_receipt")
+    receipt.update(results=results, negative_checks=source["negative_checks"])
+    _write_json(artifacts / path.name, receipt)
+    return len(results)
 
 
 def _installed_receipts(private_root: Path) -> list[dict[str, object]]:
@@ -879,12 +1105,71 @@ def run(
 ) -> int:
     """Execute the finite qualification and retain safe failure evidence."""
     product_tests = _PRODUCT_SELECTIONS[product_selection]
+    native_credentials = product_selection.startswith("native-credentials-")
+    if native_credentials:
+        validate_native_credential_environment()
     workspace = workspace.resolve()
     evidence_root = evidence_root.resolve()
     artifacts = evidence_root / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True, mode=0o700)
     private_root = _create_private_root(evidence_root)
     source_copy, archive_sha256 = _copy_tracked_source(workspace, private_root)
+
+    if native_credentials:
+        environment = _private_environment(
+            source_copy, private_root, native_credentials=True
+        )
+        environment["TLDW_NATIVE_CREDENTIAL_REVISION"] = _run_git(
+            workspace, "rev-parse", "HEAD"
+        )
+        transfer_root = Path(environment["TLDW_CREDENTIAL_TRANSFER_ROOT"])
+        phase = _run_pytest_phase(
+            workspace=source_copy,
+            private_root=private_root,
+            artifacts=artifacts,
+            environment=environment,
+            phase="product",
+            tests=product_tests,
+            noconftest=True,
+            timeout_seconds=80 * 60,
+            native_credentials=True,
+        )
+        installed = _installed_receipts(private_root)
+        junit = phase["junit"]
+        failed = bool(
+            phase["pytest_returncode"]
+            or junit["parse_error"]
+            or junit["skipped"]
+            or junit["failed"]
+            or junit["collected"] < len(product_tests)
+            or not installed
+        )
+        published = 0
+        if not failed:
+            published = _publish_native_credential_artifacts(
+                transfer_root, artifacts, product_selection
+            )
+            failed = published != (
+                1 if product_selection == "native-credentials-source" else 3
+            )
+        summary = {
+            "schema": 1,
+            "product_selection": product_selection,
+            "status": "failed" if failed else "passed",
+            "revision": environment["TLDW_NATIVE_CREDENTIAL_REVISION"],
+            "source_archive_sha256": archive_sha256,
+            "backend": environment["PYTHON_KEYRING_BACKEND"],
+            "pytest_returncode": phase["pytest_returncode"],
+            "collected": junit["collected"],
+            "failed": len(junit["failed"]),
+            "skipped": len(junit["skipped"]),
+            "junit_available": junit["parse_error"] is None,
+            "installed_package_receipts": len(installed),
+            "published_directions": published,
+        }
+        _write_json(artifacts / "summary.json", summary)
+        _write_json(artifacts / "artifact-sha256.json", _artifact_hashes(artifacts))
+        return 1 if failed else 0
 
     _write_json(
         artifacts / "source-receipt.json",

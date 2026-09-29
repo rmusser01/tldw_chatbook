@@ -318,10 +318,7 @@ def _retained_config_targets(data, profile, config_target, doc, plan, owners):
     derived = _config_targets(
         data, profile, config_target, doc, plan, owners, derive=True
     )
-    if any(
-        dict(plan.destinations).get(root) != path
-        for root, path in derived.items()
-    ):
+    if any(dict(plan.destinations).get(root) != path for root, path in derived.items()):
         raise ValueError("retained_config_destination_changed")
     prefix = f"profile:{profile}:"
     for selector, destination in plan.selectors:
@@ -475,6 +472,40 @@ def _validate_dependencies(
                 continue
             if issues:
                 raise ValueError(issues[0])
+
+
+def _credential_destinations(doc, plan):
+    """Map imported references to verified local config credential namespaces."""
+    from .credentials import profile_credential_scopes
+    from .models import Inventory, StorageItem
+
+    destinations = dict(plan.restore)
+    destinations.update(
+        (row.archive_config_id, row.config_path) for row in plan.retained_configs
+    )
+    profiles = profile_credential_scopes(
+        Inventory(
+            tuple(
+                StorageItem(
+                    "config",
+                    row.logical_id,
+                    destinations[row.logical_id],
+                    "included",
+                    (),
+                )
+                for row in doc.files
+                if row.owner_id == "config" and row.logical_id in destinations
+            ),
+            False,
+            "",
+            (),
+        )
+    )
+    return {
+        row.payload: profiles[row.logical_id.split(":")[1]]
+        for row in doc.files
+        if row.owner_id == "mcp.targets" and row.logical_id in destinations
+    }
 
 
 def stage_restore(
@@ -698,7 +729,13 @@ def stage_restore(
                         sort_keys=True,
                     ).encode()
                 )
-                credentials = dict(plan_credential_scopes(stage, fresh=True))
+                credentials = dict(
+                    plan_credential_scopes(
+                        stage,
+                        fresh=True,
+                        profile_scopes=_credential_destinations(doc, plan),
+                    )
+                )
                 publication_payloads = {}
                 for payload in doc.files:
                     if payload.logical_id not in selected:
@@ -1122,7 +1159,9 @@ def stage_restore(
         if plan.mode == "replace" and "settings" in plan.effective_groups:
             from .preserved_groups import preserved_settings_fingerprint
 
-            with session._discovery_reads() if session is not None else _preview_reads():
+            with (
+                session._discovery_reads() if session is not None else _preview_reads()
+            ):
                 preserved_fingerprint = preserved_settings_fingerprint(plan)
         recheck_targets(plan)
         reader.verify_sealed(archive, cancel)

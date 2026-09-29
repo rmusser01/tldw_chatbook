@@ -409,7 +409,15 @@ def capture_verify_rollback(
         rebound = _replace(
             inventory, items=tuple(_replace(item, path=path) for item, path in staged)
         )
-        issues = process_credentials(stage, rebound, mode="rollback", encrypted=True)
+        from .credentials import profile_credential_scopes
+
+        issues = process_credentials(
+            stage,
+            rebound,
+            mode="rollback",
+            encrypted=True,
+            profile_scopes=profile_credential_scopes(plan.target),
+        )
         if set(issues) != set(acknowledged_credential_issues):
             raise RollbackCredentialReviewRequired(issues)
         material = stage / "credential-recovery.json"
@@ -1239,9 +1247,8 @@ def _ensure_first_bindings(
                 not any(_contains_owned_path(root, item.path) for root in roots)
                 for item in inventories[selector].items
                 if item.path is not None
-                and item.status in {
-                    "included", "included_directory", "missing_required"
-                }
+                and item.status
+                in {"included", "included_directory", "missing_required"}
             ):
                 raise ValueError("replacement_current_scope_changed")
             reader._check(cancel)

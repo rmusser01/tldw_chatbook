@@ -337,7 +337,7 @@ def _capture_under_maintenance(
 
     from . import archive_reader as reader
     from .archive_writer import _output
-    from .credentials import process_credentials
+    from .credentials import process_credentials, profile_credential_scopes
     from .models import StorageItem
     from .native_files import create_private_directory, create_private_file
     from .owner_registry import registered
@@ -499,7 +499,13 @@ def _capture_under_maintenance(
             rebound = replace(
                 current, items=tuple(replace(item, path=path) for item, path in staged)
             )
-            issues = process_credentials(stage, rebound, mode=mode, encrypted=encrypted)
+            issues = process_credentials(
+                stage,
+                rebound,
+                mode=mode,
+                encrypted=encrypted,
+                profile_scopes=profile_credential_scopes(current),
+            )
             acknowledged = options.get("acknowledged_credential_issues", ())
             if (
                 type(acknowledged) is not tuple
