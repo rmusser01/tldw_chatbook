@@ -7,10 +7,11 @@ import threading
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import get_args
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryGlobalKeyProductionCSSHarness,
@@ -107,8 +108,8 @@ async def test_database_notes_capability_inventory_and_modes(
             return False
         return default
 
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=settings_without_splash,
     ):
         async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:

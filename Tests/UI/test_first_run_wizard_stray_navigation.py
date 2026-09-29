@@ -30,10 +30,11 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -106,7 +107,7 @@ async def test_stray_navigation_does_not_dismiss_first_run_wizard(
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _fresh_wizard_app()
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_splash_off_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_splash_off_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -150,7 +151,7 @@ async def test_navigation_resumes_once_the_wizard_leaves_the_stack(
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _fresh_wizard_app()
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_splash_off_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_splash_off_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"

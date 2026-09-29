@@ -64,11 +64,17 @@ _BUDGETS: dict[str, int] = {
     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
     # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658; task-33081 on dev
     # +24 -> 19,682; dev growth (theme tail, Dreams wiring) +191 -> 19,873;
-    # Library ingest queue -> app_ingest_queue.py: 19,873 -> 14,930).
-    "tldw_chatbook/app.py": 14930,
+    # Library ingest queue -> app_ingest_queue.py: 19,873 -> 14,930; dev
+    # growth (theme final wave, SSH sessions) +42 -> 14,972; service
+    # composition C/E/O -> app_service_wiring.py: 14,972 -> 11,506).
+    "tldw_chatbook/app.py": 11506,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     "tldw_chatbook/app_ingest_queue.py": 4999,
+    # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
+    # It was governed there; without its own row, wiring code could regrow in
+    # the mixin unchecked.
+    "tldw_chatbook/app_service_wiring.py": 3601,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,

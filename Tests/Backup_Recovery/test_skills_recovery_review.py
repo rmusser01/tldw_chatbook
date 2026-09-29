@@ -252,11 +252,13 @@ _APP = (
     _SETUP
     + r"""
 import tldw_chatbook.app as app_module
+import tldw_chatbook.app_service_wiring as wiring_module
 calls=[]
 def forbidden(*args,**kwargs):
  calls.append('old keyring factory');raise AssertionError('inactive Skills probed keyring backend')
-app_module.build_skill_trust_marker_store_with_fallback=forbidden
-app_module.build_default_skill_trust_key_cache=forbidden
+# TASK-33011: the local skill trust builder moved to app_service_wiring.
+wiring_module.build_skill_trust_marker_store_with_fallback=forbidden
+wiring_module.build_default_skill_trust_key_cache=forbidden
 async def check():
  app=app_module.TldwCli()
  try:

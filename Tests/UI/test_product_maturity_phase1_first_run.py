@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Input, OptionList, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli, setup_owns_startup_networking
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
@@ -269,7 +270,7 @@ async def test_clean_first_run_mount_suppresses_global_catalog_refresh(
     )
 
     with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
+        patch_app_global("get_cli_setting", side_effect=_test_cli_setting),
         patch.object(app, "notify", wraps=app.notify) as notify_spy,
     ):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -487,7 +488,7 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
 ) -> None:
     app = _build_clean_first_run_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
@@ -569,7 +570,7 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
 ) -> None:
     app = _build_clean_first_run_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot,
@@ -616,7 +617,7 @@ async def test_fresh_config_auto_offers_wizard_over_initial_screen(
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

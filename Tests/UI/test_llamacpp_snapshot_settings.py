@@ -6,6 +6,7 @@ import threading
 import pytest
 from textual.widgets import Button, Checkbox, Collapsible, Input
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.LLM_Management import snapshot_settings as preferences
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -15,14 +16,11 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 def no_snapshot_splash(monkeypatch):
     from tldw_chatbook.config import get_cli_setting
 
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False
             if (section, key) == ("splash_screen", "enabled")
             else get_cli_setting(section, key, default)
-        ),
-    )
+        ))
 
 
 @pytest.mark.asyncio
@@ -211,14 +209,11 @@ async def test_f9_save_preserves_new_edits_while_persistence_waits(
 async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(monkeypatch):
     from tldw_chatbook.config import get_cli_setting
 
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False
             if (section, key) == ("splash_screen", "enabled")
             else get_cli_setting(section, key, default)
-        ),
-    )
+        ))
     app = _build_test_app()
     threads = []
     original = preferences.save_snapshot_preferences
@@ -261,14 +256,11 @@ async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(monkey
 async def test_f9_stale_snapshot_draft_requires_revert_before_save(monkeypatch):
     from tldw_chatbook.config import get_cli_setting
 
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False
             if (section, key) == ("splash_screen", "enabled")
             else get_cli_setting(section, key, default)
-        ),
-    )
+        ))
     app = _build_test_app()
     async with app.run_test(size=(80, 24)) as pilot:
         screen = SettingsScreen(app)
@@ -292,14 +284,11 @@ async def test_f9_snapshot_controls_paint_and_keyboard_save(size, monkeypatch):
     from Tests.UI.test_llamacpp_snapshot_manager import frame, painted_text
     from tldw_chatbook.config import get_cli_setting
 
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False
             if (section, key) == ("splash_screen", "enabled")
             else get_cli_setting(section, key, default)
-        ),
-    )
+        ))
     app = _build_test_app()
     async with app.run_test(size=size) as pilot:
         screen = SettingsScreen(app)

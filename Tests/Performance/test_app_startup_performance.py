@@ -15,6 +15,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -200,7 +202,9 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         )
         before = [name for name in guarded if name in sys.modules]
         root = Path(__import__("os").environ["XDG_DATA_HOME"])
-        app_module.get_user_data_dir = lambda: root
+        # TASK-33011: the tool-pack composition moved to app_service_wiring.
+        import tldw_chatbook.app_service_wiring as wiring_module
+        wiring_module.get_user_data_dir = lambda: root
 
         class Registry:
             def __init__(self, guard): self.guard = guard
@@ -748,7 +752,7 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
     monkeypatch.setattr(STTSEventHandler, "initialize_stts", blocked_stts_init)
     monkeypatch.setattr(DBStatusManager, "update_db_sizes", blocked_db_size_update)
     monkeypatch.setattr(TldwCli, "perform_media_cleanup", blocked_media_cleanup)
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", test_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", test_cli_setting)
 
     app = _build_test_app()
 

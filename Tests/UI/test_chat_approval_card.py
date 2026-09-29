@@ -9,6 +9,7 @@ falling back to the full set if the request is empty/invalid/unknown.
 
 import pytest
 
+from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _DECISION_OPTIONS,
     _default_decision_for_row,
@@ -705,7 +706,6 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
     that fails on the bug the live pass actually saw.
     """
     import time
-    from unittest.mock import patch
 
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -717,8 +717,8 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
         return default
 
     app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    with patch_app_global(
+        "get_cli_setting", side_effect=_settings_without_splash
     ):
         async with app.run_test(size=(80, 24)) as pilot:
             deadline = time.monotonic() + 15.0

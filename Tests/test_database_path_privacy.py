@@ -591,6 +591,10 @@ def test_load_settings_does_not_create_unconsumed_server_database_parents() -> N
 
 
 def test_prompts_startup_does_not_duplicate_database_parent_creation() -> None:
-    app_source = (Path(config.__file__).parent / "app.py").read_text(encoding="utf-8")
+    # TASK-33011: TldwCli's service composition lives in app_service_wiring.py.
+    app_source = "".join(
+        (Path(config.__file__).parent / name).read_text(encoding="utf-8")
+        for name in ("app.py", "app_service_wiring.py")
+    )
 
     assert "prompts_db_path.parent.mkdir(parents=True, exist_ok=True)" not in app_source

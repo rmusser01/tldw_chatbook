@@ -18,10 +18,10 @@ six files, all now using ``self.app.call_from_thread(...)``. This test is
 the repo-wide backstop that keeps the bug class from coming back anywhere in
 the package.
 
-``tldw_chatbook/app.py`` and ``tldw_chatbook/app_ingest_queue.py`` are
-special-cased -- see ``ALLOWLISTED_RELATIVE_PATHS`` and
-``test_app_py_allowlisted_sites_are_still_safe`` below for why their
-remaining bare sites are not bugs.
+``tldw_chatbook/app.py``, ``tldw_chatbook/app_ingest_queue.py`` and
+``tldw_chatbook/app_service_wiring.py`` are special-cased -- see
+``ALLOWLISTED_RELATIVE_PATHS`` and ``test_app_py_allowlisted_sites_are_still_safe``
+below for why their remaining bare sites are not bugs.
 """
 from __future__ import annotations
 
@@ -43,12 +43,15 @@ PACKAGE_ROOT = Path(__file__).resolve().parent.parent / "tldw_chatbook"
 # Python attribute lookup resolves `self.call_from_thread` through the
 # *instance's* full MRO, not the class whose body contains the call, so
 # those sites are safe despite the mixin itself not subclassing App.
+# app_service_wiring.py (also TASK-33011) defines `ServiceWiringMixin`, mixed
+# into `TldwCli` the same way, so the same reasoning covers its sites.
 # app.py's remaining bare sites sit directly on `TldwCli(App)`, also safe.
 # Everywhere else in the package a bare call is a real bug -- see TASK-929.
 # Each allowlisted file may hold bare sites ONLY inside its own safe classes.
 _SAFE_CLASSES_BY_ALLOWLISTED_PATH = {
     "app.py": frozenset({"TldwCli"}),
     "app_ingest_queue.py": frozenset({"LibraryIngestQueueMixin"}),
+    "app_service_wiring.py": frozenset({"ServiceWiringMixin"}),
 }
 ALLOWLISTED_RELATIVE_PATHS = set(_SAFE_CLASSES_BY_ALLOWLISTED_PATH)
 
@@ -136,8 +139,9 @@ def test_app_py_allowlisted_sites_are_still_safe(rel_path: str) -> None:
     """Pin down *why* each allowlisted file is exempt so the exemption cannot
     silently rot into a hole. Every bare `self.call_from_thread(` line
     remaining in app.py must sit inside `TldwCli` (a genuine App subclass),
-    and every one in app_ingest_queue.py inside `LibraryIngestQueueMixin`
-    (always mixed with App) -- never inside a class that can be
+    every one in app_ingest_queue.py inside `LibraryIngestQueueMixin` and
+    every one in app_service_wiring.py inside `ServiceWiringMixin` (both
+    always mixed with App) -- never inside a class that can be
     instantiated on its own, such as `TabDropdown(Widget)`.
     """
     app_py = PACKAGE_ROOT / rel_path
@@ -168,5 +172,5 @@ def test_app_py_allowlisted_sites_are_still_safe(rel_path: str) -> None:
             f"{rel_path}:{lineno} 'self.call_from_thread(' sits inside "
             f"{cls!r}, which is not one of the documented safe classes "
             f"{sorted(safe_class_names)} -- this may be a real bug, not "
-            f"the LibraryIngestQueueMixin/App exemption"
+            f"the app-mixin/App exemption"
         )

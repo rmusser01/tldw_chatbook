@@ -38,6 +38,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook import app as app_module
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.UI.Navigation import screen_registry
@@ -485,7 +486,7 @@ async def test_no_overlap_thread_when_the_splash_is_disabled(monkeypatch):
             return False
         return real_get_cli_setting(section, key, default, *args, **kwargs)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", splash_off)
+    set_app_global(monkeypatch, "get_cli_setting", splash_off)
     async with app.run_test(size=(120, 36)) as pilot:
         assert await _wait_until(
             lambda: getattr(app, "_ui_ready", False),

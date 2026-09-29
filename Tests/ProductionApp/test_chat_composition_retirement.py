@@ -11,6 +11,7 @@ from loguru import logger
 from textual.css.query import NoMatches
 from textual.widgets import Input
 
+from Tests.app_module_patches import set_app_global
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
@@ -66,7 +67,7 @@ def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:

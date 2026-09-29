@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 import tldw_chatbook.app as app_module
+from tldw_chatbook import app_service_wiring
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.app import TldwCli
 
 WIRING_METHODS = (
@@ -19,7 +21,7 @@ WIRING_METHODS = (
 )
 EXPECTED_WIRING_CALLS = Counter({name: 1 for name in WIRING_METHODS})
 SYNC_CONSUMER_CLASSES = (
-    app_module.ChatConversationScopeService,
+    app_service_wiring.ChatConversationScopeService,
     app_module.MediaReadingScopeService,
 )
 SERVICE_ATTRIBUTES = (
@@ -42,6 +44,8 @@ SERVICE_ATTRIBUTES = (
     "sync_state_repository",
 )
 APP_PATH = Path(app_module.__file__).resolve()
+# TASK-33011: the `_wire_*` composition moved into this mixin.
+WIRING_PATH = Path(app_service_wiring.__file__).resolve()
 
 
 def _constructor_wiring_calls() -> Counter[str]:
@@ -72,24 +76,30 @@ def _constructor_wiring_calls() -> Counter[str]:
     )
 
 
-def _server_sync_config_factory_calls() -> list[int]:
-    tree = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
-    app_class = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "TldwCli"
-    )
-    return [
-        node.lineno
-        for node in ast.walk(app_class)
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "from_config"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "ServerSyncService"
+def _server_sync_config_factory_calls() -> list[tuple[str, int]]:
+    calls = []
+    for path, class_name in (
+        (APP_PATH, "TldwCli"),
+        (WIRING_PATH, "ServiceWiringMixin"),
+    ):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        app_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == class_name
         )
-    ]
+        calls.extend(
+            (path.name, node.lineno)
+            for node in ast.walk(app_class)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "from_config"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "ServerSyncService"
+            )
+        )
+    return calls
 
 
 def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -100,7 +110,7 @@ def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def _service_identities(app: TldwCli) -> tuple[object, ...]:

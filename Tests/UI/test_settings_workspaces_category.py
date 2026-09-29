@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
@@ -59,15 +60,13 @@ async def test_workspaces_category_registered_and_immediate(request) -> None:
 @pytest.mark.asyncio
 @private_profile_test
 async def test_create_rename_archive_unarchive_flow(request) -> None:
-    from unittest.mock import patch
-
     from textual.widgets import Button, Checkbox, Input
 
     app = _build_test_app(configured_default="settings")
     registry = app.workspace_registry_service
 
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=_settings_without_splash,
     ):
         async with app.run_test(size=(180, 50)) as pilot:
@@ -228,7 +227,6 @@ async def test_activation_failure_surfaces_inline_but_creates_workspace(
     ``test_create_workspace_recomposes_after_activation_failure`` in
     ``Tests/UI/test_post_release_workspaces_library_depth.py``).
     """
-    from unittest.mock import patch
 
     from textual.widgets import Button, Input
 
@@ -239,8 +237,8 @@ async def test_activation_failure_surfaces_inline_but_creates_workspace(
     app = _build_test_app(configured_default="settings")
     registry = app.workspace_registry_service
 
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=_settings_without_splash,
     ):
         async with app.run_test(size=(180, 50)) as pilot:
@@ -284,13 +282,12 @@ async def test_activation_failure_surfaces_inline_but_creates_workspace(
 @private_profile_test
 async def test_compact_overview_keeps_a_painted_recovery_action(request) -> None:
     """The full Settings app keeps one real action above the compact fold."""
-    from unittest.mock import patch
 
     from textual.widgets import Button
 
     app = _build_test_app(configured_default="settings")
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=_settings_without_splash,
     ):
         async with app.run_test(size=(100, 32)) as pilot:

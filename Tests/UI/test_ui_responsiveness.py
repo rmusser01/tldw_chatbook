@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 
@@ -58,15 +59,11 @@ def test_app_starts_responsiveness_monitor_with_heartbeat_timer(monkeypatch):
         return object()
 
     monkeypatch.setattr(app, "set_interval", fake_set_interval)
-    monkeypatch.setattr(
-        app_module,
-        "get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             True
             if (section, key) == ("diagnostics", "ui_responsiveness_enabled")
             else default
-        ),
-    )
+        ))
 
     app_module.TldwCli._start_ui_responsiveness_monitor(app)
 
@@ -140,15 +137,11 @@ def test_app_does_not_schedule_heartbeat_when_responsiveness_monitor_is_disabled
         return object()
 
     monkeypatch.setattr(app, "set_interval", fake_set_interval)
-    monkeypatch.setattr(
-        app_module,
-        "get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False
             if (section, key) == ("diagnostics", "ui_responsiveness_enabled")
             else default
-        ),
-    )
+        ))
 
     app_module.TldwCli._start_ui_responsiveness_monitor(app)
 

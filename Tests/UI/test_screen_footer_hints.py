@@ -14,13 +14,13 @@ import ast
 import logging
 import re
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
@@ -73,7 +73,7 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
     app._initial_tab_value = "chat"
 
     try:
-        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
             async with app.run_test(size=(160, 48)) as pilot:
                 screen = await _wait_for_screen(app, pilot, ChatScreen, "chat")
                 screen_footer = screen.query_one(AppFooterStatus)

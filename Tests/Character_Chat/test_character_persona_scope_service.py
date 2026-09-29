@@ -2956,22 +2956,23 @@ def test_app_wires_character_persona_services(monkeypatch):
 
     install_config_source(monkeypatch)
     from tldw_chatbook import app as app_module
+    from tldw_chatbook import app_service_wiring
 
     server_service = Mock()
     server_dictionary_service = Mock()
     captured = {}
 
     monkeypatch.setattr(
-        app_module.ServerCharacterPersonaService,
+        app_service_wiring.ServerCharacterPersonaService,
         "from_server_context_provider",
         Mock(return_value=server_service),
     )
     monkeypatch.setattr(
-        app_module.ServerChatDictionaryService,
+        app_service_wiring.ServerChatDictionaryService,
         "from_server_context_provider",
         Mock(return_value=server_dictionary_service),
     )
-    original_scope_service = app_module.CharacterPersonaScopeService
+    original_scope_service = app_service_wiring.CharacterPersonaScopeService
 
     def scope_service_factory(*, local_service, server_service, policy_enforcer=None):
         captured["local_service"] = local_service
@@ -2984,7 +2985,7 @@ def test_app_wires_character_persona_services(monkeypatch):
         )
 
     monkeypatch.setattr(
-        app_module, "CharacterPersonaScopeService", scope_service_factory
+        app_service_wiring, "CharacterPersonaScopeService", scope_service_factory
     )
 
     fake_app = Mock()

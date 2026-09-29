@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
-from unittest.mock import patch
 
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
@@ -95,8 +95,8 @@ class FullAppDestinationContext:
 
     @asynccontextmanager
     async def run_test(self, **kwargs):
-        with patch(
-            "tldw_chatbook.app.get_cli_setting",
+        with patch_app_global(
+            "get_cli_setting",
             side_effect=_settings_without_splash,
         ):
             async with self.app.run_test(**kwargs) as pilot:

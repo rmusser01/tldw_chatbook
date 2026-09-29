@@ -21,6 +21,7 @@ from textual.screen import ModalScreen, Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.consolidated_css import (
     APP_STYLESHEETS,
     ConsolidatedCSSApp,
@@ -274,8 +275,8 @@ async def _production_workspace_context(
             return False
         return default
 
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=settings_without_splash,
     ):
         async with app.run_test(size=size) as pilot:

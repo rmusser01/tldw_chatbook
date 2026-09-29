@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 from unittest.mock import MagicMock, patch
 
+from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 from tldw_chatbook.runtime_policy import RuntimeSourceState
@@ -317,8 +318,8 @@ def _build_test_app(
     # `db_factory` therefore now agree on one on-disk file for the app's
     # whole life. `drain_active_service_patches` (called by the root
     # conftest's autouse teardown) stops it once the test ends.
-    subscriptions_patcher = patch(
-        "tldw_chatbook.app.get_subscriptions_db_path",
+    subscriptions_patcher = patch_app_global(
+        "get_subscriptions_db_path",
         return_value=user_data_dir / "subscriptions.sqlite",
     )
     subscriptions_patcher.start()
@@ -361,7 +362,7 @@ def _build_test_app(
     with ExitStack() as stack:
         for ctx in (
             patch("tldw_chatbook.app.load_settings", return_value=fake_app_config),
-            patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting),
+            patch_app_global("get_cli_setting", side_effect=fake_cli_setting),
             patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None),
             # task-32059: `__init__` stamps `[library.rail_state] lifecycle
             # = "unknown"` for a profile this run created, and the sandbox
@@ -383,7 +384,7 @@ def _build_test_app(
                 return_value=MagicMock(),
             ),
             patch(
-                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                "tldw_chatbook.app_service_wiring.ServerCharacterPersonaService.from_config",
                 return_value=MagicMock(),
             ),
             patch.object(
@@ -414,19 +415,19 @@ def _build_test_app(
                 side_effect=fake_runtime_policy,
             ),
             patch(
-                "tldw_chatbook.app.get_notifications_db_path",
+                "tldw_chatbook.app_service_wiring.get_notifications_db_path",
                 return_value=":memory:",
             ),
             patch(
-                "tldw_chatbook.app.get_research_db_path",
+                "tldw_chatbook.app_service_wiring.get_research_db_path",
                 return_value=user_data_dir / "research.sqlite",
             ),
             patch(
-                "tldw_chatbook.app.get_writing_db_path",
+                "tldw_chatbook.app_service_wiring.get_writing_db_path",
                 return_value=user_data_dir / "writing.sqlite",
             ),
-            patch(
-                "tldw_chatbook.app.get_user_data_dir",
+            patch_app_global(
+                "get_user_data_dir",
                 return_value=user_data_dir,
             ),
             patch(
@@ -442,11 +443,11 @@ def _build_test_app(
                 ),
             ),
             patch(
-                "tldw_chatbook.app.get_workspaces_db_path",
+                "tldw_chatbook.app_service_wiring.get_workspaces_db_path",
                 return_value=user_data_dir / "workspaces.sqlite",
             ),
             patch(
-                "tldw_chatbook.app.get_scheduled_tasks_db_path",
+                "tldw_chatbook.app_service_wiring.get_scheduled_tasks_db_path",
                 return_value=user_data_dir / "scheduled_tasks.sqlite",
             ),
         ):

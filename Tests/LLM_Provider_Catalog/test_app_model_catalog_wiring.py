@@ -17,6 +17,7 @@ import pytest
 from textual.app import App
 from textual.screen import Screen
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook import config as config_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
@@ -468,7 +469,7 @@ async def test_refresh_swallows_and_logs_errors(monkeypatch):
 
 
 def test_disk_store_builds_for_cache_path_inside_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     app, _service = _stub(monkeypatch)
     store = TldwCli._init_model_catalog_disk_store(app)
     assert store is not None
@@ -478,7 +479,7 @@ def test_disk_store_builds_for_cache_path_inside_data_dir(tmp_path, monkeypatch)
 def test_disk_store_rejected_when_cache_path_escapes_data_dir(tmp_path, monkeypatch):
     from loguru import logger
 
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
         "tldw_chatbook.Utils.path_validation.get_safe_relative_path",
         lambda path, base: None,
@@ -503,7 +504,7 @@ def test_disk_store_load_failure_logs_path_without_traceback(tmp_path, monkeypat
         ModelCatalogDiskStore,
     )
 
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
 
     def failing_load_into(self, cache):
         raise RuntimeError("boom-secret")

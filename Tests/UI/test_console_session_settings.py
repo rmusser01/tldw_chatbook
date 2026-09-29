@@ -30,6 +30,7 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
+from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import persist_seeded_config
 
@@ -12697,7 +12698,7 @@ def _build_live_config_test_app():
         )
         stack.enter_context(
             patch(
-                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                "tldw_chatbook.app_service_wiring.ServerCharacterPersonaService.from_config",
                 return_value=MagicMock(),
             )
         )
@@ -12744,20 +12745,20 @@ def _build_live_config_test_app():
             "get_writing_db_path",
         ):
             stack.enter_context(
-                patch(f"tldw_chatbook.app.{db_path_getter}", return_value=":memory:")
+                patch(f"tldw_chatbook.app_service_wiring.{db_path_getter}", return_value=":memory:")
             )
         stack.enter_context(
-            patch(
-                "tldw_chatbook.app.get_subscriptions_db_path",
+            patch_app_global(
+                "get_subscriptions_db_path",
                 return_value=user_data_dir / "subscriptions.sqlite",
             )
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
+            patch_app_global("get_user_data_dir", return_value=user_data_dir)
         )
         stack.enter_context(
             patch(
-                "tldw_chatbook.app.get_workspaces_db_path",
+                "tldw_chatbook.app_service_wiring.get_workspaces_db_path",
                 return_value=user_data_dir / "workspaces.sqlite",
             )
         )

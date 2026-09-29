@@ -3,11 +3,11 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 from textual.widgets import ListView, Static, TextArea, Tree
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Writing_Interop.server_writing_service import (
     REASON_DIRECT_MANUSCRIPT_SCENE,
@@ -490,8 +490,8 @@ async def _mounted_production_writing_window(scope=None):
             return False
         return default
 
-    with patch(
-        "tldw_chatbook.app.get_cli_setting",
+    with patch_app_global(
+        "get_cli_setting",
         side_effect=setting_without_splash,
     ):
         async with app.run_test() as pilot:
