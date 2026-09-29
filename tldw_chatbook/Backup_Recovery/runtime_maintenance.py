@@ -666,6 +666,15 @@ async def _resume_monitor(runtime):
         raise cancellation
 
 
+#: TASK-33560 (PERF-08 part 2), owner decision 2026-09-29: probe for native
+#: maintenance intent once a second instead of ten times. Each probe re-reads the
+#: registry and walks every registered root's gate chain off-loop (about 240
+#: open() calls a second at 10 Hz on an idle app). A backup or restore now waits
+#: at most this much longer for the app to notice it; their own admission waits
+#: are 30-60 s.
+MAINTENANCE_PROBE_INTERVAL_SECONDS = 1.0
+
+
 async def _poll_local_pause_requested():
     """Keep native probing off-loop, retaining its resources through cancellation."""
     from . import storage_admission as storage
@@ -698,7 +707,7 @@ async def monitor_app(app):
 
     refused = False
     while True:
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(MAINTENANCE_PROBE_INTERVAL_SECONDS)
         try:
             requested = await _poll_local_pause_requested()
         except (OSError, ValueError, RuntimeError):
