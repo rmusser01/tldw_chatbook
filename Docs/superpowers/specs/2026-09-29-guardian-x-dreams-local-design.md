@@ -73,27 +73,41 @@ Scheduling/scheduler/handlers/guardian_trend_handler.py  # daily trend task
 
 ### Rules engine + check pipeline
 
+- **Visit identity (derived):** no visit id exists in the runtime today (verified — the visit is a `attach_view`/`leave_console_runtime` lifecycle concept, not an identifier). The checker mints a uuid per visit, anchored at the first send it observes after a Console mount (or ChatScreen mount — Task 1 verifies the anchor against `console_runtime`'s lifecycle) and holds it for the visit's alerts.
+- **Scope — conversational drafts only:** slash commands divert upstream of the dispatch seam (`_console_command_registry.parse` runs in `_send_console_message_from_visible_action_observed`, before dispatch — verified). Guardian matches what reaches dispatch; any command-kind draft that nonetheless arrives is skipped. Command invocations are app actions, not conversational intent.
 - **Compilation cache:** rules compile (regex + except patterns) once per rules-version with a 60s TTL invalidation on any rule write — the warm send path never recompiles.
 - **Pipeline (per send, at dispatch):**
   1. Gate: `[guardian] enabled` false → return immediately (a single config read cached with the compiled rules; effectively zero overhead).
   2. Match: each enabled rule's pattern against the draft, minus `except_patterns` spans. Crisis rules use the ported defaults.
-  3. Dedup by `notification_frequency` (session_id for conversation-scoped, visit_id for session-scoped, 24h window for daily).
-  4. Escalation: per-rule session counter + rolling-window counter; thresholds replace the base action (`notify → redact → block`) per the server's semantics; `current_action` persisted.
+  3. Dedup by `notification_frequency` (session_id for conversation-scoped, visit_id for session-scoped, 24h window for daily) — **dedup gates NOTICE SURFACING only; every match records an alert row and counts toward escalation** (Guardian tracks behavior, not annoyance).
+  4. Escalation: per-rule session counter + rolling-window counter; thresholds replace the base action (`notify → redact → block`) per the server's semantics; `current_action` persisted. **Crisis-rule action cap (binding safety invariant):** rules with `is_crisis=1` may never hold (or escalate to) `redact` or `block` — redacting distress text would hide it from the LLM that should respond to it, and blocking a user mid-crisis from their communication tool is the opposite of humane. Crisis rules surface `notify` + resources, always. Enforced at the same write boundary as the feeds_discovery cap and pinned by the same rejection-test pattern.
   5. Act: `notify` → inline system row (+ crisis resources when `is_crisis`); `redact` → rewrite the draft in-memory before send (matched span replaced with `[redacted: rule name]`); `block` → refuse through the existing blocked-reason plumbing, notice explains which rule and how to course-correct. `post_visit_summary`/`silent_log` record only.
   6. Record: alert row (digest + topic + ids + ts) in one thread-offloaded hop; escalation counters updated in the same hop.
-- **Latency budget:** warm path < 5ms (compiled-regex match + cached config gate); GuardianDB writes off the dispatch thread; a slow/errored store degrades to notice-without-record, never blocks the send.
+- **Latency budget:** warm path < 5ms (compiled-regex match + cached config gate) — a stated budget, verified by **deterministic assertions, not a timing test**: a spy proves the compiled-rule cache is hit (no recompilation on the warm path) and the config gate is a single cached read. GuardianDB writes are thread-offloaded out of dispatch; a slow/errored store degrades to notice-without-record, never blocks the send.
 - **Seam ordering vs ADR-148 hooks (binding contract):** the Guardian checker runs at dispatch **before** user `UserPromptSubmit` hooks fire; the hit is counted **regardless** of whether a hook subsequently blocks the send (Guardian measures typed intent — the draft, not the provider call); Guardian's own `block` short-circuits before hooks run. The hook emission point itself is untouched.
 - **Fail-open, loud:** any checker exception → the send proceeds; one `guardian_checker_error` notification per error-signature per visit (then silent), plus loguru with context. A dead checker must be visible, not silent.
+
+### Seed rules (v1 ship set)
+
+Exactly three, all visible and deletable in the Settings rules table, none with `feeds_discovery`:
+
+1. **Crisis / self-harm ideation awareness** — `is_crisis=1`, action `notify` (capped), severity `critical`, `notification_frequency=once_per_conversation`, crisis resources enabled, `except_patterns` seeded with research/treatment/clinical vocabulary (from the server's B2 example, adapted: `prevention|hotline|awareness|research|study|clinical|treatment|therapy`).
+2. **Doomscrolling demo** — topic `doomscrolling`, severity `info`, `display_mode=silent_log` (the quiet-by-default posture; users promote it when they want it).
+3. **Editable example** — a benign topic rule (e.g. late-night-work) demonstrating every editor field.
+
+### Disable semantics
+
+Turning `[guardian] enabled` off stops all recording and checking immediately and **leaves existing data in place** (re-enable resumes); only an explicit user action in Settings clears the store.
 
 ### Notices
 
 - **Inline:** system row via the existing transcript channel, `markup=False`, carrying the rule name, the **transient matched span (capped ~80 chars, never persisted)**, and — for `is_crisis` rules — the crisis-resource block + disclaimer verbatim.
-- **Post-visit summary:** computed at visit end into `guardian_visit_summaries`, surfaced on next Console mount via the report-slot precedent; per-topic counts and escalated rules only (no excerpts — they were never stored).
+- **Post-visit summary:** computed at visit end into `guardian_visit_summaries`, surfaced on next Console mount via the report-slot precedent; per-topic counts and escalated rules only (no excerpts — they were never stored). **Empty visits leave no trace** — summaries are stored and surfaced only when the visit produced ≥1 non-silent alert or ≥1 trend notice (a 30-second nav bounce mints nothing).
 - **Trend notices:** rendered like rule notices but produced by the analyzer; **frequency-capped at once per visit per topic** (R5).
 
 ### Trend analyzer
 
-- Inputs: `guardian_alerts` only (topic, ts, session_id) + visit summaries. Definitions (v1, deliberately conservative):
+- Inputs: `guardian_alerts` **rule-generated rows only** (`rule_id IS NOT NULL` — trend-generated rows are excluded so analyzer output never feeds analyzer input) + visit summaries. Definitions (v1, deliberately conservative):
   - **Sustained-topic share (fixation proxy):** one topic ≥ `fixation_share_threshold` (default 0.6) of alert hits across `fixation_window_days` (default 7) with ≥ `fixation_min_hits` (default 30) total.
   - **Repetitive-volume (doom-loop proxy):** ≥ `doomloop_hits_per_day` (default 20) hits on the same topic for ≥ 3 consecutive days.
 - Each trend rule's notice is itself a `guardian_alerts` row (topic = the trend kind) — so trends feed the same escalation/dedup ladder and are visible in summaries.
@@ -117,7 +131,7 @@ Checker/store/analyzer failures never eat a send or a visit summary (fail-open +
 
 ### Testing
 
-Unit: match/except evaluation; compilation cache invalidation; frequency dedup across the four modes; escalation counter transitions and action replacement; cooldown gating (rule + feature toggle, with the bypass log); redact rewrite; retention prune. Integration: dispatch-seam insertion (fail-open on raising checker; zero-overhead when disabled — a timing test on the warm path); seam ordering (Guardian block short-circuits before hooks; hook-block still counts the hit); visit-end summary + daily handler emission. Interop: `read_guardian_topics` counts; **crisis rule's hits never appear in a synthesized payload** (whole-payload absence assertion, the goals-gate pattern); DreamsDB v3 upgrade. UI: settings section per the Dreams test patterns; notice rendering with `markup=False`.
+Unit: match/except evaluation; compilation cache invalidation; frequency dedup across the four modes (notices suppressed, counts still recorded); escalation counter transitions and action replacement; **the crisis action cap** (a crisis rule can never be written with, or escalate to, redact/block); cooldown gating (rule + feature toggle, with the bypass log); redact rewrite; retention prune. Integration: dispatch-seam insertion (fail-open on raising checker; zero-overhead when disabled — deterministic cache/gate assertions, no timing test); seam ordering (Guardian block short-circuits before hooks; hook-block still counts the hit); slash-command skip; visit-end summary + daily handler emission (empty visit → no summary row). Interop: `read_guardian_topics` counts; **crisis rule's hits never appear in a synthesized payload** (whole-payload absence assertion, the goals-gate pattern); DreamsDB v3 upgrade. UI: settings section per the Dreams test patterns; notice rendering with `markup=False`.
 
 ## Governance
 
