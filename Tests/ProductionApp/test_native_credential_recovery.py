@@ -570,12 +570,14 @@ def _transfer(source):
     from tldw_chatbook.Backup_Recovery import archive_reader
     from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
     from tldw_chatbook.Backup_Recovery.inventory import discover
-    from tldw_chatbook.Backup_Recovery.models import DiscoverySelections
     from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
     from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
     from tldw_chatbook.Backup_Recovery.recovery_service import (
         RecoveryService,
         default_control_root,
+    )
+    from tldw_chatbook.Backup_Recovery.restore_plan import (
+        required_rollback_dependencies,
     )
 
     install_adapters()
@@ -664,23 +666,26 @@ def _transfer(source):
             assert opened.returncode == 0, "native_isolated_open_failed"
         retained = list(service.control_root.glob("isolated-*/credentials.age"))
         assert len(retained) == 1 and _digest(retained[0]) == _digest(source)
-        target = discover(
-            _selectors(), selections=DiscoverySelections(data_groups=GROUPS)
-        )
+        target = discover(_selectors())
         assert target.complete
         setup_parent = Path.cwd() / "files-needing-setup"
         setup_parent.mkdir(mode=0o700)
-        plan = service.preview_restore(
-            inspection,
-            mode="replace",
-            target=target,
-            profile_bases={},
-            external_destinations={},
-            profile_names={},
-            target_configs=target_configs,
-            setup_parent=setup_parent,
-            acknowledged_credential_issues=incoming_manual,
-        )
+        choices = {
+            "mode": "replace",
+            "target": target,
+            "profile_bases": {},
+            "external_destinations": {},
+            "profile_names": {},
+            "target_configs": target_configs,
+            "setup_parent": setup_parent,
+            "acknowledged_credential_issues": incoming_manual,
+        }
+        plan = service.preview_restore(inspection, **choices)
+        safety_scope = required_rollback_dependencies(plan)
+        if safety_scope:
+            plan = service.preview_restore(
+                inspection, **choices, safety_scope=safety_scope
+            )
         for attempt in range(2):
             operation = service.start_restore(
                 inspection, plan, rollback_password=PASSWORD
@@ -704,9 +709,7 @@ def _transfer(source):
         assert _material(service.inspection(inspect_copy))
         installed = Path(os.environ["TLDW_TEST_INSTALLED_PACKAGE"])
         _child(Path.cwd(), installed, "read", source=source)
-        target = discover(
-            _selectors(), selections=DiscoverySelections(data_groups=GROUPS)
-        )
+        target = discover(_selectors())
         try:
             reverse = service.preview_rollback(
                 original, old_password=PASSWORD, target=target

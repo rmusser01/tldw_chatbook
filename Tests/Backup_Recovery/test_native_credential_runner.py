@@ -490,11 +490,12 @@ def test_native_fixture_installs_owners_before_destination_discovery(
         product._transfer(source)
 
 
-@pytest.mark.parametrize("stop_mode", ("isolated", "replace"))
+@pytest.mark.parametrize("stop_mode", ("isolated", "replace", "dependency-reviewed"))
 def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
     tmp_path, monkeypatch, stop_mode
 ):
     import tldw_chatbook
+    from Tests.Backup_Recovery.test_rollback_dependency_preflight import dependency_plan
     from Tests.ProductionApp import test_native_credential_recovery as product
     from tldw_chatbook.Backup_Recovery import (
         archive_reader,
@@ -526,6 +527,8 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
         stores.append(
             SimpleNamespace(path=path, owner="db.prompts.primary", status="included")
         )
+    initial_plan = dependency_plan(root)
+    previews = []
 
     class Service:
         def __init__(self, root):
@@ -543,7 +546,7 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
         def preview_restore(self, inspection, **options):
             if options["mode"] == "isolated":
                 assert "acknowledged_credential_issues" not in options
-                if stop_mode == "replace":
+                if stop_mode != "isolated":
                     return SimpleNamespace()
             else:
                 assert options["mode"] == "replace"
@@ -558,9 +561,20 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
                 assert options["acknowledged_credential_issues"] == (
                     "credential_manual_recovery_required:synthetic-manual",
                 )
+                if stop_mode == "dependency-reviewed":
+                    assert options["target"] is initial_plan.target
+                    if not previews:
+                        previews.append(options)
+                        return initial_plan
+                    assert options == {
+                        **previews[0],
+                        "safety_scope": ("asset", "assets"),
+                    }
             raise PreviewReached()
 
-        def start_restore(self, inspection, plan):
+        def start_restore(self, inspection, plan, **options):
+            if options:
+                raise AssertionError("replacement started before dependency review")
             return "isolated-restore"
 
         def profiles(self):
@@ -574,11 +588,18 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
     monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
     monkeypatch.setattr(recovery_service, "RecoveryService", Service)
     monkeypatch.setattr(recovery_service, "default_control_root", lambda: control)
-    monkeypatch.setattr(
-        inventory,
-        "discover",
-        lambda selectors, **options: SimpleNamespace(items=stores, complete=True),
-    )
+    discoveries = []
+
+    def discover(selectors, **options):
+        assert not options, (
+            "local target inventory must include safety-only dependencies"
+        )
+        discoveries.append(selectors)
+        if stop_mode == "dependency-reviewed" and len(discoveries) > 1:
+            return initial_plan.target
+        return SimpleNamespace(items=stores, complete=True)
+
+    monkeypatch.setattr(inventory, "discover", discover)
     monkeypatch.setattr(
         archive_reader,
         "verify_sealed",
