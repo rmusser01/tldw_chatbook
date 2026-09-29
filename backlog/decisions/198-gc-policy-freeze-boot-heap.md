@@ -1,7 +1,7 @@
 # ADR-198: Freeze the boot heap; keep CPython's GC thresholds
 
 Date: 2026-09-29
-Status: Proposed. The owner approved drafting it as decision D3 of the 2026-09-27 structural perf audit on 2026-09-29, on the claim that the freeze removes the 130–871 ms pauses. The measurement below shows it shortens them but does not remove them, so acceptance waits for owner review.
+Status: Accepted 2026-09-29 by the owner as a partial win (decision D3 of the 2026-09-27 structural perf audit). The owner first approved drafting it on the claim that the freeze removes the 130–871 ms pauses. The measurement below shows it shortens them without removing them, and the owner accepted it on that basis. The <50 ms target moved to TASK-33545.
 Task: [TASK-33270](../tasks/task-33270%20-%20PERF-11-GC-policy---gc.freeze-after-ready-and-pre-import-documented-thresholds.md) (PERF-11)
 Satisfies: the ADR precondition in [TASK-31966](../tasks/task-31966%20-%20Investigate-and-reduce-Console-activation-GC-pauses.md) AC #2 for a global GC policy
 Evidence: [2026-09-27 structural perf audit](../../qa/perf-structural-audit-2026-09-27/report.md) §1, §3 R3, §4 PERF-11
@@ -118,6 +118,14 @@ about 0.6M unfrozen objects. Two things dominate it:
   with it (see Decision 3). Idle-time collection alone would not shrink a pass.
 - **`gc.disable()` plus manual collection at idle.** This risks unbounded
   growth when nothing is ever idle, such as during a long agent run.
+
+## Python versions
+
+The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.14 documentation on 2026-09-29:
+
+- **3.13, and 3.14.5 and later**, run the same generational collector as 3.12. This policy carries over unchanged, including `gc.collect(1)` meaning "collect the middle generation" and the `threshold[2]` note in Decision 3.
+- **3.14.0 to 3.14.4** shipped an incremental collector with only two generations. There, `gc.collect(1)` runs one increment and `threshold[2]` is ignored. The freeze is still valid (`gc.freeze()` is unchanged), but these measurements do not transfer. 3.14.5 reverted to the 3.13 collector after production reports of memory pressure, so a 3.14 migration should target 3.14.5 or later, or re-measure first.
+- **Free-threaded builds** (PEP 703; officially supported from 3.14 by PEP 779) use a different collector. Revisit this ADR before adopting one.
 
 ## Verification
 

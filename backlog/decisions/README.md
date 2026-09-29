@@ -133,7 +133,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 
 | [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
 | [ADR-197](197-console-hook-configuration-review.md) | Accepted | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
-| [ADR-198](198-gc-policy-freeze-boot-heap.md) | Proposed | Freeze the long-lived heap at `_ui_ready` and after each screen pre-import pass (young collect first); keep CPython's default GC thresholds; never disable the collector. |
+| [ADR-198](198-gc-policy-freeze-boot-heap.md) | Accepted | Freeze the long-lived heap at `_ui_ready` and after each screen pre-import pass (young collect first); keep CPython's default GC thresholds; never disable the collector. Partial win: shortens gen-2 pauses, does not remove them (TASK-33545). |
 | [ADR-162](162-managed-agent-plugins.md) | Accepted | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |
 | [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
