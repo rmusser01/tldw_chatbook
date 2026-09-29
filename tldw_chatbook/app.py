@@ -194,7 +194,10 @@ from tldw_chatbook.Utils.instance_lock import (
 )
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.text_selection_crash_guard import TextualAppGuards
-from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
+from tldw_chatbook.Utils.ui_responsiveness import (
+    UIResponsivenessMonitor,
+    freeze_long_lived_heap,
+)
 
 #
 # --- Local API library Imports ---
@@ -4378,6 +4381,7 @@ class TldwCli(
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
         ui_ready_time = time.perf_counter()
+        freeze_long_lived_heap("ui_ready")  # ADR-198: keep the boot heap out of gen-2 scans
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
 
@@ -5250,6 +5254,7 @@ class TldwCli(
                     type(exc).__name__,
                 )
             previous_cost = time.monotonic() - started
+        freeze_long_lived_heap("screen_preimport")  # ADR-198: imported screens are long-lived
 
     def _screen_preimport_pacing(self) -> tuple[float, float]:
         """``(yield_ratio, max_gap_seconds)`` for the between-route pause.
