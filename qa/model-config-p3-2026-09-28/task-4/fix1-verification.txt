@@ -1,0 +1,85 @@
+TASK-33003.4 fix round 1/5 -- independent re-verification of the round-0 evidence
+Date 2026-09-29, branch feat/model-config-p3-density. Base 51a7cd0ee0, head c959f8b594.
+Trees: fresh detached worktrees in the session scratchpad (t4fix/base @51a7cd0ee0,
+t4fix/head @c959f8b594, t4fix/var @c959f8b594 for the variants), each clean.
+Python: the main checkout's .venv (3.12.11). Every pytest run: -p no:randomly
+-p no:cacheprovider, a fresh scratch TLDW_TEST_CONFIG_ROOT per run.
+
+== 1. RED runs, negative controls, GREEN and repeats (serial, -n0) ==
+Command per row (in t4fix/var, modal edited as named, restored after each row):
+  pytest Tests/UI/test_console_resize_reflow.py -k fold_hint_follows -n0
+Row                                   Result                    Failing assert
+base modal (51a7cd0ee0) + head tests  3 failed                  scroll[model-view] :535 `assert not fold.display` -> assert not True
+                                                                scroll[recovery]   :535 -> assert not True
+                                                                growth             :573 `assert fold.display` -> assert False
+head minus the virtual_size watch     1 failed, 2 passed        growth :573 -> assert False           (round-0 RED 2)
+head minus the scroll_y watch         2 failed, 1 passed        both scroll variants :535 -> assert not True
+head, watches kept, old overflow rule 2 failed, 1 passed        both scroll variants :535 -> assert not True
+head (GREEN)                          3 passed
+head, 5 more serial repeats           3 passed x5 (15/15)
+AC#4 pins (blocked_quick_transfer, context_view_fits_narrow, recovery_actions_mouse_reachable):
+                                      11 passed
+Variants are written by fix1_variant.py (exact-match edits, each asserted to hit once).
+
+== 2. 24-file regression, re-run independently ==
+Files: the 24 in the round-0 list (Tests/Architecture/test_module_size_ratchet.py ...
+Tests/UI/test_widget_css_consolidation.py). Both trees concurrently, -n 6,
+-p bootstrap_all_plugin (qa/.../task-1/probe-plugins), load average ~46 on 18 cores.
+                      round 0 (implementer)            round 1 (this re-run)
+  base 51a7cd0ee0     114 failed, 1571 passed          119 failed, 1566 passed in 1581.99s
+  head c959f8b594     122 failed, 1566 passed          119 failed, 1569 passed in 1578.23s
+  head-only nodes     3 (the new fold-hint tests)      3 (same), all green
+  red at both         112                              115
+  red only at head    10                               4
+  red only at base    2                                4
+Round-0 counts re-derived from its saved junit files: identical to its report.
+Across both run pairs: 108 nodes red at base and head in both runs; 0 red at base in
+both runs and never at head; 2 red at head in both runs and never at base:
+  test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint
+  test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint
+Both raise `ValueError: not enough values to unpack (expected 3, got 0)` on
+`card_state.steps`: the setup card is in quiet mode because the persisted
+console.onboarding.first_send_completed flag is True. bootstrap_all_plugin keeps every
+node on the worker's shared collection-time profile, so any earlier send test on the
+same xdist worker leaks the flag; head's 3 extra nodes shift the worker schedule.
+Reproduced at BOTH trees by ordering alone (-n0, bootstrap plugin, fresh root):
+  pytest test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag
+         test_console_session_settings.py::test_console_unsaved_endpoint_...
+         test_console_session_settings.py::test_console_invalid_endpoint_...
+  base: 2 failed, 1 passed (both ValueError)   head: 2 failed, 1 passed (both ValueError)
+Serial re-run of the union of head-only reds from both run pairs (12 nodes), each node
+alone, 3 repeats per tree, fresh root per repeat:
+  node                                                                  base  head
+  internals_decomposition::composer_shows_cursor_when_focused           3/3   3/3
+  internals_decomposition::rag_action_requests_library_retrieval_...    3/3   3/3
+  native_chat_flow::capture_note_action_saves_the_answer_...            3/3   3/3
+  native_chat_flow::browser_selecting_default_native_session_...        3/3   3/3
+  native_chat_flow::conversation_settings_return_missing_env_...        3/3   3/3
+  session_settings::invalid_endpoint_no_model_recovery_action_...       3/3   3/3
+  session_settings::left_rail_body_scrolls_below_fixed_header_...       3/3   3/3
+  session_settings::settings_modal_replaces_focused_sampling_input      3/3   2/3
+  session_settings::settings_modal_saves_replaced_temperature_input     2/3   2/3
+  session_settings::unsaved_endpoint_no_model_recovery_action_...       3/3   3/3
+  session_settings::provider_switch_syncs_...[legacy_select]            3/3   3/3
+  session_settings::provider_switch_syncs_...[provider_picker]          3/3   3/3
+Corrections to round 0: its "7 pass / 2 fail at both / 1 flipped" split of 10 nodes
+counts 11 (the flipped item is two nodes), and the two it called "fail at both"
+(browser_selecting_default_native_session, left_rail_body_scrolls) pass 3/3 at both
+trees here. Neither correction changes the verdict: no node is red at head alone.
+
+== 3. Gates ==
+PYTHON=<venv> ./scripts/preflight.sh in the worktree at c959f8b594 (git status clean):
+  exit 0, "preflight: all derived-artifact checks passed."
+ruff 0.16.6 `check --no-cache` on console_settings_modal.py + test_console_resize_reflow.py:
+  base "Found 22 errors."  head "Found 22 errors."; the file:code:message sets are
+  identical once line numbers are stripped (10 BLE001, 2 S110, 1 each of FLY002 I001
+  PIE810 RUF012 SIM102 SIM114 SIM117 UP034 UP035 UP037); 0 in the test file.
+
+== 4. Real profile ==
+Task 4 start marker 2026-09-29 00:48:47; this round's marker 01:57:01.
+  entries under ~/.config/tldw_cli or ~/.local/share/tldw_cli newer than either marker: 0
+  files containing "t33003p4" (the live run's users_name): 0
+  newest real-profile file: 2026-09-27 13:47:32 (.local/share/tldw_cli/default_user/tldw_cli_app.log)
+The live script runs the app under `env -i` with HOME, XDG_{DATA,CONFIG,CACHE}_HOME and
+TLDW_CONFIG_PATH all in the scratch profile and the null keyring; config.py derives the
+data dir from HOME (BASE_DATA_DIR_CLI / task-519), so no path resolves to the real profile.
