@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1030 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1026 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -832,7 +832,6 @@ tldw_chatbook.Utils.db_status_manager
 tldw_chatbook.Utils.egress
 tldw_chatbook.Utils.fd_protection
 tldw_chatbook.Utils.file_durability
-tldw_chatbook.Utils.file_extraction
 tldw_chatbook.Utils.file_handlers
 tldw_chatbook.Utils.filesystem_identity
 tldw_chatbook.Utils.fts5_match_forms
@@ -881,7 +880,6 @@ tldw_chatbook.Widgets
 tldw_chatbook.Widgets.AppFooterStatus
 tldw_chatbook.Widgets.Chat_Widgets
 tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card
-tldw_chatbook.Widgets.Chat_Widgets.chat_message
 tldw_chatbook.Widgets.Chat_Widgets.chat_resume_panel
 tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards
 tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card
@@ -963,8 +961,6 @@ tldw_chatbook.Widgets.Persona_Widgets.personas_state
 tldw_chatbook.Widgets.Prompts
 tldw_chatbook.Widgets.Prompts.prompt_block_editor
 tldw_chatbook.Widgets.Prompts.prompt_block_editor_state
-tldw_chatbook.Widgets.Settings_Widgets
-tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types
 tldw_chatbook.Widgets.cancel_confirmation_dialog
 tldw_chatbook.Widgets.compact_model_bar
 tldw_chatbook.Widgets.confirmation_dialog

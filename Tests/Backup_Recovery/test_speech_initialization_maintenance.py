@@ -9,6 +9,8 @@ import asyncio, threading, time, sys
 from types import SimpleNamespace, MethodType
 from loguru import logger
 import tldw_chatbook.app as module
+# TASK-33011: the handler initializers read these names from app_speech.
+import tldw_chatbook.app_speech as speech_module
 from tldw_chatbook.app import TldwCli
 
 kind, scenario = sys.argv[1:]
@@ -21,7 +23,7 @@ async def main():
             entered.set()
             await asyncio.to_thread(release.wait, 5)
         initialize_stts = initialize_tts
-    module.TTSEventHandler = module.STTSEventHandler = Handler
+    speech_module.TTSEventHandler = speech_module.STTSEventHandler = Handler
     app = SimpleNamespace(_tts_handler=None, _stts_handler=None,
         _tts_initialization_task=None, _stts_initialization_task=None,
         loguru_logger=logger, _ensure_tts_profile_service=lambda: None)

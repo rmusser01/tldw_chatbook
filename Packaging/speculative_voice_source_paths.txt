@@ -621,6 +621,7 @@ tldw_chatbook/__init__.py
 tldw_chatbook/app.py
 tldw_chatbook/app_ingest_queue.py
 tldw_chatbook/app_service_wiring.py
+tldw_chatbook/app_speech.py
 tldw_chatbook/config.py
 tldw_chatbook/css/components/_agentic_terminal.tcss
 tldw_chatbook/css/screen_agentic_console.tcss

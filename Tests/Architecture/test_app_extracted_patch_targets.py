@@ -59,6 +59,7 @@ EXTRACTED_MODULES = (
     "app_destinations",
     "app_ingest_queue",
     "app_service_wiring",
+    "app_speech",
 )
 
 #: Rule 2 exemptions: (test file, name) -> why a bare app-module patch is right.
@@ -364,3 +365,35 @@ def test_scanner_flags_each_patch_form(tmp_path: Path) -> None:
     assert all("patch tldw_chatbook.app_service_wiring." in line for line in stale[:-1])
     assert "does not define" in stale[-1]
     assert [line.split(" ", 1)[0] for line in shared] == ["Tests/test_x.py:9"]
+
+
+def test_shared_patch_helper_leaves_a_lazy_module_unloaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deciding where to patch reads source; it never imports a lazy module.
+
+    ``_build_test_app`` patches ``get_subscriptions_db_path`` on every app
+    module. ``app_speech`` does not bind it, so the patch must not load it --
+    otherwise every factory-built test preloads speech instead of exercising
+    its production first-use import.
+    """
+    import sys
+
+    from Tests.app_module_patches import _binding_extracted_modules
+
+    monkeypatch.delitem(sys.modules, "tldw_chatbook.app_speech", raising=False)
+    bound_in = _binding_extracted_modules("get_subscriptions_db_path")
+    assert "tldw_chatbook.app_speech" not in bound_in
+    assert "tldw_chatbook.app_speech" not in sys.modules
+
+
+def test_source_derived_bindings_match_runtime_globals() -> None:
+    """``module_scope_names`` agrees with what each module really binds."""
+    import importlib
+
+    from Tests.app_module_patches import module_scope_names
+
+    for module_name in APP_GLOBAL_MODULES[1:]:
+        module = importlib.import_module(module_name)
+        runtime = {name for name in vars(module) if not name.startswith("__")}
+        assert module_scope_names(module_name) == runtime, module_name

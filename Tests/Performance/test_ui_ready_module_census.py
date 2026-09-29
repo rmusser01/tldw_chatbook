@@ -180,6 +180,10 @@ ABSENT_AT_READY_MODULES = (
     # TASK-33011: TldwCli's destination/handoff/Personal Context bodies; the
     # app stubs import it on first call, which is always post-ready.
     "tldw_chatbook.app_destinations",
+    # TASK-33011: TldwCli's TTS/STTS handler, speech-owner and speech
+    # admission bodies; first called by a speech event, the deferred audio
+    # timer or shutdown, all after ready.
+    "tldw_chatbook.app_speech",
     # Serving metadata discovery is first-use work; pure capacity defaults are not.
     "tldw_chatbook.Chat.console_context_window",
     # Parsing imported notes and assigning settings controls are first-use work.
