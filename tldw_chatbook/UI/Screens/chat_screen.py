@@ -3399,7 +3399,7 @@ class ChatScreen(BaseAppScreen):
 
         modal_contract = _conversation_settings_modal_module()
         modal = modal_contract.ConsoleSettingsModal(
-            settings=settings,
+            settings=store.session_settings(session_id) or settings,  # committed: unsaved-edits baseline
             origin=origin,
             initial_draft=initial_draft,
             transfer=transfer,

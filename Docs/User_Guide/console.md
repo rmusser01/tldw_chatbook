@@ -447,6 +447,21 @@ their width on a wider terminal. When the form is taller than the window,
 disappears once you have scrolled to the bottom; scroll back up and it
 returns.
 
+Closing never throws edits away without asking. Left of **Cancel**, the
+footer reads "Esc close" while nothing is edited, and "Esc close (asks: 2
+unsaved)" once something is, counting edits in both tabs and any carried in
+from the **Alt+M** popover. Changing a value back to what the chat already
+uses is not an edit. With edits, **Esc**, a click outside the modal, and
+**Cancel** open a prompt that names the edited fields ("2 unsaved edits to
+this chat: Temperature, Max tokens.") and offers **Apply to this chat**
+(Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
+back in the field you were editing. Apply goes through the same path as the
+footer's Apply button, so it writes nothing to `config.toml`; if a value is
+invalid, the modal stays open with the error summary. When Apply is
+unavailable (a run is active, say), the prompt says so and offers only
+Discard and Keep editing. A pending memory reset or a running compaction
+still asks first; once you answer that, the unsaved prompt follows.
+
 Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named

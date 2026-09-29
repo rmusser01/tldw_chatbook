@@ -1,0 +1,540 @@
+"""Chat settings asks before a close gesture discards unapplied edits.
+
+TASK-33003.5 (ADR-031 task-16211): Esc, a backdrop click and Cancel never
+discard an edited Chat settings draft by themselves. They open an
+unsaved-edits prompt (Apply to this chat / Discard / Keep editing) that names
+the edited fields; an unedited draft still closes at once.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+
+import pytest
+from textual.containers import Vertical
+from textual.widgets import Button, Input, Select, Static
+
+import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
+from Tests.Chat.test_console_session_settings import (
+    _settings_close_modal,
+    _SettingsCloseHarness,
+)
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_console_provider_apply_defaults_flow import (
+    _ConsoleFlowHarness,
+    _drain_settings_tasks,
+    _persisted_console_app,
+    _reset_default_intent_state,  # noqa: F401 - shared autouse fixture
+)
+from Tests.UI.test_destination_shells import _wait_for_selector
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
+)
+from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
+    chat_settings_values,
+    esc_hint_copy,
+    unsaved_baseline,
+    unsaved_labels,
+    unsaved_prompt_copy,
+)
+
+_PROMPT_KEYS = "Enter apply · d discard · Esc keep editing"
+
+
+class _GuardHarness(ConsolidatedCSSApp):
+    """Mount Chat settings under the production stylesheet."""
+
+    CSS_PATH = TldwCli.CSS_PATH
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[object] = []
+
+    def capture(self, result: object) -> None:
+        self.results.append(result)
+
+
+def _modal(**kwargs: object) -> ConsoleSettingsModal:
+    return ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", temperature=0.7
+        ),
+        app_config={
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}
+        },
+        providers_models={"llama_cpp": ["model-a", "model-b"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        **kwargs,
+    )
+
+
+async def _open(app, pilot, modal: ConsoleSettingsModal) -> None:
+    await app.push_screen(modal, callback=app.capture)
+    await _settle(pilot, modal)
+
+
+async def _settle(pilot, modal: ConsoleSettingsModal) -> None:
+    """Wait until the modal has recorded what an unedited draft looks like."""
+    for _ in range(40):
+        await pilot.pause()
+        if getattr(modal, "_unsaved_baseline", None) is not None:
+            break
+
+
+def _text(modal: ConsoleSettingsModal, selector: str) -> str:
+    return str(modal.query_one(selector, Static).renderable)
+
+
+def _visible_prompt_buttons(modal: ConsoleSettingsModal) -> list[str]:
+    return [
+        str(button.label)
+        for button in modal.query("#console-settings-close-guard Button")
+        if button.display
+    ]
+
+
+async def _edit(pilot, modal: ConsoleSettingsModal, selector: str, value: str):
+    control = modal.query_one(selector, Input)
+    control.focus()
+    control.value = value
+    await pilot.pause()
+    await pilot.pause()
+    return control
+
+
+async def _gesture(pilot, source: str) -> None:
+    if source == "cancel":
+        await pilot.click("#console-settings-cancel")
+    elif source == "escape":
+        await pilot.press("escape")
+    else:
+        await pilot.click(offset=(0, 0))
+    await pilot.pause()
+    await pilot.pause()
+
+
+def test_unsaved_labels_follow_effective_values_and_carried_edits() -> None:
+    """A field is unsaved when its effective value left the committed one."""
+    committed = chat_settings_values(
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1", temperature=0.7),
+        ConsoleContextPolicyOverrides(),
+        None,
+    )
+    # The quick surface carried Temperature 0.23 in; the controls normalized
+    # the blank committed Endpoint to a configured default at mount.
+    opened = dict(committed, Temperature=0.23)
+    mounted = dict(opened, Endpoint="https://api.openai.com/v1")
+    baseline = unsaved_baseline(mounted, opened, committed)
+
+    assert unsaved_labels(mounted, baseline) == ("Temperature",)
+    assert unsaved_labels(dict(mounted, Temperature=0.7), baseline) == ()
+    assert unsaved_labels(dict(mounted, Model="gpt-5"), baseline) == (
+        "Model",
+        "Temperature",
+    )
+    invalid_context = chat_settings_values(
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1", temperature=0.7),
+        None,
+        None,
+    )
+    assert unsaved_labels(invalid_context, committed) == ("Context and memory",)
+    assert esc_hint_copy(0) == "Esc close"
+    assert esc_hint_copy(2) == "Esc close (asks: 2 unsaved)"
+    prompt = unsaved_prompt_copy(("Model", "Temperature"))
+    assert "Model, Temperature" in prompt
+    assert _PROMPT_KEYS in prompt
+    blocked = unsaved_prompt_copy(("Model",), can_apply=False)
+    assert "Enter apply" not in blocked
+    assert "d discard · Esc keep editing" in blocked
+
+
+@pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
+@pytest.mark.asyncio
+async def test_edited_draft_asks_before_each_close_gesture(source: str) -> None:
+    app = _GuardHarness()
+    modal = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        assert _text(modal, "#console-settings-esc-hint") == "Esc close"
+
+        await _edit(pilot, modal, "#console-settings-temperature", "0.9")
+        assert (
+            _text(modal, "#console-settings-esc-hint")
+            == "Esc close (asks: 1 unsaved)"
+        )
+        await _gesture(pilot, source)
+
+        assert app.screen is modal
+        assert app.results == []
+        assert modal.query_one("#console-settings-close-guard", Vertical).display
+        message = _text(modal, "#console-settings-close-message")
+        assert "Temperature" in message
+        assert _PROMPT_KEYS in message
+        assert _visible_prompt_buttons(modal) == [
+            "Apply to this chat",
+            "Discard",
+            "Keep editing",
+        ]
+        assert modal.focused is modal.query_one(
+            "#console-settings-close-apply", Button
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_without_an_available_apply_offers_discard_and_keep() -> None:
+    app = _GuardHarness()
+    modal = _modal(active_run=True)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        assert modal.query_one("#console-settings-save", Button).disabled
+        await _edit(pilot, modal, "#console-settings-temperature", "0.9")
+        await _gesture(pilot, "escape")
+
+        apply = modal.query_one("#console-settings-close-apply", Button)
+        assert apply.display and apply.disabled
+        assert modal.focused is modal.query_one(
+            "#console-settings-close-return", Button
+        )
+        message = _text(modal, "#console-settings-close-message")
+        assert "Enter apply" not in message
+        assert "d discard · Esc keep editing" in message
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert app.screen is modal
+        assert app.results == []
+        assert not modal.query_one("#console-settings-close-guard", Vertical).display
+
+
+@pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
+@pytest.mark.asyncio
+async def test_unedited_draft_closes_immediately(source: str) -> None:
+    app = _GuardHarness()
+    modal = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        temperature = await _edit(
+            pilot, modal, "#console-settings-temperature", "0.9"
+        )
+        # Restoring the committed value is not an edit, even spelled
+        # differently: the effective value is what counts.
+        temperature.value = "0.70"
+        await pilot.pause()
+        await pilot.pause()
+        assert _text(modal, "#console-settings-esc-hint") == "Esc close"
+
+        await _gesture(pilot, source)
+
+        assert app.results == [None]
+        assert app.screen is not modal
+
+
+@pytest.mark.parametrize("how", ["escape", "button"])
+@pytest.mark.asyncio
+async def test_keep_editing_returns_focus_to_the_edited_control(how: str) -> None:
+    app = _GuardHarness()
+    modal = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        temperature = await _edit(
+            pilot, modal, "#console-settings-temperature", "0.9"
+        )
+        await _gesture(pilot, "escape")
+        assert modal.query_one("#console-settings-close-guard", Vertical).display
+
+        if how == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click("#console-settings-close-return")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not modal.query_one("#console-settings-close-guard", Vertical).display
+        assert modal.focused is temperature
+        assert temperature.value == "0.9"
+        assert app.screen is modal
+        assert app.results == []
+        assert (
+            str(modal.query_one("#console-settings-close-return", Button).label)
+            == "Keep editing"
+        )
+
+
+@pytest.mark.parametrize("how", ["key", "button"])
+@pytest.mark.asyncio
+async def test_discard_closes_without_applying(how: str) -> None:
+    app = _GuardHarness()
+    modal = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        await _edit(pilot, modal, "#console-settings-temperature", "0.9")
+        await _gesture(pilot, "cancel")
+        assert app.results == []
+        assert modal.query_one("#console-settings-close-guard", Vertical).display
+
+        if how == "key":
+            await pilot.press("d")
+        else:
+            await pilot.click("#console-settings-close-discard")
+        await pilot.pause()
+
+        assert app.results == [None]
+        assert app.screen is not modal
+
+
+@pytest.mark.asyncio
+async def test_d_types_into_a_field_while_no_prompt_is_open() -> None:
+    app = _GuardHarness()
+    modal = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        name = modal.query_one("#console-settings-user-display-name", Input)
+        name.focus()
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+
+        assert name.value == "d"
+        assert app.screen is modal
+        assert app.results == []
+        assert not modal.query_one("#console-settings-close-guard", Vertical).display
+
+
+@pytest.mark.asyncio
+async def test_apply_from_prompt_uses_the_apply_path_and_writes_no_config(
+    monkeypatch,
+) -> None:
+    def no_config_write(*_args, **_kwargs):
+        raise AssertionError("Apply to this chat must not write configuration")
+
+    monkeypatch.setattr(
+        settings_modal_module, "save_settings_to_cli_config", no_config_write
+    )
+    submissions = []
+
+    def live_committer(submission):
+        submissions.append(submission)
+        return ConsoleSettingsModal._transitional_live_commit(submission)
+
+    app = _GuardHarness()
+    modal = _modal(live_committer=live_committer)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        await _edit(pilot, modal, "#console-settings-temperature", "0.9")
+        await _gesture(pilot, "escape")
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.screen is not modal
+    assert len(submissions) == 1
+    assert submissions[0].action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert submissions[0].default_field_mask == frozenset()
+    assert submissions[0].draft.settings.temperature == pytest.approx(0.9)
+    assert len(app.results) == 1
+    assert isinstance(app.results[0], ConsoleSettingsCommittedSubmission)
+
+
+@pytest.mark.asyncio
+async def test_apply_from_prompt_with_invalid_draft_stays_open() -> None:
+    app = _GuardHarness()
+    modal = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        temperature = await _edit(
+            pilot, modal, "#console-settings-temperature", "hot"
+        )
+        await _gesture(pilot, "escape")
+        assert "Temperature" in _text(modal, "#console-settings-close-message")
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+        assert not modal.query_one("#console-settings-close-guard", Vertical).display
+        error = modal.query_one("#console-settings-error", Static)
+        assert error.display
+        assert str(error.renderable).strip()
+        assert modal.focused is temperature
+
+
+@pytest.mark.asyncio
+async def test_context_view_edit_is_named_in_the_prompt() -> None:
+    app = _GuardHarness()
+    modal = _modal(focus_context=True)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        mode = modal.query_one("#console-context-compaction-mode", Select)
+        mode.value = "off" if mode.value != "off" else "ask"
+        await pilot.pause()
+        await pilot.pause()
+
+        await _gesture(pilot, "escape")
+
+        assert app.screen is modal
+        assert "When limit nears" in _text(modal, "#console-settings-close-message")
+
+
+@pytest.mark.parametrize(
+    "choice", ["#console-settings-close-undo", "#console-settings-close-keep"]
+)
+@pytest.mark.asyncio
+async def test_memory_reset_guard_comes_first_then_asks_about_edits(
+    choice: str,
+) -> None:
+    app = _SettingsCloseHarness()
+    modal = _settings_close_modal(
+        reset_current_memory=lambda: ("memory-1", 2),
+        undo_current_memory_reset=lambda _memory_id, _revision: True,
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(modal, callback=app.capture)
+        await _settle(pilot, modal)
+        mode = modal.query_one("#console-context-compaction-mode", Select)
+        mode.value = "off" if mode.value != "off" else "ask"
+        await pilot.pause()
+        modal.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        # Reset guard first, with its own copy and buttons.
+        assert modal._settings_close_guard_mode == "reset"
+        assert _visible_prompt_buttons(modal) == [
+            "Undo and close",
+            "Keep reset and close",
+            "Return",
+        ]
+
+        await pilot.click(choice)
+        await pilot.pause()
+        await pilot.pause()
+        assert app.screen is modal
+        assert app.results == []
+        assert "When limit nears" in _text(modal, "#console-settings-close-message")
+        assert _visible_prompt_buttons(modal) == [
+            "Apply to this chat",
+            "Discard",
+            "Keep editing",
+        ]
+
+        await pilot.press("d")
+        await pilot.pause()
+        assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_compaction_close_anyway_then_asks_about_edits() -> None:
+    app = _SettingsCloseHarness()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def compact_now() -> tuple[bool, str]:
+        entered.set()
+        await release.wait()
+        return True, "Compaction complete."
+
+    modal = _settings_close_modal(compact_now=compact_now)
+    try:
+        async with app.run_test(size=(120, 42)) as pilot:
+            await app.push_screen(modal, callback=app.capture)
+            await _settle(pilot, modal)
+            mode = modal.query_one("#console-context-compaction-mode", Select)
+            mode.value = "off" if mode.value != "off" else "ask"
+            await pilot.pause()
+            modal.query_one("#console-context-compact-now", Button).press()
+            await pilot.pause()
+            await asyncio.wait_for(entered.wait(), timeout=1)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert modal._settings_close_guard_mode == "compaction"
+            assert _visible_prompt_buttons(modal) == ["Close anyway", "Return"]
+
+            await pilot.click("#console-settings-close-anyway")
+            await pilot.pause()
+            await pilot.pause()
+            assert app.results == []
+            assert "When limit nears" in _text(
+                modal, "#console-settings-close-message"
+            )
+
+            await pilot.press("d")
+            await pilot.pause()
+            assert app.results == [None]
+            assert any("may still be billed" in notice for notice in app.notices)
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quick_surface_edit_carried_in_asks_then_applies_to_this_chat(
+    request,
+):
+    """Real Console: a transferred edit counts; Apply commits it, not config."""
+    app = _persisted_console_app()
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        committed_temperature = store.session_settings(session_id).temperature
+        config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+        config_before = config_path.read_bytes()
+
+        await console._open_console_settings(focus_model=True)
+        await pilot.pause()
+        full = harness.screen
+        assert isinstance(full, ConsoleSettingsModal)
+        await _settle(pilot, full)
+        # (A focused picker takes the first Escape itself; start from a field.)
+        full.query_one("#console-settings-temperature", Input).focus()
+        await _gesture(pilot, "escape")
+        # Nothing edited: Esc closes at once.
+        assert harness.screen is console
+
+        await console.action_open_console_model_popover()
+        await pilot.pause()
+        quick = harness.screen
+        quick.query_one("#console-popover-temperature", Input).value = "0.23"
+        await pilot.pause()
+        quick.query_one("#console-popover-full-settings", Button).press()
+        await pilot.pause()
+        full = harness.screen
+        assert isinstance(full, ConsoleSettingsModal)
+        await _settle(pilot, full)
+        assert (
+            _text(full, "#console-settings-esc-hint")
+            == "Esc close (asks: 1 unsaved)"
+        )
+
+        full.query_one("#console-settings-temperature", Input).focus()
+        await _gesture(pilot, "escape")
+        assert harness.screen is full
+        assert "Temperature" in _text(full, "#console-settings-close-message")
+        assert store.session_settings(session_id).temperature == pytest.approx(
+            committed_temperature
+        )
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(harness.app_instance)
+        assert store.session_settings(session_id).temperature == pytest.approx(0.23)
+        assert config_path.read_bytes() == config_before

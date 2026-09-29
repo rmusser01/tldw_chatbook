@@ -22,6 +22,7 @@ from textual.widgets import (
     Button,
     Collapsible,
     Input,
+    Label,
     OptionList,
     Select,
     Static,
@@ -162,6 +163,7 @@ from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPicke
 # edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_summary import build_console_readiness_presentation
+from .console_settings_unsaved import ConsoleSettingsUnsavedGuardMixin
 
 if TYPE_CHECKING:
     from tldw_chatbook.Utils.token_counter import ContextWindowResolution
@@ -1013,6 +1015,7 @@ class ConsoleSettingsRecoveryButton(Button):
 
 
 class ConsoleSettingsModal(
+    ConsoleSettingsUnsavedGuardMixin,
     SafeModalDismissMixin,
     ModalScreen[
         ConsoleSettingsCommittedSubmission
@@ -1150,6 +1153,7 @@ class ConsoleSettingsModal(
         expected_settings_revision: int = 0,
     ) -> None:
         super().__init__()
+        self._unsaved_committed = (settings, context_state, user_display_name_override)
         if transfer is not None:
             origin = transfer.origin
             initial_draft = transfer.draft
@@ -2524,6 +2528,7 @@ class ConsoleSettingsModal(
                 id="console-settings-actions",
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
+                yield Label("Esc close", id="console-settings-esc-hint", classes="console-settings-action-scope", markup=False)
                 with Horizontal(classes="console-settings-action-group"):
                     yield Button("Cancel", id="console-settings-cancel")
                     save_default = Button(
@@ -2565,6 +2570,8 @@ class ConsoleSettingsModal(
             guard = Vertical(
                 Static("", id="console-settings-close-message", markup=False),
                 Horizontal(
+                    Button("Apply to this chat", id="console-settings-close-apply"),
+                    Button("Discard", id="console-settings-close-discard"),
                     Button(
                         "Undo and close",
                         id="console-settings-close-undo",
@@ -2636,6 +2643,7 @@ class ConsoleSettingsModal(
         """Allow feedback reveals after the initial mount/resize callback batch."""
 
         self._initial_feedback_sync = False
+        self._capture_unsaved_baseline()
 
     def _focus_highest_priority_connection(self) -> None:
         """Focus the first actionable blocker, or Provider when ready."""
@@ -3970,10 +3978,6 @@ class ConsoleSettingsModal(
         """Route the dismiss action through the applicable close guard."""
         self._request_settings_close()
 
-    async def _perform_safe_cancel(self, *, source: str) -> None:
-        del source
-        self._request_settings_close()
-
     def _request_settings_close(self) -> None:
         """Dismiss cleanly or reveal the one applicable side-effect guard."""
         guard = self.query_one("#console-settings-close-guard", Vertical)
@@ -3985,6 +3989,8 @@ class ConsoleSettingsModal(
             return
         if self._compaction_is_active():
             self._show_settings_close_guard("compaction")
+            return
+        if self._ask_before_discarding(self._request_settings_close):
             return
         self._cancel_generation_test()
         self.dismiss_safe_once(None)
@@ -4000,7 +4006,7 @@ class ConsoleSettingsModal(
         is_reset = mode == "reset"
         self.query_one("#console-settings-close-undo", Button).display = is_reset
         self.query_one("#console-settings-close-keep", Button).display = is_reset
-        self.query_one("#console-settings-close-anyway", Button).display = not is_reset
+        self.query_one("#console-settings-close-anyway", Button).display = mode == "compaction"
         message = self.query_one("#console-settings-close-message", Static)
         message.update(
             (
@@ -4011,16 +4017,16 @@ class ConsoleSettingsModal(
                 f"{COMPACTION_CLOSE_WARNING}"
             )
         )
+        self._sync_unsaved_prompt(mode)
         guard.add_class("visible")
         guard.display = True
         self.call_after_refresh(self._focus_settings_close_guard)
 
     def _focus_settings_close_guard(self) -> None:
-        selector = (
-            "#console-settings-close-undo"
-            if self._settings_close_guard_mode == "reset"
-            else "#console-settings-close-anyway"
-        )
+        selector = {
+            "reset": "#console-settings-close-undo",
+            "unsaved": self._unsaved_prompt_focus_selector(),
+        }.get(self._settings_close_guard_mode, "#console-settings-close-anyway")
         self.query_one(selector, Button).focus()
 
     def action_settings_focus_next(self) -> None:
@@ -4210,11 +4216,14 @@ class ConsoleSettingsModal(
             )
             self._show_settings_close_guard("compaction")
             return
-        self.dismiss_safe_once(None)
+        if not self._ask_before_discarding(self._finish_reset_close_choice):
+            self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#console-settings-close-anyway")
     def _close_during_compaction(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._ask_before_discarding(partial(self._close_during_compaction, event)):
+            return
         if self._compaction_result_definitive:
             self.dismiss_safe_once(None)
             return

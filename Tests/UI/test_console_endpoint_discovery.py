@@ -359,7 +359,14 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         # Creation persists the entry, but Cancel leaves the conversation on
         # its original provider. Selecting the new entry must run the real
         # quick-picker rebase before Apply commits the exact registry ID.
+        # TASK-33003.5: the switch onto the entry is an unapplied edit, so
+        # Cancel asks first; Discard is the choice that closes unchanged.
         modal.query_one("#console-settings-cancel", Button).press()
+        await pilot.pause()
+        assert "Provider" in str(
+            modal.query_one("#console-settings-close-message", Static).renderable
+        )
+        await pilot.press("d")
         await pilot.pause()
         assert harness.screen is console
         store = console._ensure_console_chat_store()
