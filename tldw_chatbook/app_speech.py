@@ -113,8 +113,13 @@ _TTS_GLOBAL_OVERRIDE_PROMPT_COPY: dict[str | None, str] = {
 # --- TTS/STTS event handlers and speech resource owners (cluster N) ---
 
 
-async def handle_tts_request_event(app, event: TTSRequestEvent) -> None:
-    """Handle TTS generation request."""
+async def handle_tts_request_event(app: TldwCli, event: TTSRequestEvent) -> None:
+    """Handle TTS generation request.
+
+    Args:
+        app: The running TldwCli.
+        event: The request carrying the text (and optional voice) to speak.
+    """
     app.loguru_logger.info(
         f"TTS request received for text: '{event.text[:50]}...'"
     )
@@ -132,7 +137,7 @@ async def handle_tts_request_event(app, event: TTSRequestEvent) -> None:
 
 
 async def handle_tts_message_speech_request_event(
-    app,
+    app: TldwCli,
     event: TTSMessageSpeechRequestEvent,
 ) -> None:
     """Route a trusted Console snapshot without logging private content."""
@@ -187,7 +192,7 @@ async def handle_tts_message_speech_request_event(
 
 
 async def handle_tts_global_override_decision_event(
-    app,
+    app: TldwCli,
     event: TTSGlobalOverrideDecisionEvent,
 ) -> None:
     """Route one opaque character-speech fallback decision.
@@ -206,7 +211,7 @@ async def handle_tts_global_override_decision_event(
         )
 
 
-async def _offer_tts_global_override(app, token: str) -> None:
+async def _offer_tts_global_override(app: TldwCli, token: str) -> None:
     """Prompt for one message-scoped global-voice fallback.
 
     The dialog's copy names the actual configured-voice domain that
@@ -251,13 +256,19 @@ async def _offer_tts_global_override(app, token: str) -> None:
     app.post_message(TTSGlobalOverrideDecisionEvent(token, accepted=decision))
 
 
-async def handle_tts_complete_event(app, event: TTSCompleteEvent) -> None:
+async def handle_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> None:
+    """Deliver a finished TTS result through the speech-delivery admission gate.
+
+    Args:
+        app: The running TldwCli.
+        event: The completed TTS result to deliver.
+    """
     await TldwCli._settle_speech_delivery(
         app, event, lambda message: TldwCli._deliver_tts_complete_event(app, message)
     )
 
 
-async def _deliver_tts_complete_event(app, event: TTSCompleteEvent) -> None:
+async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> None:
     """Handle TTS generation completion."""
     from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
         ChatMessageEnhanced,
@@ -431,7 +442,7 @@ async def _deliver_tts_complete_event(app, event: TTSCompleteEvent) -> None:
             app.loguru_logger.error(f"Error updating message UI: {e}")
 
 
-async def handle_tts_progress_event(app, event: TTSProgressEvent) -> None:
+async def handle_tts_progress_event(app: TldwCli, event: TTSProgressEvent) -> None:
     """Handle TTS generation progress updates."""
     from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
         ChatMessageEnhanced,
@@ -461,7 +472,7 @@ async def handle_tts_progress_event(app, event: TTSProgressEvent) -> None:
         app.loguru_logger.error(f"Error updating TTS progress: {e}")
 
 
-async def handle_tts_playback_event(app, event: TTSPlaybackEvent) -> None:
+async def handle_tts_playback_event(app: TldwCli, event: TTSPlaybackEvent) -> None:
     """Handle TTS playback control."""
     if (
         event.action == "play"
@@ -473,7 +484,7 @@ async def handle_tts_playback_event(app, event: TTSPlaybackEvent) -> None:
     await app._settle_speech_delivery(event, app.control_tts_playback)
 
 
-async def control_tts_playback(app, event: TTSPlaybackEvent) -> None:
+async def control_tts_playback(app: TldwCli, event: TTSPlaybackEvent) -> None:
     """Run playback control directly and preserve handler callback order."""
     try:
         if event.action == "play" and getattr(app, "_speech_delivery_paused", False):
@@ -513,7 +524,7 @@ async def control_tts_playback(app, event: TTSPlaybackEvent) -> None:
 
 
 async def handle_stts_playground_generate_event(
-    app, event: STTSPlaygroundGenerateEvent
+    app: TldwCli, event: STTSPlaygroundGenerateEvent
 ) -> None:
     """Handle S/TT/S playground generation request."""
     app.loguru_logger.info(
@@ -529,7 +540,7 @@ async def handle_stts_playground_generate_event(
 
 
 async def handle_stts_settings_save_event(
-    app, event: STTSSettingsSaveEvent
+    app: TldwCli, event: STTSSettingsSaveEvent
 ) -> None:
     """Handle S/TT/S settings save."""
     handler = getattr(app, "_stts_handler", None)
@@ -540,7 +551,7 @@ async def handle_stts_settings_save_event(
 
 
 def handle_stts_provider_configuration_changed(
-    app,
+    app: TldwCli,
     event: STTSProviderConfigurationChanged,
 ) -> None:
     """Forward provider invalidation to the retained STTS handler."""
@@ -551,7 +562,7 @@ def handle_stts_provider_configuration_changed(
 
 
 def _deliver_stts_provider_configuration_changed(
-    app, event: STTSProviderConfigurationChanged
+    app: TldwCli, event: STTSProviderConfigurationChanged
 ) -> None:
     handler = getattr(app, "_stts_handler", None)
     if handler is not None:
@@ -566,7 +577,7 @@ def _deliver_stts_provider_configuration_changed(
 
 
 async def handle_stts_audiobook_generate_event(
-    app, event: STTSAudioBookGenerateEvent
+    app: TldwCli, event: STTSAudioBookGenerateEvent
 ) -> None:
     """Handle audiobook generation request."""
     handler = await app._ensure_stts_handler()
@@ -574,7 +585,7 @@ async def handle_stts_audiobook_generate_event(
         await handler.handle_audiobook_generate(event)
 
 
-async def _close_tts_service(app) -> None:
+async def _close_tts_service(app: TldwCli) -> None:
     """Close and unbind the application-owned TTS service once."""
     if not app._tts_binding_active:
         return
@@ -585,7 +596,7 @@ async def _close_tts_service(app) -> None:
 
 
 def _saved_audio_cpp_managed_consumers(
-    app,
+    app: TldwCli,
 ) -> tuple[AudioCppManagedConsumerIdentity, ...]:
     """Project only exact managed identities from immutable saved Settings."""
 
@@ -606,7 +617,7 @@ def _saved_audio_cpp_managed_consumers(
 
 
 def _ensure_audio_cpp_artifact_lease_coordinator(
-    app,
+    app: TldwCli,
 ) -> AudioCppArtifactLeaseCoordinator:
     """Return the one app-owned coordinator over the shared artifact owner."""
 
@@ -621,7 +632,7 @@ def _ensure_audio_cpp_artifact_lease_coordinator(
 
 
 def _audio_cpp_removal_settings_inputs(
-    app,
+    app: TldwCli,
 ) -> tuple[
     AudioCppSettingsConfig,
     AudioCppSettingsConfig | None,
@@ -671,7 +682,7 @@ def _audio_cpp_removal_settings_inputs(
 
 
 async def _audio_cpp_model_library_observation_snapshot(
-    app,
+    app: TldwCli,
     references: tuple["ArtifactRef", ...],
 ) -> AudioCppModelLibraryObservationSnapshot:
     """Collect shared evidence once, then project every exact package ref."""
@@ -766,7 +777,7 @@ async def _audio_cpp_model_library_observation_snapshot(
 
 
 async def _audio_cpp_artifact_removal_evidence(
-    app,
+    app: TldwCli,
     reference: "ArtifactRef",
 ) -> AudioCppArtifactRemovalEvidence:
     """Collect Task 9 removal evidence through the shared bulk snapshot."""
@@ -778,7 +789,7 @@ async def _audio_cpp_artifact_removal_evidence(
     return snapshot.observations[0]
 
 
-async def _close_tts_voice_bundle_service(app) -> None:
+async def _close_tts_voice_bundle_service(app: TldwCli) -> None:
     """Close and join portability before repository authority is released."""
 
     service = getattr(app, "_tts_voice_bundle_service", None)
@@ -799,7 +810,7 @@ async def _close_tts_voice_bundle_service(app) -> None:
     await join_retained_task(close_task)
 
 
-async def _close_tts_profile_repository(app) -> None:
+async def _close_tts_profile_repository(app: TldwCli) -> None:
     """Definitively close the app-owned profile repository once."""
 
     app._tts_profile_repository_close_requested = True
@@ -839,7 +850,7 @@ async def _close_tts_profile_repository(app) -> None:
     )
 
 
-async def _close_owned_tts_resources(app) -> None:
+async def _close_owned_tts_resources(app: TldwCli) -> None:
     """Close app-owned TTS resources without masking cancellation."""
 
     failures: list[tuple[str, BaseException]] = []
@@ -897,14 +908,14 @@ async def _close_owned_tts_resources(app) -> None:
 # --- Speech initialization and delivery admission (U/U2) ---
 
 
-def _start_deferred_audio_service_initialization(app) -> None:
+def _start_deferred_audio_service_initialization(app: TldwCli) -> None:
     """Kick off TTS/STTS initialization after startup readiness."""
 
     app._schedule_tts_initialization()
     app._schedule_stts_initialization()
 
 
-def _schedule_tts_initialization(app) -> None:
+def _schedule_tts_initialization(app: TldwCli) -> None:
     if not app._speech_initialization_allowed("tts"):
         return
     if app._tts_handler is not None:
@@ -917,7 +928,7 @@ def _schedule_tts_initialization(app) -> None:
     )
 
 
-def _schedule_stts_initialization(app) -> None:
+def _schedule_stts_initialization(app: TldwCli) -> None:
     if not app._speech_initialization_allowed("stts"):
         return
     if app._stts_handler is not None:
@@ -930,7 +941,7 @@ def _schedule_stts_initialization(app) -> None:
     )
 
 
-def _speech_initialization_allowed(app, kind: str) -> bool:
+def _speech_initialization_allowed(app: TldwCli, kind: str) -> bool:
     if getattr(app, "_speech_initialization_closed", False):
         return False
     if not getattr(app, "_speech_initialization_paused", False):
@@ -942,12 +953,12 @@ def _speech_initialization_allowed(app, kind: str) -> bool:
     return False
 
 
-def _speech_delivery_close_admission(app) -> None:
+def _speech_delivery_close_admission(app: TldwCli) -> None:
     """Keep accepted notifications; defer playback until producer resume."""
     app._speech_delivery_paused = True
 
 
-async def _speech_delivery_drain(app, deadline: float) -> bool:
+async def _speech_delivery_drain(app: TldwCli, deadline: float) -> bool:
     """Settle queued publication delivery; retained autoplay is transient."""
     if not getattr(app, "_speech_delivery_paused", False):
         raise RuntimeError("speech_delivery_not_paused")
@@ -959,7 +970,7 @@ async def _speech_delivery_drain(app, deadline: float) -> bool:
     return True
 
 
-def _speech_delivery_resume(app) -> None:
+def _speech_delivery_resume(app: TldwCli) -> None:
     """Replay accepted playback after handler and service admission reopen."""
     app._speech_delivery_paused = False
     deferred = getattr(app, "_speech_delivery_deferred", [])
@@ -973,7 +984,7 @@ def _speech_delivery_resume(app) -> None:
                 event.playback_lifecycle.report_terminal("failed")
 
 
-def _defer_speech_playback(app, event: TTSPlaybackEvent) -> None:
+def _defer_speech_playback(app: TldwCli, event: TTSPlaybackEvent) -> None:
     deferred = getattr(app, "_speech_delivery_deferred", None)
     if deferred is None:
         deferred = app._speech_delivery_deferred = []
@@ -981,7 +992,7 @@ def _defer_speech_playback(app, event: TTSPlaybackEvent) -> None:
         deferred.append(event)
 
 
-def _post_speech_delivery(app, event) -> bool:
+def _post_speech_delivery(app: TldwCli, event) -> bool:
     """Retain only the installed speech completion/notification routes."""
     if type(event) not in {
         TTSCompleteEvent, TTSPlaybackEvent, STTSProviderConfigurationChanged
@@ -1008,7 +1019,7 @@ def _post_speech_delivery(app, event) -> bool:
     return accepted
 
 
-async def _settle_speech_delivery(app, event, deliver) -> None:
+async def _settle_speech_delivery(app: TldwCli, event, deliver) -> None:
     pending = getattr(app, "_speech_delivery_pending", None)
     if pending is None:
         pending = app._speech_delivery_pending = set()
@@ -1028,12 +1039,12 @@ async def _settle_speech_delivery(app, event, deliver) -> None:
         raise cancellation
 
 
-def _speech_initialization_close_admission(app) -> None:
+def _speech_initialization_close_admission(app: TldwCli) -> None:
     """Defer new service construction while admitted initialization settles."""
     app._speech_initialization_paused = True
 
 
-async def _speech_initialization_drain(app, deadline: float) -> bool:
+async def _speech_initialization_drain(app: TldwCli, deadline: float) -> bool:
     if not getattr(app, "_speech_initialization_paused", False):
         raise RuntimeError("speech_initialization_not_paused")
     while getattr(app, "_speech_initialization_children", {}):
@@ -1044,7 +1055,7 @@ async def _speech_initialization_drain(app, deadline: float) -> bool:
     return True
 
 
-def _speech_initialization_resume(app) -> None:
+def _speech_initialization_resume(app: TldwCli) -> None:
     """Replay deferred construction only after ordinary storage resumes."""
     app._speech_initialization_paused = False
     deferred = getattr(app, "_speech_initialization_deferred", set())
@@ -1055,7 +1066,7 @@ def _speech_initialization_resume(app) -> None:
         app._schedule_stts_initialization()
 
 
-async def _settle_speech_initialization(app) -> asyncio.CancelledError | None:
+async def _settle_speech_initialization(app: TldwCli) -> asyncio.CancelledError | None:
     """Finish admitted initialization before shutdown cleans its handlers.
 
     Return waiter cancellation so the existing cleanup phase can preserve
@@ -1078,7 +1089,7 @@ async def _settle_speech_initialization(app) -> asyncio.CancelledError | None:
     return cancellation
 
 
-async def _run_speech_initialization(app, kind: str, initialize):
+async def _run_speech_initialization(app: TldwCli, kind: str, initialize):
     if not app._speech_initialization_allowed(kind):
         return None
     children = getattr(app, "_speech_initialization_children", None)
@@ -1126,13 +1137,13 @@ async def _run_speech_initialization(app, kind: str, initialize):
         raise
 
 
-async def _initialize_tts_service(app):
+async def _initialize_tts_service(app: TldwCli):
     return await app._run_speech_initialization(
         "tts", app._initialize_tts_service_owned
     )
 
 
-async def _initialize_tts_service_owned(app):
+async def _initialize_tts_service_owned(app: TldwCli):
     """Initialize the TTS handler outside the startup critical path."""
 
     phase_start = time.perf_counter()
@@ -1161,13 +1172,13 @@ async def _initialize_tts_service_owned(app):
     return app._tts_handler
 
 
-async def _initialize_stts_service(app):
+async def _initialize_stts_service(app: TldwCli):
     return await app._run_speech_initialization(
         "stts", app._initialize_stts_service_owned
     )
 
 
-async def _initialize_stts_service_owned(app):
+async def _initialize_stts_service_owned(app: TldwCli):
     """Initialize the S/TT/S handler outside the startup critical path."""
 
     phase_start = time.perf_counter()
@@ -1190,7 +1201,7 @@ async def _initialize_stts_service_owned(app):
     return app._stts_handler
 
 
-async def _ensure_tts_handler(app):
+async def _ensure_tts_handler(app: TldwCli):
     """Return an initialized TTS handler, initializing on first use if needed."""
 
     if not app._speech_initialization_allowed("tts"):
@@ -1203,7 +1214,7 @@ async def _ensure_tts_handler(app):
     return await app._initialize_tts_service()
 
 
-async def _ensure_stts_handler(app):
+async def _ensure_stts_handler(app: TldwCli):
     """Return an initialized S/TT/S handler, initializing on first use if needed."""
 
     if not app._speech_initialization_allowed("stts"):
