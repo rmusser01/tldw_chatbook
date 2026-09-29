@@ -19,6 +19,7 @@ import tarfile
 from collections.abc import Iterable, Mapping
 from contextlib import closing
 from pathlib import Path
+from uuid import uuid4
 
 from defusedxml import ElementTree as ET
 
@@ -842,6 +843,86 @@ def _junit_result(path: Path) -> dict[str, object]:
     return {"collected": len(cases), "skipped": skipped, "failed": failed}
 
 
+def _native_failure_metadata(record: Mapping[str, object]) -> dict[str, object]:
+    """Project strictly bounded exception/code metadata, never messages or locals."""
+    kind, frames = record["error_class"], record["frames"]
+    if (
+        not isinstance(kind, str)
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", kind)
+        or not isinstance(frames, list)
+        or len(frames) > 64
+    ):
+        raise RuntimeError("unsafe_native_failure_metadata")
+    projected = []
+    for frame in frames:
+        filename, function, line = frame["file"], frame["function"], frame["line"]
+        if (
+            not isinstance(filename, str)
+            or not re.fullmatch(
+                r"[A-Za-z0-9_.-]{1,125}\.py|<(?:string|stdin)>|<frozen [A-Za-z_][A-Za-z0-9_.]{0,99}>",
+                filename,
+            )
+            or not isinstance(function, str)
+            or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]{0,127}|<(?:module|lambda|genexpr|listcomp|dictcomp|setcomp)>",
+                function,
+            )
+            or type(line) is not int
+            or not 1 <= line <= 1_000_000
+        ):
+            raise RuntimeError("unsafe_native_failure_frame")
+        projected.append({"file": filename, "function": function, "line": line})
+    return {"error_class": kind, "frames": projected}
+
+
+def _record_native_failure(root: Path, error: BaseException) -> None:
+    """Record metadata without allowing an observation error to mask the failure."""
+    try:
+        from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
+
+        record = _native_failure_metadata(_error_metadata(error))
+        _write_json(root / f"{os.getpid()}-{uuid4().hex}.json", record)
+    except Exception:  # noqa: BLE001 - preserve the original private failure.
+        return
+
+
+def install_native_failure_hook() -> None:
+    """Observe uncaught child failures before the product script starts."""
+    root = Path(os.environ["TLDW_NATIVE_FAILURE_ROOT"])
+    previous = sys.excepthook
+
+    def observe(kind, error, trace):
+        _record_native_failure(root, error)
+        previous(kind, error, trace)
+
+    sys.excepthook = observe
+
+
+class NativeCredentialFailures:
+    """Record outer pytest failures that never reach sys.excepthook."""
+
+    def pytest_exception_interact(self, node, call, report):
+        if call.excinfo is not None:
+            _record_native_failure(
+                Path(os.environ["TLDW_NATIVE_FAILURE_ROOT"]), call.excinfo.value
+            )
+
+
+def _publish_native_failures(private_root: Path, artifacts: Path) -> None:
+    """Revalidate private observations and publish only class and code locations."""
+    failures = []
+    for path in sorted((private_root / "native-failures").glob("*.json")):
+        if path.is_symlink():
+            raise RuntimeError("unsafe_native_failure_receipt")
+        failures.append(
+            _native_failure_metadata(json.loads(path.read_text(encoding="utf-8")))
+        )
+    if failures:
+        _write_json(
+            artifacts / "native-failures.json", {"schema": 1, "failures": failures}
+        )
+
+
 def _run_pytest_phase(
     *,
     workspace: Path,
@@ -865,12 +946,20 @@ def _run_pytest_phase(
         "raise SystemExit(pytest.main(sys.argv[1:]))"
     )
     if native_credentials:
+        failure_root = private_root / "native-failures"
+        failure_root.mkdir(mode=0o700, exist_ok=True)
+        environment = {**environment, "TLDW_NATIVE_FAILURE_ROOT": str(failure_root)}
+        (workspace / "sitecustomize.py").write_text(
+            "from Tests.Backup_Recovery.run_platform_product import install_native_failure_hook\n"
+            "install_native_failure_hook()\n",
+            encoding="utf-8",
+        )
         bootstrap = (
             "from Tests.network_guard import install; install(); "
             "from Tests.Backup_Recovery.run_platform_product import "
-            "validate_native_credential_environment; "
+            "validate_native_credential_environment, NativeCredentialFailures; "
             "validate_native_credential_environment(); import pytest, sys; "
-            "raise SystemExit(pytest.main(sys.argv[1:]))"
+            "raise SystemExit(pytest.main(sys.argv[1:], plugins=[NativeCredentialFailures()]))"
         )
     command = [sys.executable, "-c", bootstrap]
     if noconftest:
@@ -905,6 +994,8 @@ def _run_pytest_phase(
             output.write(f"\n{phase.upper()} PYTEST PHASE TIMED OUT\n")
             pytest_returncode = 124
 
+    if native_credentials:
+        _publish_native_failures(private_root, artifacts)
     if not native_credentials:
         _sanitize_file(raw_log, artifacts / raw_log.name, private_root=private_root)
     junit = {"collected": 0, "skipped": [], "failed": [], "parse_error": None}

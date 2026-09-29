@@ -259,8 +259,8 @@ def test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs(tmp_pat
     (workspace / "Tests" / "network_guard.py").write_text("def install(): pass\n")
     # Replace only the native effect boundary; exercise the real subprocess runner.
     (workspace / "Tests" / "Backup_Recovery" / "run_platform_product.py").write_text(
-        "import os\n"
-        "def validate_native_credential_environment():\n"
+        Path(runner.__file__).read_text()
+        + "\ndef validate_native_credential_environment():\n"
         " assert os.environ['PYTHON_KEYRING_BACKEND']=='keyring.backends.SecretService.Keyring'\n"
         " assert os.environ['DBUS_SESSION_BUS_ADDRESS']=='unix:path=/owned/bus'\n"
     )
@@ -331,3 +331,111 @@ def test_destination_receipt_cannot_report_passed_with_failed_readback(
             tmp_path / "transfer", artifacts, "native-credentials-destination"
         )
     assert not list(artifacts.iterdir())
+
+
+def test_native_failures_publish_only_exception_types_and_code_locations(tmp_path):
+    workspace = tmp_path / "workspace"
+    helpers = workspace / "Tests" / "Backup_Recovery"
+    helpers.mkdir(parents=True)
+    for package in (workspace / "Tests", helpers):
+        (package / "__init__.py").touch()
+    (workspace / "Tests" / "network_guard.py").write_text("def install(): pass\n")
+    (helpers / "run_platform_product.py").write_text(
+        Path(runner.__file__).read_text()
+        + "\ndef validate_native_credential_environment(): return 'keyring.backends.SecretService.Keyring'\n"
+    )
+    (helpers / "thread_diagnostics.py").write_text(
+        Path(runner.__file__).with_name("thread_diagnostics.py").read_text()
+    )
+    (workspace / "child.py").write_text(
+        "def fail_child():\n"
+        " secret='positive-native-secret'\n"
+        " raise RuntimeError(secret)\n"
+        "fail_child()\n"
+    )
+    test = workspace / "test_child.py"
+    test.write_text(
+        "import subprocess,sys\n"
+        "def test_child_failure():\n"
+        " secret='positive-native-secret'\n"
+        " result=subprocess.run([sys.executable,'child.py'])\n"
+        " assert result.returncode==0,secret\n"
+    )
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    private.mkdir()
+    artifacts.mkdir()
+    result = runner._run_pytest_phase(
+        workspace=workspace,
+        private_root=private,
+        artifacts=artifacts,
+        environment=dict(
+            os.environ, PYTHONPATH=str(workspace), PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"
+        ),
+        phase="product",
+        tests=(str(test),),
+        noconftest=True,
+        timeout_seconds=30,
+        native_credentials=True,
+    )
+    assert result["pytest_returncode"] == 1
+    path = artifacts / "native-failures.json"
+    receipt = json.loads(path.read_text())
+    assert {row["error_class"] for row in receipt["failures"]} == {
+        "RuntimeError",
+        "AssertionError",
+    }
+    assert any(
+        frame == {"file": "child.py", "function": "fail_child", "line": 3}
+        for row in receipt["failures"]
+        for frame in row["frames"]
+    )
+    assert "positive-native-secret" not in path.read_text()
+    assert {item.name for item in artifacts.iterdir()} == {"native-failures.json"}
+
+
+def test_native_failure_publication_refuses_unsafe_frame_fields(tmp_path):
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    (private / "native-failures").mkdir(parents=True)
+    artifacts.mkdir()
+    (private / "native-failures" / "unsafe.json").write_text(
+        json.dumps(
+            {
+                "error_class": "RuntimeError",
+                "frames": [
+                    {"file": "../private.log", "function": "secret=value", "line": 1}
+                ],
+                "message": "positive-native-secret",
+            }
+        )
+    )
+    with pytest.raises(RuntimeError):
+        runner._publish_native_failures(private, artifacts)
+    assert not list(artifacts.iterdir())
+
+
+def test_native_failure_keeps_import_stack_locations_without_exception_text(tmp_path):
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+
+    def fail_import():
+        raise ImportError("positive-native-secret")
+
+    fail_import.__code__ = fail_import.__code__.replace(
+        co_filename="<frozen importlib._bootstrap>"
+    )
+    try:
+        fail_import()
+    except ImportError as error:
+        runner._record_native_failure(failure_root, error)
+    runner._publish_native_failures(private, artifacts)
+    path = artifacts / "native-failures.json"
+    receipt = json.loads(path.read_text())
+    assert receipt["failures"][0]["error_class"] == "ImportError"
+    assert {
+        "file": "<frozen importlib._bootstrap>",
+        "function": "fail_import",
+        "line": fail_import.__code__.co_firstlineno + 1,
+    } in receipt["failures"][0]["frames"]
+    assert "positive-native-secret" not in path.read_text()

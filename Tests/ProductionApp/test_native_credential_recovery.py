@@ -167,6 +167,7 @@ async def _setup(role):
     selector.write_text(
         f'[general]\nusers_name="native_{role}"\n'
         "[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n"
+        '[tldw_api]\nbase_url=""\n'
         f"[API]\nopenai_api_key={json.dumps(encrypted)}\n"
     )
     selector.chmod(0o600)
