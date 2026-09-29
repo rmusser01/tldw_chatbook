@@ -2,7 +2,7 @@
 id: TASK-33262
 title: 'PERF-03: Logging pipeline defeats level filtering and redacts every record
   three times'
-status: In Progress
+status: Done
 created_date: 2026-09-28 18:02
 labels:
 - performance
@@ -14,7 +14,7 @@ references:
 - qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
 assignee:
 - '@claude'
-updated_date: 2026-09-29 04:38
+updated_date: 2026-09-29 04:44
 ---
 
 ## Description
