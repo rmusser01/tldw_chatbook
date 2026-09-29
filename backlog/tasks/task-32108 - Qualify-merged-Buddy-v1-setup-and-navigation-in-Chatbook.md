@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-09-29 17:55'
+updated_date: '2026-09-29 19:13'
 labels: []
 dependencies: []
 priority: high
@@ -51,4 +51,6 @@ PR2536 Qodo follow-up verified all six issue/inline findings and repaired the te
 Independent review follow-up corrected a remaining artifact-leaf gap: validating only the directory still allowed pre-existing SVG/JSON symlinks and a profile glob could read unrelated links. The shared writer now validates every destination; capture receipts enumerate only successful writes and revalidate each hash read. Three focused regressions cover SVG/receipt write escapes, unrelated matching links, and generated-leaf replacement. A disposable negative-control pytest plugin restored the original direct writes/glob and failed all 3 cases; the fixed guards pass. Final fresh raw export directory is pr2536-qodo-leaf-followup-20260909 under the validated scratch artifact root. The regenerated separate bundle supersedes the earlier follow-up bundle with 16 passed, 3 existing warnings in 37.13s and harness SHA256 b2728a2a35f41f8cf2e2ef10b123411954525e07f3b3b1be0ac172373f7418b0. Original pre-review artifacts remain untouched; earlier raw follow-up exports remain separate. Ruff/format/compile/whitespace pass. Report explicitly bounds path checks to pre-existing escapes rather than concurrent hostile filesystem replacement. No production change or publication action; In Progress/native qualification limits remain.
 
 2026-09-29 pinned current-dev follow-up: unchanged harness had16 setup errors (7.30s) from ADR-126 config-source selection changes. Reused existing private_profile_test child lifetimes for fresh/upgrade journeys, retained bootstrap selection for pure guards and used production settings saves; no production guard changed. Schema69 upgrade and fresh setup reach current schema73, retaining all Buddy ownership/target/default/Static-Dynamic assertions. Final targeted file16 passed110.81s; scoped Ruff/format/diff checks pass; independent read-only review has no actionable findings. Separate receipts and raw execution hashes: Docs/Reviews/2026-09-29-buddy-current-dev-qualification.md. AC4 verified for this reproduced harness defect. Native terminal/voice acceptance remains open; task stays In Progress.
+
+PR2910 rebase on dev64e140bb after gateway/provider additions preserves the reviewed patch exactly. Separate fresh/upgrade headless qualification passed16 tests in191.58s; all11 preflight guards passed. New source-hashed receipts are in Docs/Reviews/artifacts/buddy-v1-32108/rebased-dev-20260929; previous receipts retain their original source attribution. Native terminal and physical voice acceptance remain open; no full local suite.
 <!-- SECTION:NOTES:END -->

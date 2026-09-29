@@ -2,7 +2,7 @@
 
 TASK-32108; existing ADR-126 profile lifetime and ADR-139 independent Buddy bindings.
 
-Production source: `64579cce2c8dc64053fb50c00eb4f59b56716b01`. The harness
+Original production source: `64579cce2c8dc64053fb50c00eb4f59b56716b01`. The harness
 SHA-256 and separate fresh/upgrade receipts are in
 [the verification manifest](artifacts/buddy-v1-32108/current-dev-20260929/verification.json).
 
@@ -30,3 +30,13 @@ This is headless Textual rendering with real SQLite and bundled artwork. It does
 not qualify a physical terminal, microphone, audible playback, real provider or
 full local test suite. TASK-32108 remains In Progress for native acceptance; older
 receipts retain their original source attribution.
+
+
+PR #2910 was rebased onto dev `64e140bb30b476546f561fae0d61f2697fc91325`
+after the gateway/provider configuration additions. Range-diff preserved the
+reviewed patch exactly. A separate fresh/upgrade headless run passed **16 tests
+in 191.58s**, and all 11 derived-artifact preflight guards passed. The
+[rebase verification](artifacts/buddy-v1-32108/rebased-dev-20260929/verification.json)
+and separate fresh/upgrade receipts retain their tested source and capture hashes.
+Earlier evidence keeps its original source attribution; native and physical
+voice acceptance remain open. No full suite ran.
