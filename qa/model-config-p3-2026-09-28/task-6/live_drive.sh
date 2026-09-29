@@ -1,8 +1,12 @@
 #!/bin/bash
+# Review round 1: paths come from the environment. T6_SCRATCH = a scratch dir
+# holding a `git archive <rev> | tar -x` tree per non-head label (base, pre);
+# PYTHON = the venv interpreter; HEAD_TREE = the checkout run as "head". Copy
+# live_*.sh to T6_SCRATCH/live without the prefix, and ansi_cells.py as cells.py.
 # Drive one tree/theme/size through the TASK-33003.6 AC#7 states; writes
 # <out>/<tree>-<theme>-<cols>x<rows>-<state>.{txt,ansi.txt}
 # Usage: drive.sh <tree> <theme> <cols> <rows> <outdir>
-L=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scratchpad/t6/live
+L=${T6_SCRATCH:?export T6_SCRATCH}/live
 tree=$1; theme=$2; cols=$3; rows=$4; O=$5; mkdir -p $O
 T="tmux -L t33003p6"
 cap() { $T capture-pane -p; }
@@ -10,7 +14,7 @@ snap() { cap > $O/$tree-$theme-${cols}x${rows}-$1.txt; $T capture-pane -p -e > $
 stable() { a=""; for i in $(seq 1 20); do b=$(cap); [ "$a" = "$b" ] && return 0; a=$b; sleep 0.7; done; }
 underlined() {  # exit 0 when the last row holding $1 shows it underlined (focused)
   $T capture-pane -p -e > $L/_u.ansi.txt
-  (cd $L && /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -c '
+  (cd $L && ${PYTHON:?} -c '
 import sys
 from cells import rows
 R = rows("_u.ansi.txt"); T = ["".join(c[0] for c in r) for r in R]
