@@ -4730,7 +4730,10 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     with exit code 3 rather than raising into the caller. A ``REQUEST``
     whose fork or pipe the host refuses (process or fd limit) gets
     ``STATUS`` (``HOST_SPAWN_FAILED``, ``None``) at once; only that
-    request fails, and the session keeps serving. The loop is single-threaded: forking a
+    request fails, and the session keeps serving. ``LINE`` frames of a
+    still-running child may be held up to ``_COALESCE_S`` so a fast
+    operation's frames leave in one write; ``STATUS`` and ``BUSY`` are
+    always written at once. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -4750,8 +4753,8 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
-        OSError: If a low-level file descriptor operation (pipe, read,
-            write) fails for a reason other than the cases already
+        OSError: If a low-level file descriptor operation (read, write)
+            fails for a reason other than the cases already
             handled above. A failed fork or pipe while starting a request
             never raises here; see the ``HOST_SPAWN_FAILED`` case above.
     """
@@ -5238,4 +5241,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("9726814b9f042ddc0d5ecccb8546854c470d551bbf7f666527789ebe9adfa5e4")
+BUNDLE_SHA256 = _enter_worker_exchange("3029564d47569905d3ba33322cdf7c9ea84457883a49c067e3a3ca19b810785d")

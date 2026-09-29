@@ -346,6 +346,31 @@ def test_repeated_mux_start_failure_disables_the_key_for_the_run():
     assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("mux-disabled key restarted")) is None
 
 
+@pytest.mark.parametrize("closer", ["close_key", "close_all"])
+@pytest.mark.parametrize("error", ["transport", "mux", "protocol"])
+def test_start_failing_after_its_run_closed_records_nothing(closer, error):
+    """A start that fails after its key was pruned never re-populates the bookkeeping."""
+    reg = RemoteSessionRegistry()
+    start_error = {
+        "transport": SessionStartError(True, None, "255"),
+        "mux": _mux_error(),
+        "protocol": SessionStartError(False, None, "stamp"),
+    }[error]
+    close = (lambda: reg.close_key("run-1")) if closer == "close_key" else reg.close_all
+
+    def create():
+        return FakeWorker(start_error=start_error, start_hook=close)
+
+    if error == "transport":
+        with pytest.raises(SessionStartError):
+            reg.acquire(("run-1", "b1"), create)
+    else:
+        assert reg.acquire(("run-1", "b1"), create) is None
+    assert ("run-1", "b1") not in reg._start_failures
+    assert ("run-1", "b1") not in reg._mux_failed
+    assert ("run-1", "b1") not in reg._disabled
+
+
 class SlowCloseWorker(FakeWorker):
     def __init__(self, delay=1.0, **kwargs):
         super().__init__(**kwargs)
@@ -367,6 +392,7 @@ def test_reap_idle_never_closes_on_the_calling_thread():
     deadline = time.monotonic() + 5
     while worker.closed_on is None and time.monotonic() < deadline:
         time.sleep(0.01)
+    assert worker.closed_on is not None
     assert worker.closed_on is not threading.current_thread()
 
 

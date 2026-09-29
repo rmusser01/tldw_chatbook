@@ -692,7 +692,6 @@ def test_mux_marker_after_64k_of_stderr_still_classifies_mux(worker_factory, wor
     worker._stderr.append(b"x" * (70 * 1024) + b"\n")
     worker._stderr.append(b"mux_client_request_session: read from master failed: Broken pipe\n")
     worker._death_natural, worker._death_code = True, 255  # as if ssh died on its own
-    worker._retired = False  # Task 3 adds this flag; harmless before it exists
     result = worker._dead_session_result()
     assert result.failure.kind is TransportFailureKind.MUX_ERROR
 

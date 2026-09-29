@@ -161,7 +161,10 @@ def serve(
     with exit code 3 rather than raising into the caller. A ``REQUEST``
     whose fork or pipe the host refuses (process or fd limit) gets
     ``STATUS`` (``HOST_SPAWN_FAILED``, ``None``) at once; only that
-    request fails, and the session keeps serving. The loop is single-threaded: forking a
+    request fails, and the session keeps serving. ``LINE`` frames of a
+    still-running child may be held up to ``_COALESCE_S`` so a fast
+    operation's frames leave in one write; ``STATUS`` and ``BUSY`` are
+    always written at once. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -181,8 +184,8 @@ def serve(
         violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
-        OSError: If a low-level file descriptor operation (pipe, read,
-            write) fails for a reason other than the cases already
+        OSError: If a low-level file descriptor operation (read, write)
+            fails for a reason other than the cases already
             handled above. A failed fork or pipe while starting a request
             never raises here; see the ``HOST_SPAWN_FAILED`` case above.
     """

@@ -123,9 +123,12 @@ class RemoteSessionRegistry:
                     # second mux start failure in the run disables the key.
                     with self._lock:
                         repeat = key in self._mux_failed
-                        self._mux_failed.add(key)
-                        if repeat:
-                            self._disabled.add(key)
+                        # A run (or the app) closed during this start already
+                        # pruned the key: record nothing that outlives it.
+                        if not (self._shutdown or key[0] in self._closed_keys):
+                            self._mux_failed.add(key)
+                            if repeat:
+                                self._disabled.add(key)
                     logger.info(
                         "ssh session start hit a stale control socket; using one-shot calls "
                         + ("for this run" if repeat else "for this call")
@@ -133,7 +136,8 @@ class RemoteSessionRegistry:
                     return None
                 if not error.transport:
                     with self._lock:
-                        self._disabled.add(key)
+                        if not (self._shutdown or key[0] in self._closed_keys):
+                            self._disabled.add(key)
                     # Only static text: a typed failure's reason may quote a
                     # stderr line (mux errors can name the ControlPath).
                     cause = error.failure.kind.value if error.failure else str(error)
@@ -144,7 +148,8 @@ class RemoteSessionRegistry:
                 kind = error.failure.kind.value if error.failure else "unknown"
                 logger.debug(f"ssh session worker start failed (transport): {kind}")
                 with self._lock:
-                    self._start_failures[key] = (time.monotonic(), error)
+                    if not (self._shutdown or key[0] in self._closed_keys):
+                        self._start_failures[key] = (time.monotonic(), error)
                 raise
             with self._lock:
                 self._start_failures.pop(key, None)

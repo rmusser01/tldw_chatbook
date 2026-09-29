@@ -454,6 +454,22 @@ def test_fast_op_output_and_status_leave_in_one_write():
         _terminate(proc)
 
 
+def test_status_is_never_held_for_the_coalescing_window():
+    """A finished child's STATUS flushes the held LINEs at once, not at the hold's end."""
+    proc, reader = _session(
+        prelude="import tldw_chatbook.Tools.remote_session_serve as _s; _s._COALESCE_S = 5.0"
+    )
+    try:
+        sent = time.monotonic()
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"twostep"))
+        chunks = _chunks_until_status(proc, reader)
+        elapsed = time.monotonic() - sent
+        assert elapsed < 2.0, f"STATUS waited out the hold: {elapsed:.2f}s"
+        assert [[kind for kind, _, _ in chunk] for chunk in chunks] == [[LINE, LINE, STATUS]]
+    finally:
+        _terminate(proc)
+
+
 def test_slow_op_first_line_is_not_held_until_the_end():
     proc, reader = _session(prelude=_HOLD_200MS)
     try:
