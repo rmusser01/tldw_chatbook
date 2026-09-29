@@ -1,4 +1,4 @@
-"""PERF-03 (TASK-33262): a real level gate, one redaction per record, off-thread sinks.
+"""PERF-03 (TASK-33262): a real level gate and one redaction per record.
 
 The 2026-09-27 audit measured the shipped pipeline at ~7-8 us per *dropped*
 ``logger.debug`` (the loguru forwarder sat at TRACE, so loguru's early level
@@ -9,9 +9,11 @@ thread, the event loop included).
 
 These tests pin the behaviour, not the timings: the forwarder follows the
 stdlib threshold, each record reaches the sanitizer exactly once however many
-redacting sinks it feeds, the file and Logs-buffer work runs on the log-writer
-thread, nothing queued is lost on close, and a secret is still masked in
-every sink -- including across the truncation cap.
+redacting sinks it feeds, and a secret is still masked in every sink --
+including across the truncation cap and in a logger name. Writes stay
+synchronous on the emitting thread: an earlier off-thread writer was removed
+in review (it saved ~80 us per INFO record, at the cost of losing the last
+lines before a forced exit and of drain races at close and at a pause).
 """
 
 from __future__ import annotations
@@ -34,10 +36,6 @@ from tldw_chatbook.Logging_Config import (
     LogsBufferHandler,
     PrivateRotatingFileHandler,
     _private_file_formatter,
-    flush_background_logging,
-    route_through_log_writer,
-    start_background_logging,
-    stop_background_logging,
     sync_loguru_forward_level,
 )
 from tldw_chatbook.Utils.log_sanitizer import (
@@ -50,7 +48,6 @@ pytestmark = pytest.mark.unit
 #: Assembled at import so no committed line carries a contiguous token shape
 #: (secret scanners match the literal; see Tests/test_logs_share_path_privacy).
 SECRET = "".join(("sk", "-perf03SECRETsentinelKEYnotreal01"))
-WRITER_THREAD = "tldw-log-writer"
 
 
 class _AppStub:
@@ -93,16 +90,6 @@ def perf_logger():
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         handler.close()
-
-
-@pytest.fixture
-def writer():
-    """Run the shared log writer for one test, and always stop it."""
-    start_background_logging()
-    try:
-        yield
-    finally:
-        stop_background_logging()
 
 
 def _file_handler(tmp_path: Path) -> PrivateRotatingFileHandler:
@@ -216,144 +203,110 @@ def test_secret_straddling_the_cap_reaches_no_sink(tmp_path, perf_logger):
 
 
 # ---------------------------------------------------------------------------
-# Off-thread sinks
+# Logs buffer, logger names, forwarder hand-off
 # ---------------------------------------------------------------------------
 
 
-def test_file_io_runs_on_the_writer_thread(tmp_path, perf_logger, writer):
-    handler = _file_handler(tmp_path)
-    route_through_log_writer(handler)
-    threads: list[str] = []
-    real_emit = handler.emit
-
-    def spy(record):
-        threads.append(threading.current_thread().name)
-        real_emit(record)
-
-    handler.emit = spy
-    perf_logger.addHandler(handler)
-
-    for index in range(50):
-        perf_logger.info("record %d", index)
-
-    assert flush_background_logging()
-    assert threads == [WRITER_THREAD] * 50
-    assert len(_read(handler).splitlines()) == 50
-
-
-def test_message_arguments_are_rendered_at_the_call(tmp_path, perf_logger, writer):
-    """A caller may mutate its arguments the moment the log call returns."""
-    handler = _file_handler(tmp_path)
-    route_through_log_writer(handler)
-    perf_logger.addHandler(handler)
-    blocker = threading.Event()
-    real_emit = handler.emit
-    handler.emit = lambda record: (blocker.wait(5), real_emit(record))
-
-    payload = ["before"]
-    perf_logger.info("payload=%s", payload)
-    payload[0] = "after"
-    blocker.set()
-
-    assert flush_background_logging()
-    assert "payload=['before']" in _read(handler)
-
-
-def test_close_writes_every_queued_record_first(tmp_path, perf_logger, writer):
-    handler = _file_handler(tmp_path)
-    route_through_log_writer(handler)
-    perf_logger.addHandler(handler)
-
-    for index in range(300):
-        perf_logger.info("record %d", index)
-    perf_logger.removeHandler(handler)
-    handler.close()
-
-    lines = Path(handler.baseFilename).read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 300
-    assert lines[-1].endswith("record 299")
-
-
-def test_stopping_the_writer_drains_it_and_falls_back_to_direct_writes(
-    tmp_path, perf_logger
-):
-    start_background_logging()
-    handler = _file_handler(tmp_path)
-    route_through_log_writer(handler)
-    perf_logger.addHandler(handler)
-    for index in range(100):
-        perf_logger.info("queued %d", index)
-
-    stop_background_logging()
-    assert len(_read(handler).splitlines()) == 100
-
-    perf_logger.info("after stop")
-    assert _read(handler).splitlines()[-1].endswith("after stop")
-
-
-def test_maintenance_pause_writes_records_queued_before_it(
-    tmp_path, perf_logger, writer
-):
-    handler = _file_handler(tmp_path)
-    route_through_log_writer(handler)
-    perf_logger.addHandler(handler)
-    for index in range(40):
-        perf_logger.info("before pause %d", index)
-
-    handler._maintenance_close_admission()
-
-    assert handler.stream is None
-    lines = Path(handler.baseFilename).read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 40
-
-
-async def test_logs_buffer_formats_off_loop_and_stores_on_it(writer, redactions):
-    """The writer formats and redacts; only the loop touches stores and widgets."""
+async def test_logs_buffer_stores_at_emit_and_displays_on_the_loop(redactions):
+    """A worker-thread record is buffered at once; only the widget waits for the loop."""
     app = _AppStub()
     window = _FakeLogsWindow()
     app._current_logs_window = window
-    handler = LogsBufferHandler(app)
-    format_threads: list[str] = []
-    store_threads: list[str] = []
-    real_format, real_store = handler.format, handler._store
+    handler = LogsBufferHandler(app)  # built on the running loop
+    display_threads: list[str] = []
+    real_display = handler._display
 
-    def format_spy(record):
-        format_threads.append(threading.current_thread().name)
-        return real_format(record)
+    def display_spy(*entry):
+        display_threads.append(threading.current_thread().name)
+        real_display(*entry)
 
-    def store_spy(entry):
-        store_threads.append(threading.current_thread().name)
-        real_store(entry)
-
-    handler.format = format_spy
-    handler._store = store_spy
+    handler._display = display_spy
     logger = logging.Logger("tldw_chatbook.tests.perf03.buffer", level=logging.INFO)
     logger.addHandler(handler)
+    Logging_Config._safe_logger_name(logger.name)  # names are sanitized once, cached
+    redactions.clear()
     try:
-        logger.error("provider call api_key=%s failed", SECRET)
-        assert not app._log_records, "the emitting (loop) thread stored the line"
-        assert flush_background_logging()
+        worker = threading.Thread(
+            target=logger.error, args=("provider call api_key=%s failed", SECRET)
+        )
+        worker.start()
+        worker.join(5)
+        # Copy all sees the record before the loop has run a single callback.
+        assert len(app._log_buffer) == 1
+        assert not window.calls
         for _ in range(5):
             await asyncio.sleep(0)
     finally:
         logger.removeHandler(handler)
 
-    assert format_threads == [WRITER_THREAD]
-    assert store_threads == [threading.current_thread().name]
-    assert len(app._log_records) == 1
+    assert display_threads == [threading.current_thread().name]
     assert len(redactions) == 1
     for text in (app._log_records[0][2], app._log_buffer[0], window.calls[0][2]):
         assert SECRET not in text
         assert REDACTION_MARKER in text
 
 
-async def test_every_sink_masks_a_forwarded_loguru_secret(tmp_path, writer):
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("tldw_chatbook.api_key=" + SECRET, id="secret"),
+        pytest.param("tldw_chatbook.evil\nFORGED - CRITICAL - line", id="newline"),
+    ],
+)
+def test_a_logger_name_is_sanitized_in_both_sinks(tmp_path, name):
+    """Only the body is redacted per record, so the name needs its own pass."""
+    logger = logging.Logger(name, level=logging.INFO)
+    handler = _file_handler(tmp_path)
+    app = _AppStub()
+    logger.addHandler(handler)
+    logger.addHandler(LogsBufferHandler(app))
+    try:
+        logger.info("hello")
+    finally:
+        for h in list(logger.handlers):
+            logger.removeHandler(h)
+            h.close()
+
+    written = Path(handler.baseFilename).read_text(encoding="utf-8")
+    for text in (written, "\n".join(app._log_buffer), app._log_records[0][1]):
+        assert SECRET not in text
+        assert "\nFORGED" not in text
+    assert len(written.splitlines()) == 1
+    # Other handlers keep the original record's name.
+    assert logger.name == name
+
+
+def test_a_record_both_forwarders_see_reaches_stdlib_once(stdlib_levels):
+    """sync_loguru_forward_level adds the new sink before removing the old one."""
+    root, _package = stdlib_levels
+    root.setLevel(logging.INFO)
+    seen: list[str] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append(record.getMessage())
+
+    collector = _Collect()
+    root.addHandler(collector)
+    old = loguru_logger.add(Logging_Config._forward_loguru_to_standard, level="INFO")
+    new = loguru_logger.add(Logging_Config._forward_loguru_to_standard, level="INFO")
+    try:
+        loguru_logger.info("during the swap")
+        loguru_logger.info("during the swap")  # a second, distinct call
+    finally:
+        loguru_logger.remove(old)
+        loguru_logger.remove(new)
+        root.removeHandler(collector)
+
+    assert seen == ["during the swap", "during the swap"]
+
+
+async def test_every_sink_masks_a_forwarded_loguru_secret(tmp_path):
     """loguru -> stdlib forwarder -> file, Copy-all buffer, records, live view."""
     root = logging.getLogger()
     old_level = root.level
     root.setLevel(logging.INFO)
     handler = _file_handler(tmp_path)
-    route_through_log_writer(handler)
     app = _AppStub()
     window = _FakeLogsWindow()
     app._current_logs_window = window
@@ -370,7 +323,6 @@ async def test_every_sink_masks_a_forwarded_loguru_secret(tmp_path, writer):
         loguru_logger.error(
             "provider call failed api_key={} at /Users/privateperson/x.pdf", SECRET
         )
-        assert flush_background_logging()
         for _ in range(5):
             await asyncio.sleep(0)
     finally:
@@ -498,7 +450,8 @@ for _ in range(20000):
     logger.debug("dropped")
 dropped_us = (time.perf_counter() - started) / 20000 * 1e6
 logger.info("provider call api_key={} failed", sys.argv[1])
-lc.stop_background_logging()
+for handler in logging.getLogger().handlers:
+    handler.flush()
 print("RESULT " + json.dumps({
     "lazy_evaluated": len(evaluated),
     "dropped_debug_us": dropped_us,
