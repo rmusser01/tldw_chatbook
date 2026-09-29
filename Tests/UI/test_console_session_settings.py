@@ -12688,7 +12688,7 @@ def _build_live_config_test_app():
 
     with ExitStack() as stack:
         stack.enter_context(
-            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
+            patch_app_global("get_chachanotes_db_lazy", return_value=None)
         )
         stack.enter_context(
             patch(

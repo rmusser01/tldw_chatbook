@@ -50,8 +50,8 @@ def _cheap_app_init_patches():
 
     with contextlib.ExitStack() as stack:
         stack.enter_context(
-            patch(
-                "tldw_chatbook.app.load_settings",
+            patch_app_global(
+                "load_settings",
                 return_value={"tldw_api": {"base_url": "http://localhost:8000"}},
             )
         )
@@ -59,7 +59,7 @@ def _cheap_app_init_patches():
             patch_app_global("get_cli_setting", side_effect=fake_cli_setting)
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
+            patch_app_global("get_chachanotes_db_lazy", return_value=None)
         )
         stack.enter_context(
             patch(

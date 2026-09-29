@@ -120,7 +120,7 @@ def _stub(
         # Consent defaults to recorded so refresh-path tests exercise the
         # refresh itself; consent gating has its own dedicated tests below.
         settings = {"model_catalog": {"refresh_consent_recorded": True}}
-    monkeypatch.setattr("tldw_chatbook.app.load_settings", lambda: settings or {})
+    set_app_global(monkeypatch, "load_settings", lambda: settings or {})
     service = _StubCatalogService(report=report, error=error)
     app = _StubApp(
         disk_store=object() if disk_store is _DEFAULT_DISK_STORE else disk_store,
@@ -269,18 +269,18 @@ async def test_refresh_honors_disabled_setting_from_canonical_config(
     # admission pins the shared module's participant to the session
     # bootstrap selection, so re-selecting in place raises
     # RecoveryRequired. ``TldwCli._refresh_model_catalogs_owned`` resolves
-    # ``load_settings`` from the app module's globals, so that reference is
-    # rebound too -- otherwise the refresh would read the bootstrap profile
-    # and pass via the swallowed-exception/consent fallbacks instead of the
-    # disabled setting this test is about.
+    # ``load_settings`` from the app modules' globals (the refresh now lives in
+    # ``app_feature_glue``), so every reference is rebound -- otherwise the
+    # refresh would read the bootstrap profile and pass via the
+    # swallowed-exception/consent fallbacks instead of the disabled setting
+    # this test is about.
     from Tests.Backup_Recovery.config_test_support import install_config_source
-    from tldw_chatbook import app as app_module
 
     config_path = tmp_path / "model-catalog-disabled.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     fresh = install_config_source(monkeypatch)
     monkeypatch.setattr(sys.modules[__name__], "config_module", fresh)
-    monkeypatch.setattr(app_module, "load_settings", fresh.load_settings)
+    set_app_global(monkeypatch, "load_settings", fresh.load_settings)
     assert fresh.save_settings_to_cli_config(
         {"model_catalog": {"auto_refresh_enabled": False}}
     )

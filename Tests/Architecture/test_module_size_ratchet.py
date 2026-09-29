@@ -70,8 +70,9 @@ _BUDGETS: dict[str, int] = {
     # N/U/U2 -> app_speech.py: 11,506 -> 10,601; lifecycle, shutdown and
     # quit flow -> app_lifecycle.py: 10,601 -> 8,524; screen navigation ->
     # app_navigation.py: 8,524 -> 7,467; command-palette providers ->
-    # app_command_providers.py: 7,467 -> 6,403).
-    "tldw_chatbook/app.py": 6403,
+    # app_command_providers.py: 7,467 -> 6,403; per-feature glue ->
+    # app_feature_glue.py: 6,403 -> 5,712).
+    "tldw_chatbook/app.py": 5712,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     "tldw_chatbook/app_ingest_queue.py": 4999,
@@ -88,6 +89,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: the command-palette providers moved verbatim out of app.py;
     # governed there, so governed here.
     "tldw_chatbook/app_command_providers.py": 1123,
+    # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
+    # (FeatureGlueMixin); governed there, so governed here.
+    "tldw_chatbook/app_feature_glue.py": 742,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
