@@ -325,15 +325,15 @@ def test_local_same_name_broad_approval_scope_survives_later_narrow_scope(
 # only a tmp_path workspace, so they keep the collection-time test profile.
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
-    ("sibling_answer", "refusal"),
+    ("sibling_answer", "refusal", "audit"),
     [
-        ("timeout", TIMEOUT_REFUSAL),
-        ("surprise", UNRESOLVED_REFUSAL),
-        (None, UNRESOLVED_REFUSAL),
+        ("timeout", TIMEOUT_REFUSAL, "denied-timeout"),
+        ("surprise", UNRESOLVED_REFUSAL, "denied-unresolved"),
+        (None, UNRESOLVED_REFUSAL, "denied-unresolved"),
     ],
 )
 def test_sibling_without_its_own_approval_never_dispatches(
-    tmp_path, sibling_answer, refusal
+    tmp_path, sibling_answer, refusal, audit
 ):
     """TASK-33082: a reviewed call runs only on its own row's approval.
 
@@ -341,10 +341,23 @@ def test_sibling_without_its_own_approval_never_dispatches(
     unknown answer, or got no answer. The name-keyed stamp keeps the
     approval, so before the fix the hook returned "proceed" for the sibling
     and it ran on its neighbour's stamp. Drives the real hook and the real
-    provider through `run_agent_loop`.
+    provider through `run_agent_loop`. The refused sibling is never
+    dispatched, so the hook audits it, once.
+
+    Args:
+        tmp_path: The provider's workspace root.
+        sibling_answer: The unapproved sibling's own card answer; ``None``
+            leaves it out of the map.
+        refusal: The model-facing refusal that answer must produce.
+        audit: The execution-log decision recorded for the refused sibling.
     """
     (tmp_path / "sub").mkdir()
-    p = provider(ASK, tmp_path)
+    recorded: list[tuple[str, str]] = []
+    p = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
     answers = {"call-ok": "approve_once"}
     if sibling_answer is not None:
         answers["call-late"] = sibling_answer
@@ -412,6 +425,9 @@ def test_sibling_without_its_own_approval_never_dispatches(
     }
     assert results["call-late"] == refusal
     assert p.stamped(RUN, "fs_list") == "approve_once"
+    assert [row for row in recorded if row[1].startswith("denied")] == [
+        ("fs_list", audit)
+    ]
 
 
 @pytest.mark.bootstrap_profile
@@ -421,6 +437,9 @@ def test_lone_timed_out_row_still_reaches_the_provider_refusal(tmp_path):
     With no approved sibling the name's stamp is "timeout", so the hook
     still returns "proceed" and the provider refuses the call at dispatch,
     recording its audit row, as before.
+
+    Args:
+        tmp_path: The provider's workspace root.
     """
     p = provider(ASK, tmp_path)
     hook = build_local_review_hook(p, lambda _pending: {"call-late": "timeout"})

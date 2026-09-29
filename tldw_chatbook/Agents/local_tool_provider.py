@@ -1221,6 +1221,27 @@ class LocalToolProvider:
             return
         self._record_decision_safe(hub, "denied")
 
+    def record_hook_refusal(self, name: str, *, timed_out: bool) -> None:
+        """Audit a call the local review hook refused for lacking its own approval.
+
+        TASK-33082: mirrors ``MCPToolProvider.record_hook_refusal``. The
+        refused call is never dispatched, so ``invoke_detailed()`` never
+        records its timeout or unresolved outcome.
+
+        Args:
+            name: The bare local tool name. A name this provider does not
+                own is ignored, as in ``record_user_denial``.
+            timed_out: Whether the row's own answer was ``"timeout"``
+                (``"denied-timeout"``); otherwise ``"denied-unresolved"``.
+        """
+        try:
+            hub = self.hub_tool_for(name)
+        except KeyError:
+            return
+        self._record_decision_safe(
+            hub, "denied-timeout" if timed_out else UNRESOLVED_DENIED_DECISION
+        )
+
     def timeout_for(self, tool_id: str) -> float | None:
         """Per-call timeout override; every local tool but ``web_deep_search``
         and ``character_save`` keeps the caller's own run budget.

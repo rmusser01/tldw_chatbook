@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-27 16:40'
-updated_date: '2026-09-29 15:43'
+updated_date: '2026-09-29 15:56'
 labels:
   - agents
   - permissions
@@ -53,4 +53,10 @@ Tests:
 - The two local tests use @pytest.mark.bootstrap_profile: LocalToolProvider's [tools] config read trips the per-test sandbox's config admission (RecoveryRequired raw_source_selection_changed, ADR-126). That trip is why most of that file already fails locally on dev.
 
 Verification: failure names across all 18 files that drive these hooks match dev, apart from test_console_headless_approval.py::test_reprojection_never_renders_an_exhausted_head. Its params flip between runs on both trees (3 reruns each). Preflight passes and ruff counts are unchanged. console_chat_controller.py grows by 54 lines on a row already about 1,190 over budget on dev.
+
+Qodo round 1 (PR #2908), three fixes:
+- Audit: a hook-refused sibling is never dispatched, so its owner never recorded the outcome. New record_hook_refusal(name, timed_out=...) seams on MCPToolProvider and LocalToolProvider write the decision dispatch would have written (denied-timeout / denied-unresolved). The hooks call them through _sibling_approval_refusals' record_refusal callback. Built-in rows stay unaudited, as for a Deny. The approval round writes no row for a timeout, and Stop/revoke rows are deny (skipped), so nothing is duplicated.
+- One _APPROVING_DECISIONS constant (also _review_decision's default); MCP extends it with allow_matching.
+- Args sections on the new tests.
+New tests: test_review_hook_refuses_and_audits_an_mcp_sibling_without_its_own_approval (hook-level audit), test_record_hook_refusal_writes_the_dispatch_decision (MCP seam), and the local runtime test now asserts one denied-* row for the refused sibling.
 <!-- SECTION:NOTES:END -->

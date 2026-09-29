@@ -1040,6 +1040,30 @@ def test_record_user_denial_writes_one_denied_row(running_loop):
     assert len(service.record_tool_decision_calls) == 1
 
 
+def test_record_hook_refusal_writes_the_dispatch_decision(running_loop):
+    """TASK-33082: the seam for a sibling the hook refused before dispatch.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    provider.record_hook_refusal(tool_id, timed_out=True)
+    provider.record_hook_refusal(tool_id, timed_out=False)
+    provider.record_hook_refusal("read_file", timed_out=True)
+
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied-timeout", "agent", None),
+        ("local:srv", "run", "denied-unresolved", "agent", None),
+    ]
+    assert service.execute_calls == []
+
+
 def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(running_loop):
     """task-32280 regression, live-observed on dev 3315241674.
 
