@@ -8,13 +8,32 @@ into an interest profile, turns that into search queries, and writes one
 short "story" per interesting find. Reactions you give to stories nudge the
 next cycle toward (or away from) similar finds.
 
-Dreams is **off by default** and has no Settings panel in Phase 1: enabling
-it is a `[dreams]` section in your `config.toml` away.
+Dreams is **off by default**. Enable it in Settings.
 
 ## Enabling Dreams
 
-Open your `config.toml` (the same file Settings edits; `~/.config/tldw_cli/
-config.toml` by default) and add:
+Open **Settings** (**F9**) ▸ **Domain Defaults** ▸ **Dreams** and press
+**Enable Dreams**. The change takes effect on the next cycle or at boot;
+while Dreams is off, nothing runs and nothing is spent. The same page lets
+you:
+
+- pick a **provider** and **model** for Dreams alone — leave both unset to
+  follow your chat defaults (Settings ▸ Providers & Models);
+- set a **region** (only claimed when it literally appears in a story's
+  source text — never guessed);
+- manage **your topics**: add a topic you care about with a weight
+  (default 0.5), or remove one. Topics you add are yours — the nightly
+  signal refresh never overwrites them. Goals are edited from any Dreams
+  story (press **g**), not here.
+
+The remaining keys (budgets, cadence, track caps) are shown read-only on
+that page; editing them is a `config.toml` escape hatch.
+
+### The config.toml escape hatch
+
+You can also enable Dreams by hand in your `config.toml` (the same file
+Settings edits; `~/.config/tldw_cli/config.toml` by default) — useful for
+scripted setups or the keys the Settings page only displays:
 
 ```toml
 [dreams]
@@ -115,4 +134,4 @@ watch is checked more often than once per
 - Everything is stored locally in the Dreams SQLite database.
 
 —
-*Verified against feat/dreams-phase-3 @ a5f7daa078 — 2026-09-28*
+*Actions/tracking verified against feat/dreams-phase-3 @ a5f7daa078 — 2026-09-28; enabling-via-Settings section added on feat/dreams-phase-4 — 2026-09-28*
