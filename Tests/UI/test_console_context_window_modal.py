@@ -61,7 +61,14 @@ async def test_full_modal_refreshes_capacity_and_ignores_late_previous_model(fin
                 modal.query_one("#console-settings-provider", Select).value = "openai"
                 await pilot.pause()
             elif finish == "dismiss":
+                # TASK-33003.5: the provider switch is an unapplied edit, so
+                # Esc asks first; Discard is the dismissal under test here.
                 await pilot.press("escape")
+                assert "Provider" in str(
+                    modal.query_one("#console-settings-close-message", Static).render()
+                )
+                await pilot.press("d")
+                await pilot.pause()
                 assert modal not in app.screen_stack
             expected = modal._context_estimate.token_limit
             release.set()

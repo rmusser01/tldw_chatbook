@@ -805,6 +805,18 @@ must say so in its docstring, as `test_schedules_keyboard_map.py:115` does. And 
 the sibling trap from the paint-over hunt: widget-tier CSS (`BUNDLED_CSS`/`DEFAULT_CSS`)
 loses to app-tier rules regardless of specificity.
 
+**The reverse trap: a new widget sized only by an app-tier class breaks bare harnesses.**
+TASK-33003.5 added an Esc hint to the Chat settings footer as
+`Static(..., classes="... w-auto")`. `.w-auto` lives in the app bundle
+(`css/utilities/_helpers.tcss`). Most modal tests (`ModalHarness`, `_SettingsCloseHarness`)
+mount without the bundle, so there the Static fell back to full width. It pushed the whole
+button row past the right edge (`Cancel` at x=211 on a 211-column screen), and
+`pilot.click("#console-settings-cancel")` raised `OutOfBounds` in tests that never mention
+the hint. The fix was a `Label`: its own `DEFAULT_CSS` is `width: auto`, which every harness
+loads. **What to do:** give a widget added to a shared row geometry that holds without the
+bundle: the widget type's own `DEFAULT_CSS`, or the owning class's `DEFAULT_CSS`. Then
+probe `region` once under a bare harness as well as under `TldwCli.CSS_PATH`.
+
 ---
 
 ## Target CSS by CLASS on the subject — never an ancestor-scoped bare type
