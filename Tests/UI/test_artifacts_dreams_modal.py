@@ -910,7 +910,7 @@ async def test_http_story_still_offers_ingest(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_advertise_exactly_the_ten_actions(tmp_path):
+async def test_footer_hints_advertise_exactly_the_eleven_actions(tmp_path):
     db = _seed_db(tmp_path)
     story = _story_row(db)
     app = App()

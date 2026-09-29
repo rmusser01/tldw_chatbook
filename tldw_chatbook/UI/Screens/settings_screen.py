@@ -211,6 +211,7 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
     load_model_catalog_settings,
 )
+from ...Dreams.settings import dreams_setting
 from ...LLM_Calls.qwencloud import normalize_qwencloud_api_mode
 from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
@@ -1479,6 +1480,37 @@ _NETWORK_TLS_MODE_OPTIONS: list[tuple[str, str]] = [
 _NETWORK_TLS_MODE_VALUES = frozenset(
     value for _, value in _NETWORK_TLS_MODE_OPTIONS
 )
+# Dreams (task-33244): the provider Select's "unset" is a REAL option, never
+# Select.NULL -- the dropdown must list "Follow chat defaults" so following
+# chat defaults is an explicit choice, and picking it deletes the key from
+# config.toml (empty == unset == chat-defaults fallback, mirroring
+# resolve_dreams_chat's resolution chain).
+DREAMS_PROVIDER_FOLLOW_DEFAULTS_LABEL = "Follow chat defaults"
+DREAMS_PROVIDER_UNSET_VALUE = ""
+#: Weight stepper offered for a new user topic; 0.5 is the default pick.
+DREAMS_TOPIC_WEIGHT_OPTIONS: tuple[tuple[str, str], ...] = tuple(
+    (f"{tenths / 10:.1f}", f"{tenths / 10:.1f}") for tenths in range(1, 11)
+)
+DREAMS_TOPIC_DEFAULT_WEIGHT = "0.5"
+#: [dreams] keys this section displays read-only (ruling R1: budgets and
+#: cadence stay editable in TOML only, v1). Everything in DREAMS_DEFAULTS
+#: except the four keys the section owns: enabled, provider, model, region.
+_DREAMS_READ_ONLY_KEYS: tuple[str, ...] = (
+    "stories_per_cycle",
+    "queries_per_cycle",
+    "exploration_slots",
+    "cadence_hours",
+    "catchup_enabled",
+    "search_engine",
+    "web_search_enabled",
+    "watchlist_freshness_hours",
+    "seen_item_ttl_days",
+    "max_searches_per_day",
+    "max_llm_calls_per_day",
+    "tracked_item_cap",
+    "track_min_check_interval_hours",
+    "track_quiet_retire_count",
+)
 # THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
 # persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
@@ -1665,6 +1697,36 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
             ),
         ),
         follow_up="add watchlist defaults after Watchlists exposes persisted polling/notification settings.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.DREAMS,
+        title="Dreams",
+        owner_destination="Artifacts",
+        source_of_truth=(
+            "config.toml [dreams] (enabled, provider, model, region)",
+            "the Dreams interest profile (dream_interest_profile in the Dreams DB)",
+            "Dreams cycle, track, and scheduler services",
+        ),
+        settings_can_mutate=True,
+        rows=(
+            (
+                "Stories & goals",
+                "Artifacts shows Dreams stories; the story modal owns goals (g) and reactions",
+            ),
+            (
+                "Settings role",
+                "enable/disable Dreams, pin provider/model/region, and edit your topics",
+            ),
+            (
+                "Budgets & cadence",
+                "read-only here; edit the remaining [dreams] keys in config.toml (v1)",
+            ),
+        ),
+        follow_up=(
+            "Use this page to enable Dreams and shape the interest profile; "
+            "press g on any Dreams story for goals, and edit remaining [dreams] "
+            "keys in config.toml."
+        ),
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.WORKFLOWS,
@@ -3479,6 +3541,10 @@ class SettingsScreen(BaseAppScreen):
         self._settings_workspace_first_bind_intent: object | None = None
         self._settings_workspace_first_bind_modal: object | None = None
         self._settings_workspace_folder_result: tuple[str, str | None, str] | None = None
+        #: task-33244: latest Dreams-section action outcome; re-rendered into
+        #: #settings-dreams-result across the pane recomposes its own actions
+        #: trigger (mirrors the workspace folder result retention idiom).
+        self._settings_dreams_result = ""
         #: Task 20 (SSH bindings): the latest SSH-editor outcome, same
         #: ``(workspace_id, binding_id | None, text)`` shape as the folder
         #: result so the pane recompose keeps it beside its action.
@@ -4572,6 +4638,12 @@ class SettingsScreen(BaseAppScreen):
                 "Read-only",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.DREAMS,
+                "Dreams",
+                "Enable the daily discovery digest and edit your interest topics.",
+                "Immediate actions",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.WORKFLOWS,
                 "Workflows",
                 "Procedure, dry-run, approval, and execution safety defaults.",
@@ -5460,6 +5532,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.SKILLS,
                     SettingsCategoryId.SCHEDULES,
                     SettingsCategoryId.WATCHLISTS,
+                    SettingsCategoryId.DREAMS,
                     SettingsCategoryId.WORKFLOWS,
                     SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
@@ -5594,6 +5667,35 @@ class SettingsScreen(BaseAppScreen):
                         recovery_copy=(
                             "Enable scheduled briefings here to reactivate stored "
                             "collection cadences."
+                        ),
+                    )
+                )
+                continue
+            if contract.category is SettingsCategoryId.DREAMS:
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "dreams.enabled",
+                            "dreams.provider",
+                            "dreams.model",
+                            "dreams.region",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner=(
+                            "Settings persisted [dreams] keys and user topics; "
+                            "Dreams cycles own derived profile rows"
+                        ),
+                        boundary_copy=(
+                            "Settings owns enabling Dreams, its provider/model/region "
+                            "override, and user-added topics; the cycle's signal "
+                            "refresh owns every derived profile row; goals stay in "
+                            "the story modal's DreamsGoalsModal."
+                        ),
+                        recovery_copy=(
+                            "Disable Dreams here to stop cycles; re-enable to resume "
+                            "with the stored profile and stories."
                         ),
                     )
                 )
@@ -8935,6 +9037,11 @@ class SettingsScreen(BaseAppScreen):
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category is SettingsCategoryId.SCHEDULES:
             return "Applies immediately: use the global briefing-schedules control below."
+        if category is SettingsCategoryId.DREAMS:
+            return (
+                "Applies immediately: the toggle, provider, model, region, and "
+                "topic edits below save as you make them."
+            )
         if category == SettingsCategoryId.IMAGE_GENERATION:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: use the panel's own Save/Revert controls below."
@@ -9660,6 +9767,8 @@ class SettingsScreen(BaseAppScreen):
             return "Per-item Save/Reset"
         if category is SettingsCategoryId.SCHEDULES:
             return "Applies immediately"
+        if category is SettingsCategoryId.DREAMS:
+            return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
         return "Read-only here"
@@ -9714,6 +9823,11 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "Settings owns the global Watchlists briefing gate; Artifacts owns "
                 "each collection cadence; schedules run while Chatbook is open."
+            )
+        if category is SettingsCategoryId.DREAMS:
+            return (
+                "Enable and profile edits apply on the next Dreams cycle or at "
+                "boot; budget and cadence keys stay editable in config.toml only."
             )
         # TASK-23104: the badge already leads the banner with "State: ..." --
         # scope text must never embed a second "State:" segment of its own
@@ -16515,6 +16629,28 @@ class SettingsScreen(BaseAppScreen):
                     "Schedules owns runtime actions",
                 ),
             )
+        if category is SettingsCategoryId.DREAMS:
+            # Same reasoning as IMAGE_GENERATION above: DREAMS rides the
+            # Domain Defaults rail group but Settings genuinely writes here,
+            # so the generic "nothing on this page is editable" domain copy
+            # must not win.
+            return (
+                (
+                    "Affected config",
+                    "[dreams] enabled, provider, model, region; topic rows in the "
+                    "Dreams interest profile (source=user)",
+                ),
+                (
+                    "Recovery",
+                    "disable Dreams here to stop cycles; unset provider/model to "
+                    "follow chat defaults again",
+                ),
+                (
+                    "Boundary",
+                    "Settings owns the enable gate, overrides, and user topics; "
+                    "cycles own derived rows; budgets stay config.toml-only (v1)",
+                ),
+            )
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
@@ -20551,6 +20687,8 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-briefing-schedules-toggle",
                     compact=True,
                 )
+            if category is SettingsCategoryId.DREAMS:
+                yield from self._render_dreams_controls()
             yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
@@ -29947,6 +30085,446 @@ class SettingsScreen(BaseAppScreen):
                 "not active in this run. Restart Chatbook to apply the saved gate."
             )
         button.label = self._briefing_schedules_toggle_label(live_enabled)
+
+    # ------------------------------------------------------------------
+    # Dreams (task-33244): the canonical enable path plus the interest
+    # profile's topic editor. Immediate-apply like the Schedules gate
+    # above; the list editor follows the workspace folder-bindings idioms
+    # (per-row attr-stashed buttons, add input + action, retained result).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _dreams_enabled() -> bool:
+        """Read the persisted Dreams master switch."""
+        return bool(dreams_setting("enabled", False))
+
+    @staticmethod
+    def _dreams_gate_copy(enabled: bool) -> str:
+        """Describe the gate; the copy names when a change takes effect."""
+        if enabled:
+            return (
+                "Dreams is enabled. Cycles run while Chatbook is open; this "
+                "and the settings below apply on the next cycle or at boot."
+            )
+        return (
+            "Dreams is disabled. Nothing runs and nothing is spent; your "
+            "stories and interest profile stay on disk."
+        )
+
+    @staticmethod
+    def _dreams_toggle_label(enabled: bool) -> str:
+        return "Disable Dreams" if enabled else "Enable Dreams"
+
+    def _dreams_db(self):
+        """The app-owned Dreams DB handle, or None (ruling R2).
+
+        Raw attribute read, never ``app.get_dreams_db()``: that method
+        BOOTSTRAPS storage, and an off-by-default feature must not gain a
+        database just because Settings opened. The toggle handler is the
+        one place that may build it, and only after a successful enable.
+        """
+        return getattr(self.app_instance, "dreams_db", None)
+
+    def _dreams_provider_options(self) -> list[tuple[str, str]]:
+        """Catalog providers with a real "follow chat defaults" option first."""
+        options: list[tuple[str, str]] = [
+            (DREAMS_PROVIDER_FOLLOW_DEFAULTS_LABEL, DREAMS_PROVIDER_UNSET_VALUE)
+        ]
+        for label, value in self._provider_select_options():
+            # No Manual option: this picker has no manual-key input, so
+            # offering Manual would persist an unusable sentinel value.
+            if value == PROVIDER_MANUAL_SELECT_VALUE:
+                continue
+            options.append((label, value))
+        configured = str(dreams_setting("provider") or "").strip()
+        if configured and configured not in {value for _, value in options}:
+            # A hand-set provider key outside the catalog stays visible and
+            # selectable instead of the Select silently claiming "follow
+            # chat defaults" while config pins something else.
+            options.append((f"{configured} (from config.toml)", configured))
+        return options
+
+    def _dreams_provider_select_value(
+        self, options: list[tuple[str, str]]
+    ) -> str:
+        configured = str(dreams_setting("provider") or "").strip()
+        if configured and configured in {value for _, value in options}:
+            return configured
+        return DREAMS_PROVIDER_UNSET_VALUE
+
+    @staticmethod
+    def _format_dreams_value(value: object) -> str:
+        """Render one read-only [dreams] value the way TOML spells it."""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, str):
+            return f'"{value}"'
+        return str(value)
+
+    def _render_dreams_controls(self) -> ComposeResult:
+        enabled = self._dreams_enabled()
+        yield Static(
+            self._dreams_gate_copy(enabled),
+            id="settings-dreams-status",
+            classes="settings-status-row",
+        )
+        yield Button(
+            self._dreams_toggle_label(enabled),
+            id="settings-dreams-toggle",
+            compact=True,
+        )
+        yield Static("Provider & model", classes="destination-section")
+        provider_options = self._dreams_provider_options()
+        with Horizontal(classes="settings-input-row settings-select-row"):
+            yield Static("Provider", classes="settings-input-label")
+            yield Select(
+                provider_options,
+                value=self._dreams_provider_select_value(provider_options),
+                id="settings-dreams-provider",
+                classes="settings-compact-select",
+                allow_blank=False,
+                compact=True,
+            )
+        yield Static(
+            "Unset follows your chat defaults (Providers & Models); provider "
+            "and model here override them for Dreams only.",
+            id="settings-dreams-provider-caption",
+            classes="settings-help-copy",
+            markup=False,
+        )
+        with Horizontal(classes="settings-input-row"):
+            yield Static("Model", classes="settings-input-label")
+            yield Input(
+                value=str(dreams_setting("model") or ""),
+                id="settings-dreams-model",
+                classes="settings-compact-input",
+                placeholder="Follow chat defaults",
+            )
+        with Horizontal(classes="settings-input-row"):
+            yield Static("Region", classes="settings-input-label")
+            yield Input(
+                value=str(dreams_setting("region") or ""),
+                id="settings-dreams-region",
+                classes="settings-compact-input",
+                placeholder="Used only when it appears in a source",
+            )
+        yield Static(
+            "Model and region save when you press Enter.",
+            classes="settings-help-copy",
+            markup=False,
+        )
+        yield Static(
+            self._settings_dreams_result,
+            id="settings-dreams-result",
+            classes="settings-status-row",
+            markup=False,
+        )
+        yield Static(
+            "Cycle shape & budgets (read-only; edit [dreams] in config.toml)",
+            classes="destination-section",
+            markup=False,
+        )
+        for key in _DREAMS_READ_ONLY_KEYS:
+            yield self._detail_row(
+                key, self._format_dreams_value(dreams_setting(key))
+            )
+        yield from self._render_dreams_topics()
+
+    def _render_dreams_topics(self) -> ComposeResult:
+        """The interest profile's topic rows (facet='topic' only).
+
+        Goals are deliberately absent (ruling R1): DreamsGoalsModal -- g on
+        any story -- owns them; the cross-link caption below points there.
+        """
+        yield Static("Your topics", classes="destination-section")
+        dreams_db = self._dreams_db()
+        if dreams_db is None:
+            yield Static(
+                "Dreams storage unavailable. Topics become editable once "
+                "Dreams is enabled and its database opens.",
+                id="settings-dreams-topics-unavailable",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Static(
+                "Goals: press g on any Dreams story.",
+                id="settings-dreams-goals-crosslink",
+                classes="settings-help-copy",
+                markup=False,
+            )
+            return
+        topics = [
+            row for row in dreams_db.list_profile() if row.get("facet") == "topic"
+        ]
+        if not topics:
+            yield Static("No topics yet.", classes="settings-detail-row", markup=False)
+        for row in topics:
+            weight = float(row.get("weight") or 0.0)
+            source = str(row.get("source") or "")
+            badge = "yours" if source == "user" else f"from {source or 'signals'}"
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    f"{row.get('text')} — weight {weight:.2f} · {badge}",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+                remove_button = Button(
+                    "Remove",
+                    id=f"settings-dreams-topic-remove-{row.get('id')}",
+                    compact=True,
+                )
+                # Stash-at-compose idiom (workspace folder rows): the DB id
+                # rides the button, never parsed back out of its selector.
+                remove_button.dreams_topic_entry_id = row.get("id")
+                yield remove_button
+        with Horizontal(classes="settings-input-row"):
+            yield Input(
+                placeholder="A topic you care about",
+                id="settings-dreams-topic-text",
+                classes="settings-compact-input",
+            )
+            yield Select(
+                DREAMS_TOPIC_WEIGHT_OPTIONS,
+                value=DREAMS_TOPIC_DEFAULT_WEIGHT,
+                id="settings-dreams-topic-weight",
+                classes="settings-compact-select",
+                allow_blank=False,
+                compact=True,
+            )
+            yield Button("Add topic", id="settings-dreams-topic-add", compact=True)
+        yield Static(
+            "Added topics are yours: the cycle's signal refresh never "
+            "overwrites them. Goals: press g on any Dreams story.",
+            id="settings-dreams-topics-caption",
+            classes="settings-help-copy",
+            markup=False,
+        )
+
+    def _refresh_dreams_pane(self) -> None:
+        """Re-render the Dreams category through the standard pane rebuild."""
+        self.mutate_reactive(SettingsScreen.active_category)
+
+    @on(Button.Pressed, "#settings-dreams-toggle")
+    def handle_dreams_toggle(self, event: Button.Pressed) -> None:
+        """Persist the Dreams master switch (immediate apply)."""
+        event.stop()
+        enabled = not self._dreams_enabled()
+        event.button.disabled = True
+        self.run_worker(
+            self._persist_dreams_toggle(enabled),
+            group="settings-dreams",
+            exclusive=True,
+        )
+
+    async def _persist_dreams_toggle(self, enabled: bool) -> None:
+        try:
+            mutation = await asyncio.to_thread(
+                apply_settings_mutation_to_cli_config,
+                {"dreams": {"enabled": enabled}},
+            )
+        except Exception:  # noqa: BLE001 - fixed UI recovery copy
+            mutation = ConfigMutationResult(False, False, "before_replace")
+        if mutation.fully_applied and enabled:
+            builder = getattr(self.app_instance, "get_dreams_db", None)
+            if callable(builder):
+                # First enable: create the storage the topic editor needs
+                # through the app-owned builder (no-op while already built).
+                # The pane rebuild below then finds a real dreams_db.
+                await asyncio.to_thread(builder)
+        if not self.is_attached:
+            return
+        if mutation.fully_applied:
+            self._settings_dreams_result = (
+                "Dreams enabled — applies on the next cycle or at boot."
+                if enabled
+                else "Dreams disabled — no cycles run; stories stay on disk."
+            )
+        else:
+            self._settings_dreams_result = (
+                "Dreams was not changed. Retry, or edit [dreams] enabled in "
+                "Advanced Config."
+            )
+        self._refresh_dreams_pane()
+
+    @on(Select.Changed, "#settings-dreams-provider")
+    def handle_dreams_provider_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if event.value is None or event.value is Select.NULL:
+            return
+        value = str(event.value).strip()
+        if value == str(dreams_setting("provider") or "").strip():
+            # Compose-time Changed or a re-pick of the current value: a
+            # no-op write would bounce the status row for nothing.
+            return
+        self.run_worker(
+            self._persist_dreams_provider(value),
+            group="settings-dreams",
+            exclusive=True,
+        )
+
+    async def _persist_dreams_provider(self, value: str) -> None:
+        if value == DREAMS_PROVIDER_UNSET_VALUE:
+            try:
+                mutation = await asyncio.to_thread(
+                    apply_settings_mutation_to_cli_config,
+                    {"dreams": {}},
+                    delete_keys={"dreams": ["provider"]},
+                )
+            except Exception:  # noqa: BLE001 - fixed UI recovery copy
+                mutation = ConfigMutationResult(False, False, "before_replace")
+            saved_copy = "Provider unset — Dreams follows your chat defaults."
+        else:
+            try:
+                mutation = await asyncio.to_thread(
+                    apply_settings_mutation_to_cli_config,
+                    {"dreams": {"provider": value}},
+                )
+            except Exception:  # noqa: BLE001 - fixed UI recovery copy
+                mutation = ConfigMutationResult(False, False, "before_replace")
+            saved_copy = f"Provider saved: {value}."
+        if not self.is_attached:
+            return
+        self._settings_dreams_result = (
+            saved_copy
+            if mutation.fully_applied
+            else "Provider was not changed. Retry, or edit [dreams] provider "
+            "in Advanced Config."
+        )
+        self._set_static_text(
+            "#settings-dreams-result", self._settings_dreams_result
+        )
+
+    @on(Input.Submitted, "#settings-dreams-model")
+    def handle_dreams_model_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.run_worker(
+            self._persist_dreams_field("model", event.value.strip()),
+            group="settings-dreams",
+            exclusive=True,
+        )
+
+    @on(Input.Submitted, "#settings-dreams-region")
+    def handle_dreams_region_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.run_worker(
+            self._persist_dreams_field("region", event.value.strip()),
+            group="settings-dreams",
+            exclusive=True,
+        )
+
+    async def _persist_dreams_field(self, key: str, value: str) -> None:
+        """Save or clear one free-text [dreams] key (model/region)."""
+        if value == str(dreams_setting(key) or "").strip():
+            return
+        try:
+            if value:
+                mutation = await asyncio.to_thread(
+                    apply_settings_mutation_to_cli_config,
+                    {"dreams": {key: value}},
+                )
+            else:
+                mutation = await asyncio.to_thread(
+                    apply_settings_mutation_to_cli_config,
+                    {"dreams": {}},
+                    delete_keys={"dreams": [key]},
+                )
+        except Exception:  # noqa: BLE001 - fixed UI recovery copy
+            mutation = ConfigMutationResult(False, False, "before_replace")
+        if not self.is_attached:
+            return
+        label = key.capitalize()
+        if mutation.fully_applied:
+            self._settings_dreams_result = (
+                f"{label} saved." if value else f"{label} cleared."
+            )
+        else:
+            self._settings_dreams_result = (
+                f"{label} was not changed. Retry, or edit [dreams] {key} in "
+                "Advanced Config."
+            )
+        self._set_static_text(
+            "#settings-dreams-result", self._settings_dreams_result
+        )
+
+    @on(Button.Pressed, "#settings-dreams-topic-add")
+    def handle_dreams_topic_add(self, event: Button.Pressed) -> None:
+        """Insert one ``source='user'`` topic row (the protected source)."""
+        event.stop()
+        dreams_db = self._dreams_db()
+        if dreams_db is None:
+            self._settings_dreams_result = (
+                "Topic not added: Dreams storage unavailable."
+            )
+            self._set_static_text(
+                "#settings-dreams-result", self._settings_dreams_result
+            )
+            return
+        try:
+            text_value = self.query_one(
+                "#settings-dreams-topic-text", Input
+            ).value.strip()
+        except QueryError:
+            return
+        if not text_value:
+            # Feedback without a pane rebuild: the half-typed input must
+            # survive the correction nudge.
+            self._settings_dreams_result = "Type a topic first."
+            self._set_static_text(
+                "#settings-dreams-result", self._settings_dreams_result
+            )
+            return
+        try:
+            weight = float(
+                self.query_one("#settings-dreams-topic-weight", Select).value
+                or DREAMS_TOPIC_DEFAULT_WEIGHT
+            )
+        except (QueryError, TypeError, ValueError):
+            weight = float(DREAMS_TOPIC_DEFAULT_WEIGHT)
+        try:
+            dreams_db.upsert_profile_entry(
+                "topic",
+                text_value,
+                weight=weight,
+                searchable=1,
+                source="user",
+            )
+        except Exception as error:  # noqa: BLE001 - surfaced in the result row
+            self._settings_dreams_result = f"Topic not added: {error}"
+            self._set_static_text(
+                "#settings-dreams-result", self._settings_dreams_result
+            )
+            return
+        self._settings_dreams_result = (
+            f"Added '{text_value}' — yours; the cycle never overwrites it."
+        )
+        self._refresh_dreams_pane()
+
+    @on(Button.Pressed)
+    def handle_dreams_topic_remove_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch per-row topic removal (id-prefix pattern).
+
+        Only ids starting with ``settings-dreams-topic-remove-`` are
+        consumed; every other press passes through untouched for the
+        screen's other handlers.
+        """
+        button_id = str(getattr(event.button, "id", "") or "")
+        if not button_id.startswith("settings-dreams-topic-remove-"):
+            return
+        event.stop()
+        entry_id = getattr(event.button, "dreams_topic_entry_id", None)
+        dreams_db = self._dreams_db()
+        if dreams_db is None or entry_id is None:
+            return
+        try:
+            dreams_db.delete_profile_entry(int(entry_id))
+        except Exception as error:  # noqa: BLE001 - surfaced in the result row
+            self._settings_dreams_result = f"Topic not removed: {error}"
+            self._set_static_text(
+                "#settings-dreams-result", self._settings_dreams_result
+            )
+            return
+        self._settings_dreams_result = "Topic removed."
+        self._refresh_dreams_pane()
 
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:

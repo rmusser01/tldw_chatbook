@@ -30,6 +30,7 @@ class SettingsCategoryId(StrEnum):
     SKILLS = "skills"
     SCHEDULES = "schedules"
     WATCHLISTS = "watchlists"
+    DREAMS = "dreams"
     WORKFLOWS = "workflows"
     MCP_DEFAULTS = "mcp-defaults"
     ACP_DEFAULTS = "acp-defaults"
