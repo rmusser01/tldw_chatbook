@@ -597,6 +597,9 @@ MIMO = ProviderRecord(
         # No "model" key (see TOGETHER): seeded [providers] list instead.
         "streaming": True,
         **_HOSTED_TRANSPORT_DEFAULTS,
+        # MiMo can take minutes to send its first token: oh-my-pi documents a
+        # 5-minute stream-idle floor for it (docs/provider-quirks.md, Xiaomi).
+        "timeout": 300,
     },
     pricing_seeds={},
     engine_driven=True,
