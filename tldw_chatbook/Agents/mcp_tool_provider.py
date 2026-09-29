@@ -835,6 +835,10 @@ class MCPToolProvider:
         if entry is None:
             return None
         tool, _cached_state = entry
+        if self._server_session_character_write_refusal(tool) is not None:
+            # TASK-33106: never ask about a call `invoke()` refuses outright --
+            # an approval here could persist a grant for a call that cannot run.
+            return None
         try:
             # Task 7 (controller ruling from Task 6's review): the FRESH gate
             # resolves under the ACTIVE workspace profile, never the default
@@ -982,6 +986,15 @@ class MCPToolProvider:
             # call to work must go to the switch, so the row says so.
             self._record_decision_safe(tool, decision=KILL_SWITCH_DENIED_DECISION)
             return ToolResult.blocked(KILL_SWITCH_REFUSAL)
+
+        # TASK-33106: refuse a server session's character write before any
+        # stamped verdict or fresh approval can persist a grant for it.
+        # Nobody was asked (`pending_gate_for` shows no card for it), so the
+        # audit row is a policy refusal, with the reason as its error.
+        refusal = self._server_session_character_write_refusal(tool)
+        if refusal is not None:
+            self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION, error=refusal)
+            return ToolResult.blocked(refusal)
 
         # PR2a Task 5: only THIS run's own stamp may resolve this call. The
         # `ToolProvider.invoke` Protocol has no run parameter, so the
@@ -1340,6 +1353,8 @@ class MCPToolProvider:
             success; `ok=False` with a non-empty, length-capped `error`
             on any failure. Never raises.
         """
+        # TASK-33106: re-checked here in case the session's backend changed
+        # between `invoke()`'s own check and execution.
         refusal = self._server_session_character_write_refusal(tool)
         if refusal is not None:
             self._record_decision_safe(tool, decision=decision, error=refusal)

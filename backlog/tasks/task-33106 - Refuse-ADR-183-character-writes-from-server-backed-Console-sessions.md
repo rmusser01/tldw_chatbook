@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-27 17:30'
-updated_date: '2026-09-29 16:44'
+updated_date: '2026-09-29 16:54'
 labels:
   - mcp
   - characters
@@ -50,4 +50,6 @@ The standalone MCP server (MCP/server.py, MCPTools) is unchanged (AC#3); MCP/too
 Tests: test_mcp_tool_provider.py (server refused with the audit row and reads unaffected; local and unbound runs write; a raising lookup fails closed), and test_console_character_wiring.py (the composed provider reads the calling session's backend; a server session's create_character is refused end to end; no session applies no check).
 
 Verification: failure names across the 72 test files that touch MCPToolProvider, the Console MCP composition or the character tools match dev exactly (1,589 each; +7 passes). Preflight, the census and ruff counts are unchanged.
+
+Qodo round 1 (PR #2909): the _execute-only check ran after _apply_verdict, so an approval could persist an always_allow / session / argument-rule grant for a call that was then refused. Now pending_gate_for shows no card for such a call, and invoke() refuses it right after the kill-switch check, before any stamped verdict or fresh gate. The audit row is denied-policy (nobody was asked) with SERVER_REFUSAL as its error. The _execute check stays for a backend switched mid-call. Tests: no card plus no persisted grant for stamped always_allow / approve_session; a backend switched before execution is still refused.
 <!-- SECTION:NOTES:END -->

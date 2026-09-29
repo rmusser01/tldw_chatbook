@@ -611,8 +611,8 @@ def test_server_session_refuses_builtin_character_write(running_loop):
     """TASK-33106: a server-backed session cannot write local cards via MCP.
 
     The refusal matches the Console's own character tools, the write never
-    reaches the in-process runtime, and the audit row keeps the decision it
-    was authorized under with the refusal as its error. Reads still run.
+    reaches the in-process runtime, and the audit row is a policy refusal
+    with the reason as its error. Reads still run.
 
     Args:
         running_loop: The provider's main loop.
@@ -630,6 +630,65 @@ def test_server_session_refuses_builtin_character_write(running_loop):
     assert write.error == SERVER_REFUSAL
     assert read.ok is True
     assert [call[1] for call in service.execute_calls] == ["list_characters"]
+    assert service.record_tool_decision_calls == [
+        ("builtin:tldw_chatbook", "create_character", "denied-policy", "agent", SERVER_REFUSAL)
+    ]
+
+
+def test_server_session_character_write_is_never_asked_and_persists_no_grant(
+    running_loop,
+):
+    """TASK-33106 (Qodo #2909): no card, and no grant outlives the refusal.
+
+    An `ask`-state character write in a server session gets no approval row,
+    so the user is never asked about a call that cannot run. A stamped
+    "always_allow" (or session approval) is not applied either: `invoke()`
+    refuses before `_apply_verdict` could persist it.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+
+    service = FakeMCPService(
+        inventory={"tools": [_tool_dict("create_character")]},
+        default_state=EffectiveToolState(state="ask", origin="global_default"),
+    )
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop, runtime_source_provider=lambda: "server"
+    )
+    _compose(provider)
+    write_id = provider.list_catalog()[0].id
+
+    assert provider.pending_gate_for(write_id, {"name": "Ada"}) is None
+
+    for verdict in ("always_allow", "approve_session"):
+        provider.apply_batch_decisions("run-1", {write_id: verdict})
+        with use_run_id("run-1"):
+            result = provider.invoke(write_id, {"name": "Ada"})
+        assert result.ok is False and result.error == SERVER_REFUSAL
+    assert service.set_tool_state_calls == []
+    assert service.session_approvals == set()
+    assert service.execute_calls == []
+
+
+def test_backend_switched_before_execution_still_refuses(running_loop):
+    """TASK-33106: `_execute` re-checks, for a session switched mid-call.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+
+    sources = iter(["local", "server"])
+    service, provider, write_id, _read_id = _character_tools_provider(
+        running_loop, lambda: next(sources)
+    )
+
+    result = provider.invoke(write_id, {"name": "Ada"})
+
+    assert result.ok is False and result.error == SERVER_REFUSAL
+    assert service.execute_calls == []
     assert service.record_tool_decision_calls == [
         ("builtin:tldw_chatbook", "create_character", "allowed", "agent", SERVER_REFUSAL)
     ]
