@@ -11,6 +11,7 @@ from dataclasses import replace
 
 import pytest
 from textual.css.query import NoMatches
+from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import Button, Static, Tooltip
 
 from Tests.UI.app_factory import _build_test_app
@@ -495,6 +496,92 @@ async def test_full_settings_recovery_actions_are_mouse_reachable_at_narrow_widt
         await pilot.pause()
 
     assert requests == [ConsoleDefaultRecoveryRequest(expected_action, 7)]
+
+
+@pytest.mark.parametrize("recovery", (False, True), ids=("model-view", "recovery"))
+@pytest.mark.asyncio
+async def test_fold_hint_follows_the_body_scroll_position(recovery: bool) -> None:
+    """TASK-33003.4 (C5(c)): the hint promises more only while more is below.
+
+    Wheel events alone drive it: shown while content remains below, hidden
+    at the bottom, shown again one wheel step back up. A 24-row terminal
+    forces the overflow whatever has focus.
+    """
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    if recovery:
+        modal._default_durability_state = _long_failed_default_state(
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION
+        )
+    async with app.run_test(size=(72, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        body = modal.query_one("#console-settings-body")
+        fold = modal.query_one("#console-settings-fold-hint", Static)
+        assert body.max_scroll_y > 0
+        assert ("recovery summary" in str(fold.renderable)) is recovery
+        for _ in range(100):
+            if body.scroll_y >= body.max_scroll_y:
+                break
+            assert fold.display, (body.scroll_y, body.max_scroll_y)
+            body.post_message(MouseScrollDown(body, 0, 0, 0, 1, 0, False, False, False))
+            await pilot.pause()
+        await pilot.pause()
+        assert body.max_scroll_y > 0
+        assert body.scroll_y == body.max_scroll_y
+        assert not fold.display
+
+        body.post_message(MouseScrollUp(body, 0, 0, 0, -1, 0, False, False, False))
+        await pilot.pause()
+        await pilot.pause()
+        assert body.scroll_y < body.max_scroll_y
+        assert fold.display
+        assert ("recovery summary" in str(fold.renderable)) is recovery
+
+
+@pytest.mark.asyncio
+async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
+    """TASK-33003.4: at 211x44 the focused provider picker's results overflow.
+
+    The results open on focus and close on blur, and nothing but the body's
+    own size tells the hint; the live open state used to hide it with 9 rows
+    below. If a later layout change moves the fold, pick the height where the
+    open results overflow and the closed ones fit.
+    """
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        body = modal.query_one("#console-settings-body")
+        fold = modal.query_one("#console-settings-fold-hint", Static)
+        results = modal.query_one("#console-settings-provider-picker-results")
+
+        async def settle() -> None:
+            for _ in range(4):
+                await pilot.pause()
+            await pilot.pause(0.5)
+
+        await settle()
+        assert app.focused is not None
+        assert app.focused.id == "console-settings-provider-picker-input"
+        precondition = (results.display, body.scroll_y, body.max_scroll_y)
+        assert results.display and body.scroll_y < body.max_scroll_y, precondition
+        assert fold.display
+
+        await pilot.press("tab")
+        await settle()
+        precondition = (results.display, body.max_scroll_y)
+        assert not results.display and body.max_scroll_y == 0, precondition
+        assert not fold.display
+
+        await pilot.press("shift+tab")
+        await settle()
+        assert results.display and body.scroll_y < body.max_scroll_y
+        assert fold.display
 
 
 @pytest.mark.parametrize("width", (60, 72))

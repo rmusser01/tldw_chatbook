@@ -442,7 +442,10 @@ focus colour and its value turns bold. Each field is as wide as the value it
 holds, not as wide as the window: a number gets 12 columns, a dropdown is as
 wide as its longest choice, and text is capped by what it holds (your name in
 this chat 32, the provider and model 48, an endpoint URL 64). The fields keep
-their width on a wider terminal.
+their width on a wider terminal. When the form is taller than the window,
+"▼ more — scroll for the rest" sits under it while anything is left below and
+disappears once you have scrolled to the bottom; scroll back up and it
+returns.
 
 Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:

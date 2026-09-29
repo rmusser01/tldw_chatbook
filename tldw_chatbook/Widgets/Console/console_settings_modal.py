@@ -2588,6 +2588,16 @@ class ConsoleSettingsModal(
     def on_mount(self) -> None:
         self._subscription_readiness_snapshot: tuple[int, str | None] | None = None
         self.set_interval(0.25, self._poll_subscription_readiness)
+        body = self.query_one("#console-settings-body", ScrollableContainer)
+        self.watch(body, "scroll_y", self._sync_fold_hint, init=False)
+        # Content can grow with no caller (a focused picker's results); sync
+        # after the refresh, once container_size has caught up too.
+        self.watch(
+            body,
+            "virtual_size",
+            lambda: self.call_after_refresh(self._sync_fold_hint),
+            init=False,
+        )
         self._sync_action_layout(self.size.width)
         self._show_settings_view(self._active_view)
         self._sync_default_recovery_region()
@@ -3773,7 +3783,7 @@ class ConsoleSettingsModal(
         )
 
     def _sync_fold_hint(self) -> None:
-        """Show a persistent cue whenever the modal body has hidden content."""
+        """Show the cue only while body content remains below (on scroll too)."""
         try:
             body = self.query_one("#console-settings-body", ScrollableContainer)
             hint = self.query_one("#console-settings-fold-hint", Static)
@@ -3783,13 +3793,14 @@ class ConsoleSettingsModal(
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
         )
-        overflow = body.virtual_size.height > body.container_size.height
-        if recovery_active:
-            hint.update("▼ more — scroll recovery summary")
-            hint.display = overflow
-            return
-        hint.update("▼ more — scroll for the rest")
-        hint.display = overflow
+        text = (
+            "▼ more — scroll recovery summary"
+            if recovery_active
+            else "▼ more — scroll for the rest"
+        )
+        if hint.content != text:  # a scroll step must not relayout the modal
+            hint.update(text)
+        hint.display = body.scroll_y < body.max_scroll_y
 
     def _sync_responsive_layout(self) -> None:
         """Derive the compact and wide layout tiers from measured widths."""
