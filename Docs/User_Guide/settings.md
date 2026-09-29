@@ -579,6 +579,37 @@ This page's **Custom endpoints** section manages them. Each row reads
 | **Edit** | Rewrites **Endpoint**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
 | **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. |
 
+An entry can also be your saved default provider. Settings then names it by
+its display name, and its readiness is the family's readiness plus the
+entry's own `api_key_env` rule. Providers & Models shows the entry's own
+facts, read-only: **Endpoint** is the entry's base URL, **Endpoint key** is
+`custom_endpoints.<slug>.base_url`, and the credential line names where the
+key comes from — **env var `<NAME>` (this endpoint)**, **saved in this
+endpoint**, or **none required by this endpoint** (never the key itself, and
+never the family's own `[api_settings]` key). **Test Provider** checks the
+same facts and names the entry's URL. Providers & Models cannot save a named
+endpoint, so its Model, Endpoint, API key, Env var, Context window, Generation
+defaults, and model discovery controls are disabled for one; **Edit this
+endpoint in Custom endpoints** opens the entry's editor below. Picking
+another provider enables those controls again.
+
+If the entry's `api_key_env` is not a valid environment variable name (for
+example `gpu-key`, hand-edited into `config.toml`), the entry stays listed
+but is not ready: Overview reads **Not ready: Invalid provider settings** and
+the credential line says the endpoint's credential env var name is invalid.
+Fix it with **Edit ▸ Env var** (letters, digits, and underscores, not
+starting with a digit). A stored key on the entry still works meanwhile.
+
+If the entry the default names no longer exists (for example, it was removed
+from `config.toml` by hand), Overview reads **Not ready: Endpoint not found**
+and Providers & Models reads **Not ready · endpoint not found; choose another
+provider**. Pick another provider, or recreate the endpoint.
+
+A hand-edited default that is not a provider id at all — `custom-ep:` with
+no slug, `foo:bar`, or an uppercase `CUSTOM-EP:<slug>` (endpoint ids are
+lowercase) — reads **Not ready: Unknown provider**. Pick a provider in
+Providers & Models.
+
 The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are
 listed below the entries once they have a configured endpoint, each with a
 one-way **Convert to named endpoint** action: it creates a registry entry

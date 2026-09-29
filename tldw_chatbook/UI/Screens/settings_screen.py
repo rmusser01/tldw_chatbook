@@ -96,12 +96,19 @@ from ...Chat.console_provider_endpoints import (
 )
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    CustomEndpointEntry,
     build_entry_mutation,
+    canonical_custom_endpoint_id,
     entry_for,
     load_custom_endpoints,
+    split_custom_endpoint_id,
     validate_entry,
 )
-from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.provider_readiness import (
+    ProviderReadiness,
+    get_provider_readiness,
+    provider_config_key,
+)
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     build_provider_setup_mutation,
@@ -128,6 +135,7 @@ from ...Chat.console_provider_support import (
 )
 from ...Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    _custom_endpoint_declared_credential,
     normalize_console_model_value,
 )
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
@@ -1119,6 +1127,24 @@ PROVIDER_SAVE_SCOPE_COPY = (
 #: CATEGORY here ("Appearance defaults", "Storage defaults", "Provider
 #: setup"), which a keyboard user cannot tell apart from a setting's name.
 NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
+#: TASK-33002.12: Providers & Models status for a saved default naming an
+#: ADR-146 registry entry that no longer exists.
+ENDPOINT_NOT_FOUND_SETTINGS_COPY = (
+    "Not ready · endpoint not found; choose another provider"
+)
+#: Placeholder for a Connect field a registry default does not offer.
+REGISTRY_FIELD_PLACEHOLDER = "Managed in Custom endpoints"
+#: Connect fields Save cannot apply for an ADR-146 ``custom-ep:`` id (Qodo
+#: #2876): their drafts stage under ``api_settings`` or ride the provider
+#: mutation, and both reject a registry id. Enabled for every other provider.
+_REGISTRY_LOCKED_FIELD_SELECTORS = (
+    "#settings-model-value",
+    "#settings-provider-endpoint-value",
+    "#settings-provider-api-key",
+    "#settings-provider-credential-env-var",
+    "#settings-model-context-window",
+    "#settings-generation-defaults",
+)
 #: The categories whose Scope Inspector renders a "Focused setting" row,
 #: mapped to the method that builds those rows. `_guided_field_id` asks the
 #: named method whether a focused widget is one it can name, so the set of
@@ -13823,6 +13849,8 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Select provider first"
+        if self._provider_is_registry_id(provider):
+            return REGISTRY_FIELD_PLACEHOLDER
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
@@ -13842,6 +13870,11 @@ class SettingsScreen(BaseAppScreen):
             self._provider_readiness_app_config(),
             background_credentials=True,
         )
+        registry_status = self._provider_registry_credential_status(
+            provider, readiness
+        )
+        if registry_status is not None:
+            return registry_status
         if readiness.subscription_status is not None:
             return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
@@ -13862,6 +13895,8 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Select provider first"
+        if self._provider_is_registry_id(provider):
+            return REGISTRY_FIELD_PLACEHOLDER
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
@@ -13895,12 +13930,120 @@ class SettingsScreen(BaseAppScreen):
             entry.readiness_key for entry in self._provider_catalog_entries()
         )
 
-    def _provider_display_name(self, provider: str) -> str:
-        # Markup: a registry entry's name is user text, and its sinks are
-        # Statics, Buttons and toasts.
-        return escape_markup(
-            provider_display_name(provider, self._app_config_mapping())
+    @staticmethod
+    def _provider_is_registry_id(provider: object) -> bool:
+        """Whether ``provider`` addresses an ADR-146 entry (dangling included)."""
+        return canonical_custom_endpoint_id(provider) is not None
+
+    def _provider_registry_entry(
+        self, provider: object
+    ) -> CustomEndpointEntry | None:
+        """The ADR-146 entry ``provider`` names, in either spelling, else None."""
+        return entry_for(
+            self._provider_readiness_app_config(),
+            canonical_custom_endpoint_id(provider),
         )
+
+    def _provider_registry_credential_status(
+        self, provider: str, readiness: ProviderReadiness
+    ) -> str | None:
+        """Markup of :meth:`_provider_registry_credential_text`."""
+        text = self._provider_registry_credential_text(provider, readiness)
+        return None if text is None else escape_markup(text)
+
+    def _provider_registry_credential_text(
+        self, provider: str, readiness: ProviderReadiness
+    ) -> str | None:
+        """Plain credential status for a registry id, from its entry.
+
+        Qodo #2876: the registry record rides the keyless family readiness,
+        which would say "not required" while a send authenticates with the
+        entry's own credential. The source is named, never the secret, and
+        never the family slot's credential.
+
+        Args:
+            provider: Provider id shown in Providers & Models.
+            readiness: ``get_provider_readiness`` for ``provider``.
+
+        Returns:
+            The status line, or None for an ordinary provider.
+        """
+        if not self._provider_is_registry_id(provider):
+            return None
+        entry = self._provider_registry_entry(provider)
+        if entry is None:
+            return ENDPOINT_NOT_FOUND_SETTINGS_COPY
+        if not readiness.ready:
+            return f"Not ready · {readiness.recovery or readiness.reason}"
+        declared = _custom_endpoint_declared_credential(entry, None)
+        if declared is None:
+            return "API key source: none required by this endpoint"
+        if declared[1] == "environment":
+            return f"API key source: env var {entry.api_key_env} (this endpoint)"
+        return "API key source: saved in this endpoint"
+
+    def _provider_registry_endpoint(
+        self, provider: str
+    ) -> tuple[str, str | None] | None:
+        """Config key and display URL (plain text) of a registry id's endpoint.
+
+        Qodo #2876: a registry id has no ``api_settings`` table; its URL is
+        the entry's ``base_url``. Both parts are plain: every sink is a
+        ``_detail_row`` (``markup=False``), where an escape would show its
+        backslash on a hand-edited id (rider TASK-33002.18) or an IPv6 host.
+
+        Args:
+            provider: Provider id shown in Providers & Models.
+
+        Returns:
+            ``(key, url)`` with ``url`` None when the entry is gone, or None
+            for an ordinary provider.
+        """
+        slug = split_custom_endpoint_id(provider)
+        if slug is None:
+            return None
+        entry = self._provider_registry_entry(provider)
+        if entry is None:
+            return f"custom_endpoints.{slug}.base_url", None
+        return (
+            f"custom_endpoints.{entry.slug}.base_url",
+            safe_endpoint_display(entry.base_url),
+        )
+
+    def _sync_provider_registry_lock(self, provider: str) -> None:
+        """Offer no Connect field a registry id cannot save (Qodo #2876)."""
+        locked = self._provider_is_registry_id(provider)
+        for selector in _REGISTRY_LOCKED_FIELD_SELECTORS:
+            try:
+                self.query_one(selector).disabled = locked
+            except QueryError:
+                continue
+        try:
+            edit = self.query_one("#settings-provider-edit-custom-endpoint", Button)
+        except QueryError:
+            return
+        edit.display = self._provider_registry_entry(provider) is not None
+        # Revert restores a registry id without the provider-change reset;
+        # without this, llama_cpp's live Discover survived it (TASK-33002.12).
+        self._refresh_model_discovery_widgets()
+
+    def _provider_display_name(self, provider: str) -> str:
+        """Markup display name (see :meth:`_provider_display_label`).
+
+        For markup sinks (Statics, Buttons, toasts): a registry entry's name
+        or a hand-edited id is user text, where "[local]" would render as a
+        tag and "[/]" would crash (TASK-33002.12). Plain sinks -- every
+        ``_detail_row`` and the Test rows -- take the label instead.
+        """
+        return escape_markup(self._provider_display_label(provider))
+
+    def _provider_display_label(self, provider: str) -> str:
+        """Plain display name: the registry entry's (either spelling), else
+        the catalog name, else the raw id."""
+        entry = self._provider_registry_entry(provider)
+        if entry is not None:
+            return entry.display_name
+        return provider_display_name(provider, self._app_config_mapping())
 
     @staticmethod
     def _provider_catalog_group(entry: ConsoleProviderCatalogEntry) -> str:
@@ -14107,14 +14250,17 @@ class SettingsScreen(BaseAppScreen):
                     ).value.strip()
                 except QueryError:
                     return ""
-            return selected_value
+            if selected_value:
+                return selected_value
+            # Textual applies a Select's value only on mount, and the 0.25s
+            # subscription poll can tick in between: a composed Select reads
+            # NULL, so read the saved selection as if it were not there yet.
         except QueryError:
             try:
                 return self.query_one("#settings-provider-value", Input).value.strip()
             except QueryError:
-                return str(
-                    self._provider_setting_values_mapping().get("provider") or ""
-                ).strip()
+                pass
+        return str(self._provider_setting_values_mapping().get("provider") or "").strip()
 
     def _sync_provider_manual_widget(self, provider: str) -> None:
         from ...Widgets.select_values import assign_select_value
@@ -14517,7 +14663,10 @@ class SettingsScreen(BaseAppScreen):
         try:
             self.query_one(
                 "#settings-model-context-window-reset", Button
-            ).disabled = not state.has_configured_override
+            ).disabled = (
+                not state.has_configured_override
+                or self._provider_is_registry_id(provider)
+            )
         except QueryError:
             pass
 
@@ -14565,6 +14714,8 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Select a provider before setting an endpoint"
+        if self._provider_is_registry_id(provider):
+            return REGISTRY_FIELD_PLACEHOLDER
         if provider_key in PROVIDER_ENDPOINT_PLACEHOLDERS:
             return PROVIDER_ENDPOINT_PLACEHOLDERS[provider_key]
         if provider_key in API_URL_PROVIDER_KEYS:
@@ -14613,6 +14764,9 @@ class SettingsScreen(BaseAppScreen):
     def _provider_endpoint_display_value(
         self, provider: str, endpoint: object | None = None
     ) -> str:
+        registry = self._provider_registry_endpoint(provider)
+        if registry is not None:
+            return registry[1] or "endpoint not found"
         provider_key = provider_config_key(provider)
         endpoint_value = str(
             endpoint
@@ -14628,6 +14782,9 @@ class SettingsScreen(BaseAppScreen):
         return "provider default"
 
     def _provider_endpoint_row(self, provider: str) -> str:
+        registry = self._provider_registry_endpoint(provider)
+        if registry is not None:
+            return f"Endpoint key: {registry[0]}"
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Endpoint key: provider required"
@@ -14679,6 +14836,11 @@ class SettingsScreen(BaseAppScreen):
             self._provider_readiness_app_config(),
             background_credentials=True,
         )
+        registry_status = self._provider_registry_credential_status(
+            provider, readiness
+        )
+        if registry_status is not None:
+            return registry_status
         if readiness.subscription_status is not None:
             return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
@@ -14694,6 +14856,8 @@ class SettingsScreen(BaseAppScreen):
     def _model_discovery_available(self, provider: str) -> bool:
         return (
             bool(provider_config_key(provider))
+            # A registry entry's models are edited in Custom endpoints.
+            and not self._provider_is_registry_id(provider)
             and getattr(
                 self.app_instance,
                 "llm_provider_catalog_scope_service",
@@ -14867,27 +15031,27 @@ class SettingsScreen(BaseAppScreen):
             ).display = not self._model_discovery_models
         except QueryError:
             pass
+        available = self._model_discovery_available(self._provider_widget_value())
         try:
             discover_button = self.query_one(
                 "#settings-discover-provider-models", Button
             )
-            discover_button.disabled = not self._model_discovery_available(
-                self._provider_widget_value()
-            )
+            discover_button.disabled = not available
         except QueryError:
             pass
+        # Another provider's list must not save under a registry id.
         try:
             save_button = self.query_one(
                 "#settings-save-discovered-provider-models", Button
             )
-            save_button.disabled = not self._model_discovery_models
+            save_button.disabled = not (available and self._model_discovery_models)
         except QueryError:
             pass
         try:
             clear_button = self.query_one(
                 "#settings-clear-discovered-provider-models", Button
             )
-            clear_button.disabled = not self._model_discovery_models
+            clear_button.disabled = not (available and self._model_discovery_models)
         except QueryError:
             pass
         try:
@@ -15643,15 +15807,32 @@ class SettingsScreen(BaseAppScreen):
         """
         passed = bool(readiness.ready and model)
         display_name = self._provider_display_name(provider) if provider else "Provider"
+        # Qodo #2876: a registry id's URL and credential are its entry's, never
+        # the family slot's ("provider default", "not required"). The rows are
+        # plain text (the widget sets markup=False), so they take the plain name.
+        entry = self._provider_registry_entry(provider)
         rows = self._provider_test_rows(
             readiness,
-            display_name=display_name,
+            display_name=(
+                self._provider_display_label(provider) if provider else "Provider"
+            ),
             model=model,
-            endpoint=draft_endpoint,
+            endpoint=draft_endpoint if entry is None else entry.base_url,
             dirty=dirty,
             evidence=evidence,
             checking=checking,
         )
+        registry_rows: dict[str, str] = {}
+        if entry is not None:
+            registry_rows["Key"] = str(
+                self._provider_registry_credential_text(provider, readiness)
+            ).removeprefix("API key source: ")
+        elif self._provider_is_registry_id(provider):
+            registry_rows["Endpoint"] = (
+                "not found — choose another provider, or recreate it under "
+                "Custom endpoints"
+            )
+        rows = tuple((label, registry_rows.get(label, text)) for label, text in rows)
         generation = dict(rows)["Generation"]
         listing = None if checking else getattr(evidence, "endpoint", None)
         # task-185 / TASK-33002.2 AC#6: one line stating the outcome that the
@@ -15949,6 +16130,7 @@ class SettingsScreen(BaseAppScreen):
             pass
         self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
+        self._sync_provider_registry_lock(provider)
         self._refresh_provider_field_guidance()
 
     def _detail_row(
@@ -16771,7 +16953,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
         resolved = self._resolve_provider_model_for_settings()
-        provider = self._provider_display_name(str(resolved.provider or ""))
+        # Plain: every Overview row is a ``_detail_row`` (``markup=False``).
+        provider = self._provider_display_label(str(resolved.provider or ""))
         model = str(resolved.model or "not selected")
         source_rows = dict(self.server_sync_workspace_handoff_rows)
         conversation_updates = "; ".join(
@@ -16953,6 +17136,8 @@ class SettingsScreen(BaseAppScreen):
         context_window_state = model_context_window_state(
             self._app_config_mapping(), provider, str(values["model"])
         )
+        # Qodo #2876: a registry default is edited in Custom endpoints.
+        registry_locked = self._provider_is_registry_id(provider)
         yield Static(
             "Providers & Models", classes="destination-section settings-column-title"
         )
@@ -17063,6 +17248,18 @@ class SettingsScreen(BaseAppScreen):
                         != PROVIDER_MANUAL_SELECT_VALUE
                     ),
                 )
+            edit_endpoint = Button(
+                "Edit this endpoint in Custom endpoints",
+                id="settings-provider-edit-custom-endpoint",
+                tooltip=(
+                    "This provider is a named custom endpoint: its URL, "
+                    "credential, and models are edited there."
+                ),
+            )
+            edit_endpoint.display = registry_locked and (
+                self._provider_registry_entry(provider) is not None
+            )
+            yield edit_endpoint
             with Horizontal(classes="settings-input-row"):
                 yield Static("Model", classes="settings-input-label")
                 yield Input(
@@ -17071,6 +17268,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="Model name",
                     suggester=self._model_field_suggester(),
+                    disabled=registry_locked,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
@@ -17081,6 +17279,7 @@ class SettingsScreen(BaseAppScreen):
                     placeholder=self._provider_endpoint_placeholder(provider),
                     validators=[ProviderEndpointURLValidator()],
                     validate_on={"blur", "submitted"},
+                    disabled=registry_locked,
                 )
             api_mode_value, api_mode_valid = self._provider_api_mode_display_value(
                 provider
@@ -17142,6 +17341,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder=self._provider_api_key_placeholder(provider),
                     password=True,
+                    disabled=registry_locked,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("", classes="settings-input-label")
@@ -17161,6 +17361,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-credential-env-var",
                     classes="settings-compact-input",
                     placeholder=self._provider_credential_placeholder(provider),
+                    disabled=registry_locked,
                 )
             yield Static(
                 "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.",
@@ -17320,13 +17521,17 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="tokens (required when unknown)",
                     restrict=r"^[0-9]*$",
+                    disabled=registry_locked,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("", classes="settings-input-label")
                 yield Button(
                     "Reset to detected",
                     id="settings-model-context-window-reset",
-                    disabled=not context_window_state.has_configured_override,
+                    disabled=(
+                        not context_window_state.has_configured_override
+                        or registry_locked
+                    ),
                     tooltip=(
                         "Remove only the configured context-window override and "
                         "return to the detected capability value."
@@ -17483,6 +17688,7 @@ class SettingsScreen(BaseAppScreen):
                 title="Generation defaults",
                 collapsed=self._generation_defaults_collapsed,
                 id="settings-generation-defaults",
+                disabled=registry_locked,
             ):
                 yield Static(
                     "Selected model defaults",
@@ -29631,6 +29837,49 @@ class SettingsScreen(BaseAppScreen):
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Button.Pressed, "#settings-provider-edit-custom-endpoint")
+    async def handle_provider_edit_custom_endpoint(
+        self, event: Button.Pressed
+    ) -> None:
+        """Open the registry default's entry in the Custom endpoints editor.
+
+        Qodo #2876: Providers & Models cannot save a registry id, so its
+        Connect fields are locked and this is the way to edit it.
+
+        Args:
+            event: The press on the "Edit this endpoint" button.
+        """
+        event.stop()
+        entry = self._provider_registry_entry(self._provider_widget_value())
+        if entry is None:
+            return
+        self._custom_endpoint_edit_slug = entry.slug
+        self._custom_endpoint_rename_slug = None
+        try:
+            region = self.query_one("#settings-custom-endpoints")
+        except QueryError:
+            return
+        await region.recompose()
+        target = region  # The editor lists the on-disk registry.
+        try:
+            target = self.query_one("#settings-cep-edit-url", Input)
+        except QueryError:
+            pass
+        else:
+            target.focus(scroll_visible=False)
+
+        def reveal() -> None:
+            # Focus alone left the editor below the fold: the fresh region's
+            # scroll bounds settle only after this refresh (see
+            # _focus_provider_return_continuation for the same pattern).
+            try:
+                body = self.query_one("#settings-detail-pane-body", VerticalScroll)
+            except QueryError:
+                return
+            body.scroll_to_widget(target, animate=False, force=True, top=True)
+
+        self.call_after_refresh(reveal)
 
     @on(Button.Pressed, "#settings-provider-api-key-clear")
     def handle_provider_api_key_clear_pressed(self, event: Button.Pressed) -> None:
