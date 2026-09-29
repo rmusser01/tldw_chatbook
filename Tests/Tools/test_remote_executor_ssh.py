@@ -1031,3 +1031,41 @@ def test_stale_control_socket_at_start_runs_one_shot_then_session(
     assert env.read(executor)["outcome"] == "success"  # a session again
     assert len(sessions.spawns) == 2
     assert len(env.fake.call_invocations()) == one_shot_before + 1
+
+
+def test_budget_expiry_mid_upload_is_op_timeout_and_keeps_the_warm_path(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    """TASK-33420: slow cache-miss upload + short budget -> OP_TIMEOUT, not BLOCKED, session next call."""
+    import subprocess
+
+    real_spawn = sessions.spawn
+    _, compressed, _ = _bundle_payload()
+    stall = {"left": 1}
+    need_no_read = (
+        "import os, sys, time\n"
+        "os.read(0, 1 << 20)\n"
+        "os.write(1, b'TLDW-REMOTE-0001NEED ' + sys.argv[1].encode() + b'\\n')\n"
+        "time.sleep(30)\n"
+    )
+
+    def spawn(ssh_argv: list[str]) -> subprocess.Popen[bytes]:
+        if stall["left"]:
+            stall["left"] -= 1
+            proc = subprocess.Popen(
+                [sys.executable, "-c", need_no_read, hashlib.sha256(compressed).hexdigest()],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            sessions.spawns.append(proc)
+            return proc
+        return real_spawn(ssh_argv)
+
+    sessions.spawn = spawn
+    executor = _session_executor(env, sessions, budget_seconds=1.0, grace=0.5)
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(executor)
+    assert raised.value.code == TransportFailureKind.OP_TIMEOUT.value
+    assert env.cache.status("binding-1").state != BindingState.BLOCKED
+    executor = _session_executor(env, sessions)  # a normal budget
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2  # the key was not disabled: a session again

@@ -21,7 +21,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, NoReturn
 
 from loguru import logger
 
@@ -330,8 +330,17 @@ class RemoteSessionWorker:
             line = self._read_handshake_line(deadline)
             cache_hit = line != b"NEED " + bundle_hash.encode()
             if not cache_hit:
-                self._handshake_write(len(compressed).to_bytes(4, "big") + compressed, deadline)
-                line = self._read_handshake_line(deadline)
+                # The host answered NEED: from here a deadline is never
+                # transport-class (TASK-33420).
+                self._handshake_write(
+                    len(compressed).to_bytes(4, "big") + compressed, deadline, answered=True
+                )
+                try:
+                    line = self._read_handshake_line(deadline)
+                except _HandshakeFailed as ended:
+                    if ended.stalled:
+                        self._stalled_after_answer("handshake stalled after the host answered")
+                    raise
         except _HandshakeFailed as ended:
             self._fail_start(ended)
         if line != b"READY " + expected_bundle_stamp(artifact).encode():
@@ -387,12 +396,14 @@ class RemoteSessionWorker:
         except (OSError, ValueError):
             pass
 
-    def _handshake_write(self, data: bytes, deadline: float) -> None:
+    def _handshake_write(self, data: bytes, deadline: float, *, answered: bool = False) -> None:
         try:
             self._write(data, deadline)
         except OSError:
             pass  # the process died; the read below sees EOF and classifies it
         except (_WriteStalled, _NotSent):
+            if answered:
+                self._stalled_after_answer("handshake write stalled")
             self._kill_and_reap()
             raise SessionStartError(False, None, "handshake write stalled") from None
 
@@ -451,6 +462,22 @@ class RemoteSessionWorker:
         raise SessionStartError(
             failure.kind in _TRANSPORT_START_KINDS, failure, f"session start failed: {failure.reason}"
         )
+
+    def _stalled_after_answer(self, reason: str) -> NoReturn:
+        """The host answered the handshake, then the deadline passed.
+
+        A live channel proves reachability, so this is never transport-class
+        (ADR-181, R8). When the deadline was the call's own budget (a slow
+        cache-miss upload, a short tool timeout), this call fails as
+        ``OP_TIMEOUT`` and the next call tries a session again. When it was
+        the 30 s cap, the loader is stuck: protocol-class (``reason``),
+        one-shot for the run.
+        """
+        self._kill_and_reap()
+        if self._handshake_limit < _HANDSHAKE_TIMEOUT_S:
+            failure = TransportFailure(TransportFailureKind.OP_TIMEOUT, None, "operation timed out")
+            raise SessionStartError(True, failure, "session start ran out of the call's budget") from None
+        raise SessionStartError(False, None, reason) from None
 
     # -- steady state ------------------------------------------------------
 

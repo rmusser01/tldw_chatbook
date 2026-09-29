@@ -147,8 +147,14 @@ class RemoteSessionRegistry:
                     return None
                 kind = error.failure.kind.value if error.failure else "unknown"
                 logger.debug(f"ssh session worker start failed (transport): {kind}")
+                budget_expired = (
+                    error.failure is not None
+                    and error.failure.kind is TransportFailureKind.OP_TIMEOUT
+                )
                 with self._lock:
-                    if not (self._shutdown or key[0] in self._closed_keys):
+                    # OP_TIMEOUT is this caller's budget running out on a live
+                    # host: waiters have their own budgets, so it is not shared.
+                    if not budget_expired and not (self._shutdown or key[0] in self._closed_keys):
                         self._start_failures[key] = (time.monotonic(), error)
                 raise
             with self._lock:

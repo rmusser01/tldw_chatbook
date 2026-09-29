@@ -598,6 +598,72 @@ _NEED_NO_READ_HOST = textwrap.dedent(
     """
 )
 
+#: Host that asks for the bundle, takes it whole, then never says READY.
+_NEED_THEN_SILENT_HOST = textwrap.dedent(
+    """
+    import os, sys, time
+    loader_len, bundle_hash = int(sys.argv[1]), sys.argv[2]
+    def read_exact(n):
+        buf = b""
+        while len(buf) < n:
+            chunk = os.read(0, n - len(buf))
+            if not chunk:
+                sys.exit(3)
+            buf += chunk
+        return buf
+    read_exact(loader_len)
+    header = b""
+    while not header.endswith(b"\\n"):
+        header += read_exact(1)
+    os.write(1, b"TLDW-REMOTE-0001NEED " + bundle_hash.encode() + b"\\n")
+    size = int.from_bytes(read_exact(4), "big")
+    read_exact(size)
+    time.sleep(30)
+    """
+)
+
+
+def _need_then_silent_argv() -> list[str]:
+    _, compressed, _ = _bundle_payload()
+    return [
+        sys.executable, "-c", _NEED_THEN_SILENT_HOST,
+        str(len(loader_payload())), hashlib.sha256(compressed).hexdigest(),
+    ]
+
+
+def _need_no_read_argv() -> list[str]:
+    _, compressed, _ = _bundle_payload()
+    return [sys.executable, "-c", _NEED_NO_READ_HOST, hashlib.sha256(compressed).hexdigest()]
+
+
+def test_budget_expiry_mid_upload_fails_only_that_call(worker_factory):
+    """TASK-33420: the host answered NEED; the call's budget ran out mid-upload."""
+    worker, _ = worker_factory(spawn_argv=_need_no_read_argv(), handshake_timeout=1.0)
+    started = time.monotonic()
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert time.monotonic() - started < 8
+    assert err.value.transport is True  # the call's result, no one-shot retry
+    assert err.value.failure.kind is TransportFailureKind.OP_TIMEOUT
+
+
+@pytest.mark.parametrize("budget_bounded", [True, False])
+def test_ready_stall_after_answer_is_never_unreachable(worker_factory, monkeypatch, budget_bounded):
+    """TASK-33420 AC #3: a READY that never comes after NEED is never UNREACHABLE."""
+    if budget_bounded:
+        worker, _ = worker_factory(spawn_argv=_need_then_silent_argv(), handshake_timeout=1.0)
+    else:
+        monkeypatch.setattr(worker_module, "_HANDSHAKE_TIMEOUT_S", 1.0)
+        worker, _ = worker_factory(spawn_argv=_need_then_silent_argv())
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    if budget_bounded:
+        assert err.value.transport is True
+        assert err.value.failure.kind is TransportFailureKind.OP_TIMEOUT
+    else:
+        assert err.value.transport is False  # protocol-class: one-shot for the run
+        assert err.value.failure is None or err.value.failure.kind is not TransportFailureKind.UNREACHABLE
+
 
 def test_bundle_write_is_bounded_by_the_handshake_deadline(worker_factory, monkeypatch):
     monkeypatch.setattr(worker_module, "_HANDSHAKE_TIMEOUT_S", 2.0)
