@@ -30,8 +30,8 @@ and this project adheres to Some kind of Versioning
 - SSH workspaces: the first call after the laptop wakes from sleep (stale ControlMaster socket) no longer turns the fast session path off for the rest of the run; only that one call runs the slower way.
 - SSH workspaces: a host at its process limit fails only the one request it could not start; the binding is not marked unreachable.
 - SSH workspaces: quitting with several remote bindings closes their sessions in parallel within 5 s, and no ControlMaster is left running after exit.
-- SSH workspaces: when a slow link or a short tool timeout runs out during a session's first upload, only that call times out; the binding is no longer marked unreachable or switched to the slower path for the rest of the run.
-- SSH workspaces: a tool call whose session was closed (idle, run end or app exit) just before it was sent now gets a fresh session instead of an error.
+- SSH workspaces: a session start that stalls after the host has answered no longer marks the binding unreachable; the run falls back to the slower path instead (and when a call's own time budget runs out first, only that call times out).
+- SSH workspaces: a tool call whose session was closed (idle, run end or app exit) just before it was sent now gets a fresh session (or the slower path after run end or app exit) instead of an error.
 
 ## [0.2.2] - 2026-09-14
 

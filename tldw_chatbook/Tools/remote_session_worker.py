@@ -91,9 +91,13 @@ class SessionStartError(Exception):
     """The session could not start.
 
     Attributes:
-        transport: True for transport-class failures (record in the status
-            cache, no one-shot retry); False for protocol-class ones (fall
-            back to the one-shot path for the rest of the run).
+        transport: True when the failure is the call's own result: it is
+            recorded in the status cache, there is no one-shot retry, and
+            the key stays enabled. That covers the transport-class kinds
+            (``_TRANSPORT_START_KINDS``) and also the post-answer budget
+            ``OP_TIMEOUT`` (see ``_stalled_after_answer``), which is not
+            transport-class in the ADR-181 sense. False for protocol-class
+            failures (fall back to the one-shot path for the rest of the run).
         failure: The typed failure when the taxonomy classified one.
     """
 
@@ -244,8 +248,11 @@ class RemoteSessionWorker:
         #: death (EOF / ssh exited), False when the laptop ended it.
         self._death_natural: bool | None = None
         self._death_code: int | None = None
-        #: True once close() closed a session that was alive at that moment
-        #: (TASK-33401): the caller's request never reached this session.
+        #: True once close() retired this session while it was alive
+        #: (TASK-33401). Alone it does not mean a call's request never
+        #: reached the session; together with the call finding the session
+        #: not alive at registration, or with the pre-send stdin check
+        #: (``_StdinClosed``), it means nothing of that call was sent.
         self._retired = False
         self._settled = threading.Event()  # set once _die has reaped
 
@@ -472,12 +479,15 @@ class RemoteSessionWorker:
     def _stalled_after_answer(self, reason: str) -> NoReturn:
         """The host answered the handshake, then the deadline passed.
 
-        A live channel proves reachability, so this is never transport-class
-        (ADR-181, R8). When the deadline was the call's own budget (a slow
-        cache-miss upload, a short tool timeout), this call fails as
-        ``OP_TIMEOUT`` and the next call tries a session again. When it was
-        the 30 s cap, the loader is stuck: protocol-class (``reason``),
-        one-shot for the run.
+        A live channel proves reachability, so this is never UNREACHABLE or
+        BLOCKED (ADR-181, R8). When the deadline was the call's own budget
+        (only when budget + grace is under the 30 s cap: a short tool
+        timeout, not the default 300 s budget), this call fails as
+        ``OP_TIMEOUT`` -- raised with ``transport=True`` only so it becomes
+        this call's result -- and the next call tries a session again. At
+        the 30 s cap it is protocol-class (``reason``), one-shot for the
+        run: a stuck loader, or an upload still progressing too slowly to
+        finish (``_write``'s deadline is absolute, not an inactivity window).
         """
         self._kill_and_reap()
         if self._handshake_limit < _HANDSHAKE_TIMEOUT_S:

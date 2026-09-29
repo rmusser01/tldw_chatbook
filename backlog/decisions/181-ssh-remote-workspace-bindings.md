@@ -236,22 +236,29 @@ target is a warm call of about one round trip.
     get that failure; nobody starts again against the same dead host. A
     later call still tries a fresh session.
   - A session handshake is part of its call: it gives up at the call's
-    budget + grace (capped at 30 s). Before the host answers, a silent host
-    is classified like a one-shot handshake (transport-class). Once the host
+    remaining budget + grace, capped at 30 s. Both Console callers build
+    their executors with the default 300 s tool budget, so in practice the
+    30 s cap is the deadline. Before the host answers, a silent host is
+    classified like a one-shot handshake (transport-class). Once the host
     has answered (NEED or READY), the deadline is never transport-class
-    (TASK-33420): running out of the call's budget (a slow link or a short
-    tool timeout during a cache-miss bundle upload, or a READY that never
-    comes) fails only that call as `OP_TIMEOUT` (status-preserving), is not
-    shared with callers queued behind the start, and the next call tries a
-    session again; reaching the 30 s cap means a stuck loader and is
-    protocol-class (one-shot for the run). An ssh exit after the answer is
-    still classified by its exit code, like any natural death. Trade-off:
-    callers queued behind a start that ran out of budget each run their own
-    start in turn with their full budget, so the k-th waits up to about
-    (k+1) × (budget + grace), and that queue is bounded by
-    `max_concurrent_calls`; handing a waiter only its remaining budget
-    would push a nearly spent one into a pre-answer stall (UNREACHABLE, so
-    BLOCKED), which is worse.
+    (TASK-33420). At the 30 s cap the start is protocol-class: the binding
+    status is unchanged and the run falls back to one-shot calls. That
+    catches a stuck loader, and equally a cache-miss bundle upload still
+    making progress slower than about 2.5 KB/s (74,233 B against the 30 s):
+    the write deadline is absolute, not an inactivity window. Only when the
+    call's budget + grace is under the 30 s cap (a short budget, not the
+    default) does running out of it (mid-upload, or waiting for a READY
+    that never comes) fail just that call as `OP_TIMEOUT`
+    (status-preserving); that failure is not shared with callers queued
+    behind the start, and the next call tries a session again. An ssh exit
+    after the answer is still classified by its exit code, like any natural
+    death. Trade-off (the budget case only; at the cap the run is one-shot
+    and waiters go one-shot too): callers queued behind a start that ran
+    out of budget each run their own start in turn with their full budget,
+    so the k-th waits up to about (k+1) × (budget + grace), and that queue
+    is bounded by `max_concurrent_calls`; handing a waiter only its
+    remaining budget would push a nearly spent one into a pre-answer stall
+    (UNREACHABLE, so BLOCKED), which is worse.
   - A mux failure (`MUX_ERROR`) at session start runs that call one-shot
     over the restarted master and fails nothing; the next call tries a
     session again. A second one in the same run switches the binding to
