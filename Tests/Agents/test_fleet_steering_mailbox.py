@@ -882,6 +882,7 @@ def db(tmp_path):
     return AgentRunsDB(tmp_path / "runs.db", client_id="test")
 
 
+@pytest.mark.bootstrap_profile
 def test_fleet_child_drain_is_wired_to_its_own_coordinator_mailbox(db):
     """End-to-end: a post to the child's handle reaches the child's NEXT
     provider payload as the labeled user-role message, at the boundary."""
@@ -936,6 +937,7 @@ def test_fleet_child_drain_is_wired_to_its_own_coordinator_mailbox(db):
         ]
 
 
+@pytest.mark.bootstrap_profile
 def test_only_the_threaded_fleet_child_is_wired_for_drain(db, monkeypatch):
     """The primary's LoopDeps.drain_mailbox is None; the fleet child's is
     the service-built closure."""
@@ -983,6 +985,7 @@ def test_only_the_threaded_fleet_child_is_wired_for_drain(db, monkeypatch):
     assert primary_drains[0] is not child_drains[0]
 
 
+@pytest.mark.bootstrap_profile
 def test_inline_children_and_their_primary_stay_unwired(db, monkeypatch):
     """CHARACTERIZATION PIN (not a red -- current behavior is already
     correct): the inline path has no handle and so no mailbox; wiring a

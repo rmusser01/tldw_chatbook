@@ -214,6 +214,7 @@ def test_exact_result_cap_keeps_first_report_on_refusal():
     _, inbox, sender, reader = setup_queue()
     sender.send("first\t\n" + "🦉" * 50)
     envelope = dataclasses.asdict(inbox.snapshot()[0])
+    envelope.pop("created_at")  # Durable timestamp is not provider context.
     source = envelope.pop("identity")
     expected = json.dumps(
         {"status": "collected", "messages": [{**envelope, **source}], "remaining": 0},
@@ -223,7 +224,10 @@ def test_exact_result_cap_keeps_first_report_on_refusal():
     )
     assert_refusal("result_limit_too_small", lambda: reader.collect(len(expected) - 1))
     assert reader.pending_count() == 1
-    assert len(reader.collect(len(expected)).content) == len(expected)
+    result = reader.collect(len(expected)).content
+    assert len(result) == len(expected)
+    assert json.loads(result) == json.loads(expected)
+    assert "created_at" not in json.loads(result)["messages"][0]
 
 
 def test_result_cap_reserves_accurate_remaining_and_never_truncates():
@@ -408,3 +412,46 @@ def test_closed_sender_is_not_retained_by_admitted_reports():
     gc.collect()
     assert ref() is None
     assert inbox.snapshot()[0].body == "independent of lifetime accounting"
+
+
+def test_two_phase_close_revokes_immediately_and_cannot_remove_replacement():
+    store, inbox, sender, reader = setup_queue()
+    sender.send("retained until physical close")
+    with store._lock:
+        exact = store.begin_close_inbox("conversation-a")
+        assert exact is inbox
+        assert store.get_inbox("conversation-a") is None
+        assert store.pending_counts() == {}
+    for operation in (lambda: sender.send("late"), reader.collect, inbox.snapshot):
+        with pytest.raises(MessageError, match="unavailable"):
+            operation()
+    with pytest.raises(MessageError, match="unavailable"):
+        store.open_inbox("conversation-a")
+    store.finish_close_inbox("conversation-a", exact)
+    replacement = store.open_inbox("conversation-a")
+    replacement.sender(MessageIdentity("new", "new-run", "parent", None, "new")).send(
+        "new"
+    )
+    store.finish_close_inbox("conversation-a", exact)
+    store.finish_close_inbox("conversation-a", None)
+    assert store.get_inbox("conversation-a") is replacement
+    assert replacement.snapshot()[0].body == "new"
+
+
+def test_begin_store_close_revokes_all_capabilities_without_waiting_for_writer():
+    store, inbox, sender, reader = setup_queue()
+    sender.send("retained")
+    with store._lock:
+        store.begin_close()
+        assert store.pending_counts() == {}
+        assert store.get_inbox("conversation-a") is None
+    for operation in (
+        lambda: sender.send("late"),
+        reader.collect,
+        inbox.snapshot,
+        lambda: store.open_inbox("new-owner"),
+    ):
+        with pytest.raises(MessageError, match="unavailable"):
+            operation()
+    store.close()
+    assert store._pending_count == store._pending_chars == 0

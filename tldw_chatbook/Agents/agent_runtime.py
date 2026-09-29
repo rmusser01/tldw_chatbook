@@ -38,7 +38,13 @@ from tldw_chatbook.model_capabilities import (
 # retry/fallback/projection helpers are loop-only dependencies, imported
 # at the top of `run_agent_loop`; `FallbackRuntime` appears here only as
 # a string annotation on `LoopDeps.fallback`.
-from .agent_models import MESSAGE_TOOL_NAMES, READ_AGENT_MESSAGES_TOOL_NAME, REPORT_TO_SUPERVISOR_TOOL_NAME
+from .agent_models import (
+    LIST_PEER_AGENTS_TOOL_NAME,
+    MESSAGE_TOOL_NAMES,
+    READ_AGENT_MESSAGES_TOOL_NAME,
+    REPORT_TO_SUPERVISOR_TOOL_NAME,
+    SEND_TO_PEER_TOOL_NAME,
+)
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
     PluginContextText,
@@ -669,6 +675,8 @@ class LoopDeps:
     # Ephemeral display copy; never changes durable trace payloads (ADR-195).
     # Append to preserve the positional constructor slots above.
     on_tool_activity: Callable[[AgentStep], None] | None = None
+    list_peer_agents: Callable[[dict], ToolResult] | None = None
+    send_to_peer: Callable[[dict], ToolResult] | None = None
 
 def _continuation_calls_match(
     checkpoint: ProviderContinuationCheckpoint,
@@ -1103,6 +1111,7 @@ def run_agent_loop(
     """
     # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
     from .fallback_chain import is_credit_terminal
+    from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
     from .history_projection import ProjectionError, project_history_for_protocol
     from .model_retry import (
         RetryPolicy,
@@ -1141,6 +1150,8 @@ def run_agent_loop(
         list(deps.fallback.candidates) if deps.fallback is not None else []
     )
     active_provider = config.provider or "unknown"
+    if deps.fallback is not None and deps.fallback.pre_tool_only:
+        active_provider = f"{active_provider}/{config.model}"
     budget_warning_delivered = False
     #: TASK-25901: transient-failure retries used so far in THIS run. Counted
     #: per run rather than per turn: a provider failing every turn is a failing
@@ -1153,6 +1164,7 @@ def run_agent_loop(
     consecutive_denials = 0
     spawned = 0
     model_turns = 0
+    tool_activity_proposed = False
     total_tokens = 0
     budget_steps = 0
     trace_steps = 0
@@ -1771,16 +1783,26 @@ def run_agent_loop(
                         )
                         add(
                             STEP_STEERING,
-                            summary=steer_message[:200],
+                            summary=(
+                                "Consumed " + steer_source
+                                if steer_source.startswith("peer:")
+                                else steer_message[:200]
+                            ),
                             parent_event_id=source_event_id,
                             source_event_id=source_event_id,
                         )
                         _emit_record(
                             deps,
                             "steering",
-                            content=steer_message,
+                            content=(
+                                steer_source
+                                if steer_source.startswith("peer:")
+                                else steer_message
+                            ),
                             tool="",
-                            status=steer_source,
+                            status=(
+                                "consumed" if steer_source.startswith("peer:") else steer_source
+                            ),
                             call_id="",
                         )
                 except Exception:  # noqa: BLE001 — containment, like on_step
@@ -1835,6 +1857,8 @@ def run_agent_loop(
                     context_injected_step.index if context_injected_step else None
                 ),
             )
+            if deps.fallback is not None and deps.fallback.pre_tool_only:
+                model_turns += 1
             try:
                 turn = (
                     active_call_model_with_continuation(
@@ -1846,6 +1870,8 @@ def run_agent_loop(
                     else active_call_model(messages, tuple(active))
                 )
             except Exception as exc:
+                if deps.fallback is not None and deps.fallback.pre_tool_only and deps.should_cancel():
+                    return _outcome(RUN_CANCELLED)
                 # TASK-25901: a transient provider failure used to discard the
                 # whole run along with every tool result already in it. Retry
                 # in place -- deliberately NOT by rebuilding LoopDeps, which
@@ -1895,20 +1921,24 @@ def run_agent_loop(
                     deps.fallback is not None
                     and fallback_candidates
                     and continuation_checkpoint is None
+                    and not deps.should_cancel()
+                    and (not deps.fallback.pre_tool_only or not tool_activity_proposed)
                     and (
-                        is_credit_terminal(exc)
-                        or is_transient_model_error(exc)
+                        is_transient_model_error(exc)
+                        or (deps.fallback.pre_tool_only and isinstance(exc, ChatModelUnavailableError))
+                        or (not deps.fallback.pre_tool_only and is_credit_terminal(exc))
                     )
                 ):
                     switched = False
                     while fallback_candidates:
                         candidate = fallback_candidates.pop(0)
+                        candidate_name = f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
                         if not candidate.ready:
                             trace(
                                 STEP_MODEL_ERROR,
                                 summary=(
                                     f"Provider fallback skipped: "
-                                    f"{candidate.provider} "
+                                    f"{candidate_name} "
                                     f"({candidate.skip_reason})"
                                 ),
                                 status="failed",
@@ -1935,7 +1965,9 @@ def run_agent_loop(
                                 parent_step_index=model_request_step.index,
                             )
                             continue
-                        new_call = deps.fallback.build(candidate.provider)
+                        new_call = deps.fallback.build(
+                            candidate if deps.fallback.pre_tool_only else candidate.provider
+                        )
                         if new_call is None:
                             # Review M-1: the only silent skip in the chain
                             # walk -- trace it like the unready skip, or a
@@ -1958,6 +1990,8 @@ def run_agent_loop(
                         # and every step index stay valid; in-place so the
                         # projection becomes the run's canonical history
                         # (decision 4 -- the run now IS the new protocol).
+                        if deps.fallback.select is not None:
+                            deps.fallback.select(candidate)
                         messages[:] = projected
                         active_call_model = new_call
                         active_call_model_with_continuation = new_call
@@ -1965,7 +1999,7 @@ def run_agent_loop(
                             STEP_MODEL_ERROR,
                             summary=(
                                 f"Provider fallback: {active_provider} -> "
-                                f"{candidate.provider} "
+                                f"{candidate_name} "
                                 f"(after {type(exc).__name__})"
                             ),
                             status="failed",
@@ -1973,7 +2007,7 @@ def run_agent_loop(
                             sensitivity="diagnostic",
                             parent_step_index=model_request_step.index,
                         )
-                        active_provider = candidate.provider
+                        active_provider = candidate_name
                         switched = True
                         break
                     if switched:
@@ -1995,7 +2029,8 @@ def run_agent_loop(
                 sensitivity="diagnostic",
                 parent_step_index=model_request_step.index,
             )
-            model_turns += 1
+            if deps.fallback is None or not deps.fallback.pre_tool_only:
+                model_turns += 1
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)
             if calls:
@@ -2011,6 +2046,7 @@ def run_agent_loop(
                 # with_preamble_rationale).
                 calls = list(with_preamble_rationale([fenced], _visible))
         if calls:
+            tool_activity_proposed = True
             # A tool call is content: it resets the empty streak even when the
             # turn carried no text, which is the ordinary shape of a model
             # deciding to call a tool (TASK-26002 AC#5). Sits AFTER the fence
@@ -2097,16 +2133,26 @@ def run_agent_loop(
                     )
                     add(
                         STEP_STEERING,
-                        summary=content[:200],
+                        summary=(
+                            "Consumed " + steer_source
+                            if steer_source.startswith("peer:")
+                            else content[:200]
+                        ),
                         parent_event_id=source_event_id,
                         source_event_id=source_event_id,
                     )
                     _emit_record(
                         deps,
                         "steering",
-                        content=content,
+                        content=(
+                            steer_source
+                            if steer_source.startswith("peer:")
+                            else content
+                        ),
                         tool="",
-                        status=steer_source,
+                        status=(
+                            "consumed" if steer_source.startswith("peer:") else steer_source
+                        ),
                         call_id="",
                     )
                 continue
@@ -2251,6 +2297,8 @@ def run_agent_loop(
                 )
                 model_log_content = safe_tool_summary
                 model_step_summary = safe_tool_summary
+            if any(call.name in MESSAGE_TOOL_NAMES for call in calls):
+                model_log_content = "progress_tool_call"
             add(
                 STEP_MODEL,
                 summary=(
@@ -2974,16 +3022,13 @@ def run_agent_loop(
                     from .fleet_message_tools import refused
 
                     add(STEP_TOOL_CALL, tool_name=call.name, args=call.args)
-                    callback = (
-                        deps.report_to_supervisor
-                        if call.name == REPORT_TO_SUPERVISOR_TOOL_NAME
-                        else deps.read_agent_messages
-                    )
-                    result = (
-                        callback(call.args)
-                        if callback is not None
-                        else replace(refused(), dispatch_state="not_started")
-                    )
+                    callback = {
+                        REPORT_TO_SUPERVISOR_TOOL_NAME: deps.report_to_supervisor,
+                        READ_AGENT_MESSAGES_TOOL_NAME: deps.read_agent_messages,
+                        LIST_PEER_AGENTS_TOOL_NAME: deps.list_peer_agents,
+                        SEND_TO_PEER_TOOL_NAME: deps.send_to_peer,
+                    }.get(call.name)
+                    result = callback(call.args) if callback is not None else replace(refused(), dispatch_state="not_started")
                 elif (
                     call.name == SEND_TO_AGENT_TOOL_NAME and deps.send_to_agent is None
                 ):

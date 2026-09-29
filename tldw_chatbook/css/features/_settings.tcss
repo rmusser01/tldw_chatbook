@@ -518,7 +518,8 @@ Button.settings-category-group-toggle:focus {
 
 /* TextArea's border consumes two rows. Keep at least one painted content row
    when the preset row joins this scrollable form. */
-#agents-instructions-area {
+#agents-instructions-area,
+#agents-fallback-models-area {
     height: $ds-size-5;
     min-height: $ds-size-3;
 }

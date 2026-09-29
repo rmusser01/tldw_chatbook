@@ -9203,6 +9203,7 @@ async def test_auxiliary_adapter_transport_failure_keeps_bounded_category(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outage() -> (
     None
 ):

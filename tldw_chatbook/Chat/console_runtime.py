@@ -1061,6 +1061,7 @@ class ConsoleRuntime:
         self._canvas_maintenance_closed = False
         self._canvas_maintenance_generation = 0
         self._canvas_policy_cleanups: set[asyncio.Task[None]] = set()
+        self._progress_cleanup_tasks: set[asyncio.Task[Any]] = set()
         self._canvas_settlement_listener = self._forward_canvas_settlement
         if canvas_enabled_reader is None:
             from tldw_chatbook.config import get_canvas_execution_enabled
@@ -1733,10 +1734,34 @@ class ConsoleRuntime:
                 self._get_execution_capacity, existing_capacity=existing_capacity
             )
         if self._agent_bridge is not value:
-            close_progress = getattr(self._agent_bridge, "close_all_progress", None)
-            if callable(close_progress):
-                close_progress()
+            self._begin_progress_cleanup(self._agent_bridge)
         self._agent_bridge = value
+
+    def _begin_progress_cleanup(self, bridge: Any) -> asyncio.Task[Any] | None:
+        """Revoke immediately and retain only the old bridge's physical close leaf."""
+        begin_close = getattr(bridge, "begin_close_all_progress", None)
+        wait_close = getattr(bridge, "await_all_progress_closed", None)
+        if callable(begin_close) and callable(wait_close):
+            begin_close()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Constructor/CLI compatibility has no GUI loop to keep responsive.
+                bridge.close_all_progress()
+                return None
+            task = loop.create_task(wait_close(), name="console-retired-progress-close")
+            self._progress_cleanup_tasks.add(task)
+
+            def settled(done: asyncio.Task[Any]) -> None:
+                self._progress_cleanup_tasks.discard(done)
+                self._consume_task_outcome(done)
+
+            task.add_done_callback(settled)
+            return task
+        close_progress = getattr(bridge, "close_all_progress", None)
+        if callable(close_progress):
+            close_progress()
+        return None
 
     def set_chat_controller(self, value: Any) -> None:
         """Replace the chat-controller handle."""
@@ -4736,14 +4761,24 @@ class ConsoleRuntime:
             tasks.update(snapshot_tasks(session_id))
 
         bridge = self._agent_bridge
-        await_fleet = getattr(bridge, "await_fleet_terminal", None)
-        fleet_waiter: asyncio.Task[Any] | None = None
-        if callable(await_fleet):
-            fleet_waiter = asyncio.create_task(
-                await_fleet(ticket.conversation_id),
-                name=f"console-close-fleet-{ticket.close_id[:8]}",
+        await_progress = getattr(bridge, "await_progress_closed", None)
+        if callable(await_progress):
+            tasks.add(
+                asyncio.create_task(
+                    await_progress(session_id),
+                    name=f"console-close-progress-{ticket.close_id[:8]}",
+                )
             )
-            tasks.add(fleet_waiter)
+        await_fleet = getattr(bridge, "await_fleet_terminal", None)
+        fleet_waiters: list[asyncio.Task[Any]] = []
+        if callable(await_fleet):
+            for conversation_id in dict.fromkeys((session_id, ticket.conversation_id)):
+                waiter = asyncio.create_task(
+                    await_fleet(conversation_id),
+                    name=f"console-close-fleet-{ticket.close_id[:8]}",
+                )
+                fleet_waiters.append(waiter)
+                tasks.add(waiter)
 
         # Once the controller issues a close ticket the operation is
         # irreversible: queue/wake/fleet admission is already terminally
@@ -4765,14 +4800,13 @@ class ConsoleRuntime:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))
-        fleet_drain_succeeded = not fleet_fenced and fleet_waiter is None
-        if (
-            fleet_waiter is not None
-            and fleet_waiter.done()
-            and not fleet_waiter.cancelled()
-        ):
+        fleet_drain_succeeded = not fleet_fenced and not fleet_waiters
+        if fleet_waiters:
             try:
-                fleet_drain_succeeded = bool(fleet_waiter.result())
+                fleet_drain_succeeded = all(
+                    waiter.done() and not waiter.cancelled() and bool(waiter.result())
+                    for waiter in fleet_waiters
+                )
             except Exception:  # noqa: BLE001 -- unknown drain stays fenced
                 fleet_drain_succeeded = False
         for turn_id, record in tuple(self._turn_custody.items()):
@@ -4853,11 +4887,9 @@ class ConsoleRuntime:
                             conversation_id = conversation_id_for_session(session_id)
                         except Exception:
                             pass
-                    if fence_fleet(
-                        conversation_id,
-                        generation=provisional_generation,
-                    ):
-                        acquired_fences.append(conversation_id)
+                    for causal_id in dict.fromkeys((session_id, conversation_id)):
+                        if fence_fleet(causal_id, generation=provisional_generation):
+                            acquired_fences.append(causal_id)
             # Reservation observers publish before the fleet fence can take
             # the coordinator lock. Rechecking here closes the dialog-to-
             # shutdown race while the provisional fence prevents another
@@ -4890,6 +4922,11 @@ class ConsoleRuntime:
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         self._admission_fenced_sessions.update(session_ids)
+        begin_progress_close = getattr(
+            self._agent_bridge, "begin_close_all_progress", None
+        )
+        if callable(begin_progress_close):
+            begin_progress_close()
         for turn_id in tuple(self._turn_recoveries):
             self.discard_turn_recovery(turn_id)
         begin_shutdown = getattr(controller, "begin_shutdown", None)
@@ -4961,6 +4998,11 @@ class ConsoleRuntime:
                 self._disposed = True
                 self._canvas_native_view_binding = None
         self._seal_hooks_v2()
+        begin_progress_close = getattr(
+            self._agent_bridge, "begin_close_all_progress", None
+        )
+        if callable(begin_progress_close):
+            begin_progress_close()
         with self._run_hooks_lock:
             engine = self.run_hooks_engine
             if self._hook_permissions is not None:
@@ -5004,9 +5046,7 @@ class ConsoleRuntime:
         for decision in dispatch_decisions:
             self.resolve_project_instruction_dispatch(decision.decision_id, "cancel")
         self._scratch_spaces.tombstone_all()
-        close_progress = getattr(self._agent_bridge, "close_all_progress", None)
-        if callable(close_progress):
-            close_progress()
+        self._begin_progress_cleanup(self._agent_bridge)
         with self._execution_capacity_lock:
             if self._execution_capacity is not None:
                 self._execution_capacity.close()
@@ -5057,7 +5097,7 @@ class ConsoleRuntime:
         )
         session_ids = {str(session.id) for session in sessions}
         self._admission_fenced_sessions.update(session_ids)
-        conversation_ids: set[str] = set()
+        conversation_ids: set[str] = set(session_ids)
         conversation_id_for_session = getattr(
             controller,
             "conversation_id_for_session",
@@ -5079,7 +5119,8 @@ class ConsoleRuntime:
             except Exception:
                 logger.warning("Console runtime: shutdown fence failed at dispose.")
 
-        drain_tasks: set[asyncio.Future[Any]] = set()
+        progress_cleanups = set(self._progress_cleanup_tasks)
+        drain_tasks: set[asyncio.Future[Any]] = set(progress_cleanups)
         voice_cleanup = None
         if self._voice_worker is not None or self._voice_process_supervisor is not None:
 
@@ -5139,14 +5180,21 @@ class ConsoleRuntime:
                         name="console-dispose-controller",
                     )
                 )
-        pending = await self._bounded_wait(
-            drain_tasks,
-            timeout_seconds=remaining_seconds(),
+        drain = asyncio.create_task(
+            self._bounded_wait(drain_tasks, timeout_seconds=remaining_seconds()),
+            name="console-dispose-drain",
         )
+        cancel_requested = False
+        while True:
+            try:
+                pending = await asyncio.shield(drain)
+                break
+            except asyncio.CancelledError:
+                cancel_requested = True
         if voice_cleanup in pending:
             logger.warning("Console runtime: voice cleanup remains pending at dispose.")
         for task in pending:
-            if task is voice_cleanup:
+            if task is voice_cleanup or task in progress_cleanups:
                 continue
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
@@ -5154,6 +5202,15 @@ class ConsoleRuntime:
             # The child budget cannot end UI-owned provider/TTS/claimed work.
             # Keep its original owner loop and store until actual custody settles.
             await asyncio.shield(voice_cleanup)
+        # An admitted SQL leaf outlives the grace budget; keep its exact owner
+        # until it physically releases the lock before downstream disposal.
+        for task in progress_cleanups:
+            while True:
+                try:
+                    await asyncio.shield(task)
+                    break
+                except asyncio.CancelledError:
+                    cancel_requested = True
         await self.close_hooks_v2()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)
@@ -5251,7 +5308,7 @@ class ConsoleRuntime:
         for task in cleanup_pending:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
-        if asyncio.current_task().cancelling():
+        if cancel_requested or asyncio.current_task().cancelling():
             raise asyncio.CancelledError
 
 

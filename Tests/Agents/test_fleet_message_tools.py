@@ -24,6 +24,7 @@ READ = "read_agent_messages"
 SECRET = "private finding: format is JSONL"
 
 
+@pytest.mark.bootstrap_profile
 def test_child_reports_primary_collects_and_explicitly_relays(tmp_path, monkeypatch):
     from Tests.Agents.conftest import pin_agent_settings
 
@@ -231,6 +232,7 @@ def test_mixed_repeated_reader_calls_cannot_claim_progress_in_text(trusted):
 
 
 @pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.bootstrap_profile
 def test_toolless_primary_only_reads_an_existing_inbox(tmp_path, existing):
     from tldw_chatbook.Agents.fleet_messages import MessageIdentity
 
@@ -389,6 +391,7 @@ def test_message_runtime_schemas_are_exact_and_catalog_cannot_disclose_forged_na
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_first_request_plan_matches_live_native_fleet_disclosure(tmp_path, monkeypatch):
     from Tests.Agents.conftest import pin_agent_settings
     from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolSchema

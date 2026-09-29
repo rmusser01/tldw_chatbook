@@ -319,7 +319,7 @@ async def test_console_progress_navigation_pruned_access_and_actual_paint(
         modal.query_one(SelectionList).select(inbox.snapshot()[0].message_id)
         await pilot.pause()
         paint = _compositor_text(host.export_screenshot())
-        assert "Queued progress (this session)" in paint
+        assert "Queued progress" in paint
         assert "Sample report:" in paint
         assert "Discard selected (1)" in paint
         host.save_screenshot(

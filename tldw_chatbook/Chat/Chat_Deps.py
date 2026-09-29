@@ -113,4 +113,59 @@ class ChatProviderError(ChatAPIError):
         super().__init__(message, status_code=status_code, provider=provider)
 
 
+class ChatModelUnavailableError(ChatProviderError):
+    """Provider explicitly classified this model as unavailable."""
+
+    def __init__(
+        self,
+        message="The requested model is unavailable.",
+        provider=None,
+        status_code=404,
+    ):
+        super().__init__(message, status_code=status_code, provider=provider)
+
+
+def project_provider_error(exc: BaseException, provider: str) -> ChatAPIError | None:
+    """Preserve known retry semantics with content-free diagnostic bodies."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(exc, ChatModelUnavailableError):
+        return ChatModelUnavailableError(provider=provider, status_code=status)
+    if isinstance(exc, ChatAuthenticationError):
+        return ChatAuthenticationError(provider=provider)
+    if isinstance(exc, ChatBadRequestError):
+        return ChatBadRequestError(provider=provider, status_code=status)
+    if isinstance(exc, ChatConfigurationError):
+        return ChatConfigurationError(provider=provider, status_code=status)
+    if isinstance(exc, ChatRateLimitError):
+        return ChatRateLimitError(provider=provider, retry_after=exc.retry_after)
+    return None
+
+
+def model_unavailable_error(provider: str, status: int, payload: object):
+    """Map documented machine codes only; status and prose never suffice."""
+    if status not in {400, 404} or not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    # The OpenAI-compatible model_not_found code is explicit. Providers with
+    # ambiguous not_found_error envelopes remain terminal until a distinct
+    # machine-code contract is available.
+    if (
+        str(provider).lower()
+        in {
+            "openai",
+            "groq",
+            "deepseek",
+            "moonshot",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "custom-hosted",
+        }
+        and error.get("code") == "model_not_found"
+    ):
+        return ChatModelUnavailableError(provider=provider, status_code=status)
+    return None
+
+
 # ---------------- End of Exceptions ----------------------------
