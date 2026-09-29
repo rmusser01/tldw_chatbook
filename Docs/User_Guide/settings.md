@@ -482,12 +482,12 @@ a real reply fails with a protocol error instead of being passed through.
 If that happens, please report the provider and the error.
 
 Function tools are exposed for the models that support them. Reasoning
-differs by provider: Together and Cerebras have no reasoning-effort control,
-while **Fireworks keeps R1-family model reasoning private** — the server
-reasons behind its own API surface and does not stream it with the reply, so
-reasoning does not appear in transcripts (any `reasoning_content` the server
-does return gets Z.ai's private treatment: kept off the live stream). That is
-provider behavior, not the app dropping output. **NVIDIA NIM**, **Nebius**,
+differs by provider. Most of these presets take no reasoning-effort setting,
+so Console hides that control for them rather than offering a level the
+request would refuse (NVIDIA's Qwen3.5 models are the exception, below).
+**Fireworks** returns reasoning in a separate field that Chatbook keeps
+private: it stays off the live stream and out of transcripts, and is sent
+back on tool turns as Fireworks requires. **NVIDIA NIM**, **Nebius**,
 **Novita**, and **MiniMax** reasoning models get the same private treatment;
 Novita and MiniMax are asked to return reasoning separately so it never
 leaks into the reply text as `<think>` tags. **SambaNova** documents reasoning
@@ -498,6 +498,16 @@ form out of the reply text.
 **NVIDIA NIM** streams do not report token usage, so streamed NVIDIA replies
 show no token counts. Nebius and MiniMax treat a `content_filter` finish as
 a provider error rather than a partial reply.
+
+**NVIDIA NIM's Qwen3.5 models think on every turn by default.** Set
+**Reasoning effort** to **None** to turn thinking off; any other level leaves
+it on, because NVIDIA offers on/off rather than levels. Other NVIDIA models
+take no reasoning setting.
+
+If a reasoning model spends its whole **Max tokens** budget thinking, the
+turn stops before any reply and the error says the max-tokens limit was
+reached. Raise **Max tokens** and send again; the request is not retried
+automatically, because it would stop the same way.
 
 GitHub Models and Hyperbolic are not offered: both services retired their
 hosted inference APIs in 2026.
