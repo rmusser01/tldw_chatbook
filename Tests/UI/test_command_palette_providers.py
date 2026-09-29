@@ -11,6 +11,7 @@
 import time
 from types import SimpleNamespace
 
+from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 
 import pytest
@@ -211,7 +212,7 @@ class TestThemeProvider:
         self, theme_provider
     ):
         """Test that search shows specific themes when theme keywords are used."""
-        with patch("tldw_chatbook.app.ALL_THEMES", []):  # Mock empty themes list
+        with patch_app_global("ALL_THEMES", []):  # Mock empty themes list
             hits = []
             async for hit in theme_provider.search("theme dark"):
                 hits.append(hit)

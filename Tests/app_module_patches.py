@@ -29,13 +29,20 @@ from unittest.mock import DEFAULT, patch
 
 import pytest
 
-#: The app module first, then each extracted module that shares its reads.
+#: The app module first, then each extracted module that shares its reads. The
+#: eager extractions (mixins and the palette providers, loaded with app.py anyway)
+#: are all listed. Of the lazy ones only ``app_speech`` is: its moved bodies share
+#: names with app.py that tests patch. ``app_entry`` and ``app_destinations`` stay
+#: out -- listing them would import them for every ``load_settings`` patch, and a
+#: patch of a name only THEY read is still caught by the guard's moved-only rule.
 APP_GLOBAL_MODULES: tuple[str, ...] = (
     "tldw_chatbook.app",
+    "tldw_chatbook.app_ingest_queue",
     "tldw_chatbook.app_service_wiring",
     "tldw_chatbook.app_speech",
     "tldw_chatbook.app_lifecycle",
     "tldw_chatbook.app_navigation",
+    "tldw_chatbook.app_command_providers",
 )
 
 
