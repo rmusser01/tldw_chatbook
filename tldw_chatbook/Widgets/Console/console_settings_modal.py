@@ -163,7 +163,10 @@ from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPicke
 # edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_summary import build_console_readiness_presentation
-from .console_settings_unsaved import ConsoleSettingsUnsavedGuardMixin
+from .console_settings_unsaved import (
+    ConsoleSettingsUnsavedGuardMixin,
+    snapshot_unsaved_baseline,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Utils.token_counter import ContextWindowResolution
@@ -577,6 +580,9 @@ class ConsoleSettingsDraftSnapshot:
     scroll_anchor: int
     focus_control_id: str | None
     disclosure_state: Mapping[str, bool]
+    # The first modal's unsaved-edits baseline (TASK-33003.5); optional
+    # because a draft captured before the modal's initial sync has none.
+    unsaved_baseline: Mapping[str, object] | None = None
 
     def __repr__(self) -> str:
         """Return diagnostic metadata without exposing Console-owned content."""
@@ -662,6 +668,9 @@ class ConsoleSettingsDraftSnapshot:
         object.__setattr__(self, "provider_model_drafts", model_drafts)
         object.__setattr__(self, "provider_base_url_drafts", base_url_drafts)
         object.__setattr__(self, "disclosure_state", disclosure_state)
+        object.__setattr__(
+            self, "unsaved_baseline", snapshot_unsaved_baseline(self.unsaved_baseline)
+        )
 
     def to_mapping(self) -> dict[str, object]:
         """Return a structurally detached primitive mapping for screen state."""
@@ -679,6 +688,7 @@ class ConsoleSettingsDraftSnapshot:
             "scroll_anchor": self.scroll_anchor,
             "focus_control_id": self.focus_control_id,
             "disclosure_state": dict(self.disclosure_state),
+            "unsaved_baseline": snapshot_unsaved_baseline(self.unsaved_baseline),
         }
 
     @classmethod
@@ -698,7 +708,9 @@ class ConsoleSettingsDraftSnapshot:
             "focus_control_id",
             "disclosure_state",
         }
-        if not isinstance(source, Mapping) or set(source) != required_keys:
+        if not isinstance(source, Mapping) or (
+            set(source) - {"unsaved_baseline"} != required_keys
+        ):
             return None
         if (
             type(source.get("version")) is not int
@@ -739,6 +751,7 @@ class ConsoleSettingsDraftSnapshot:
                 scroll_anchor=source["scroll_anchor"],  # type: ignore[arg-type]
                 focus_control_id=source["focus_control_id"],  # type: ignore[arg-type]
                 disclosure_state=dict(disclosure_state),
+                unsaved_baseline=source.get("unsaved_baseline"),
             )
         except (ContextPolicyError, TypeError, ValueError):
             return None
@@ -2612,7 +2625,6 @@ class ConsoleSettingsModal(
         self.call_after_refresh(self._reveal_default_feedback)
         self.call_after_refresh(self._finish_initial_control_sync)
         if self._suspended_draft is not None:
-            self._record_suspended_opened_values()
             self._restore_suspended_draft(self._suspended_draft)
         elif self._default_recovery_layout_phase is None:
             if self._focus_model:
@@ -3002,6 +3014,7 @@ class ConsoleSettingsModal(
                     getattr(self, "_connection_details_disclosed", False)
                 ),
             },
+            unsaved_baseline=self._unsaved_baseline,
         )
 
     def _context_state_with_overrides(

@@ -45,7 +45,10 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsDraftSnapshot,
+    ConsoleSettingsModal,
+)
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
     chat_settings_values,
     esc_hint_copy,
@@ -53,6 +56,7 @@ from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
     unsaved_labels,
     unsaved_prompt_copy,
 )
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
 _PROMPT_KEYS = "Enter apply · d discard · Esc keep editing"
 
@@ -165,6 +169,41 @@ def test_unsaved_labels_follow_effective_values_and_carried_edits() -> None:
     assert "d discard · Esc keep editing" in blocked
 
 
+def test_snapshot_carries_the_unsaved_baseline_and_refuses_a_malformed_one() -> None:
+    """The suspended draft keeps the first modal's baseline, fail-closed."""
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={},
+        provider_model_drafts={},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    mapping = snapshot.to_mapping()
+    # A draft captured before the modal's initial sync carries no baseline.
+    legacy = {key: value for key, value in mapping.items() if key != "unsaved_baseline"}
+    assert ConsoleSettingsDraftSnapshot.from_mapping(legacy).unsaved_baseline is None
+    for baseline in (
+        chat_settings_values(settings, ConsoleContextPolicyOverrides(), "Ada"),
+        chat_settings_values(settings, None, None),
+    ):
+        restored = ConsoleSettingsDraftSnapshot.from_mapping(
+            dict(mapping, unsaved_baseline=baseline)
+        )
+        assert restored is not None and restored.unsaved_baseline == baseline
+    for malformed in ({"Not a field": 1}, {"Model": object()}, ["Model"]):
+        assert (
+            ConsoleSettingsDraftSnapshot.from_mapping(
+                dict(mapping, unsaved_baseline=malformed)
+            )
+            is None
+        )
+
+
 @pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
 @pytest.mark.asyncio
 async def test_edited_draft_asks_before_each_close_gesture(source: str) -> None:
@@ -246,46 +285,71 @@ async def test_unedited_draft_closes_immediately(source: str) -> None:
         assert app.screen is not modal
 
 
-@pytest.mark.parametrize("edited", [True, False])
+async def _round_trip_edit(pilot, modal: ConsoleSettingsModal, edit: str) -> None:
+    """Make one edit a credential round-trip must carry as unsaved."""
+    if edit == "temperature":
+        await _edit(pilot, modal, "#console-settings-temperature", "0.9")
+    elif edit == "endpoint":
+        await _edit(pilot, modal, "#console-settings-base-url", "http://127.0.0.1:9100")
+    elif edit == "provider":
+        modal.query_one("#console-settings-provider", Select).value = "openai"
+    elif edit == "model":
+        modal.query_one(ModelSearchPicker).set_model_value("model-b")
+    elif edit == "streaming":
+        modal.query_one("#console-settings-streaming", Button).press()
+    for _ in range(4):
+        await pilot.pause()
+
+
+@pytest.mark.parametrize(
+    ("edit", "label"),
+    [
+        (None, None),
+        ("temperature", "Temperature"),
+        ("provider", "Provider"),
+        ("model", "Model"),
+        ("endpoint", "Endpoint"),
+        ("streaming", "Streaming"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_suspended_draft_round_trip_keeps_its_edits_unsaved(
-    edited: bool,
+    edit: str | None, label: str | None
 ) -> None:
     """A credential round-trip reopens the draft; its edits still ask.
 
-    The snapshot's ``settings`` are the ones the first modal opened with; the
-    edits travel only as raw control values. The committed ``base_url`` is
-    blank and shown as the configured default, which is not an edit either.
+    The snapshot's ``settings`` are the ones the first modal opened with;
+    Provider, Model, Endpoint and Streaming edits are already in the reopened
+    modal's controls when it composes, so only the first modal knows what
+    they were unedited. The committed ``base_url`` is blank and shown as the
+    configured default, which is not an edit either.
     """
     app = _GuardHarness()
     first = _modal()
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, first)
-        if edited:
-            await _edit(pilot, first, "#console-settings-temperature", "0.9")
+        if edit is not None:
+            await _round_trip_edit(pilot, first, edit)
+        labels = first._unsaved_field_labels()
+        assert (label in labels) if label else labels == ()
         snapshot = first.capture_suspended_draft()
         app.pop_screen()
         await pilot.pause()
 
         modal = _modal(suspended_draft=snapshot)
         await _open(app, pilot, modal)
-        assert modal._unsaved_baseline == first._unsaved_baseline
-        assert modal.query_one("#console-settings-temperature", Input).value == (
-            "0.9" if edited else "0.7"
-        )
-        assert _text(modal, "#console-settings-esc-hint") == (
-            "Esc close (asks: 1 unsaved)" if edited else "Esc close"
-        )
+        assert modal._unsaved_field_labels() == labels
+        assert _text(modal, "#console-settings-esc-hint") == esc_hint_copy(len(labels))
         await _gesture(pilot, "cancel")
 
-        if not edited:
+        if not labels:
             assert app.results == [None]
             assert app.screen is not modal
             return
         assert app.results == []
         assert app.screen is modal
         assert _text(modal, "#console-settings-close-message").startswith(
-            "1 unsaved edit to this chat: Temperature."
+            unsaved_prompt_copy(labels).split("\n")[0]
         )
 
 
@@ -588,12 +652,17 @@ async def test_quick_surface_edit_carried_in_asks_then_applies_to_this_chat(
         assert config_path.read_bytes() == config_before
 
 
+@pytest.mark.parametrize("edit", ["temperature", "model"])
 @pytest.mark.asyncio
-async def test_credential_round_trip_keeps_the_restored_edit_unsaved(monkeypatch):
+async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
+    monkeypatch, edit: str
+):
     """Real router: Configure credential -> Settings -> Return keeps the ask.
 
-    The returned modal is rebuilt from the suspended draft; the Temperature
-    edit made before the handoff must still count, and nothing else may.
+    The returned modal is rebuilt from the suspended draft; the edits made
+    before the handoff must still count, and nothing else may. The reopened
+    modal composes Model from the draft, so only the first modal knows its
+    unedited value.
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
@@ -606,7 +675,10 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(monkeypatch
     app.chat_api_model_value = "gpt-5"
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {"openai": {}}
-    app.providers_models = {"openai": ["gpt-5"]}
+    app.providers_models = {"openai": ["gpt-5", "model-b"]}
+    committed = ConsoleSessionSettings(
+        provider="openai", model="gpt-5", temperature=0.7
+    )
 
     async with app.run_test(size=(211, 44)) as pilot:
         console = None
@@ -621,10 +693,7 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(monkeypatch
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.replace_session_settings(
-            session.id,
-            ConsoleSessionSettings(provider="openai", model="gpt-5", temperature=0.7),
-        )
+        store.replace_session_settings(session.id, committed)
         assert await console._open_console_settings() is True
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):
@@ -633,7 +702,9 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(monkeypatch
         first = app.screen
         assert isinstance(first, ConsoleSettingsModal)
         await _settle(pilot, first)
-        await _edit(pilot, first, "#console-settings-temperature", "0.9")
+        await _round_trip_edit(pilot, first, edit)
+        labels = first._unsaved_field_labels()
+        assert labels == (("Temperature",) if edit == "temperature" else ("Model",))
         await pilot.click("#console-settings-configure-credential")
 
         settings = None
@@ -665,15 +736,14 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(monkeypatch
             await pilot.pause(0.05)
         assert returned is not None
         await _settle(pilot, returned)
-        assert returned.query_one("#console-settings-temperature", Input).value == "0.9"
-        assert (
-            _text(returned, "#console-settings-esc-hint")
-            == "Esc close (asks: 1 unsaved)"
+        assert returned._unsaved_field_labels() == labels
+        assert _text(returned, "#console-settings-esc-hint") == esc_hint_copy(
+            len(labels)
         )
         await _gesture(pilot, "cancel")
 
         assert app.screen is returned
         assert _text(returned, "#console-settings-close-message").startswith(
-            "1 unsaved edit to this chat: Temperature."
+            unsaved_prompt_copy(labels).split("\n")[0]
         )
-        assert store.session_settings(session.id).temperature == pytest.approx(0.7)
+        assert store.session_settings(session.id) == committed
