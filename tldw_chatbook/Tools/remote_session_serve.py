@@ -19,7 +19,7 @@ from collections import deque
 from typing import BinaryIO, Callable
 
 from tldw_chatbook.Tools.remote_session_frames import (
-    BUSY, CANCEL, HELLO, LINE, REQUEST, STATUS, FrameError, FrameReader,
+    BUSY, CANCEL, HELLO, HOST_SPAWN_FAILED, LINE, REQUEST, STATUS, FrameError, FrameReader,
     encode_frame, encode_status,
 )
 
@@ -31,6 +31,11 @@ _MAX_IDLE_S = 1_000_000.0
 #: at most this many ``max_request_bytes`` of queued bodies in aggregate.
 _QUEUE_PER_CHILD = 4
 _QUEUE_BYTES_FACTOR = 2
+#: How long the parent holds a still-running child's output before writing
+#: it, so a fast operation's admitted marker, result and STATUS leave in one
+#: write (one ssh packet) instead of two small ones. A slow operation's
+#: marker goes out this much later; nothing else waits. 0 disables it.
+_COALESCE_S = 0.010
 
 
 class _Child:
@@ -88,7 +93,12 @@ def _close_fds_above_2(keep: int) -> None:
 
 def _spawn(raw: bytes, request_id: int, run_request: Callable[[bytes, BinaryIO], int]) -> _Child:
     read_fd, write_fd = os.pipe()
-    pid = os.fork()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
     if pid == 0:  # child
         code = _CHILD_CRASH_EXIT
         try:
@@ -148,7 +158,13 @@ def serve(
     ``max_response_bytes`` is killed and its STATUS still reports the
     kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, a
     value of the wrong type, or a non-finite ``idle_s``) ends the session
-    with exit code 3 rather than raising into the caller. The loop is single-threaded: forking a
+    with exit code 3 rather than raising into the caller. A ``REQUEST``
+    whose fork or pipe the host refuses (process or fd limit) gets
+    ``STATUS`` (``HOST_SPAWN_FAILED``, ``None``) at once; only that
+    request fails, and the session keeps serving. ``LINE`` frames of a
+    still-running child may be held up to ``_COALESCE_S`` so a fast
+    operation's frames leave in one write; ``STATUS`` and ``BUSY`` are
+    always written at once. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -168,9 +184,10 @@ def serve(
         violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
-        OSError: If a low-level file descriptor operation (fork, pipe,
-            read, write) fails for a reason other than the cases already
-            handled above.
+        OSError: If a low-level file descriptor operation (read, write)
+            fails for a reason other than the cases already
+            handled above. A failed fork or pipe while starting a request
+            never raises here; see the ``HOST_SPAWN_FAILED`` case above.
     """
     reader = FrameReader(max_body=max_request_bytes)
     selector = selectors.DefaultSelector()
@@ -182,6 +199,8 @@ def serve(
     max_children, idle_s, hello = 8, 60.0, False
     last_activity = clock()
     outbox = bytearray()
+    hold_until: float | None = None
+    urgent = False
 
     def flush() -> None:
         view = memoryview(outbox)
@@ -192,13 +211,21 @@ def serve(
         outbox.clear()
 
     def start(request_id: int, raw: bytes) -> None:
-        child = _spawn(raw, request_id, run_request)
+        nonlocal urgent
+        try:
+            child = _spawn(raw, request_id, run_request)
+        except OSError:
+            # fork/pipe refused (process or fd limit): only this request
+            # fails; the loop, its children and its queue carry on.
+            outbox.extend(encode_frame(STATUS, request_id, encode_status(HOST_SPAWN_FAILED, None)))
+            urgent = True
+            return
         children[child.fd] = child
         by_request[request_id] = child
         selector.register(child.fd, selectors.EVENT_READ, child)
 
     def finish(child: _Child) -> None:
-        nonlocal queued_bytes
+        nonlocal queued_bytes, urgent
         selector.unregister(child.fd)
         os.close(child.fd)
         if child.partial and not child.capped:
@@ -211,6 +238,7 @@ def serve(
         exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else None
         signal_no = os.WTERMSIG(status) if os.WIFSIGNALED(status) else None
         outbox.extend(encode_frame(STATUS, child.request_id, encode_status(exit_code, signal_no)))
+        urgent = True
         del children[child.fd]
         by_request.pop(child.request_id, None)
         while queue and len(children) < max_children:
@@ -219,8 +247,10 @@ def serve(
             start(request_id, raw)
 
     def refuse(request_id: int) -> None:
+        nonlocal urgent
         # Never ran: the same STATUS a cancelled queued request gets.
         outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
+        urgent = True
 
     def kill_all() -> None:
         for child in list(children.values()):
@@ -236,9 +266,14 @@ def serve(
     try:
         while True:
             busy = bool(children or queue)
-            timeout = None if busy else max(0.0, idle_s - (clock() - last_activity))
+            if hold_until is not None:
+                timeout = max(0.0, hold_until - clock())
+            elif busy:
+                timeout = None
+            else:
+                timeout = max(0.0, idle_s - (clock() - last_activity))
             events = selector.select(timeout)
-            if not events and not busy and clock() - last_activity >= idle_s:
+            if not events and not busy and hold_until is None and clock() - last_activity >= idle_s:
                 return 0
             for key, _mask in events:
                 if key.data is None:  # stdin
@@ -283,6 +318,7 @@ def serve(
                                 queue.append((request_id, body))
                                 queued_bytes += len(body)
                                 outbox.extend(encode_frame(BUSY, request_id, b""))
+                                urgent = True
                         elif kind == CANCEL:
                             child = by_request.get(request_id)
                             if child is not None:
@@ -301,6 +337,7 @@ def serve(
                                     outbox.extend(encode_frame(
                                         STATUS, request_id, encode_status(None, signal.SIGKILL),
                                     ))
+                                    urgent = True
                                 queue.clear()
                                 queue.extend(remaining)
                                 queued_bytes = sum(len(item[1]) for item in queue)
@@ -333,8 +370,11 @@ def serve(
                     child.partial = bytearray(lines[-1])
                     for line in lines[:-1]:
                         outbox.extend(encode_frame(LINE, child.request_id, line + b"\n"))
-            if outbox:
+                    if lines[:-1] and hold_until is None:
+                        hold_until = clock() + _COALESCE_S
+            if outbox and (urgent or hold_until is None or clock() >= hold_until):
                 flush()
+                urgent, hold_until = False, None
     except FrameError:
         return 3
     finally:

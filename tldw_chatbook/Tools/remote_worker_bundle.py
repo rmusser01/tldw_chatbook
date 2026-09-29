@@ -4541,6 +4541,7 @@ HELLO, REQUEST, CANCEL = (1, 2, 3)
 LINE, STATUS, BUSY = (16, 17, 18)
 HEADER = struct.Struct('>IIB')
 _U32_MAX = 2 ** 32 - 1
+HOST_SPAWN_FAILED = 71
 
 class FrameError(ValueError):
     """A frame violated the size cap or the header format."""
@@ -4623,6 +4624,7 @@ _CHILD_CRASH_EXIT = 70
 _MAX_IDLE_S = 1000000.0
 _QUEUE_PER_CHILD = 4
 _QUEUE_BYTES_FACTOR = 2
+_COALESCE_S = 0.01
 
 class _Child:
     __slots__ = ('pid', 'fd', 'request_id', 'partial', 'sent', 'capped')
@@ -4669,7 +4671,12 @@ def _close_fds_above_2(keep: int) -> None:
 
 def _spawn(raw: bytes, request_id: int, run_request: Callable[[bytes, BinaryIO], int]) -> _Child:
     read_fd, write_fd = os.pipe()
-    pid = os.fork()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
     if pid == 0:
         code = _CHILD_CRASH_EXIT
         try:
@@ -4720,7 +4727,13 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     ``max_response_bytes`` is killed and its STATUS still reports the
     kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, a
     value of the wrong type, or a non-finite ``idle_s``) ends the session
-    with exit code 3 rather than raising into the caller. The loop is single-threaded: forking a
+    with exit code 3 rather than raising into the caller. A ``REQUEST``
+    whose fork or pipe the host refuses (process or fd limit) gets
+    ``STATUS`` (``HOST_SPAWN_FAILED``, ``None``) at once; only that
+    request fails, and the session keeps serving. ``LINE`` frames of a
+    still-running child may be held up to ``_COALESCE_S`` so a fast
+    operation's frames leave in one write; ``STATUS`` and ``BUSY`` are
+    always written at once. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -4740,9 +4753,10 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
-        OSError: If a low-level file descriptor operation (fork, pipe,
-            read, write) fails for a reason other than the cases already
-            handled above.
+        OSError: If a low-level file descriptor operation (read, write)
+            fails for a reason other than the cases already
+            handled above. A failed fork or pipe while starting a request
+            never raises here; see the ``HOST_SPAWN_FAILED`` case above.
     """
     reader = FrameReader(max_body=max_request_bytes)
     selector = selectors.DefaultSelector()
@@ -4754,6 +4768,8 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     max_children, idle_s, hello = (8, 60.0, False)
     last_activity = clock()
     outbox = bytearray()
+    hold_until: float | None = None
+    urgent = False
 
     def flush() -> None:
         view = memoryview(outbox)
@@ -4764,13 +4780,19 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         outbox.clear()
 
     def start(request_id: int, raw: bytes) -> None:
-        child = _spawn(raw, request_id, run_request)
+        nonlocal urgent
+        try:
+            child = _spawn(raw, request_id, run_request)
+        except OSError:
+            outbox.extend(encode_frame(STATUS, request_id, encode_status(HOST_SPAWN_FAILED, None)))
+            urgent = True
+            return
         children[child.fd] = child
         by_request[request_id] = child
         selector.register(child.fd, selectors.EVENT_READ, child)
 
     def finish(child: _Child) -> None:
-        nonlocal queued_bytes
+        nonlocal queued_bytes, urgent
         selector.unregister(child.fd)
         os.close(child.fd)
         if child.partial and (not child.capped):
@@ -4779,6 +4801,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else None
         signal_no = os.WTERMSIG(status) if os.WIFSIGNALED(status) else None
         outbox.extend(encode_frame(STATUS, child.request_id, encode_status(exit_code, signal_no)))
+        urgent = True
         del children[child.fd]
         by_request.pop(child.request_id, None)
         while queue and len(children) < max_children:
@@ -4787,7 +4810,9 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
             start(request_id, raw)
 
     def refuse(request_id: int) -> None:
+        nonlocal urgent
         outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
+        urgent = True
 
     def kill_all() -> None:
         for child in list(children.values()):
@@ -4802,9 +4827,14 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     try:
         while True:
             busy = bool(children or queue)
-            timeout = None if busy else max(0.0, idle_s - (clock() - last_activity))
+            if hold_until is not None:
+                timeout = max(0.0, hold_until - clock())
+            elif busy:
+                timeout = None
+            else:
+                timeout = max(0.0, idle_s - (clock() - last_activity))
             events = selector.select(timeout)
-            if not events and (not busy) and (clock() - last_activity >= idle_s):
+            if not events and (not busy) and (hold_until is None) and (clock() - last_activity >= idle_s):
                 return 0
             for key, _mask in events:
                 if key.data is None:
@@ -4836,6 +4866,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                                 queue.append((request_id, body))
                                 queued_bytes += len(body)
                                 outbox.extend(encode_frame(BUSY, request_id, b''))
+                                urgent = True
                         elif kind == CANCEL:
                             child = by_request.get(request_id)
                             if child is not None:
@@ -4847,6 +4878,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                                 remaining = [item for item in queue if item[0] != request_id]
                                 if len(remaining) != len(queue):
                                     outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
+                                    urgent = True
                                 queue.clear()
                                 queue.extend(remaining)
                                 queued_bytes = sum((len(item[1]) for item in queue))
@@ -4872,8 +4904,11 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                     child.partial = bytearray(lines[-1])
                     for line in lines[:-1]:
                         outbox.extend(encode_frame(LINE, child.request_id, line + b'\n'))
-            if outbox:
+                    if lines[:-1] and hold_until is None:
+                        hold_until = clock() + _COALESCE_S
+            if outbox and (urgent or hold_until is None or clock() >= hold_until):
                 flush()
+                urgent, hold_until = (False, None)
     except FrameError:
         return 3
     finally:
@@ -5206,4 +5241,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("80ade35b467ab74d0902c45a224ef879ba2490ec961b9aaf6721044df7c6c9b9")
+BUNDLE_SHA256 = _enter_worker_exchange("3029564d47569905d3ba33322cdf7c9ea84457883a49c067e3a3ca19b810785d")

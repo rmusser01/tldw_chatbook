@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Tools.remote_session_frames import (
-    BUSY, CANCEL, HELLO, LINE, REQUEST, STATUS, FrameReader, decode_status, encode_frame,
+    BUSY, CANCEL, HELLO, HOST_SPAWN_FAILED, LINE, REQUEST, STATUS, FrameReader, decode_status,
+    encode_frame,
 )
 
 # `serve` forks; nightly CI runs `pytest ./Tests/` on Windows too.
@@ -43,16 +44,54 @@ HANDLER = textwrap.dedent('''
                     pass
             out.write(leaked.encode() + b"\\n")
             return 0
+        if cmd in ("twostep", "twostep-slow"):
+            out.write(b"one\\n"); out.flush()
+            time.sleep(0.002 if cmd == "twostep" else 0.6)
+            out.write(b"two\\n"); out.flush()
+            return 0
         out.write(b"echo:" + raw + b"\\n"); out.flush()
         return 0
     sys.exit(serve(0, 1, run_request=run_request, max_request_bytes=1 << 20, max_response_bytes=1 << 16))
 ''' % str(REPO))
 
 
-def _session(max_children=4, idle_s=30.0):
-    proc = subprocess.Popen([sys.executable, "-c", HANDLER], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+def _session(max_children=4, idle_s=30.0, prelude=""):
+    script = HANDLER.replace(
+        "from tldw_chatbook.Tools.remote_session_serve import serve",
+        prelude + "\nfrom tldw_chatbook.Tools.remote_session_serve import serve",
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     os.write(proc.stdin.fileno(), encode_frame(HELLO, 0, json.dumps({"max_children": max_children, "idle_s": idle_s}).encode()))
     return proc, FrameReader(max_body=1 << 20)
+
+
+_FAIL_ONCE = textwrap.dedent('''
+    import errno
+    _real, _left = os.{name}, [1]
+    def _once(*args):
+        if _left[0]:
+            _left[0] -= 1
+            raise OSError(errno.{errno}, "refused")
+        return _real(*args)
+    os.{name} = _once
+''')
+
+
+@pytest.mark.parametrize("name,errno_name", [("fork", "EAGAIN"), ("pipe", "EMFILE")])
+def test_failed_spawn_fails_only_that_request(name, errno_name):
+    """TASK-33404: the host at its process/fd limit fails one request, not the session."""
+    proc, reader = _session(prelude=_FAIL_ONCE.format(name=name, errno=errno_name))
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"first") + encode_frame(REQUEST, 2, b"second"))
+        frames = _collect(proc, reader, 2)
+        statuses = {rid: decode_status(body) for kind, rid, body in frames if kind == STATUS}
+        assert statuses[1] == (HOST_SPAWN_FAILED, None)
+        assert statuses[2] == (0, None)
+        assert not any(kind == LINE and rid == 1 for kind, rid, _ in frames)
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 3, b"third"))
+        assert any(kind == STATUS and rid == 3 for kind, rid, _ in _collect(proc, reader, 1))
+    finally:
+        _terminate(proc)
 
 
 def _terminate(proc):
@@ -378,5 +417,65 @@ def test_queue_byte_bound_refuses_the_excess_at_once():
         frames = _statuses_for(proc, reader, 4, 1, timeout=5)
         assert {r: decode_status(b) for k, r, b in frames if k == STATUS} == {4: (None, 9)}
         assert {r for k, r, _ in frames if k == BUSY} == {2, 3}
+    finally:
+        _terminate(proc)
+
+
+def _chunks_until_status(proc, reader, timeout=10.0):
+    """Frames grouped by the os.read chunk they arrived in."""
+    chunks, end, fd = [], time.monotonic() + timeout, proc.stdout.fileno()
+    while time.monotonic() < end:
+        ready, _, _ = select.select([fd], [], [], end - time.monotonic())
+        if not ready:
+            break
+        data = os.read(fd, 65536)
+        if not data:
+            break
+        frames = reader.feed(data)
+        chunks.append(frames)
+        if any(kind == STATUS for kind, _, _ in frames):
+            break
+    return chunks
+
+
+# A generous window for the tests (the shipped value is _COALESCE_S): a
+# loaded CI runner must not turn "child exited within the window" flaky.
+_HOLD_200MS = "import tldw_chatbook.Tools.remote_session_serve as _s; _s._COALESCE_S = 0.2"
+
+
+def test_fast_op_output_and_status_leave_in_one_write():
+    proc, reader = _session(prelude=_HOLD_200MS)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"twostep"))
+        chunks = _chunks_until_status(proc, reader)
+        assert len(chunks) == 1, chunks
+        assert [kind for kind, _, _ in chunks[0]] == [LINE, LINE, STATUS]
+    finally:
+        _terminate(proc)
+
+
+def test_status_is_never_held_for_the_coalescing_window():
+    """A finished child's STATUS flushes the held LINEs at once, not at the hold's end."""
+    proc, reader = _session(
+        prelude="import tldw_chatbook.Tools.remote_session_serve as _s; _s._COALESCE_S = 5.0"
+    )
+    try:
+        sent = time.monotonic()
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"twostep"))
+        chunks = _chunks_until_status(proc, reader)
+        elapsed = time.monotonic() - sent
+        assert elapsed < 2.0, f"STATUS waited out the hold: {elapsed:.2f}s"
+        assert [[kind for kind, _, _ in chunk] for chunk in chunks] == [[LINE, LINE, STATUS]]
+    finally:
+        _terminate(proc)
+
+
+def test_slow_op_first_line_is_not_held_until_the_end():
+    proc, reader = _session(prelude=_HOLD_200MS)
+    try:
+        os.write(proc.stdin.fileno(), encode_frame(REQUEST, 1, b"twostep-slow"))
+        chunks = _chunks_until_status(proc, reader)
+        assert len(chunks) >= 2
+        assert [kind for kind, _, _ in chunks[0]] == [LINE]
     finally:
         _terminate(proc)

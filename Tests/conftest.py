@@ -413,12 +413,17 @@ def reset_remote_session_registry():
 
     An app test's on_unmount calls close_all_remote_sessions(), which shuts
     the singleton down for good; without this, later tests in the same
-    process would get a one-shot-only registry. Never imports the module.
+    process would get a one-shot-only registry. Also drops the SSH master
+    manager singleton so straggler tests do not see a closed manager.
+    Never imports the modules.
     """
     yield
     module = sys.modules.get("tldw_chatbook.Tools.remote_session_registry")
     if module is not None:
         module._REGISTRY = None
+    transport = sys.modules.get("tldw_chatbook.Tools.remote_workspace_transport")
+    if transport is not None:
+        transport._MASTER_MANAGER = None
 
 
 @pytest.fixture(autouse=True)

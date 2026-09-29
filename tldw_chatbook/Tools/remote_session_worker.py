@@ -33,6 +33,7 @@ from tldw_chatbook.Tools.remote_binding_locator import RemoteLocator, build_ssh_
 from tldw_chatbook.Tools.remote_session_frames import (
     CANCEL,
     HELLO,
+    HOST_SPAWN_FAILED,
     LINE,
     REQUEST,
     STATUS,
@@ -47,7 +48,6 @@ from tldw_chatbook.Tools.remote_workspace_transport import (
     RemoteWorkspaceTransport,
     TransportFailure,
     TransportFailureKind,
-    _BoundedCapture,
     _frame_is_admitted_marker,
     _remote_command,
 )
@@ -103,6 +103,12 @@ class SessionStartError(Exception):
         self.failure = failure
 
 
+class SessionClosed(Exception):
+    """The laptop closed this healthy session (idle reap, run end, app
+    exit) before the call's request was registered: nothing was sent, so
+    the caller may ask the registry again (TASK-33401)."""
+
+
 class _HandshakeFailed(Exception):
     """Internal: the handshake ended; carries what classification needs."""
 
@@ -139,6 +145,31 @@ def _wait_fd(fd: int, events: int, timeout: float) -> bool:
         return bool(selector.select(timeout))
 
 
+class _TailCapture:
+    """Byte sink keeping the LAST ``cap`` bytes (TASK-33403).
+
+    A long-lived session's death reason (a mux marker, ssh's final error)
+    is at the end of its stderr; a head capture drops it once earlier
+    output fills the cap, turning a status-preserving MUX_ERROR into
+    UNREACHABLE (BLOCKED).
+    """
+
+    def __init__(self, cap: int) -> None:
+        self._cap = cap
+        self._buf = bytearray()
+        self._lock = threading.Lock()
+
+    def append(self, chunk: bytes) -> None:
+        with self._lock:
+            self._buf += chunk
+            if len(self._buf) > self._cap:
+                del self._buf[: len(self._buf) - self._cap]
+
+    def value(self) -> bytes:
+        with self._lock:
+            return bytes(self._buf)
+
+
 @dataclass
 class _Pending:
     done: threading.Event = field(default_factory=threading.Event)
@@ -159,6 +190,9 @@ class RemoteSessionWorker:
         idle_s: Host-side idle exit sent in HELLO.
         cache: Whether the loader may use its ``$XDG_RUNTIME_DIR`` cache.
         spawn: Test seam replacing the ssh ``Popen``; receives the ssh argv.
+        handshake_timeout: Caps the handshake wall-clock ceiling: ``None``
+            means the module's ``_HANDSHAKE_TIMEOUT_S`` (30 s), a number is
+            capped at it (a call's own budget may never outlive it).
     """
 
     def __init__(
@@ -171,6 +205,7 @@ class RemoteSessionWorker:
         idle_s: float,
         cache: bool,
         spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None,
+        handshake_timeout: float | None = None,
     ) -> None:
         self._loc = loc
         self._transport = transport
@@ -178,6 +213,8 @@ class RemoteSessionWorker:
         self._max_children = max_children
         self._idle_s = idle_s
         self._cache = cache
+        self._handshake_timeout = handshake_timeout
+        self._handshake_limit = _HANDSHAKE_TIMEOUT_S
         self._spawn = spawn or (
             lambda argv: subprocess.Popen(
                 argv,
@@ -188,7 +225,7 @@ class RemoteSessionWorker:
             )
         )
         self._proc: subprocess.Popen[bytes] | None = None
-        self._stderr = _BoundedCapture(_STDERR_CAP)
+        self._stderr = _TailCapture(_STDERR_CAP)
         self._stderr_thread: threading.Thread | None = None
         self._reader_thread: threading.Thread | None = None
         self._write_lock = threading.Lock()
@@ -201,6 +238,9 @@ class RemoteSessionWorker:
         #: death (EOF / ssh exited), False when the laptop ended it.
         self._death_natural: bool | None = None
         self._death_code: int | None = None
+        #: True once close() closed a session that was alive at that moment
+        #: (TASK-33401): the caller's request never reached this session.
+        self._retired = False
         self._settled = threading.Event()  # set once _die has reaped
 
     @property
@@ -252,6 +292,23 @@ class RemoteSessionWorker:
             )
             raise SessionStartError(True, failure, "ssh could not be run") from None
         self._proc = proc
+        try:
+            self._handshake(proc, loader=loader, compressed=compressed, artifact=artifact)
+        except SessionStartError:
+            self._abandon_start()
+            raise
+        except OSError:
+            # A local pipe error outside the classified paths: nothing can
+            # be said about the host, so fall back to one-shot for the run.
+            self._abandon_start()
+            raise SessionStartError(False, None, "session start failed: local pipe error") from None
+        except BaseException:
+            self._abandon_start()
+            raise
+
+    def _handshake(
+        self, proc: subprocess.Popen[bytes], *, loader: bytes, compressed: bytes, artifact
+    ) -> None:
         # Every write is select-bounded (see _write): a stalled remote can
         # never wedge a writer, and so never the write lock.
         os.set_blocking(proc.stdin.fileno(), False)  # type: ignore[union-attr]
@@ -262,7 +319,11 @@ class RemoteSessionWorker:
 
         bundle_hash = hashlib.sha256(compressed).hexdigest()
         header = json.dumps({"hash": bundle_hash, "cache": self._cache}).encode() + b"\n"
-        deadline = time.monotonic() + _HANDSHAKE_TIMEOUT_S
+        limit = _HANDSHAKE_TIMEOUT_S
+        if self._handshake_timeout is not None:
+            limit = min(self._handshake_timeout, limit)
+        deadline = time.monotonic() + limit
+        self._handshake_limit = limit
         try:
             # LOCKSTEP: after each write, send nothing until the loader answers.
             self._handshake_write(loader + header, deadline)
@@ -295,6 +356,24 @@ class RemoteSessionWorker:
         logger.debug(
             "ssh session worker started; bundle cache {}", "hit" if cache_hit else "miss"
         )
+
+    def _abandon_start(self) -> None:
+        """Leave nothing behind after a failed start: reap ssh, close its pipes."""
+        self._kill_and_reap()
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(_CLOSE_WAIT_S)
+        proc = self._proc
+        if proc is None:
+            return
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is None:
+                continue
+            if stream is proc.stderr and self._stderr_thread is not None and self._stderr_thread.is_alive():
+                continue  # still read by the drain thread: left to GC, never closed under it
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def _drain_stderr(self) -> None:
         stream = self._proc.stderr if self._proc else None
@@ -364,7 +443,7 @@ class RemoteSessionWorker:
             exit_code=exit_code,
             admitted=False,
             admitted_at=None,
-            budget=_HANDSHAKE_TIMEOUT_S,
+            budget=self._handshake_limit,
             killed=killed and ended.stalled,
             noise_capped=ended.noise,
             stderr=self._stderr.value(),
@@ -512,12 +591,15 @@ class RemoteSessionWorker:
             return RemoteCallResult(False, _OVERSIZED_REQUEST_FRAME, None)
         with self._lock:
             alive = self._alive
+            retired = self._retired
             if alive:
                 request_id = self._next_id
                 self._next_id += 1
                 pending = self._pending[request_id] = _Pending()
                 self._idle_since = None
         if not alive:
+            if retired:
+                raise SessionClosed()
             return self._dead_session_result()
         grace = self._transport.grace_seconds
         sent_at = time.monotonic()
@@ -612,6 +694,18 @@ class RemoteSessionWorker:
             code = self._death_code if self._death_code is not None else -9
         else:
             exit_code, signal_no = pending.status
+            if not admitted and exit_code == HOST_SPAWN_FAILED:
+                # The host could not fork for this request (process limit):
+                # the live session proves reachability, so status-preserving.
+                return RemoteCallResult(
+                    False,
+                    None,
+                    TransportFailure(
+                        TransportFailureKind.REMOTE_OP_FAILED,
+                        exit_code,
+                        "host could not start the operation",
+                    ),
+                )
             code = exit_code if exit_code is not None else -(signal_no or 9)
             refused = exit_code is None and signal_no == signal.SIGKILL
             if (killed or refused) and not admitted:
@@ -676,6 +770,7 @@ class RemoteSessionWorker:
             if self._death_natural is None:
                 self._death_natural = False
             was_alive, self._alive = self._alive, False
+            self._retired = self._retired or was_alive
         proc = self._proc
         if proc is None:
             return
