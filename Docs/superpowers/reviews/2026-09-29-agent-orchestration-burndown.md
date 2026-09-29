@@ -1,7 +1,9 @@
 # Agent orchestration burn-down review — 2026-09-29
 
-Status: all 13 tasks completed and independently reviewed; latest-dev integration and draft PR publication in progress.
-Base: dev `64579cce2c8dc64053fb50c00eb4f59b56716b01`.
+Status: all 13 tasks completed, independently reviewed and rebased; ready for PR review.
+Implementation base: dev `64579cce2c8dc64053fb50c00eb4f59b56716b01`.
+Integration base: latest fetched dev `6423c4fbd1460952dd8cb5df04e51c4e0e7e0d0b`.
+Delivery: draft PR against dev; no merge is claimed.
 Branch: `codex/agent-orchestration-burndown`.
 Scope: all 13 tasks authorized by the user's request to burn down the remaining work.
 
@@ -50,6 +52,12 @@ A broader final repair selection passed 112 checks and exposed four missed Setti
 The fresh actual navigation-away wake regression passed **one case in 32.02s** after scheduler integration. Root primary identity/URL/child/custom-hosted qualification passed **nine checks in 18.45s**. Messaging receipts and the two previously externally marked gateway/bridge nodes passed **22 checks in 14.67s** using committed bootstrap-profile markers. The markers preserve the real selected config source; production recovery gates and original assertions remain intact.
 
 The final durable affected selection passes **247 checks in 340.36s** (`/tmp/task33431_final-affected-green.log`). Following the confirmed worker-cache fixes, the directly affected native/modal/hydration selection passes **82 checks in 173.36s** (`/tmp/task33431_final-worker-lifetimes-green.log`) and the final durable/threaded-report/tool/queue selection passes **74 checks in 24.52s** (`/tmp/task33431_final-child-report-green.log`). Final independent cache review approves all four entries with **13 checks**, actual mounted/threaded physical-drain probes and the complete shipping sink audit. These selections overlap and are not summed.
+
+## Latest-dev integration
+
+Rebased cleanly onto `6423c4fbd1460952dd8cb5df04e51c4e0e7e0d0b`. Comparing the frozen pre-rebase source manifest shows incoming changes in only two patch files: `Chat_Functions.py` (new provider dispatch/preset entries) and `ChaChaNotes_DB.py` (uncorrelated conversation-search FTS). The durable schema and reviewed worker/capability/queue/wake code retain their reviewed changes.
+
+A fresh combined post-rebase selection passes **217 checks in 87.14s**: incoming gateway/host presets and search FTS, sampling, the nine actual primary/child/custom-endpoint gateway checks, and all four startup census checks (`/private/tmp/agent-burndown-post-rebase-green.log`). Census is 1031/1033 with headroom two and the existing +1/-0 snapshot warning. The final base-relative static scan remains clean across 72 changed/new Python files and ten new Python files; whitespace passes. No further source changes were required.
 
 ## Contracts and qualification limits
 
