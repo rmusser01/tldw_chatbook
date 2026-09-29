@@ -314,3 +314,63 @@ async def test_rebuild_keeps_selection_with_connection_drafts():
         assert _list(screen).selected == [MODELS[1]]
         assert _list(screen).option_count == 2
         assert not scope.persist_calls
+
+
+def _painted_row(screen, y: int, x0: int, x1: int):
+    """[(glyph, fg, bg)] the compositor paints on screen row y, columns x0..x1."""
+    cells, position = [], 0
+    for segment in screen._compositor.render_strips()[y]:
+        for glyph in segment.text:
+            if x0 <= position < x1:
+                cells.append((glyph, segment.style.color, segment.style.bgcolor))
+            position += 1
+    return cells
+
+
+
+def _ratio(first, second) -> float:
+    from textual.color import Color
+
+    from tldw_chatbook.css.Themes.themes import _contrast_ratio
+
+    return _contrast_ratio(Color.from_rich_color(first), Color.from_rich_color(second))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_discovered_models_highlight_is_a_readable_bar(theme):
+    """TASK-33003.6 review round 1: this SelectionList sits inside
+    #settings-providers-models-card, so the card's highlight bar
+    (components/_lists.tcss) restyles it too. The highlighted row reads as a
+    3:1 bar with an AA label, focused or not, and a checked box stays a
+    distinct box inside the bar. The base painted $surface on the card
+    (textual-dark #1e1e1e on #272727, 1.12:1)."""
+    app, _scope = _app_scope()
+    host = ProviderSettingsHarness(app, "settings")
+    host.theme = theme
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open(host, pilot)
+        await _tab_to(host, pilot, "#settings-discover-provider-models")
+        await pilot.press("enter")
+        await _settle(host, pilot)
+        await _tab_to(host, pilot, "#settings-discovered-models-list")
+        await pilot.press("home", "space")
+        await _settle(host, pilot)
+        listing = _list(screen)
+        assert listing.highlighted == 0 and listing.selected == [MODELS[0]]
+        box = listing.content_region
+        for focused in (True, False):
+            if not focused:
+                host.set_focus(None)
+                await _settle(host, pilot)
+            rows = {y: _painted_row(screen, y, box.x, box.right) for y in range(box.y, box.bottom)}
+            texts = {y: "".join(cell[0] for cell in cells) for y, cells in rows.items()}
+            lit = next(y for y, text in texts.items() if MODELS[0] in text)
+            other = next(y for y, text in texts.items() if MODELS[1] in text)
+            x = texts[lit].index(MODELS[0])
+            _, ink, bar = rows[lit][x]
+            _, _, rest = rows[other][x]
+            _, _, checked_box = rows[lit][texts[lit].index("X")]
+            assert _ratio(bar, rest) >= 3.0, (theme, focused, bar, rest)
+            assert _ratio(ink, bar) >= 4.5, (theme, focused, ink, bar)
+            assert _ratio(checked_box, bar) >= 3.0, (theme, focused, checked_box, bar)

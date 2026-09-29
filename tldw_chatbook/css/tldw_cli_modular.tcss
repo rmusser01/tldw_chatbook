@@ -1261,7 +1261,8 @@ Button:hover {
 
 Button:focus,
 Button:hover:focus {
-    background: $ds-focus-bg;
+    background: $tldw-focus-fill;
+    background-tint: transparent;
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;

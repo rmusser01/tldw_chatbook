@@ -4872,14 +4872,23 @@ async def test_console_settings_select_highlight_is_a_readable_bar(theme) -> Non
         assert _painted_ratio(ink, bar) >= 4.5, (theme, ink, bar)
 
 
-@pytest.mark.parametrize("theme", ["agentic_terminal", "textual-light"])
+@pytest.mark.parametrize(
+    "theme", ["agentic_terminal", "textual-light", "paradise_virtua", "earthy_nature"]
+)
 @pytest.mark.asyncio
 async def test_console_settings_focused_button_keeps_its_contrast(theme) -> None:
     """TASK-33003.6 AC#4: focus never lowers a Chat settings button's
     contrast against the modal. The global `Button:focus` fill (primary at
     30%) replaced the primary Apply button's $primary, so a focused Apply
-    read as disabled; a default button must not lose contrast either."""
+    read as disabled; a default button must not lose contrast either. On 14
+    themes (review round 1: paradise_virtua, earthy_nature) the tint sat
+    closer to the modal than the resting fill; FOCUS_FILL_VARIABLE pins them."""
+    from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
     app = _themed_modal_harness()
+    for registered in ALL_THEMES:
+        if registered.name == theme:
+            app.register_theme(registered)
     async with app.run_test(size=(211, 44)) as pilot:
         app.theme = theme
         await app.push_screen(_one_row_settings_modal(app.app_config))

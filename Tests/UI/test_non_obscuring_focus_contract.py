@@ -565,12 +565,19 @@ def test_global_focus_fallback_is_visible_but_not_heavy():
     assert any(cue in block for cue in ("outline: solid", "border:", "text-style:"))
 
 
+#: TASK-33003.6 review round 1: the global Button focus fill is the guard's
+#: FOCUS_FILL_VARIABLE -- the house $ds-focus-bg tint wherever that keeps a
+#: focused default button at least as far from its card as at rest (gated
+#: per theme in test_theme_contrast.py). Never the resting surface.
+BUTTON_FOCUS_FILL = "background: $tldw-focus-fill;"
+
+
 def test_global_button_focus_uses_two_non_obscuring_cues():
     text = BUTTONS.read_text(encoding="utf-8")
     for selector in ("Button:focus", "Button:hover:focus"):
         block = css_block(text, selector)
         assert_non_obscuring_focus(block)
-        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+        assert BUTTON_FOCUS_FILL in block
 
 
 def test_shared_button_hover_uses_non_obscuring_surface_contract():
@@ -1360,7 +1367,7 @@ def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_
     for selector in ("Button:focus", "Button:hover:focus"):
         block = css_block(button_text, selector)
         assert_non_obscuring_focus(block)
-        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+        assert BUTTON_FOCUS_FILL in block
 
     assert (
         css_blocks(CODING.read_text(encoding="utf-8"), ".coding-nav-button:focus") == []

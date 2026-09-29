@@ -119,7 +119,9 @@ Every interactive control must define, at minimum:
   resting surface (this nullified focus twice: TASK-345, task-1586). A
   variant Button keeps its own fill on focus (the tint is darker than
   `$primary`), and a focus cue that is an edge must reach 3:1 against the
-  row it marks (TASK-33003.6: the Settings rail edge is `$ds-active-fg`)
+  row it marks (TASK-33003.6: the Settings rail edge is `$ds-active-fg`).
+  A default Button's focus fill is `$tldw-focus-fill`, never closer to its
+  card than the resting fill (themes.py `FOCUS_FILL_VARIABLE`)
 - **disabled:** `$ds-disabled-bg` + `$ds-text-disabled-readable` at full
   opacity (never opacity-stacked — see §2.5); hover on disabled keeps the
   disabled surface

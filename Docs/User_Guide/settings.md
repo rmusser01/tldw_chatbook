@@ -830,7 +830,9 @@ Library readers after a successful save.
 Theme now opens on a **picker**, not the editor. Every theme, including one
 you save, gets frame lines and field edges at 3:1 or more against its own
 backgrounds: when a theme loads, Chatbook works that colour out from its
-surface colours. A **Filter themes** box
+surface colours. It does the same for a focused button's fill, so a focused
+button never blends into its card more than the same button unfocused. A
+**Filter themes** box
 narrows the list live, by theme name or id (not by group words such as
 "built-in" or "shipped" — the group headings already sort by those). Below it, one grouped,
 scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then

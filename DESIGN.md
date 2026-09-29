@@ -272,7 +272,12 @@ fields (task-1586):
   bold text. Three concurrent signals: edge weight, background, weight.
   The Settings category rail uses the same thick edge, in `$ds-active-fg`
   (3:1 on every row fill). A variant Button (primary, success, warning,
-  error) keeps its fill on focus; the focus tint would make it darker.
+  error) keeps its fill on focus; the focus tint would make it darker. A
+  default Button's focus fill is `$tldw-focus-fill`: the focus tint where
+  that sits at least as far from a `$panel` card as the resting `$surface`
+  fill (and 1.25x off a `$surface` pane, label AA), otherwise a colour
+  `ensure_readable_text_hues` works out per theme (22 of 89 themes).
+  Textual's 5% focus `background-tint` is dropped for every Button.
 - **Highlighted list rows:** where the shared `$surface` highlight reads
   under 3:1 (Chat settings; Settings ▸ Providers & Models; the Theme
   picker), the highlighted option is an inverted bar: `$ds-active-fg`

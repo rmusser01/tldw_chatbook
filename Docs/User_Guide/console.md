@@ -443,7 +443,7 @@ drawn at 3:1 or more against the background in every theme, so they stay
 visible. In an open dropdown or the model list, the highlighted choice is a
 solid bar in the theme's primary text colour with its label in the panel
 colour, and a focused **Apply to this chat** keeps its colour instead of
-dimming. Each field is as wide as the value it
+dimming; a focused plain button always stands out from the panel at least as much as it does unfocused. Each field is as wide as the value it
 holds, not as wide as the window: a number gets 12 columns, a dropdown is as
 wide as its longest choice, and text is capped by what it holds (your name in
 this chat 32, the provider and model 48, an endpoint URL 64). The fields keep

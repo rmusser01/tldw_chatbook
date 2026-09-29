@@ -17,10 +17,13 @@
 #   text-error, block-cursor-blurred-background, input-selection-background,
 #   footer-key-foreground, ...) DO override, and are gated for readability by
 #   Tests/UI/test_theme_contrast.py.
-# - TASK-33003.6: `BOUNDARY_VARIABLE` is the app's own such name. `$ds-grid-line`
-#   and `$ds-control-edge` point at it, so EVERY theme must carry it (an
-#   undefined `$name` fails the stylesheet parse); ensure_readable_text_hues
-#   sets it on the shipped, built-in and user-theme load paths.
+# - TASK-33003.6: `GUARD_VARIABLES` are the app's own such names
+#   (`$ds-grid-line`/`$ds-control-edge` -> BOUNDARY_VARIABLE, `Button:focus`
+#   -> FOCUS_FILL_VARIABLE), so EVERY theme must carry them (an undefined
+#   `$name` fails the stylesheet parse). ensure_readable_text_hues sets them
+#   on the shipped, built-in and user-theme load paths, and
+#   ThemeVariableDefaultsMixin supplies them for any theme that skipped it.
+import copy
 import re
 from pathlib import Path
 
@@ -129,6 +132,14 @@ _AA_RATIO = 4.5
 BOUNDARY_VARIABLE = "tldw-boundary"
 #: WCAG 1.4.11: component boundaries need 3:1 against adjacent colours.
 _NON_TEXT_RATIO = 3.0
+#: TASK-33003.6 AC#4: a focused default Button's fill (components/_buttons.tcss).
+#: The house focus tint ($block-cursor-blurred-background, primary at 30%)
+#: sat closer to a $panel card than the resting $surface fill on 14 themes.
+FOCUS_FILL_VARIABLE = "tldw-focus-fill"
+#: task-31284's floor: a focus fill shifts the pane it sits on at least 1.25x.
+_FOCUS_SHIFT = 1.25
+#: The names the guard generates that no tcss defines and the tcss references.
+GUARD_VARIABLES = (BOUNDARY_VARIABLE, FOCUS_FILL_VARIABLE)
 
 #: Review finding #3: ensure_readable_text_hues records the keys it wrote on
 #: the Theme under this attribute. A key a theme set by hand (22 shipped
@@ -137,7 +148,7 @@ _PINNED_ATTR = "_tldw_pinned_text_hues"
 
 
 def pinned_text_hues(theme: Theme) -> set[str]:
-    """The keys the guard generated for ``theme`` (text-* hues, boundary).
+    """The keys the guard generated for ``theme`` (text-* hues, GUARD_VARIABLES).
 
     Args:
         theme: A theme that may have passed through
@@ -171,13 +182,67 @@ def _clears(color: Color, surfaces: list[Color], ratio: float) -> bool:
     return all(_contrast_ratio(color, s) >= ratio for s in surfaces)
 
 
+def _blend_until(color: Color, poles: tuple[Color, ...], ok, steps: int = 20) -> Color | None:
+    """The first step from ``color`` (itself first) toward any of ``poles`` that ``ok`` accepts."""
+    for step in range(steps + 1):
+        for pole in poles:
+            candidate = color.blend(pole, step / steps)
+            if ok(candidate):
+                return candidate
+    return None
+
+
 def _blend_to_floor(color: Color, pole: Color, surfaces: list[Color], ratio: float) -> str:
     """The first 5% step from ``color`` (itself first) toward ``pole`` clearing ``ratio``."""
-    for step in range(21):
-        candidate = color.blend(pole, step / 20)
-        if _clears(candidate, surfaces, ratio):
-            return candidate.hex
-    return pole.hex
+    found = _blend_until(color, (pole,), lambda c: _clears(c, surfaces, ratio))
+    return (found or pole).hex
+
+
+def _ink(value: object, background: Color) -> Color:
+    """Text colour ``value`` painted on ``background``; 'auto NN%' is Textual's contrast pole."""
+    words = str(value).split()
+    if words and words[0] == "auto":
+        alpha = float(words[1].rstrip("%")) / 100 if len(words) > 1 else 1.0
+        return background + background.get_contrast_text(alpha)
+    return background + Color.parse(value)
+
+
+def _focus_fill(variables: dict, generated: dict, surface: Color, panel: Color) -> str | None:
+    """A focused default button's fill, or None when the theme's own entry holds.
+
+    It must sit at least as far from a $panel card as the resting $surface
+    fill does, shift a $surface pane by _FOCUS_SHIFT, and keep the focus
+    label AA on both (`Button:focus` drops Textual's 5% $foreground tint).
+    The house tint is kept where it holds; otherwise the tint composited on
+    panel moves toward white or black, whichever clears first.
+    """
+    text = variables.get("text", generated["text"])
+    rest = _contrast_ratio(surface, panel)
+
+    def holds(fill: object) -> bool:
+        try:
+            painted = Color.parse(fill)
+        except Exception:  # noqa: BLE001 - absent or unmeasurable entry
+            return False
+        on_panel, on_surface = panel + painted, surface + painted
+        return (
+            _contrast_ratio(on_panel, panel) >= rest
+            and _contrast_ratio(on_surface, surface) >= _FOCUS_SHIFT
+            and all(
+                _contrast_ratio(_ink(text, bg), bg) >= _AA_RATIO
+                for bg in (on_panel, on_surface)
+            )
+        )
+
+    if holds(variables.get(FOCUS_FILL_VARIABLE)):
+        return None
+    house_key = "block-cursor-blurred-background"
+    house = Color.parse(variables.get(house_key, generated[house_key]))
+    if holds(house):
+        return house.hex
+    start = panel + house
+    found = _blend_until(start, (Color(255, 255, 255), Color(0, 0, 0)), holds, steps=40)
+    return (found or start).hex
 
 
 def _opaque(value: object) -> Color | None:
@@ -204,9 +269,11 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     TASK-33003.6: ``BOUNDARY_VARIABLE`` (grid lines, control edges) starts
     from the theme's own entry or ``surface-lighten-2`` and blends the same
     way until it clears 3:1 (WCAG 1.4.11) on both surfaces; an explicit
-    entry below that floor is replaced. Themes whose colours cannot be
-    resolved (ANSI palettes) still get it, at its old ``surface-lighten-2``
-    value, because the tcss references it.
+    entry below that floor is replaced. ``FOCUS_FILL_VARIABLE`` is the house
+    focus tint wherever that keeps a focused default button at least as far
+    from its card as at rest (``_focus_fill``). Themes whose colours cannot
+    be resolved (ANSI palettes) still get both, at their old values
+    (``surface-lighten-2``, the focus tint), because the tcss references them.
 
     Args:
         theme: The theme to adjust; mutated and returned for chaining.
@@ -222,9 +289,11 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     except Exception:  # noqa: BLE001 - ANSI/transparent palettes have no hex to measure
         generated, surfaces = {}, []
     if not surfaces or any(surface.a < 1 for surface in surfaces):
-        if BOUNDARY_VARIABLE not in variables:
-            variables[BOUNDARY_VARIABLE] = generated.get("surface-lighten-2", "transparent")
-            pinned.add(BOUNDARY_VARIABLE)
+        sources = ("surface-lighten-2", "block-cursor-blurred-background")
+        for name, source in zip(GUARD_VARIABLES, sources):
+            if name not in variables:
+                variables[name] = generated.get(source, "transparent")
+                pinned.add(name)
         theme.variables = variables
         setattr(theme, _PINNED_ATTR, frozenset(pinned))
         return theme
@@ -243,9 +312,43 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
         start = edge or Color.parse(generated["surface-lighten-2"])
         pinned.add(BOUNDARY_VARIABLE)
         variables[BOUNDARY_VARIABLE] = _blend_to_floor(start, pole, surfaces, _NON_TEXT_RATIO)
+    fill = _focus_fill(variables, generated, *surfaces)
+    if fill is not None:
+        pinned.add(FOCUS_FILL_VARIABLE)
+        variables[FOCUS_FILL_VARIABLE] = fill
     theme.variables = variables
     setattr(theme, _PINNED_ATTR, frozenset(pinned))
     return theme
+
+
+def theme_variable_defaults(theme: Theme) -> dict[str, str]:
+    """The GUARD_VARIABLES values ``theme`` gets from the guard, without mutating it.
+
+    Args:
+        theme: Any theme, guarded or not.
+
+    Returns:
+        A mapping of each guard-generated variable name to its value.
+    """
+    probe = ensure_readable_text_hues(copy.copy(theme))
+    return {name: probe.variables[name] for name in GUARD_VARIABLES}
+
+
+class ThemeVariableDefaultsMixin:
+    """App mixin: the unconditional fallback for the guard's names (ruling 15).
+
+    Textual fills any variable the current theme lacks from
+    ``get_theme_variable_defaults``, so a theme registered without passing
+    ensure_readable_text_hues (a plugin, a bare ``Theme()``) gets the guard's
+    values instead of failing the stylesheet parse on apply.
+    """
+
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        """Textual's defaults, plus the guard's names for the current theme."""
+        return {
+            **super().get_theme_variable_defaults(),  # type: ignore[misc]
+            **theme_variable_defaults(self.current_theme),  # type: ignore[attr-defined]
+        }
 
 
 _VARIABLE_NAME = re.compile(r"[a-z0-9-]+")
@@ -2191,7 +2294,8 @@ del _shipped_theme
 # textual-light's text-accent among them, and it is the only light theme in
 # the app's hard-coded list. The guard is idempotent and leaves an explicit
 # per-theme `variables` entry alone, so running it over shared Theme objects
-# is safe; ANSI palettes have no hex to measure and are returned untouched.
+# is safe; ANSI palettes have no hex to measure and get only the
+# GUARD_VARIABLES fallbacks the tcss needs.
 for _builtin_theme in BUILTIN_THEMES.values():
     ensure_readable_text_hues(_builtin_theme)
 del _builtin_theme

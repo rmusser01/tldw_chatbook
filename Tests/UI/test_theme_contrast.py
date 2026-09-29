@@ -260,6 +260,52 @@ def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
     assert [t.name for t in themes] == ["pastel_probe", "hand_set_probe"]
     for theme in themes:
         _assert_boundaries_visible(theme)
+        _assert_button_focus_keeps_contrast(theme)
+
+
+BUTTONS_SHEET = CSS_ROOT / "components/_buttons.tcss"
+
+
+def _assert_button_focus_keeps_contrast(theme: Theme) -> None:
+    """A focused default button against a $panel card and a $surface pane.
+
+    The resting fill is $surface; `Button:focus` drops Textual's 5%
+    `background-tint`, so the rule's fill is what paints.
+    """
+    assert _rule_token(BUTTONS_SHEET, "Button:focus", "background-tint") == "transparent"
+    table = _painted_variables(theme)
+    fill = Color.parse(
+        _painted(table, _rule_token(BUTTONS_SHEET, "Button:focus", "background"))
+    )
+    panel, surface = Color.parse(table["panel"]), Color.parse(table["surface"])
+    rest = _ratio(surface.hex, panel.hex)
+    on_panel, on_surface = _over(panel, fill), _over(surface, fill)
+    assert _ratio(on_panel.hex, panel.hex) >= rest, (
+        f"{theme.name}: focused {on_panel.hex} is {_ratio(on_panel.hex, panel.hex):.2f}:1 "
+        f"on the card, resting $surface {rest:.2f}:1"
+    )
+    shift = _ratio(on_surface.hex, surface.hex)
+    assert shift >= FOCUS_SHIFT_FLOOR, f"{theme.name}: {shift:.2f}x on $surface"
+    for painted in (on_panel, on_surface):
+        ink = _resolve_color(_painted(table, "ds-focus-fg"), painted)
+        assert _ratio(ink.hex, painted.hex) >= AA, (theme.name, ink.hex, painted.hex)
+
+
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_focused_default_button_never_loses_contrast(theme: Theme) -> None:
+    """TASK-33003.6 AC#4, review round 1: the focus tint composited over a
+    $panel card sat closer to the card than the resting $surface fill on 14
+    themes (paradise_virtua 2.47 -> 1.12:1), once Settings stopped aliasing
+    focus to $surface. The fill must also shift a $surface pane visibly
+    (task-31284 floor) and keep its label AA."""
+    _assert_button_focus_keeps_contrast(theme)
+
+
+#: Every theme-generated name the app's tcss references (themes.py).
+_GUARD_PROBE_CSS = (
+    "\nScreen { border-left: solid $ds-grid-line;"
+    " border-right: solid $ds-control-edge; background: $tldw-focus-fill; }\n"
+)
 
 
 @pytest.mark.parametrize(
@@ -274,12 +320,44 @@ def test_boundary_tokens_parse_under_every_registered_theme(theme: Theme) -> Non
 
     sheet = Stylesheet(variables=_resolved_variables(theme))
     sheet.add_source(
-        CORE_VARIABLES.read_text(encoding="utf-8")
-        + "\nScreen { border-left: solid $ds-grid-line;"
-        " border-right: solid $ds-control-edge; }\n",
+        CORE_VARIABLES.read_text(encoding="utf-8") + _GUARD_PROBE_CSS,
         read_from=(str(CORE_VARIABLES), ""),
     )
     sheet.parse()
+
+
+@pytest.mark.asyncio
+async def test_a_theme_that_skipped_the_guard_still_applies() -> None:
+    """TASK-33003.6 ruling 15, review round 1: the fallback is unconditional.
+    A Theme registered without ensure_readable_text_hues (a plugin, a test's
+    bare `Theme()`) used to fail the stylesheet parse on apply with
+    "undefined variable '$tldw-boundary'". The app's theme-variable defaults
+    now supply the guard's values for whatever theme is current."""
+    from textual.app import App
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.css.Themes.themes import (
+        BOUNDARY_VARIABLE,
+        ThemeVariableDefaultsMixin,
+    )
+
+    assert issubclass(TldwCli, ThemeVariableDefaultsMixin)
+
+    class Host(ThemeVariableDefaultsMixin, App):
+        CSS = CORE_VARIABLES.read_text(encoding="utf-8") + _GUARD_PROBE_CSS
+
+    bare = Theme(name="bare_probe", primary="#3366CC", dark=True)
+    assert not bare.variables
+    app = Host()
+    app.register_theme(bare)
+    async with app.run_test() as pilot:
+        app.theme = "bare_probe"
+        await pilot.pause()
+        edge = Color.parse(app.theme_variables[BOUNDARY_VARIABLE])
+        for key in ("surface", "panel"):
+            surface = Color.parse(app.theme_variables[key])
+            assert _ratio(edge.hex, surface.hex) >= NON_TEXT, key
+    assert not bare.variables, "the fallback must not mutate the registered theme"
 
 
 @pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)

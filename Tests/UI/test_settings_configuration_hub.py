@@ -5424,15 +5424,24 @@ async def test_providers_models_focused_button_keeps_its_contrast(request):
     """TASK-33003.6 AC#4: focus never lowers a Providers & Models button's
     contrast against the card. `#settings-shell Button:focus` painted the
     resting `$ds-surface-raised`; with Textual's focus tint on top, a focused
-    default button fell toward the card on textual-light (1.08 -> 1.02:1)."""
+    default button fell toward the card on textual-light (1.08 -> 1.02:1).
+    Review round 1: dropping that rule left the house tint, which sat closer
+    to the card than the resting fill on 14 themes (paradise_virtua 2.47 ->
+    1.12, earthy_nature 1.70 -> 1.07); FOCUS_FILL_VARIABLE pins those."""
+    from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
+    themes = ("agentic_terminal", "textual-light", "paradise_virtua", "earthy_nature")
     host = _styled_settings_host()
+    for theme in ALL_THEMES:
+        if theme.name in themes:
+            host.register_theme(theme)
     async with host.run_test(size=(211, 44)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         button = screen.query_one("#settings-test-provider", Button)
         button.scroll_visible(animate=False)
         await pilot.pause()
-        for theme in ("agentic_terminal", "textual-light"):
+        for theme in themes:
             host.theme = theme
             host.set_focus(None)
             await pilot.pause()
