@@ -88,6 +88,10 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "nebius",
         "novita",
         "minimax",
+        # TASK-33350: StepFun ships tools OFF (finish "stop" alongside tool_calls).
+        "mimo",
+        "tokenhub",
+        "byteplus",
     }
 )
 

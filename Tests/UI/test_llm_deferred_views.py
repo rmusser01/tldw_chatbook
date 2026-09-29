@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.LLM_Management_Window import (
     LLMManagementWindow,
@@ -59,7 +60,7 @@ def _no_splash(monkeypatch):
             return False
         return _real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
 
 
 async def test_initial_load_populates_only_llamacpp_body():

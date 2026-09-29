@@ -5,7 +5,7 @@ Task: TASK-25907.7
 Status: Reviewed design explicitly approved; accepted design direction only
 
 Design: [Disclosure controls](../specs/2026-09-25-personal-context-provider-disclosure-controls-design.md)
-Decision: [Accepted design ADR-187](../../../backlog/decisions/187-personal-context-provider-disclosure-authority.md)
+Decision: [Accepted design ADR-203](../../../backlog/decisions/203-personal-context-provider-disclosure-authority.md)
 Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.md)
 
 ## Deliverable and evidence boundary
@@ -42,7 +42,7 @@ syncable filtering, destination snapshots and separate exports/compaction owners
 No provider execution was used to confirm these code facts.
 
 Parent self-review clarified reserved on-device audience enrollment, foreground
-policy/grant widening, promotions preserving restrictions, current ADR-185 inline
+policy/grant widening, promotions preserving restrictions, current ADR-201 inline
 evidence authority and hidden revision diagnostics without a constant-time claim.
 Targeted reviewer rereads confirmed both the managed-cache and tool/publication
 fixes. No Critical, outstanding Important or actionable Minor finding remained;
@@ -67,11 +67,11 @@ Native scoped checks passed across 14 owned documents: all 215 local Markdown
 links and 19 task reference/documentation paths resolve; 59 original child
 criteria remain unchanged; 11 family IDs are unique and original dependencies
 point backward. Tasks .5/.6 are Done; .7 remains In Progress with seven technical
-criteria checked. ADR-186 accepts design direction; ADR-187 is Proposed. New
+criteria checked. ADR-202 accepts design direction; ADR-203 is Proposed. New
 spec/ADR contain no placeholders; whitespace and the documentation-only diff
 boundary pass. Independent evaluation task/roadmap bytes are unchanged.
 The offline provisional ADR allocation checked 559 available refs and 77
-worktrees; no competing ADR-187 was found. No fetch or open-PR audit occurred;
+worktrees; no competing ADR-203 was found. No fetch or open-PR audit occurred;
 integration-time recheck remains necessary. Independent evaluation additions
 remain outside these commits. No push, PR or merge was performed.
 
@@ -85,7 +85,7 @@ and documentation checks do not establish any such runtime guarantee.
 ## Written-design approval
 
 The user explicitly approved the reviewed contract. TASK-25907.7 is Done and
-ADR-187 accepts design direction only. ADR-102 now links that future amendment,
+ADR-203 accepts design direction only. ADR-102 now links that future amendment,
 without claiming it is current model-egress enforcement. No policy, grant, model
 schema or runtime behavior changed; enabling consolidation still requires
 shipped verified safeguards. Fresh approval/consolidation checkpoint validation passed across 18 owned documents: 136 local Markdown links and 52 task reference/documentation paths resolve; all original 59 child criteria remain unchanged, 11 family IDs are unique, and whitespace/documentation-only boundaries pass. Independent evaluation task/roadmap bytes remain unchanged. No runtime tests or permission changes were performed.

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- ADR required: no new ADR. ADR path: backlog/decisions/192-personal-context-v2-canonical-data-contract.md. Reason: direct inactive implementation of the accepted storage-independent contract; ADR-185/186/187/191 and native activation gates remain binding.
+- ADR required: no new ADR. ADR path: backlog/decisions/192-personal-context-v2-canonical-data-contract.md. Reason: direct inactive implementation of the accepted storage-independent contract; ADR-201/202/203/191 and native activation gates remain binding.
 - Python >=3.12; no dependencies, package version, V1 public exports or `SERIALIZED_SCHEMA_VERSION=1` changes.
 - All specified keys required, including nulls/arrays; only absent model_disclosure defaults to deny. Nested payload V1 defaults remain V1.
 - IDs: exact built-in strings, 1–128 codepoints, <=512 UTF-8 bytes, nonblank, no Cc/Cf/invalid scalars. Digest: 64 lowercase hex.

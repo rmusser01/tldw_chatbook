@@ -4,7 +4,7 @@ Date: 2026-09-26
 Task: [TASK-25907.16](../../../backlog/tasks/task-25907.16%20-%20Exclude-device-only-records-from-current-agent-profile-reads.md)
 Status: Approved bounded native implementation, independently reviewed and verified.
 Authority: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md)
-and [ADR-187](../../../backlog/decisions/187-personal-context-provider-disclosure-authority.md).
+and [ADR-203](../../../backlog/decisions/203-personal-context-provider-disclosure-authority.md).
 ADR required: no new ADR; this enforces the existing device-only ceiling without
 changing schemas, storage, grants, provider contracts or portable policy.
 

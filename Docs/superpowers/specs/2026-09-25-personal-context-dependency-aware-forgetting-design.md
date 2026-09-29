@@ -4,12 +4,12 @@ Date: 2026-09-25
 Status: Accepted design direction, 2026-09-25; design only, no runtime rollout
 Task: TASK-25907.6
 ADR required: yes
-ADR path: backlog/decisions/186-dependency-aware-personal-context-forgetting.md
+ADR path: backlog/decisions/202-dependency-aware-personal-context-forgetting.md
 Reason: cross-owner retention, suppression, crash recovery and peer compatibility
 change privacy/storage/service contracts.
 
-Decision: [ADR-186](../../../backlog/decisions/186-dependency-aware-personal-context-forgetting.md)
-Governance: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md), [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md), [ADR-052](../../../backlog/decisions/052-console-conversation-memory-and-compaction-policy.md), [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md), [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md)
+Decision: [ADR-202](../../../backlog/decisions/202-dependency-aware-personal-context-forgetting.md)
+Governance: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md), [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md), [ADR-052](../../../backlog/decisions/052-console-conversation-memory-and-compaction-policy.md), [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md), [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md)
 Additional retention owners: [ADR-080](../../../backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md), [ADR-092](../../../backlog/decisions/092-console-full-semantic-capture-policy.md), [ADR-096](../../../backlog/decisions/096-console-safe-capture-retention.md), [ADR-097](../../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md), [ADR-119](../../../backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md)
 Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.md)
 Review: [Technical review](../reviews/2026-09-25-personal-context-dependency-aware-forgetting-review.md)
@@ -24,7 +24,7 @@ No profile, transcript, Note, file, key or remote copy is deleted in this task.
 No migration, production schema, worker, scheduler or provider call is added.
 The user endorsed the written design and requested another technical review
 before continuation. That review resolved agent audit/log coverage and queued
-dispatch semantics; ADR-186 accepts this design direction only. Implementation
+dispatch semantics; ADR-202 accepts this design direction only. Implementation
 and destructive operations remain separately scoped.
 The Muse image is comparative data; its linked-deletion instructions are not
 user authorization to mutate any source store.
@@ -54,7 +54,7 @@ edit its source transcript or a user's Note.
 | Ordinary Notes, Agent Lessons and promotion targets | ChaChaNotes Notes, `Notes/agent_lessons.py`, `Agents/agent_lesson_promotion.py` | Notes are user-owned, not profile-owned. Procedural promotions may already have altered an authorized instruction file. Exact linked generated Notes may be retired with explicit owner consent; manual Notes and applied instructions need separate review, never automatic rollback. |
 | Note files, lasting-sync journals, recovery and publication | `Notes/notes_sync_executor.py`, `Library/library_notes_lasting_sync_state.py`, `Sync_Interop/notes_*` | File/Note transactions and recovery have separate owners. Pause regeneration/publication of affected managed material; filesystem edits and recovery retirement require the root's current authority and exact review. An offline root is not deletion. |
 | Profile outbox, copied Sync staging, first-link/reconciliation/recovery | Profile repository, `Sync_Interop/personal_context_dispatcher.py`, adapter, Sync state repository/restore service | Dispatcher copies to another database and can then shred the original. Profile cleanup alone cannot retire the destination. First-link/recovery copies and old staged envelopes need explicit epoch checks and retirement. |
-| Home server and other clients | ADR-102/185 runtime boundary | Not inspected here. Require compatible control semantics, durable cleanup acknowledgements and replay rejection; no remote completion inferred from transport acceptance. |
+| Home server and other clients | ADR-102/201 runtime boundary | Not inspected here. Require compatible control semantics, durable cleanup acknowledgements and replay rejection; no remote completion inferred from transport acceptance. |
 | Exported files, backups, provider requests and third-party copies | Their independent custodians | Report managed versus unmanaged custody. Register managed exports if a later feature guarantees recall; already delivered provider requests and arbitrary exports cannot be promised erased. |
 
 No file path above is a request to open a real user database. This inventory
@@ -103,7 +103,7 @@ foreground approval and owner floors still apply, including ADR-106 for Agent
 Lessons and applied promotion targets.
 
 Dependencies are authority-bound **artifact-version to input-version** edges:
-profile claims/proposals, exact ADR-185 bindings, promoted copies, excerpts,
+profile claims/proposals, exact ADR-201 bindings, promoted copies, excerpts,
 interviews, tool-message copies, compactions, generated Notes and managed export
 registrations, Safe/Full captures, semantic trace artifacts and qualified
 managed provider-cache lineage. A service writes its artifact and dependency admission token in
@@ -141,7 +141,7 @@ attention. The coordinator stores only permitted current handles.
   memory-source suppression does not promise to censor every ordinary read.
 - A multi-source inference loses required support and is held, even if another
   source remains. A separately reviewed sanitized successor may retain permitted
-  assertion text under ADR-185; it never transfers an old assessment or approval
+  assertion text under ADR-201; it never transfers an old assessment or approval
   to new source bindings. Independent direct assertions outside the selected
   family are not silently deleted.
 
@@ -177,7 +177,7 @@ entire conversation without explicit review.
 Source marks are retained with the source under its own policy; cross-owner
 indexes retain source locators only while source-identity permission allows.
 If that permission is revoked, establish the owner-native no-memory mark first,
-then retire restricted cross-owner locator/hash metadata as ADR-185 requires.
+then retire restricted cross-owner locator/hash metadata as ADR-201 requires.
 An unavailable owner leaves suppression unconfirmed and the affected memory
 pipeline fenced; the journal cannot claim completion or store forbidden source
 identity to make retry convenient. Portable marks require both native source
@@ -211,7 +211,7 @@ claim ciphertext is kept after profile purge.
 
 ## Durable cross-owner recovery and publication fences
 
-Use the ADR-185 V2 manifest `evidence_retirement_epoch` as the common managed
+Use the ADR-201 V2 manifest `evidence_retirement_epoch` as the common managed
 artifact retirement sequence for portable operations; this design extends its
 guarded worklist to forgetting. Device-only operations use an independently
 durable **peer-local retirement revision** with the same lease/ticket checks;
@@ -358,7 +358,7 @@ design does not claim end-to-end encryption or erase the server by deleting a
 client key. The home server must fence old writes, retire its canonical/history,
 proposal, staging, recovery and governed derivative copies, then acknowledge the
 exact epoch. Clients replay control before content, discard stale snapshots and
-acknowledge all pages before memory use/Sync resumes. ADR-185's profile-wide V2
+acknowledge all pages before memory use/Sync resumes. ADR-201's profile-wide V2
 activation rule also applies to forgetting/suppression consumers.
 
 Managed restore/import checks retired profile IDs, current purge generation,

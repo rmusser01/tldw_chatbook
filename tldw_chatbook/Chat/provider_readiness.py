@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 from unicodedata import category as unicode_category
 
@@ -55,6 +55,7 @@ SUBSCRIPTION_SOURCE = "subscription:claude_code"
 PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
         "anthropic",
+        "byteplus",
         "cerebras",
         "cohere",
         "databricks",
@@ -64,6 +65,7 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "google",
         "groq",
         "huggingface",
+        "mimo",
         "minimax",
         "mistral",
         "mistralai",
@@ -75,7 +77,9 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "openrouter",
         "qwencloud",
         "sambanova",
+        "stepfun",
         "together",
+        "tokenhub",
         "zai",
     }
 )
@@ -159,6 +163,9 @@ _MAX_SOURCE_CHARS = 256
 _MAX_ENV_VAR_CHARS = 128
 _MAX_REASON_CHARS = 128
 _MAX_RECOVERY_CHARS = 1024
+#: ADR-146: the readiness reason for a ``custom-ep:<slug>`` id whose registry
+#: entry is gone (TASK-33002.12).
+ENDPOINT_NOT_FOUND_REASON = "Endpoint not found"
 _CONFIGURATION_STATE_BY_REASON: dict[
     str, tuple[ConfigurationFacet, ConfigurationIssueCode | None]
 ] = {
@@ -178,6 +185,7 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Missing workspace URL": ("incomplete", "endpoint_missing"),
     "Invalid provider settings": ("incomplete", "invalid_settings"),
     "Unknown provider": ("incomplete", "invalid_settings"),
+    ENDPOINT_NOT_FOUND_REASON: ("incomplete", "endpoint_missing"),
 }
 _PERSISTED_CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment"})
 
@@ -194,6 +202,28 @@ def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
         )
     ):
         raise ValueError(f"{label} is invalid.")
+
+
+def safe_provider_label(text: str, fallback: str) -> str:
+    """Return ``text`` when ``ProviderReadiness.provider`` can carry it.
+
+    An ADR-146 entry's ``display_name`` is user text the registry accepts
+    but the record rejects (a no-break space, a ZWJ emoji, a tab), and a
+    rejected record is an unhandled ValueError that kills Settings on open
+    (TASK-33002.12), so such a name reads as ``fallback`` instead.
+
+    Args:
+        text: Candidate user-facing provider label.
+        fallback: Label to use when ``text`` is not carriable.
+
+    Returns:
+        ``text`` or ``fallback``.
+    """
+    try:
+        _validate_safe_text(text, label="Provider", max_chars=_MAX_PROVIDER_CHARS)
+    except ValueError:
+        return fallback
+    return text
 
 
 def _validate_provider_key(provider_key: object) -> None:
@@ -569,6 +599,83 @@ def resolve_provider_credential(
     return env_key, f"env:{env_var}", env_var
 
 
+def _custom_endpoint_readiness(
+    provider_name: str,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str],
+    background_credentials: bool,
+) -> ProviderReadiness | None:
+    """Resolve an ADR-146 ``custom-ep:<slug>`` id through its registry entry.
+
+    A registry id is not an ``api_settings`` key: canonicalized, it becomes
+    ``custom_ep:<slug>``, which no readiness record can carry (TASK-33002.12:
+    opening Settings on such a default killed the app). Readiness is the
+    entry family's readiness plus the entry's own API-key rule, as Console
+    decides it; the family record's credential is dropped, since it belongs
+    to the family's slot table and never to the entry (the send path resolves
+    the entry's own credential).
+
+    Args:
+        provider_name: Stripped provider id from the caller.
+        app_config: Loaded app configuration holding the registry.
+        environ: Environment mapping for credential resolution.
+        background_credentials: Forwarded to the family readiness check.
+
+    Returns:
+        The entry's readiness, an "Endpoint not found" state for a dangling
+        slug, or None when ``provider_name`` is not a registry id.
+    """
+    # Lazy: the registry imports console_session_settings, which imports this module.
+    from .console_session_settings import _custom_endpoint_missing_key_readiness
+    from .custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        SLUG_PATTERN,
+        canonical_custom_endpoint_id,
+        entry_for,
+        family_execution_key,
+    )
+
+    registry_id = canonical_custom_endpoint_id(provider_name)
+    if registry_id is None:
+        return None
+    entry = entry_for(app_config, registry_id)
+    if entry is None:
+        # A hand-edited id is echoed only when it is a real slug.
+        slug = registry_id.removeprefix(CUSTOM_ENDPOINT_ID_PREFIX)
+        return ProviderReadiness(
+            provider=(
+                registry_id if SLUG_PATTERN.fullmatch(slug) else "Custom endpoint"
+            ),
+            provider_key="custom",
+            requires_api_key=False,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason=ENDPOINT_NOT_FOUND_REASON,
+            recovery=(
+                "No custom endpoint with that id is saved. Choose another "
+                "provider, or recreate the endpoint under Custom endpoints."
+            ),
+        )
+    family_key = family_execution_key(entry.family)
+    family = get_provider_readiness(
+        family_key,
+        app_config,
+        environ=environ,
+        background_credentials=background_credentials,
+    )
+    if family.ready:
+        missing_key = _custom_endpoint_missing_key_readiness(entry, family_key, environ)
+        if missing_key is not None:
+            return missing_key
+        # The slot's env var is not the entry's either (the Test row printed it).
+        family = replace(family, api_key=None, api_key_source=None, env_var=None)
+    return replace(
+        family, provider=safe_provider_label(entry.display_name, registry_id)
+    )
+
+
 def get_provider_readiness(
     provider: str | None,
     app_config: Mapping[str, object],
@@ -593,6 +700,12 @@ def get_provider_readiness(
     provider_key = provider_config_key(provider_name)
     env = environ if environ is not None else os.environ
 
+    registry_readiness = _custom_endpoint_readiness(
+        provider_name, app_config, env, background_credentials
+    )
+    if registry_readiness is not None:
+        return registry_readiness
+
     if not provider_name:
         return ProviderReadiness(
             provider="No provider",
@@ -604,6 +717,25 @@ def get_provider_readiness(
             env_var=None,
             reason="Select a provider",
             recovery="Choose a provider and model before sending.",
+        )
+
+    try:
+        _validate_provider_key(provider_key)
+    except ValueError:
+        # A hand-edited id no record can carry ("foo:bar", "custom-ep:" with
+        # no slug, "CUSTOM-EP:<slug>" -- registry ids are case-sensitive)
+        # raised here and killed Settings on open (TASK-33002.12). Report
+        # only: the record keeps rejecting the key everywhere else.
+        return ProviderReadiness(
+            provider=safe_provider_label(provider_name, "Provider"),
+            provider_key="unknown",
+            requires_api_key=True,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Unknown provider",
+            recovery="That is not a valid provider id. Choose a supported provider.",
         )
 
     api_settings = app_config.get("api_settings", {})

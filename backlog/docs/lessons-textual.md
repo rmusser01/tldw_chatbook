@@ -1147,6 +1147,33 @@ calling `str(Select.value)` erases that distinction and breaks control dispatch.
 Real-service regressions
 and four native cells verified exact saved IDs, labels and memory confirmation.
 
+## Narrowing a Select's options orphans the value already saved (TASK-33002 final review C1, 2026-09-27)
+
+TASK-33002.1 removed "minimal" from Settings' Reasoning effort Select for
+llama.cpp, because the request drops it. Compose and sync used the narrowed list,
+so a profile that had already saved "minimal" was mapped to `Select.NULL` and
+showed "Inherit default". Two failures followed, and both passed the task review
+and its tests:
+- **Revert** still mapped against the full list and assigned `select.value =
+  "minimal"` to a Select that lacked the option. Textual raises
+  `InvalidSelectValueError`. The `try` caught only `QueryError`, so the error
+  escaped a button handler and the app exited.
+- **An unrelated Save** rebuilt the profile from the widget. NULL became "",
+  and the saved value was deleted. Save had touched only Temperature.
+
+Both reproduced only with a value saved *before* the list shrank, and no test
+seeded one.
+
+**What to do.** When a Select's option list narrows by provider, model or family:
+- Route every writer (compose, sync on identity change, Revert) through ONE
+  options helper.
+- Have that helper keep a saved, still-legal value as a labelled option, as
+  `_model_profile_enum_options` in settings_screen.py does with "minimal (not
+  supported here)". Silently mapping it to NULL is the bug.
+- Test the three paths that change the option list under a saved value: open
+  with it saved, switch identity and then Revert, and Save an unrelated field.
+  Assert the value that is written.
+
 ## `is_mounted` never goes False, and `push_screen_wait` needs a worker (Qodo review of PR #2799, 2026-09-23)
 
 Two Textual facts that turned three "crash guard" fixes into no-ops. Both were

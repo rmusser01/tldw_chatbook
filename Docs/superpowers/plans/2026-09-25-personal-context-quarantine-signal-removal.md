@@ -12,8 +12,8 @@
 
 **Backlog:** TASK-25907.11 — Done; user approved native implementation on 2026-09-25.
 
-ADR required: no new ADR; existing ADR-187/182 apply.
-ADR path: backlog/decisions/187-personal-context-provider-disclosure-authority.md; backlog/decisions/182-personal-context-memory-evolution.md.
+ADR required: no new ADR; existing ADR-203/182 apply.
+ADR path: backlog/decisions/203-personal-context-provider-disclosure-authority.md; backlog/decisions/182-personal-context-memory-evolution.md.
 Reason: directly implement the accepted existing serializer privacy correction; no new storage, source, provider, custody, permission or service boundary.
 
 ## Global Constraints
@@ -227,7 +227,7 @@ This is the concrete next native implementation proposal, after the original fou
 
 ## Plan self-review
 
-- The accepted ADR-187 removal requirement is covered by Units 1–2; broader disclosure, enrollment and V2 requirements remain explicitly outside this independently testable slice.
+- The accepted ADR-203 removal requirement is covered by Units 1–2; broader disclosure, enrollment and V2 requirements remain explicitly outside this independently testable slice.
 - Native signatures, Console helper, system-message append seam, zero-token request validation, frozen h11 fixture and create-only report writer were inspected. The spec anchor was corrected and repr-only privacy assertions replaced with actual payload/selection assertions.
 - Unit 3 distinguishes full-file static checks for the Personal Context files from the older Chat module's baseline debt; it cannot certify that debt as fixed.
 - This checkpoint changes documentation/tracker files only. Execution receipts and the new JSON report are future deliverables, not planning evidence.

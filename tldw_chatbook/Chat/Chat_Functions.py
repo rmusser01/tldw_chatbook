@@ -80,17 +80,21 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
 from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
+    BYTEPLUS,
     CEREBRAS,
     CUSTOM_HOSTED,
     DATABRICKS,
     DEEPINFRA,
     FIREWORKS,
+    MIMO,
     MINIMAX,
     NEBIUS,
     NOVITA,
     NVIDIA,
     SAMBANOVA,
+    STEPFUN,
     TOGETHER,
+    TOKENHUB,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
@@ -191,6 +195,11 @@ API_CALL_HANDLERS = {
     "nebius": _LazyHostedChatHandler(NEBIUS),
     "novita": _LazyHostedChatHandler(NOVITA),
     "minimax": _LazyHostedChatHandler(MINIMAX),
+    # Top-15 OpenRouter model makers (TASK-33350).
+    "mimo": _LazyHostedChatHandler(MIMO),
+    "tokenhub": _LazyHostedChatHandler(TOKENHUB),
+    "byteplus": _LazyHostedChatHandler(BYTEPLUS),
+    "stepfun": _LazyHostedChatHandler(STEPFUN),
     # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
     # gateway identity site swaps ``openai_compatible`` custom-ep entries to
     # this key when ``[console] custom_endpoints_use_engine`` is on. The
@@ -888,6 +897,10 @@ PROVIDER_PARAM_MAP = {
     "nebius": ENGINE_PROVIDER_PARAM_MAP,
     "novita": ENGINE_PROVIDER_PARAM_MAP,
     "minimax": ENGINE_PROVIDER_PARAM_MAP,
+    "mimo": ENGINE_PROVIDER_PARAM_MAP,
+    "tokenhub": ENGINE_PROVIDER_PARAM_MAP,
+    "byteplus": ENGINE_PROVIDER_PARAM_MAP,
+    "stepfun": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
 

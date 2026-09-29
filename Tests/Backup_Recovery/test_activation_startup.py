@@ -115,7 +115,8 @@ app.local_llm_provider_catalog_service = SimpleNamespace(refresh_stale_configure
 app._init_providers_models = lambda: None
 app.post_message = lambda *a: None
 app.notify = lambda *a, **k: None
-module.load_settings = lambda: {'model_catalog': {'auto_refresh_enabled': True, 'refresh_consent_recorded': True}}
+import tldw_chatbook.app_feature_glue as glue_module
+glue_module.load_settings = lambda: {'model_catalog': {'auto_refresh_enabled': True, 'refresh_consent_recorded': True}}
 
 async def main():
     if scenario == 'speech':
@@ -124,7 +125,10 @@ async def main():
         TldwCli.schedule_media_cleanup(app)
     elif scenario == 'backfill':
         app.subscriptions_db = SimpleNamespace(close=lambda: None)
-        module.backfill_subscription_items_fts = lambda db: effects.append('backfill')
+        # TASK-33011: app.py imports the backfill driver inside the worker body
+        # (census offset), so patch the defining module the import reads.
+        import tldw_chatbook.Subscriptions.fts_backfill as fts_backfill_module
+        fts_backfill_module.backfill_subscription_items_fts = lambda db: effects.append('backfill')
         TldwCli._backfill_subscription_items_fts(app)
     elif scenario == 'catalog':
         await TldwCli._refresh_model_catalogs(app)

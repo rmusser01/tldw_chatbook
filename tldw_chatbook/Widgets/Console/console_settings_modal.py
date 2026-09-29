@@ -43,6 +43,8 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    CARRY_FORWARD_OPTIONS,
+    MODEL_FIELD_LABELS,
     ConsoleGenerationControl,
     console_generation_control_support,
 )
@@ -807,17 +809,9 @@ class ConsoleUnverifiedModelDecision:
     model_id: str
 
 
-_PROVIDER_CHOICE_CONTROLS: tuple[
-    tuple[str, str, ConsoleGenerationControl], ...
-] = (
-    ("Reasoning effort", "console-settings-reasoning-effort", "reasoning_effort"),
-    (
-        "Reasoning summary",
-        "console-settings-reasoning-summary",
-        "reasoning_summary",
-    ),
-    ("Verbosity", "console-settings-verbosity", "verbosity"),
-    ("Thinking effort", "console-settings-thinking-effort", "thinking_effort"),
+_PROVIDER_CHOICE_CONTROLS: tuple[tuple[str, str, ConsoleGenerationControl], ...] = tuple(
+    (MODEL_FIELD_LABELS[control], f"console-settings-{control.replace('_', '-')}", control)
+    for control in ("reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort")
 )
 # Keep widget options and help copy in the same deterministic order as the one
 # canonical settings-field registry used by snapshot validation.
@@ -859,7 +853,7 @@ CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Use: this conversation only. Defaults: future provider conversations."
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
-    "Use: this conversation only. Defaults: F4 Settings > Console behavior."
+    "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
 )
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 #: Debounce for the custom-model-id `Input` -- mirrors the picker/filter
@@ -1753,7 +1747,7 @@ class ConsoleSettingsModal(
                         )
                         yield credential_action
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Base URL")
+                            yield self._modal_label(MODEL_FIELD_LABELS["endpoint"])
                             base_url_input = ConsoleSettingsInput(
                                 value=base_url or "",
                                 id="console-settings-base-url",
@@ -1961,63 +1955,63 @@ class ConsoleSettingsModal(
                     ),
                 ):
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Temperature")
+                        yield self._modal_label(MODEL_FIELD_LABELS["temperature"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.temperature),
                             id="console-settings-temperature",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Top P")
+                        yield self._modal_label(MODEL_FIELD_LABELS["top_p"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_p),
                             id="console-settings-top-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Min P")
+                        yield self._modal_label(MODEL_FIELD_LABELS["min_p"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.min_p),
                             id="console-settings-min-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Top K")
+                        yield self._modal_label(MODEL_FIELD_LABELS["top_k"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_k),
                             id="console-settings-top-k",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Response max tokens")
+                        yield self._modal_label(MODEL_FIELD_LABELS["max_tokens"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.max_tokens),
                             id="console-settings-max-tokens",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Seed")
+                        yield self._modal_label(MODEL_FIELD_LABELS["seed"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.seed),
                             id="console-settings-seed",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Presence")
+                        yield self._modal_label(MODEL_FIELD_LABELS["presence_penalty"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.presence_penalty),
                             id="console-settings-presence-penalty",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Frequency")
+                        yield self._modal_label(MODEL_FIELD_LABELS["frequency_penalty"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.frequency_penalty),
                             id="console-settings-frequency-penalty",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Streaming")
+                        yield self._modal_label(MODEL_FIELD_LABELS["streaming"])
                         streaming_toggle = Button(
                             self._streaming_toggle_label(),
                             id="console-settings-streaming",
@@ -2035,7 +2029,7 @@ class ConsoleSettingsModal(
                         id="console-settings-reasoning-effort-row",
                         classes="console-settings-modal-row",
                     ):
-                        yield self._modal_label("Reasoning")
+                        yield self._modal_label(MODEL_FIELD_LABELS["reasoning_effort"])
                         yield self._generation_choice_select(
                             "console-settings-reasoning-effort",
                             self._settings.reasoning_effort,
@@ -2057,7 +2051,7 @@ class ConsoleSettingsModal(
                         id="console-settings-reasoning-summary-row",
                         classes="console-settings-modal-row",
                     ):
-                        yield self._modal_label("Summary")
+                        yield self._modal_label(MODEL_FIELD_LABELS["reasoning_summary"])
                         yield self._generation_choice_select(
                             "console-settings-reasoning-summary",
                             self._settings.reasoning_summary,
@@ -2079,7 +2073,7 @@ class ConsoleSettingsModal(
                         id="console-settings-verbosity-row",
                         classes="console-settings-modal-row",
                     ):
-                        yield self._modal_label("Verbosity")
+                        yield self._modal_label(MODEL_FIELD_LABELS["verbosity"])
                         yield self._generation_choice_select(
                             "console-settings-verbosity",
                             self._settings.verbosity,
@@ -2101,7 +2095,7 @@ class ConsoleSettingsModal(
                         id="console-settings-thinking-effort-row",
                         classes="console-settings-modal-row",
                     ):
-                        yield self._modal_label("Thinking")
+                        yield self._modal_label(MODEL_FIELD_LABELS["thinking_effort"])
                         yield self._generation_choice_select(
                             "console-settings-thinking-effort",
                             self._settings.thinking_effort,
@@ -2123,7 +2117,7 @@ class ConsoleSettingsModal(
                         id="console-settings-thinking-budget-tokens-row",
                         classes="console-settings-modal-row",
                     ):
-                        yield self._modal_label("Budget")
+                        yield self._modal_label(MODEL_FIELD_LABELS["thinking_budget_tokens"])
                         yield ConsoleSettingsInput(
                             value=self._format_value(
                                 self._settings.thinking_budget_tokens
@@ -2216,7 +2210,7 @@ class ConsoleSettingsModal(
                             markup=False,
                         )
                         yield Static(
-                            "Response max tokens "
+                            f"{MODEL_FIELD_LABELS['max_tokens']:<20}"
                             f"{format_context_tokens(self._context_state.response_max_tokens)} tokens",
                             id="console-context-response-max",
                             classes="console-settings-modal-row",
@@ -2248,7 +2242,7 @@ class ConsoleSettingsModal(
                             "Conversation budget", classes="destination-section"
                         )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Budget mode")
+                            yield self._modal_label(MODEL_FIELD_LABELS["conversation_budget_mode"])
                             yield Select(
                                 [
                                     ("Automatic", ContextBudgetMode.AUTOMATIC.value),
@@ -2293,14 +2287,11 @@ class ConsoleSettingsModal(
                     with Vertical(classes="console-settings-modal-section"):
                         yield Static("Compaction", classes="destination-section")
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Behavior")
+                            yield self._modal_label(MODEL_FIELD_LABELS["compaction_mode"])
                             yield Select(
                                 [
                                     ("Ask", ContextCompactionMode.ASK.value),
-                                    (
-                                        "Automatic",
-                                        ContextCompactionMode.AUTOMATIC.value,
-                                    ),
+                                    ("Automatic", ContextCompactionMode.AUTOMATIC.value),
                                     ("Off", ContextCompactionMode.OFF.value),
                                 ],
                                 value=self._context_state.resolved_policy.policy.compaction_mode.value,
@@ -2345,7 +2336,9 @@ class ConsoleSettingsModal(
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Reduce conversation to (%)")
+                            yield self._modal_label(
+                                MODEL_FIELD_LABELS["compaction_target_ratio"]
+                            )
                             yield ConsoleSettingsInput(
                                 value=self._format_percent(
                                     self._context_state.resolved_policy.policy.target_ratio
@@ -2385,18 +2378,11 @@ class ConsoleSettingsModal(
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Keep after compaction")
+                            yield self._modal_label(
+                                MODEL_FIELD_LABELS["compaction_carry_forward_mode"]
+                            )
                             yield Select(
-                                [
-                                    (
-                                        "Memory with recent turns",
-                                        ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS.value,
-                                    ),
-                                    (
-                                        "Memory with latest exchange",
-                                        ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE.value,
-                                    ),
-                                ],
+                                CARRY_FORWARD_OPTIONS,
                                 value=self._context_state.resolved_policy.policy.carry_forward_mode.value,
                                 id="console-context-carry-forward",
                                 classes="console-settings-control",
@@ -3415,7 +3401,7 @@ class ConsoleSettingsModal(
             "provider_configuration_invalid": (
                 f"Review the {provider} configuration to continue."
             ),
-            "endpoint_invalid": f"Enter a valid {provider} Base URL to continue.",
+            "endpoint_invalid": f"Enter a valid {provider} endpoint to continue.",
             "endpoint_not_saved": (
                 f"Save the {provider} endpoint in Conversation settings before "
                 "using it here."
@@ -6804,7 +6790,7 @@ class ConsoleSettingsModal(
             "console-context-model-window": f"{self._model_window_label():<20}{result.tokens:,} tokens ({result.source})",
             "console-context-safe-input": f"Safe input ceiling  {format_context_tokens(state.safe_input_ceiling_tokens)} tokens",
             "console-context-effective-budget": f"Effective           {format_context_tokens(state.conversation_budget_tokens)} tokens",
-            "console-context-response-max": f"Response max tokens {format_context_tokens(state.response_max_tokens)} tokens",
+            "console-context-response-max": f"{MODEL_FIELD_LABELS['max_tokens']:<20}{format_context_tokens(state.response_max_tokens)} tokens",
             "console-context-safety-margin": f"Safety margin       {format_context_tokens(state.safety_margin_tokens)} tokens",
             "console-context-capacity-status": self._context_validation_label(),
         }

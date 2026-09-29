@@ -5,7 +5,7 @@ Task: TASK-25907.14; base: bf0d556467512dae2a133004f683262eeb6a3cdc.
 [specification](../specs/2026-09-26-personal-context-owner-version-evidence-binding-design.md),
 [API](../../../backlog/docs/personal-context-owner-version-evidence-binding.md).
 ADR required: no new ADR; direct data-only convention from
-[ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md).
+[ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md).
 
 ## Requested design review
 

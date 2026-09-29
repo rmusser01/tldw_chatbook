@@ -17,6 +17,7 @@ import pytest
 from textual.app import App
 from textual.screen import Screen
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook import config as config_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
@@ -119,7 +120,7 @@ def _stub(
         # Consent defaults to recorded so refresh-path tests exercise the
         # refresh itself; consent gating has its own dedicated tests below.
         settings = {"model_catalog": {"refresh_consent_recorded": True}}
-    monkeypatch.setattr("tldw_chatbook.app.load_settings", lambda: settings or {})
+    set_app_global(monkeypatch, "load_settings", lambda: settings or {})
     service = _StubCatalogService(report=report, error=error)
     app = _StubApp(
         disk_store=object() if disk_store is _DEFAULT_DISK_STORE else disk_store,
@@ -268,18 +269,18 @@ async def test_refresh_honors_disabled_setting_from_canonical_config(
     # admission pins the shared module's participant to the session
     # bootstrap selection, so re-selecting in place raises
     # RecoveryRequired. ``TldwCli._refresh_model_catalogs_owned`` resolves
-    # ``load_settings`` from the app module's globals, so that reference is
-    # rebound too -- otherwise the refresh would read the bootstrap profile
-    # and pass via the swallowed-exception/consent fallbacks instead of the
-    # disabled setting this test is about.
+    # ``load_settings`` from the app modules' globals (the refresh now lives in
+    # ``app_feature_glue``), so every reference is rebound -- otherwise the
+    # refresh would read the bootstrap profile and pass via the
+    # swallowed-exception/consent fallbacks instead of the disabled setting
+    # this test is about.
     from Tests.Backup_Recovery.config_test_support import install_config_source
-    from tldw_chatbook import app as app_module
 
     config_path = tmp_path / "model-catalog-disabled.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     fresh = install_config_source(monkeypatch)
     monkeypatch.setattr(sys.modules[__name__], "config_module", fresh)
-    monkeypatch.setattr(app_module, "load_settings", fresh.load_settings)
+    set_app_global(monkeypatch, "load_settings", fresh.load_settings)
     assert fresh.save_settings_to_cli_config(
         {"model_catalog": {"auto_refresh_enabled": False}}
     )
@@ -468,7 +469,7 @@ async def test_refresh_swallows_and_logs_errors(monkeypatch):
 
 
 def test_disk_store_builds_for_cache_path_inside_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     app, _service = _stub(monkeypatch)
     store = TldwCli._init_model_catalog_disk_store(app)
     assert store is not None
@@ -478,7 +479,7 @@ def test_disk_store_builds_for_cache_path_inside_data_dir(tmp_path, monkeypatch)
 def test_disk_store_rejected_when_cache_path_escapes_data_dir(tmp_path, monkeypatch):
     from loguru import logger
 
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
         "tldw_chatbook.Utils.path_validation.get_safe_relative_path",
         lambda path, base: None,
@@ -503,7 +504,7 @@ def test_disk_store_load_failure_logs_path_without_traceback(tmp_path, monkeypat
         ModelCatalogDiskStore,
     )
 
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
 
     def failing_load_into(self, cache):
         raise RuntimeError("boom-secret")

@@ -439,11 +439,11 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         assert save_defaults.display is False
         scope = str(app.screen.query_one("#console-settings-scope", Static).renderable)
         assert "this conversation" in scope
-        assert "F4 Settings > Console behavior" in scope
+        assert "F4 Settings > Console Behavior" in scope
         context_labels = {
             "#console-context-custom-budget": "Conversation max tokens",
             "#console-context-trigger-percent": "Compact at (%)",
-            "#console-context-target-percent": "Reduce conversation to (%)",
+            "#console-context-target-percent": "Reduce context to (%)",
             "#console-context-summary-max": "Summary response max",
             "#console-context-failure-behavior": "If compaction fails",
             "#console-context-carry-forward": "Keep after compaction",

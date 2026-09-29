@@ -12,9 +12,9 @@
 
 **Task:** [TASK-25907.12](../../../backlog/tasks/task-25907.12%20-%20Add-exact-text-span-digests-to-shared-profile-core.md).
 
-**ADR required:** no new ADR; implement the exact text/span convention already accepted in ADR-185.
+**ADR required:** no new ADR; implement the exact text/span convention already accepted in ADR-201.
 
-**ADR path:** [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md), retaining [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md) ownership.
+**ADR path:** [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md), retaining [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md) ownership.
 
 **Reason:** This slice introduces a data-only calculation in the accepted shared-core boundary; it makes no storage, schema, resolver, grant, retirement or temporal policy decision.
 
@@ -249,7 +249,7 @@ PYTHONPATH=.:packages/tldw_profile_core/src .venv/bin/python -m pytest packages/
 
 This is a targeted shared-core run, not the application suite. Keep the existing V1 canonical/HMAC and source/export schema parity checks unchanged. Do not add broad runtime tests for native routes that remain untouched, or claim server conformance from Python-only checks.
 
-- [x] **Step 3: Add the API documentation.** Show `from tldw_profile_core.evidence import exact_text_span_digests` with the accepted source and both fixed hashes. State the half-open codepoint convention, all error/empty-span semantics, no normalization, caller-owned input resource bounds and no retained source in the returned result. State explicitly that V2 bindings, owner authorization/current-source verification, semantic assessment, migration, negotiation, forgetting, disclosure and server qualification are unimplemented by this helper. Distinguish these exact-text SHA values from future RFC 8785 binding/claim digests and existing keyed V1 integrity tags. Link ADR-185, this plan and the task; create no V2 wire fixtures or capability declarations.
+- [x] **Step 3: Add the API documentation.** Show `from tldw_profile_core.evidence import exact_text_span_digests` with the accepted source and both fixed hashes. State the half-open codepoint convention, all error/empty-span semantics, no normalization, caller-owned input resource bounds and no retained source in the returned result. State explicitly that V2 bindings, owner authorization/current-source verification, semantic assessment, migration, negotiation, forgetting, disclosure and server qualification are unimplemented by this helper. Distinguish these exact-text SHA values from future RFC 8785 binding/claim digests and existing keyed V1 integrity tags. Link ADR-201, this plan and the task; create no V2 wire fixtures or capability declarations.
 
 ## Unit 3: Review and verified closeout
 

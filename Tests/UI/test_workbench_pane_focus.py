@@ -7,6 +7,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Input, Static
 
+from Tests.app_module_patches import set_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 import tldw_chatbook.app as app_module
@@ -35,7 +36,7 @@ def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def _mark_console_onboarding_complete(app) -> None:

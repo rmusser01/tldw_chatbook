@@ -1,5 +1,24 @@
 # Lessons: what counts as evidence a change works
 
+## Tests that read a moved file's source run outside the PR gate
+
+**TASK-33011, 2026-09-29.** Nine PRs moved code verbatim out of `app.py` into `app_*.py`
+modules, and each passed the required check. A full-suite comparison by failure name
+against the stack's merge-base still found three tests reading the old location:
+- `test_terminal_imports_and_runtime_ownership_stay_in_local_ui_layers`: a path list,
+  `TERMINAL_RUNTIME_OWNERS`.
+- `test_unmount_closes_owned_tts_resources_from_outer_finally`: an AST lookup of
+  `TldwCli.on_unmount` in `app.py`.
+- `test_legacy_server_client_builder_matches_are_listed_in_migration_audit`: the audit
+  doc's per-file rows.
+
+The PR fast lane collects none of them. The third had been red on `dev` since #2891 merged
+green. Before pushing a move, grep `Tests/` for the old path and the moved symbols, and run
+every hit on both trees. Do not lean on the full-suite comparison alone. Here about 20k tests
+failed locally on both sides with `RecoveryRequired: raw_source_selection_changed` (see the
+Tests/UI `RecoveryRequired` lesson below), and a name diff cannot see a regression in a test
+that fails on both sides.
+
 ## A queue that never drains may be another repo's CI
 
 **TASK-33160, 2026-09-27.** From 2026-09-23, this repo's required check waited 172-745 min

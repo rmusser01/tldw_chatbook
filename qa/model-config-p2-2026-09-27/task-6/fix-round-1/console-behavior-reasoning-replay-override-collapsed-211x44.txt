@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Console Behavior                                                                                                          │  │  │ Selected category: Console Behavior     │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ │                                                                                                                   │ │▁ │  │  │  Save (s) — no changes                  │
+│     Providers & Models       │  │  │ │ │  Start here                                                                                                       │ │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ │ ▐X▌ Show model thinking (On)                                                                                      │ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ │  Applies immediately. Thinking remains part of the conversation even when hidden.                                 │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ │                                                                                                                   │ │  │  │  │ Control guide                           │
+│     Appearance               │  │  │ │ │                                                                                                                   │ │  │  │  │  Default chat display name: Speaker     │
+│     Theme                    │  │  │ │ │  Local reasoning history                                                                                          │ │  │  │  │  label and trusted character-template   │
+│     Splash Screen            │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  │  human name                             │
+│   > Console Behavior         │  │  │ │ │ ▊  Automatic (recommended)                                                                                   ▼  ▎ │ │  │  │  │                                         │
+│  Data & Privacy              │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │  Streaming: Global fallback for         │
+│     Storage                  │  │  │ │ │                                                                                                                   │ │  │  │  │  streaming responses when no Console    │
+│     Workspaces               │  │  │ │ │  These device-local controls refine Conversation Auto. Conversation Include and Exclude override them, and        │ │  │  │  │  session or provider+model profile      │
+│     Tool Profiles            │  │  │ │ │  Required continuation remains intact. Automatic follows reviewed templates; unknown templates keep the server    │ │  │  │  │  overrides it                           │
+│     Privacy & Security       │  │  │ │ │  default. All available sends every compatible field, but the server template can still omit older reasoning.     │ │  │  │  │                                         │
+│     Network                  │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  │  Temperature: Creativity fallback,    ▃ │
+│     My Profile               │  │  │ │ │ ▊  ▶ Reasoning replay override                                                                                  ▎ │ │  │  │  │  0.0 is focused and 2.0 is              │
+│  Troubleshooting             │  │  │ │ │ ▊                                                                                                               ▎ │ │  │  │  │  exploratory                            │
+│     Diagnostics (view)       │  │  │ │ │ ▊                                                                                                               ▎ │ │  │  │  │                                         │
+│     About (view)             │  │  │ │ │ ▊                                                                                                               ▎ │ │  │  │  │  Top P: Probability cutoff fallback;    │
+│     Agents                   │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │  lower values narrow token choices      │
+│  Expert                      │  │  │ │ │                                                                                                                   │ │  │  │  │                                         │
+│     Internal Prompts         │  │  │ │ │  Conversation Auto: template checked on next send                                                                 │ │  │  │  │  Max tokens: Optional response cap      │
+│     Advanced Config          │  │  │ │ │  Conversation context and memory ↓                                                                                │ │  │  │  │  for new/default Console sends          │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  Also in this category: rail presentation, paste handling, images, agent limits, selection side chat, and         │ │  │  │  │                                         │
+│                              │  │  │ │ │  generation defaults.                                                                                             │ │  │  │  │  Paste collapse: Only pasted chunks     │
+│                              │  │  │ │ │                                                                                                                   │ │  │  │  │  over the threshold become compact      │
+│                              │  │  │ │ │  Exchange capture                                                                                                 │ │  │  │  │  placeholders; typed text stays         │
+│                              │  │  │ │ │ ▐X▌ Capture future exchanges                                                                                      │ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

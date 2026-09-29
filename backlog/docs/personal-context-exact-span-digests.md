@@ -4,7 +4,7 @@ The shared-core primitive calculates two exact text identities. It does not
 resolve a source or establish a claim's truth, support, approval or authority.
 [TASK-25907.12](../tasks/task-25907.12%20-%20Add-exact-text-span-digests-to-shared-profile-core.md)
 implements the convention in
-[ADR-185](../decisions/185-versioned-profile-evidence-and-temporal-claims.md);
+[ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md);
 its [native plan](../../Docs/superpowers/plans/2026-09-26-personal-context-exact-span-digests.md)
 records the scope and targeted checks.
 

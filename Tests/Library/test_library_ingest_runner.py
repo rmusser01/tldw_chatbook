@@ -42,6 +42,8 @@ import pytest
 from textual.app import App
 
 import tldw_chatbook.app as _app_module
+import tldw_chatbook.app_ingest_queue as _ingest_queue_module
+import tldw_chatbook.app_service_wiring as _service_wiring_module
 import tldw_chatbook.STT.parakeet_dispatch as _parakeet_dispatch_module
 import tldw_chatbook.STT.parakeet_external as _parakeet_external_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
@@ -865,7 +867,7 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    workspace_db = _app_module.WorkspaceDB(
+    workspace_db = _service_wiring_module.WorkspaceDB(
         tmp_path / "app-workspaces.sqlite",
         client_id="app-wiring-test",
     )
@@ -876,7 +878,7 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     )
     app = _app_module.TldwCli.__new__(_app_module.TldwCli)
     app.local_workspace_db = workspace_db
-    app.workspace_registry_service = _app_module.LocalWorkspaceRegistryService(
+    app.workspace_registry_service = _service_wiring_module.LocalWorkspaceRegistryService(
         workspace_db
     )
     app.workspace_registry_service.create_workspace(
@@ -1062,7 +1064,7 @@ async def test_writer_passes_claimed_generate_embeddings_snapshot_to_persistence
     app = _IngestRunnerHarness(db)
 
     with patch.object(
-        _app_module, "persist_parsed_media", return_value=(777, "media-777", "saved")
+        _ingest_queue_module, "persist_parsed_media", return_value=(777, "media-777", "saved")
     ) as persist:
         async with app.run_test() as pilot:
             job = app.submit_library_ingest_job(
@@ -1095,9 +1097,9 @@ async def test_writer_missing_generic_snapshot_uses_capability_defaults(
         }.get(name, fallback)
 
     with (
-        patch.object(_app_module, "generic_option_default", side_effect=schema_default),
+        patch.object(_ingest_queue_module, "generic_option_default", side_effect=schema_default),
         patch.object(
-            _app_module,
+            _ingest_queue_module,
             "persist_parsed_media",
             return_value=(778, "media-778", "saved"),
         ) as persist,
@@ -1196,7 +1198,7 @@ async def test_directory_submission_honours_scan_limit(tmp_path: Path) -> None:
             return 2
         return _real_get_cli_setting(*args, **kwargs)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_limited):
+    with patch("tldw_chatbook.app_ingest_queue.get_cli_setting", side_effect=_limited):
         async with app.run_test() as pilot:
             app.submit_library_ingest_job(source_path=str(folder))
             assert len(app.library_ingest_jobs.jobs()) == 2
@@ -1295,9 +1297,9 @@ async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
     target = _write_text_file(tmp_path, "arrives-later.txt", "Arrived just in time.")
     app = _IngestRunnerHarness(db)
 
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_ingest_queue as ingest_queue_module
 
-    real_run_parse_job = app_module.run_parse_job
+    real_run_parse_job = ingest_queue_module.run_parse_job
     call_count = {"n": 0}
 
     def _flaky_run_parse_job(file_path, options, progress_context):
@@ -1306,7 +1308,7 @@ async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
             return {"ok": False, "error": "transient parse hiccup", "permanent": False}
         return real_run_parse_job(file_path, options, progress_context)
 
-    monkeypatch.setattr(app_module, "run_parse_job", _flaky_run_parse_job)
+    monkeypatch.setattr(ingest_queue_module, "run_parse_job", _flaky_run_parse_job)
 
     async with app.run_test() as pilot:
         failing_job = app.submit_library_ingest_job(source_path=str(target))
@@ -2782,7 +2784,7 @@ def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
     ):
         (legacy_v2 / filename).write_bytes(filename.encode())
     monkeypatch.setattr(
-        _app_module,
+        _ingest_queue_module,
         "get_cli_setting",
         lambda key, *args: str(legacy_v2)
         if key == "transcription.parakeet_onnx_model_dir"
@@ -3696,7 +3698,7 @@ def test_local_stt_marshal_failure_logs_callback_context(tmp_path: Path) -> None
 
     with (
         patch.object(app, "call_from_thread", side_effect=RuntimeError("closed")),
-        patch("tldw_chatbook.app.logger") as logger,
+        patch("tldw_chatbook.app_ingest_queue.logger") as logger,
     ):
         app._marshal_local_stt_call(safe_callback)
 
@@ -4315,7 +4317,7 @@ def test_worker_shutdown_timeout_reports_failure_without_late_completion(
             join_finished.set()
 
     monkeypatch.setattr(
-        _app_module,
+        _ingest_queue_module,
         "_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS",
         0.01,
         raising=False,
@@ -4903,7 +4905,7 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
     ``sys.stderr.fileno()`` during construction). Pool construction itself
     is faked (recording, not spawning) so this stays fast and
     deterministic."""
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_ingest_queue as ingest_queue_module
 
     recorded: dict[str, Any] = {}
 
@@ -4938,7 +4940,7 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
             assert method == "spawn"
             return _RecordingContext()
 
-    monkeypatch.setattr(app_module, "multiprocessing", _RecordingMultiprocessing())
+    monkeypatch.setattr(ingest_queue_module, "multiprocessing", _RecordingMultiprocessing())
     monkeypatch.setattr(sys, "stderr", _TextualLikeStderr())
 
     mixin = LibraryIngestQueueMixin()
@@ -4957,7 +4959,7 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
 ) -> None:
     """Control: with a valid ``sys.stderr`` fileno, no redirect happens --
     the stream object seen during construction is the ambient one."""
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_ingest_queue as ingest_queue_module
 
     recorded: dict[str, Any] = {}
 
@@ -4985,7 +4987,7 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
             assert method == "spawn"
             return _RecordingContext()
 
-    monkeypatch.setattr(app_module, "multiprocessing", _RecordingMultiprocessing())
+    monkeypatch.setattr(ingest_queue_module, "multiprocessing", _RecordingMultiprocessing())
 
     ambient_stderr = sys.stderr
     assert ambient_stderr.fileno() >= 0  # pytest's capture stream is fd-backed
@@ -5737,14 +5739,14 @@ def _server_ingest_preference():
     runtime to be in server mode as well -- so tests that want a server route
     must ALSO call ``_use_server_runtime`` (see ``_resolve_ingest_backend``).
     """
-    real = _app_module.get_cli_setting
+    real = _ingest_queue_module.get_cli_setting
 
     def _fake(*args, **kwargs):
         if args[:2] == ("library.ingest", "backend"):
             return "server"
         return real(*args, **kwargs)
 
-    return patch("tldw_chatbook.app.get_cli_setting", side_effect=_fake)
+    return patch("tldw_chatbook.app_ingest_queue.get_cli_setting", side_effect=_fake)
 
 
 def _use_server_runtime(app) -> None:
@@ -5894,7 +5896,7 @@ async def test_an_unrecognised_backend_falls_back_to_local(tmp_path: Path) -> No
     async with app.run_test() as pilot:
         for value in ("", "  ", "remote", "Server-ish", "cloud", None):
             with patch(
-                "tldw_chatbook.app.get_cli_setting",
+                "tldw_chatbook.app_ingest_queue.get_cli_setting",
                 side_effect=lambda *a, v=value, **k: (
                     v if a[:2] == ("library.ingest", "backend") else None
                 ),
@@ -5918,7 +5920,7 @@ async def test_server_backend_is_matched_case_insensitively(tmp_path: Path) -> N
     async with app.run_test():
         for value in ("server", "Server", " SERVER "):
             with patch(
-                "tldw_chatbook.app.get_cli_setting",
+                "tldw_chatbook.app_ingest_queue.get_cli_setting",
                 side_effect=lambda *a, v=value, **k: (
                     v if a[:2] == ("library.ingest", "backend") else None
                 ),
@@ -5983,7 +5985,7 @@ async def test_an_explicit_server_preference_routes_remotely(tmp_path: Path) -> 
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
     with patch(
-        "tldw_chatbook.app.get_cli_setting",
+        "tldw_chatbook.app_ingest_queue.get_cli_setting",
         side_effect=lambda *a, **k: (
             "server" if a and a[0] == "library.ingest" and a[1:2] == ("backend",) else None
         ),

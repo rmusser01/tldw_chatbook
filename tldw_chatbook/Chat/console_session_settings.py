@@ -13,6 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
+    MODEL_FIELD_LABELS,
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
     supported_console_provider_catalog,
@@ -37,6 +38,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
     provider_config_key,
+    safe_provider_label,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_test_evidence import (
@@ -77,7 +79,10 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
-from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.input_validation import (
+    validate_env_var_reference,
+    validate_url,
+)
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
@@ -101,6 +106,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
     {
         "anthropic",
         "aphrodite",
+        "byteplus",
         "cerebras",
         "cohere",
         "custom-openai-api",
@@ -120,6 +126,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "local_mlx_lm",
         "local_ollama",
         "local_vllm",
+        "mimo",
         "minimax",
         "mistral",
         "mistralai",
@@ -134,8 +141,10 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "openrouter",
         "qwencloud",
         "sambanova",
+        "stepfun",
         "tabbyapi",
         "together",
+        "tokenhub",
         "vllm",
         "zai",
     }
@@ -1451,7 +1460,7 @@ def _console_session_settings_structural_errors(
     if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(
         settings.max_tokens, 1
     ):
-        errors.append("Response max tokens must be 1 or greater.")
+        errors.append(f"{MODEL_FIELD_LABELS['max_tokens']} must be 1 or greater.")
     if not _is_blank_value(settings.seed) and not _optional_int_at_least(
         settings.seed, 0
     ):
@@ -1488,12 +1497,15 @@ def _console_session_settings_structural_errors(
         and settings.thinking_effort not in _THINKING_EFFORT_VALUES
     ):
         errors.append(
-            "Thinking effort must be one of off, low, medium, high, xhigh, or max."
+            f"{MODEL_FIELD_LABELS['thinking_effort']} must be one of off, low, "
+            "medium, high, xhigh, or max."
         )
     if not _is_blank_value(
         settings.thinking_budget_tokens
     ) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
-        errors.append("Thinking budget tokens must be at least 1024.")
+        errors.append(
+            f"{MODEL_FIELD_LABELS['thinking_budget_tokens']} must be at least 1024."
+        )
 
     return errors
 
@@ -1519,7 +1531,7 @@ def validate_console_session_settings(
         and _is_url_based_provider(provider_key, provider_settings)
         and not _valid_base_url(provider_key, base_url)
     ):
-        errors.append("Base URL must be a valid http(s) URL.")
+        errors.append(f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL.")
 
     return errors
 
@@ -2161,15 +2173,43 @@ def _custom_endpoint_missing_key_readiness(
         return None
     if env_key is not None or stored_key is not None:
         return None
+    # Lazy import: custom_endpoint_registry imports this module.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        ENV_VAR_NAME_RULE_COPY,
+    )
+
+    # TASK-33002.12: a name the record cannot carry reads as the entry's id.
+    label = safe_provider_label(
+        entry.display_name, f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}"
+    )
+    if entry.api_key_env and not validate_env_var_reference(entry.api_key_env):
+        # Qodo #2876: a hand-edited name the record rejects was an unhandled
+        # ValueError. Name the problem, never the value (it may be a secret
+        # pasted into the name field).
+        return ProviderReadiness(
+            provider=label,
+            provider_key=provider_key,
+            requires_api_key=True,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Invalid provider settings",
+            recovery=(
+                f"The '{label}' endpoint's credential env var name is invalid. "
+                f"{ENV_VAR_NAME_RULE_COPY} Fix it under Custom endpoints."
+            ),
+        )
     if entry.api_key_env:
         recovery = (
             f"Set {entry.api_key_env} or update the stored api_key for the "
-            f"'{entry.display_name}' endpoint."
+            f"'{label}' endpoint."
         )
     else:
-        recovery = f"Update the stored api_key for the '{entry.display_name}' endpoint."
+        recovery = f"Update the stored api_key for the '{label}' endpoint."
     return ProviderReadiness(
-        provider=entry.display_name,
+        provider=label,
         provider_key=provider_key,
         requires_api_key=True,
         ready=False,

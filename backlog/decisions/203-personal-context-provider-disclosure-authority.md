@@ -1,10 +1,10 @@
-# ADR-187: Separate Personal Context model disclosure from Sync and agent authority
+# ADR-203: Separate Personal Context model disclosure from Sync and agent authority
 
 Status: Accepted — design direction approved, 2026-09-25; no schema, permissions or runtime rollout approved
 Date: 2026-09-25
 Task: TASK-25907.7
 Accepted future-design amendment to: [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md)
-Extends: [ADR-182](182-personal-context-memory-evolution.md), [ADR-185](185-versioned-profile-evidence-and-temporal-claims.md), [ADR-186](186-dependency-aware-personal-context-forgetting.md)
+Extends: [ADR-182](182-personal-context-memory-evolution.md), [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md), [ADR-202](202-dependency-aware-personal-context-forgetting.md)
 Related: [ADR-119](119-llamacpp-prompt-cache-snapshot-ownership.md), [ADR-147](147-agent-provider-routing.md), [ADR-080](080-trace-v2-exhaustive-event-projection-and-collaboration.md)
 Design: [Provider disclosure controls](../../Docs/superpowers/specs/2026-09-25-personal-context-provider-disclosure-controls-design.md)
 
@@ -23,7 +23,7 @@ literal device-only promise exceeds this observed model enforcement.
 Propose a restrictive separately versioned canonical disclosure ceiling plus
 user-reviewed destination/purpose-bound native grants. Agent read authority,
 Syncability, imported policy, a saved credential or a previous send grants no
-model permission. V1 bytes remain unchanged. Extend unshipped ADR-185 V2 with
+model permission. V1 bytes remain unchanged. Extend unshipped ADR-201 V2 with
 `deny`, `on_device_only` or `reviewed_destinations`; if it has shipped, use a
 subsequent version rather than mutate canonical semantics. Unknown/absent policy
 means deny. Portable opaque audience handles/purposes are ceilings, not runtime
@@ -59,7 +59,7 @@ copies cannot become unrestricted by replay. Exact reviewed replacements use
 new permitted inputs/lineage; manual originals remain independent authorities.
 
 Admission binds destination, purpose, exact versions, actor/root ceiling,
-policy/grant revisions and purge/retirement controls. The native ADR-186 gate
+policy/grant revisions and purge/retirement controls. The native ADR-202 gate
 covers final qualified adapter entry, not queue insertion. Retries, child routes,
 fallbacks, summaries, interviews and resumed jobs require fresh admission. No
 network await is held inside the gate. Model-generated web/MCP/skill/shell/file
@@ -80,7 +80,7 @@ never become automatic logs, capture metadata or provider content.
 
 Migration defaults all legacy/unreviewed records to deny model disclosure;
 existing credentials and visibility are not grandfathered grants. Use profile-wide
-version/capability gates under ADR-185; old active consumers block cutover or are
+version/capability gates under ADR-201; old active consumers block cutover or are
 explicitly retired. Restrictive/unknown policy conflicts deny pending review.
 Recovery never imports local grant authority. Preserve `server_trusted_v1` Sync:
 storage receipt or canonical policy is no grant for server-side model jobs.
@@ -116,7 +116,7 @@ storage and revisions, qualified destination adapters, governed dependency/polic
 propagation, final-entry admission and compatibility/deny migration. It changes
 future behavior visibly: unreviewed profile material is omitted until enrolled.
 This task is documents/tracking only; no permission or provider behavior changed.
-The user explicitly approved the reviewed written contract. ADR-187 accepts
+The user explicitly approved the reviewed written contract. ADR-203 accepts
 design direction only and remains provisionally numbered against concurrent
 branches until integration-time allocation checks. Implementation and current
 grants remain separately scoped.

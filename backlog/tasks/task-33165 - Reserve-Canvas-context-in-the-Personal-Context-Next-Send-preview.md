@@ -17,7 +17,7 @@ references:
 documentation:
   - >-
     backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md
-  - backlog/decisions/186-dependency-aware-personal-context-forgetting.md
+  - backlog/decisions/202-dependency-aware-personal-context-forgetting.md
 priority: medium
 ---
 
@@ -39,7 +39,7 @@ When Canvas tools are enabled and the model input budget is tight, the Personal 
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
-ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md; backlog/decisions/186-dependency-aware-personal-context-forgetting.md
+ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md; backlog/decisions/202-dependency-aware-personal-context-forgetting.md
 Reason: bounded correction of disposable first-request budgeting under existing Canvas ownership and Personal Context publication boundaries; document the pure-schema preview contract in ADR-121 before implementation.
 1. Reproduce missing Canvas reservation through the real controller/bridge preview and real Personal Context selection, with synthetic private state and native Python 3.12.
 2. Reuse the Canvas schema loader and shared disclosure planner for a data-only preview catalog. Preserve live registry authentication, schema order, persona narrowing, native/fenced protocol and progressive discovery; do not register a preview run or issue Canvas authority.
@@ -53,5 +53,5 @@ Reason: bounded correction of disposable first-request budgeting under existing 
 <!-- SECTION:NOTES:BEGIN -->
 Corrected disposable Personal Context budgeting using the existing Canvas owner profile, ordered catalog metadata and a lazy read-only schema loader inside the shared guarded planner. Live Canvas provider authentication and execution authority remain unchanged. One shared currentness callback fences exact session identity, Canvas enablement/controller/interactive owner and branch through final snapshot publication and later Inspector validation; diagnostic sidecars publish only after that fence.
 
-Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatch on unchanged head 295ee2a02a. Seven fresh-review regressions failed before correction (unreadable/denied schemas, closure/disable/replacement during project preview, durable replacement and later Inspector validation). Final affected groups passed 93 context/Inspector cases and 367 agent/Canvas cases, followed by 19 shared-probe checks after simplifying the loop. All 41 exact private-profile children passed without skips; parent/child application and profile-library imports were verified against this PR worktree. Three legacy suites now use the existing bootstrap-profile marker; the unchanged control reproduced their config-source setup failure. Targeted lint, regression-file formatting, AST-preserving helper formatting and whitespace pass. ADR-121 and ADR-186 apply; no new policy or activation was selected. Current-dev integration qualification remains separately tracked.
+Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatch on unchanged head 295ee2a02a. Seven fresh-review regressions failed before correction (unreadable/denied schemas, closure/disable/replacement during project preview, durable replacement and later Inspector validation). Final affected groups passed 93 context/Inspector cases and 367 agent/Canvas cases, followed by 19 shared-probe checks after simplifying the loop. All 41 exact private-profile children passed without skips; parent/child application and profile-library imports were verified against this PR worktree. Three legacy suites now use the existing bootstrap-profile marker; the unchanged control reproduced their config-source setup failure. Targeted lint, regression-file formatting, AST-preserving helper formatting and whitespace pass. ADR-121 and ADR-202 apply; no new policy or activation was selected. Current-dev integration qualification remains separately tracked.
 <!-- SECTION:NOTES:END -->

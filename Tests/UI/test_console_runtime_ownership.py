@@ -34,6 +34,7 @@ import weakref
 import pytest
 from textual.events import Key
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -2362,7 +2363,7 @@ def test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle(
             return False
         return get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", no_splash)
+    set_app_global(monkeypatch, "get_cli_setting", no_splash)
     # Shipping CLI construction happens before Textual creates its loop.
     # Home keeps Canvas unwarmed; Console mount itself creates its controller.
     app = _build_test_app(configured_default="home")

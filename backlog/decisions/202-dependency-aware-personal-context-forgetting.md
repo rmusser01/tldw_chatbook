@@ -1,9 +1,9 @@
-# ADR-186: Fence dependency-aware Personal Context forgetting across existing owners
+# ADR-202: Fence dependency-aware Personal Context forgetting across existing owners
 
 Status: Accepted — design direction approved, 2026-09-25; no deletion, migration or runtime rollout approved
 Date: 2026-09-25
 Task: TASK-25907.6
-Extends: [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](182-personal-context-memory-evolution.md), [ADR-185](185-versioned-profile-evidence-and-temporal-claims.md)
+Extends: [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](182-personal-context-memory-evolution.md), [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md)
 Related: [ADR-080](080-trace-v2-exhaustive-event-projection-and-collaboration.md), [ADR-092](092-console-full-semantic-capture-policy.md), [ADR-096](096-console-safe-capture-retention.md), [ADR-097](097-console-reference-backed-semantic-trace-ledger.md), [ADR-119](119-llamacpp-prompt-cache-snapshot-ownership.md), [ADR-052](052-console-conversation-memory-and-compaction-policy.md), [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md), [ADR-106](106-human-reviewed-agent-lesson-promotion.md)
 Design: [Dependency-aware forgetting](../../Docs/superpowers/specs/2026-09-25-personal-context-dependency-aware-forgetting-design.md)
 
@@ -18,7 +18,7 @@ app-managed prompt-cache snapshots, copied Sync staging and remote peers have
 separate custodians. V1 source IDs and hashes do not establish a
 complete dependency graph. A tombstone cannot justify “forgotten everywhere.”
 
-ADR-185 defines exact V2 evidence and metadata retirement with a profile-wide
+ADR-201 defines exact V2 evidence and metadata retirement with a profile-wide
 compatibility gate. It requires a forgetting implementation before portable
 evidence or new memory jobs ship. Retained source material must not silently
 recreate a deleted claim under a new ID; independently authored user material
@@ -47,7 +47,7 @@ structured claim-family selectors with the profile (no readable subject text) an
 no-memory marks with the source owner. Future source versions do not bypass
 those marks. Every memory-producing/restore/Sync path checks controls at
 admission and final publication; late workers and unsupported owner gaps fail
-closed. Restricted cross-owner source locators are retired under ADR-185,
+closed. Restricted cross-owner source locators are retired under ADR-201,
 while owner-native marks stay under that owner's own policy. Whole-profile
 purge destroys its claim-family ledger, retains only content-free profile
 barriers, and leaves source marks with sources the user chose to retain.
@@ -56,7 +56,7 @@ Fresh authorship admits only the reviewed new record/version and input; it does
 not clear family/source controls for replay or later automatic recreation.
 This does not promise detection of unknown copies or arbitrary paraphrases.
 
-Extend ADR-185's `evidence_retirement_epoch` for the managed artifact worklist;
+Extend ADR-201's `evidence_retirement_epoch` for the managed artifact worklist;
 use a peer-local retirement revision for device-only operations without a
 shared epoch/receipt, and keep ADR-102 `purge_generation` for whole-profile
 deletion. A shared-core
@@ -140,6 +140,6 @@ It intentionally limits automatic cleanup of independently authored material
 and reports unknown coverage rather than claiming universal deletion.
 TASK-25907.6 changes documentation/tracking only; no destructive operation is
 performed. The user endorsed the written design subject to another review; the follow-up
-review resolved audit/log coverage and queued-dispatch gaps. ADR-186 accepts
+review resolved audit/log coverage and queued-dispatch gaps. ADR-202 accepts
 design direction only and remains provisionally numbered against concurrent
 branches until integration-time allocation checks.

@@ -25,6 +25,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.app import TldwCli
 
@@ -462,7 +463,6 @@ def test_tool_pack_prerequisite_failure_attaches_no_guard() -> None:
 def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
     request, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import tldw_chatbook.app as app_module
     from tldw_chatbook.Tool_Packs.catalog_snapshot import PermissionInventoryRegistry
     from tldw_chatbook.Tool_Packs.service import ToolPackService
 
@@ -498,7 +498,7 @@ def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
     fake._record_tool_pack_receipt_reconciliation = lambda service, category: (
         TldwCli._record_tool_pack_receipt_reconciliation(fake, service, category)
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
         PermissionInventoryRegistry, "v1", lambda *_args, **_kwargs: "sealed"
     )

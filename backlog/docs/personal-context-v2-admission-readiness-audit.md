@@ -50,7 +50,7 @@ that differently named unrelated application registries do not exist.
 1. **Concrete shared-core contract first — recommended.** Freeze field names,
    strict scalars/defaults/bounds, unknown vocabulary behavior, tombstone and
    proposal rules, claim/binding digest projections and fixtures. Carry forward
-   ADR-185 temporal/review semantics and ADR-187 restrictive disclosure ceilings.
+   ADR-201 temporal/review semantics and ADR-203 restrictive disclosure ceilings.
    The 18-field binding remains its published component; a governed excerpt or
    new source representation requires explicit versioning/composition rather
    than silently widening it. Keep V1 schemas/bytes and fixture copies intact.
@@ -73,7 +73,7 @@ restore, Sync and other memory-producing/replaying paths, then prove that each
 acknowledges the required semantics or is explicitly disabled with old grants
 retired. A dormant peer is not retired merely because it is offline. Pin shared
 canonical/semantic conformance in both Chatbook and the companion server before
-rollout, as ADR-185 requires. No server implementation was inspected here.
+rollout, as ADR-201 requires. No server implementation was inspected here.
 
 Bind metadata retirement and restrictive disclosure to the actual native owners
 before a V2 evidence claim becomes usable. Startup/restore/reconnect must apply
@@ -142,9 +142,9 @@ unchanged; independent TASK-25907.10 and its roadmap suffix are preserved.
 
 ADR required: no new ADR for this read-only audit/recommendation.
 ADR paths: [ADR-102](../decisions/102-personal-context-profile-authority-sync-and-encryption.md),
-[ADR-185](../decisions/185-versioned-profile-evidence-and-temporal-claims.md),
-[ADR-186](../decisions/186-dependency-aware-personal-context-forgetting.md),
-[ADR-187](../decisions/187-personal-context-provider-disclosure-authority.md),
+[ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md),
+[ADR-202](../decisions/202-dependency-aware-personal-context-forgetting.md),
+[ADR-203](../decisions/203-personal-context-provider-disclosure-authority.md),
 [ADR-191](../decisions/191-foreground-personal-context-source-inspection-authority.md).
 A later concrete schema or native admission/activation design needs its own
 review and ADR check. Accepted design direction is not runtime rollout approval.

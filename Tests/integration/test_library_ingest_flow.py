@@ -732,7 +732,7 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     from tldw_chatbook.Media.server_media_reading_service import (
         ServerMediaReadingService,
     )
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_ingest_queue as ingest_queue_module
     from Tests.Library.test_library_ingest_runner import (
         _IngestRunnerHarness,
         _make_db,
@@ -763,14 +763,14 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     commit_line = forecast_summary_line(forecast)
 
     transport = _RecordingIngestTransport()
-    real_get_cli_setting = app_module.get_cli_setting
+    real_get_cli_setting = ingest_queue_module.get_cli_setting
 
     def _server_backend(*args, **kwargs):
         if args[:2] == ("library.ingest", "backend"):
             return "server"
         return real_get_cli_setting(*args, **kwargs)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", _server_backend)
+    monkeypatch.setattr(ingest_queue_module, "get_cli_setting", _server_backend)
 
     db = _make_db(tmp_path, name="server-forecast-governance.db")
     app = _IngestRunnerHarness(db)

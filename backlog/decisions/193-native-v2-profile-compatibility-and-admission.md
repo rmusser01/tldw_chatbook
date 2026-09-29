@@ -9,8 +9,8 @@ date: 2026-09-27
 Status: Accepted design direction after explicit user approval, 2026-09-27. No native schema/runtime rollout approved.
 Task: TASK-25907.21
 Design: [Native compatibility and admission](../../Docs/superpowers/specs/2026-09-27-personal-context-native-v2-admission-design.md)
-Extends: [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md), [ADR-185](185-versioned-profile-evidence-and-temporal-claims.md), [ADR-192](192-personal-context-v2-canonical-data-contract.md)
-Prerequisites: [ADR-186](186-dependency-aware-personal-context-forgetting.md), [ADR-187](187-personal-context-provider-disclosure-authority.md), [ADR-191](191-foreground-personal-context-source-inspection-authority.md)
+Extends: [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md), [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md), [ADR-192](192-personal-context-v2-canonical-data-contract.md)
+Prerequisites: [ADR-202](202-dependency-aware-personal-context-forgetting.md), [ADR-203](203-personal-context-provider-disclosure-authority.md), [ADR-191](191-foreground-personal-context-source-inspection-authority.md)
 
 ## Context
 

@@ -4,12 +4,12 @@ Date: 2026-09-25
 Status: Accepted design direction, 2026-09-25; design only, no runtime rollout
 Task: TASK-25907.7
 ADR required: yes
-ADR path: backlog/decisions/187-personal-context-provider-disclosure-authority.md
+ADR path: backlog/decisions/203-personal-context-provider-disclosure-authority.md
 Reason: model egress, destination-bound runtime grants, canonical compatibility
 and the governing device-only promise change privacy/provider contracts.
 
-Decision: [Accepted design ADR-187](../../../backlog/decisions/187-personal-context-provider-disclosure-authority.md)
-Governance: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md), [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md), [ADR-186](../../../backlog/decisions/186-dependency-aware-personal-context-forgetting.md), [ADR-147](../../../backlog/decisions/147-agent-provider-routing.md), [ADR-080](../../../backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md), [ADR-119](../../../backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md)
+Decision: [Accepted design ADR-203](../../../backlog/decisions/203-personal-context-provider-disclosure-authority.md)
+Governance: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md), [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md), [ADR-202](../../../backlog/decisions/202-dependency-aware-personal-context-forgetting.md), [ADR-147](../../../backlog/decisions/147-agent-provider-routing.md), [ADR-080](../../../backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md), [ADR-119](../../../backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md)
 Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.md)
 Review: [Technical review](../reviews/2026-09-25-personal-context-provider-disclosure-controls-review.md)
 
@@ -22,7 +22,7 @@ carry restrictions into registered derivatives, and recheck before adapter entry
 This task writes contracts and future synthetic acceptance cases only. It makes
 no provider calls, grants, migrations, model/schema edits, UI or runtime changes.
 The Muse diagram supplies comparative ideas, not disclosure instructions.
-The user explicitly approved the reviewed written contract. ADR-187 accepts
+The user explicitly approved the reviewed written contract. ADR-203 accepts
 design direction only; no model grant, policy migration or runtime rollout is
 approved by closing this design task.
 
@@ -39,7 +39,7 @@ approved by closing this design task.
 | Interviews | Coordinator pins provider/model and currently filters existing records to visible syncable records. Configured adapter serializes records and prior turns | Separate interview-purpose consent for records and draft answers; syncable is not provider consent; recheck each question/resume |
 | Summaries and compaction | `Chat/console_context_compaction.py` uses gateway auxiliary/native calls and input lineage, including prior summaries | Apply policy to full prepared input, admit the summary route separately and retain input restrictions in the output |
 | Embeddings/RAG | Existing embedding wrapper supports configurable backend selection; the completed Personal Context matcher is local lexical search | No new profile embedding/index job is implied. Any future model embedding request requires an embedding-purpose audience grant and derived-index ownership |
-| Captures, audit/logs and caches | ADR-186 inventories Safe/Full first-system copies, semantic artifacts, AgentRunsDB, run logs and managed cache binaries | Preserving a local copy does not authorize later model replay/search/export; policy and lineage must accompany registered managed copies |
+| Captures, audit/logs and caches | ADR-202 inventories Safe/Full first-system copies, semantic artifacts, AgentRunsDB, run logs and managed cache binaries | Preserving a local copy does not authorize later model replay/search/export; policy and lineage must accompany registered managed copies |
 | Export/recovery/Sync | Profile export has separate explicit plaintext/recovery publication; Console exchange export has its own Trace profiles. Sync is the ADR-102 trusted-server boundary | No model grant from export/Sync/import. Local export approval is its own exact action; model uploads require current audience consent |
 | Quarantine status | Service derives `unsupported_records_present` from unscoped record quarantine; context serializer may emit it even with no selected record | Remove that global existence signal from model block and normal Next Send diagnostics; owner-only maintenance remains separate |
 
@@ -92,7 +92,7 @@ with no model call needs no model grant but retains normal draft/source privacy.
 
 ## Proposed canonical policy and local grants
 
-Extend the not-yet-shipped ADR-185 V2 design with a strict `model_disclosure`
+Extend the not-yet-shipped ADR-201 V2 design with a strict `model_disclosure`
 policy: `deny`, `on_device_only`, or `reviewed_destinations`. These are proposed
 versioned vocabulary values, not fields added to V1. `reviewed_destinations`
 names at most 16 bounded opaque audience handles and explicit purposes from
@@ -102,7 +102,7 @@ credentials, endpoint paths or runtime permission. No wildcard/all-providers
 policy is offered. `on_device_only` uses a reserved local audience namespace
 with the same explicit destination/purpose enrollment; it does not grant every
 local-looking model. An empty, unknown or unsupported policy means deny.
-If ADR-185 ships first, this addition needs a subsequent version; never mutate
+If ADR-201 ships first, this addition needs a subsequent version; never mutate
 previously shipped canonical bytes/schema semantics in place.
 
 Each peer keeps separate encrypted, user-reviewed native grant bindings for
@@ -162,12 +162,12 @@ at a destination is omitted as a whole; no substring redaction or generative
 sanitization during dispatch. User-authored originals remain independent owners;
 a selected governed derivative does not confer consent to read its originals.
 Admitted record text and evidence/provenance fields each remain subject to
-ADR-185 current source display/transport authority. A record-level model grant
+ADR-201 current source display/transport authority. A record-level model grant
 is no bypass for restricted quotations/locators. Required inline metadata that
 cannot be disclosed requires the reviewed sanitized successor contract; do not
 fabricate an evidence-free canonical object during provider serialization.
 An explicitly reviewed replacement requires new inputs/lineage/approval under
-ADR-185/186, not a transfer of an old audience receipt.
+ADR-201/202, not a transfer of an old audience receipt.
 
 Stored transcript/tool rows, child messages, summaries, captures/log search
 results and prepared snapshots retain governed dependency/policy identity.
@@ -192,7 +192,7 @@ coverage failure only under the current conversation owner's authority.
 An immutable request-owned admission token binds the qualified destination and
 purpose, actor/root grant ceiling, exact selected artifact versions, current
 policy/grant revisions and purge/retirement controls. Native admission and final
-adapter entry share the qualified ADR-186 publication gate; no unlocked final
+adapter entry share the qualified ADR-202 publication gate; no unlocked final
 check/callback or model decision substitutes. Tokens are opaque, content-free,
 short-lived, single-attempt and cannot be transferred to another child/model.
 Queued requests are still managed; final entry consumes current authority and
@@ -267,7 +267,7 @@ compose the existing design tokens; no parallel legacy Settings surface.
   A future rollout gives all legacy/unreviewed records a deny model policy;
   existing visibility, Syncability, saved credentials or previous sends create
   no grant. User review may enable qualified local use or exact remote audiences.
-- Use ADR-185's profile-wide version/capability activation, not silent V1
+- Use ADR-201's profile-wide version/capability activation, not silent V1
   downcasting. Every active context/tool/Sync/restore consumer must understand
   restrictive policy before activation. Unsupported consumers block cutover or
   have their profile grants explicitly retired. Retain deny for unknown policy.

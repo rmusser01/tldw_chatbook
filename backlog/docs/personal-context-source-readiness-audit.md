@@ -94,13 +94,13 @@ those contracts or bridging their namespaces requires its own scoped design.
    consolidation remains gated by those controls.
 
 ADR required: no new ADR for this audit and test-only fixture corrections.
-ADR paths: [ADR-185](../decisions/185-versioned-profile-evidence-and-temporal-claims.md),
+ADR paths: [ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md),
 [ADR-097](../decisions/097-console-reference-backed-semantic-trace-ledger.md),
 [ADR-024](../decisions/024-rag-citation-provenance-and-source-resolution.md).
 Reason: document existing boundaries and exercise their existing guards. No new
 storage, retention, authority interface or runtime policy is selected here.
-Future implementations must also retain [ADR-186](../decisions/186-dependency-aware-personal-context-forgetting.md)
-and [ADR-187](../decisions/187-personal-context-provider-disclosure-authority.md).
+Future implementations must also retain [ADR-202](../decisions/202-dependency-aware-personal-context-forgetting.md)
+and [ADR-203](../decisions/203-personal-context-provider-disclosure-authority.md).
 
 ## Native verification and fixture repair
 

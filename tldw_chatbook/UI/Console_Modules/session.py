@@ -221,6 +221,7 @@ from ...Chat.console_turn_context import (
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
 )
+from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
     VisualIdentityResolution,
@@ -3911,6 +3912,11 @@ class ConsoleSessionController:
             self._notify_stale_default_provider_swap(
                 previous_provider_key,
                 next_provider_key or str(fresh_defaults.provider),
+                # TASK-33002.5: the notice names both providers as the chip
+                # does; the log keeps the keys.
+                provider_display_name(settings.provider, app_config),
+                provider_display_name(fresh_defaults.provider, app_config)
+                or "not selected",
             )
         return fresh_defaults
 
@@ -3918,6 +3924,8 @@ class ConsoleSessionController:
         self,
         previous_provider_key: str,
         next_provider_key: str,
+        previous_provider_name: str,
+        next_provider_name: str,
     ) -> None:
         """Announce one stale-default refresh that changed the provider.
 
@@ -3925,8 +3933,8 @@ class ConsoleSessionController:
         notification failure must never break them.
         """
         copy = (
-            f"Console provider changed {previous_provider_key} -> "
-            f"{next_provider_key}: this unused session now follows your saved "
+            f"Console provider changed {previous_provider_name} -> "
+            f"{next_provider_name}: this unused session now follows your saved "
             "defaults (Settings > Providers & Models)."
         )
         logger.info(

@@ -350,7 +350,7 @@ fails without playing a truncated file.
 
 | Chip | What it shows |
 |---|---|
-| **Provider** / **Model** | The active provider and model for this session. |
+| **Provider** / **Model** | The active provider and model for this session. The provider shows its display name — "llama.cpp", "OpenAI", or a custom endpoint's own name — never its config key; a long name is shortened with "…" and shows in full when the chip has focus. |
 | **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls as **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**. Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
 | **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
@@ -419,13 +419,15 @@ button, the Model section's **Configure** button in the left rail, or the
 
 - A readiness line up top (e.g. "custom is ready. No API key is required.").
 - **Provider and model** — Provider and Model selects, **Custom model** for
-  a name the list doesn't offer, **Discover models** to list what a Base
-  URL serves, and the **Base URL** field for local/self-hosted endpoints.
+  a name the list doesn't offer, **Discover models** to list what an
+  endpoint serves, and the **Endpoint** field for local/self-hosted servers.
 - **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
   related knobs), then **Provider-specific**, **Context**, and **Identity**.
+  Each field has the same label as in Settings — for example **Thinking
+  budget**, and **Budget strategy** and **When limit nears** under Context.
   The modal still shows every sampling field, but a field the selected
   provider's request does not carry is dropped: for Anthropic, Min P, Seed,
-  Presence and Frequency are accepted without error, never sent, and not
+  Presence penalty and Frequency penalty are accepted without error, never sent, and not
   written by **Save as model default**. A value saved for such a field earlier
   stays in `config.toml` untouched.
 - Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
@@ -433,7 +435,7 @@ button, the Model section's **Configure** button in the left rail, or the
   streaming defaults to config."
 
 Need another server beyond the built-in providers? **New endpoint…**, next
-to **Base URL**, creates a named custom endpoint without leaving the modal:
+to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named
 entry), adjust family, URL, and models, name it, and **Create**. The entry
 is saved to `config.toml` immediately and becomes selectable here, so unlike
@@ -612,6 +614,10 @@ transcript, which is provider behavior, not dropped output. Streamed NVIDIA
 NIM replies carry no token counts (NVIDIA does not report streamed usage).
 Setup details, env vars, and per-provider notes live in
 [Settings — Inference clouds](settings.md#inference-clouds).
+**Xiaomi MiMo**, **Tencent TokenHub** (Hy4), **ByteDance Seed (BytePlus)**, and
+**StepFun** work the same way; see
+[Settings — Model makers' own APIs](settings.md#model-makers-own-apis) for
+their env vars and region notes. StepFun runs without function tools.
 
 ### Leaving Console during a run
 
@@ -634,7 +640,7 @@ and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-b
 
 1. **Set up a provider from the Get started card.** Click **Set up
    provider**, pick a provider in "Provider and model" (for a local server,
-   enter its Base URL, then **Discover models**), pick a model, and press
+   enter its Endpoint, then **Discover models**), pick a model, and press
    **Save**. The card's steps tick off and the composer unlocks.
 2. **Switch model for just this session.** Press **Alt+M**, choose the
    provider/model, and confirm — or open **Settings** and press **Save**

@@ -62,13 +62,41 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUDGETS: dict[str, int] = {
     # TASK-33011 decomposition: lowered as each extraction PR lands
     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
-    # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658).
-    "tldw_chatbook/app.py": 19682,
+    # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658; task-33081 on dev
+    # +24 -> 19,682; dev growth (theme tail, Dreams wiring) +191 -> 19,873;
+    # Library ingest queue -> app_ingest_queue.py: 19,873 -> 14,930; dev
+    # growth (theme final wave, SSH sessions) +42 -> 14,972; service
+    # composition C/E/O -> app_service_wiring.py: 14,972 -> 11,506; speech
+    # N/U/U2 -> app_speech.py: 11,506 -> 10,601; lifecycle, shutdown and
+    # quit flow -> app_lifecycle.py: 10,601 -> 8,524; screen navigation ->
+    # app_navigation.py: 8,524 -> 7,467; command-palette providers ->
+    # app_command_providers.py: 7,467 -> 6,403; per-feature glue ->
+    # app_feature_glue.py: 6,403 -> 5,712).
+    "tldw_chatbook/app.py": 5712,
+    # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
+    # 4,999 lines it is larger than two rows below, so it is born governed.
+    "tldw_chatbook/app_ingest_queue.py": 4999,
+    # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
+    # It was governed there; without its own row, wiring code could regrow in
+    # the mixin unchecked.
+    "tldw_chatbook/app_service_wiring.py": 3601,
+    # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
+    # out of app.py (LifecycleMixin); governed there, so governed here.
+    "tldw_chatbook/app_lifecycle.py": 2140,
+    # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
+    # (NavigationMixin); governed there, so governed here.
+    "tldw_chatbook/app_navigation.py": 1110,
+    # TASK-33011: the command-palette providers moved verbatim out of app.py;
+    # governed there, so governed here.
+    "tldw_chatbook/app_command_providers.py": 1123,
+    # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
+    # (FeatureGlueMixin); governed there, so governed here.
+    "tldw_chatbook/app_feature_glue.py": 742,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7807,
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7802,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

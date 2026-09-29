@@ -56,7 +56,7 @@ The final review's four set-aside areas receive explicit disposition: enabled V2
 
 ## Remaining activation gates
 
-[ADR-102](../decisions/102-personal-context-profile-authority-sync-and-encryption.md), [ADR-185](../decisions/185-versioned-profile-evidence-and-temporal-claims.md), [ADR-186](../decisions/186-dependency-aware-personal-context-forgetting.md), [ADR-187](../decisions/187-personal-context-provider-disclosure-authority.md), [ADR-191](../decisions/191-foreground-personal-context-source-inspection-authority.md), [ADR-192](../decisions/192-personal-context-v2-canonical-data-contract.md) and ADR-193 remain independent release prerequisites.
+[ADR-102](../decisions/102-personal-context-profile-authority-sync-and-encryption.md), [ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md), [ADR-202](../decisions/202-dependency-aware-personal-context-forgetting.md), [ADR-203](../decisions/203-personal-context-provider-disclosure-authority.md), [ADR-191](../decisions/191-foreground-personal-context-source-inspection-authority.md), [ADR-192](../decisions/192-personal-context-v2-canonical-data-contract.md) and ADR-193 remain independent release prerequisites.
 
 Native admission/qualification, retirement and final publication races, provider disclosure, foreground source authority, storage/AAD migration, server conformance and companion/cohort cutover are unimplemented and unqualified here. No V2 activation, migration, source resolution or wire rollout is offered. A shared decoder or a passing closed-barrier test cannot replace these gates.
 

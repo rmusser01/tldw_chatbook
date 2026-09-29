@@ -34,7 +34,7 @@ and [Accepted design ADR-191](../../../backlog/decisions/191-foreground-personal
 At the initial drafting checkpoint, native reads checked profile Settings inspection,
 agent profile composition,
 source locator/citation namespace contracts, Console lifecycle ownership and
-ADR-185 plus the completed source audit. That initial pass was an inline document review, not a production authority
+ADR-201 plus the completed source audit. That initial pass was an inline document review, not a production authority
 test; the later independent review and confirmation are recorded below. No app, real
 profile, keyring, provider, server or network was accessed.
 

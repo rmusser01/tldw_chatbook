@@ -408,6 +408,25 @@ def restore_sys_path():
 
 
 @pytest.fixture(autouse=True)
+def reset_remote_session_registry():
+    """Drop the SSH session registry singleton after each test.
+
+    An app test's on_unmount calls close_all_remote_sessions(), which shuts
+    the singleton down for good; without this, later tests in the same
+    process would get a one-shot-only registry. Also drops the SSH master
+    manager singleton so straggler tests do not see a closed manager.
+    Never imports the modules.
+    """
+    yield
+    module = sys.modules.get("tldw_chatbook.Tools.remote_session_registry")
+    if module is not None:
+        module._REGISTRY = None
+    transport = sys.modules.get("tldw_chatbook.Tools.remote_workspace_transport")
+    if transport is not None:
+        transport._MASTER_MANAGER = None
+
+
+@pytest.fixture(autouse=True)
 def cleanup_loguru_handlers():
     """Automatically cleanup loguru handlers after each test to prevent file descriptor leaks."""
     from loguru import logger

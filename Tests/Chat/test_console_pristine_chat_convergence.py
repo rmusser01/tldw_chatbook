@@ -296,8 +296,24 @@ def test_provider_change_posts_the_swap_notice_and_a_model_change_does_not():
     assert provider_config_key(_ensure(console).provider) == "anthropic"
     app.notify.assert_called_once()
     message = app.notify.call_args.args[0]
-    assert "llama_cpp" in message and "anthropic" in message
+    # TASK-33002.5 rewrote the notice to display names; no raw key remains.
+    assert "llama.cpp" in message and "Anthropic" in message
+    assert "llama_cpp" not in message and "anthropic" not in message
     assert app.notify.call_args.kwargs == {"severity": "warning"}
+
+
+def test_swap_notice_names_a_cleared_provider_as_not_selected():
+    """Final review (Task 5 minor): defaults without a provider read as the
+    chip reads them, not "changed llama.cpp -> : ..."."""
+    app, console, store = _console(_config("llama_cpp", "new-model"))
+    _pristine(store, ConsoleSessionSettings(provider="llama_cpp", model="old-model"))
+    _ensure(console)
+
+    app.app_config = {"chat_defaults": {}, "api_settings": {}}
+    _ensure(console)
+
+    message = app.notify.call_args.args[0]
+    assert message.startswith("Console provider changed llama.cpp -> not selected:")
 
 
 def test_rebuilds_rederive_a_pristine_chat_at_most_once_per_saved_config(

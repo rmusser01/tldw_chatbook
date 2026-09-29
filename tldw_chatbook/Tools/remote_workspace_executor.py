@@ -41,8 +41,11 @@ stay inside the ssh entry points: the transport imports this module (for
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import select
 import subprocess
 import sys
 import threading
@@ -55,7 +58,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tldw_chatbook.Tools.build_remote_worker_bundle import expected_bundle_stamp
+from tldw_chatbook.Tools import remote_session_frames as session_frames
+from tldw_chatbook.Tools.build_remote_worker_bundle import (
+    RESPONSE_HEADROOM_BYTES,
+    expected_bundle_stamp,
+    loader_payload,
+)
 from tldw_chatbook.Tools.remote_worker_bundle import RESPONSE_MAGIC
 from tldw_chatbook.Tools.workspace_tool_executor import (
     WORKSPACE_HELPER_TIMEOUT_SECONDS,
@@ -69,6 +77,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolResponse,
 )
 from tldw_chatbook.Tools.workspace_wire_decode import WIRE_VERSION
+from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 if TYPE_CHECKING:  # pragma: no cover - import-cycle guard (see for_ssh)
     from tldw_chatbook.Tools.remote_binding_locator import RemoteLocator
@@ -86,8 +95,9 @@ _BUNDLE_PATH = Path(__file__).resolve().parent / "remote_worker_bundle.py"
 _NOISE_GARBAGE_CAP = 4 * 1024
 
 #: Hard capture ceiling for one exchange (response ceiling plus noise
-#: headroom, mirroring the local executor's bounded readers).
-_STDOUT_CAPTURE_CAP = MAX_RESPONSE_BYTES + (64 * 1024)
+#: headroom, mirroring the local executor's bounded readers). The same
+#: headroom sizes the bundle's session per-child cap (builder-asserted).
+_STDOUT_CAPTURE_CAP = MAX_RESPONSE_BYTES + RESPONSE_HEADROOM_BYTES
 
 _DEFAULT_BUDGET_SECONDS = 30.0
 
@@ -386,6 +396,214 @@ def run_bundle_loopback(
 
 
 # ---------------------------------------------------------------------------
+# Session loopback (SSH session worker, Task 5): bootstrap -> loader ->
+# bundle ``serve_session`` fork-server, driven over binary frames.
+# ---------------------------------------------------------------------------
+
+#: HELLO limits the session harness sends (spec defaults).
+_SESSION_HELLO = {"max_children": 4, "idle_s": 30}
+
+
+def _session_request(spec: Mapping[str, Any], chain: Any) -> dict[str, Any]:
+    """Expand one plain op dict into a wire-legal pinned request.
+
+    ``spec`` is ``{"op": <operation>, **arguments}`` plus two harness-only
+    keys: ``budget`` (the request's ``timeout_seconds``, default 30) and
+    ``stale_identity`` (perturb the root inode so the pin must fail —
+    ``identities[0]`` is the root, since ``chain.identities`` is
+    root-first, so ``root_identity`` and ``ancestor_identities[0]`` stay
+    consistent with each other and only disagree with the disk).
+    Exclusion lists the wire requires default to empty.
+    """
+    arguments = dict(spec)
+    operation = arguments.pop("op")
+    budget = arguments.pop("budget", 30)
+    stale = arguments.pop("stale_identity", False)
+    if operation in _EXCLUSION_CARRYING_OPERATIONS:
+        arguments.setdefault("sensitive_exclusions", [])
+    if operation == "fs_grep":
+        arguments.setdefault("content_exclusions", [])
+    identities = [
+        {
+            "device": identity.device,
+            "inode": identity.inode,
+            "mode": identity.mode,
+            "reparse": identity.reparse,
+        }
+        for identity in chain.identities
+    ]
+    if stale:
+        identities[0] = {**identities[0], "inode": identities[0]["inode"] + 1}
+    return {
+        "version": WIRE_VERSION,
+        "operation_id": uuid.uuid4().hex,
+        "operation": operation,
+        "intent": "read",
+        "root_locator": str(chain.canonical_root),
+        "root_identity": identities[0],
+        "ancestor_identities": identities,
+        "arguments": arguments,
+        "timeout_seconds": budget,
+        "output_max_bytes": MAX_RESPONSE_BYTES,
+    }
+
+
+def _read_ready(fd: int, deadline: float) -> None:
+    """Block until ``fd`` is readable or raise ``loopback_timeout``."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+        raise RemoteWorkspaceLoopbackError("loopback_timeout")
+
+
+def _read_line(fd: int, deadline: float) -> bytes:
+    """Read one newline-terminated line byte-by-byte (no read-ahead)."""
+    line = bytearray()
+    while not line.endswith(b"\n"):
+        _read_ready(fd, deadline)
+        byte = os.read(fd, 1)
+        if not byte:
+            raise RemoteWorkspaceLoopbackError("protocol_failure", "loader EOF")
+        line += byte
+        if len(line) > 4096:
+            raise RemoteWorkspaceLoopbackError("protocol_failure", "loader line too long")
+    return bytes(line)
+
+
+def run_session_loopback(
+    root: Path,
+    requests: list[dict[str, Any]],
+    *,
+    cache_dir: Path | None = None,
+    python: str = sys.executable,
+    budget_seconds: float = 60.0,
+    require_cache_hit: bool = False,
+) -> dict[int, list[dict[str, Any]]]:
+    """Run ``requests`` concurrently through ONE loopback bundle session.
+
+    Spawns ``python -I -c <bootstrap>``, sends the stage-1 loader and its
+    header, answers ``NEED`` with the compressed bundle, asserts
+    ``READY <committed stamp>``, sends HELLO and every REQUEST frame, and
+    collects LINE/STATUS frames until each request has its STATUS.
+
+    Args:
+        root: Workspace root (pinned via its locally captured chain — the
+            same host, so identical to what ``ping`` would report).
+        requests: Plain op dicts (see ``_session_request``).
+        cache_dir: ``XDG_RUNTIME_DIR`` for the loader cache; ``None``
+            removes the variable and disables caching. The bundle is sent
+            whenever the loader answers ``NEED``, cache file or not (the
+            loader rejects a tampered or wrong-mode entry).
+        python: Interpreter running the remote side (3.10 floor tests).
+        budget_seconds: Whole-session wall-clock ceiling.
+        require_cache_hit: The loader's first line MUST be ``READY`` (a
+            ``NEED`` fails with ``protocol_failure``).
+
+    Returns:
+        Request index -> parsed LINE dicts, then ``{"status": (exit,
+        signal), "arrival": n}`` as the last element, where ``n`` is the
+        0-based order in which that STATUS arrived across the session.
+
+    Raises:
+        RemoteWorkspaceLoopbackError: On a missing root, loader/protocol
+            violations, or the session outrunning ``budget_seconds``.
+    """
+    if not root.is_dir():
+        raise RemoteWorkspaceLoopbackError("loopback_root_missing")
+    chain = capture_directory_chain(root)
+    frames_out = [
+        _encode_request(_session_request(spec, chain)) for spec in requests
+    ]
+    bundle, compressed, _bootstrap = _bundle_payload()
+    bundle_hash = hashlib.sha256(compressed).hexdigest()
+    magic = RESPONSE_MAGIC
+    ready_line = magic + b"READY " + expected_bundle_stamp(bundle).encode() + b"\n"
+
+    env = dict(os.environ)
+    env.pop("XDG_RUNTIME_DIR", None)
+    if cache_dir is not None:
+        env["XDG_RUNTIME_DIR"] = str(cache_dir)
+    loader = loader_payload()
+    header = json.dumps({"hash": bundle_hash, "cache": cache_dir is not None})
+    deadline = time.monotonic() + budget_seconds
+    process = subprocess.Popen(
+        [python, "-I", "-c", bootstrap_source(len(loader))],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=env,
+    )
+    assert process.stdin is not None and process.stdout is not None
+    out_fd = process.stdout.fileno()
+    try:
+        process.stdin.write(loader + header.encode() + b"\n")
+        process.stdin.flush()
+        line = _read_line(out_fd, deadline)
+        if line == magic + b"NEED " + bundle_hash.encode() + b"\n":
+            if require_cache_hit:
+                raise RemoteWorkspaceLoopbackError(
+                    "protocol_failure", "expected a cache hit, got NEED"
+                )
+            process.stdin.write(len(compressed).to_bytes(4, "big") + compressed)
+            process.stdin.flush()
+            line = _read_line(out_fd, deadline)
+        if line != ready_line:
+            raise RemoteWorkspaceLoopbackError(
+                "protocol_failure", f"expected READY, got {line[:200]!r}"
+            )
+
+        # ponytail: writes every REQUEST before reading anything — fine for
+        # test batches; a large batch could fill both pipes and surface as
+        # loopback_timeout (interleave writes with reads if that matters).
+        wire = session_frames.encode_frame(
+            session_frames.HELLO, 0, json.dumps(_SESSION_HELLO).encode()
+        )
+        for index, body in enumerate(frames_out):
+            wire += session_frames.encode_frame(session_frames.REQUEST, index + 1, body)
+        process.stdin.write(wire)
+        process.stdin.flush()
+
+        results: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(requests))}
+        pending = set(results)
+        arrivals = 0
+        reader = session_frames.FrameReader(max_body=MAX_RESPONSE_BYTES + 1)
+        while pending:
+            _read_ready(out_fd, deadline)
+            data = os.read(out_fd, 65536)
+            if not data:
+                raise RemoteWorkspaceLoopbackError("protocol_failure", "session EOF")
+            for kind, request_id, body in reader.feed(data):
+                index = request_id - 1
+                if index not in results:
+                    raise RemoteWorkspaceLoopbackError("protocol_failure", "unknown request id")
+                if kind == session_frames.LINE:
+                    results[index].append(json.loads(body))
+                elif kind == session_frames.STATUS:
+                    results[index].append(
+                        {"status": session_frames.decode_status(body), "arrival": arrivals}
+                    )
+                    arrivals += 1
+                    pending.discard(index)
+        process.stdin.close()  # EOF: serve returns 0
+        returncode = process.wait(max(0.1, deadline - time.monotonic()))
+        if returncode != 0:
+            raise RemoteWorkspaceLoopbackError(
+                "protocol_failure", f"session exited {returncode}"
+            )
+        return results
+    except subprocess.TimeoutExpired as error:
+        raise RemoteWorkspaceLoopbackError("loopback_timeout") from error
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+        if not process.stdin.closed:
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # SSH transport mode (Phase 2e, Task 14)
 # ---------------------------------------------------------------------------
 
@@ -471,6 +689,10 @@ class _SshModeConfig:
     #: The ``ssh -G`` host identity keying the per-host cap and probe
     #: debounce, so two aliases for one host share one budget.
     host_key: tuple[str | None, str, int | None] | None = None
+    #: The Console run key sessions are scoped to; ``None`` = one-shot only.
+    session_key: str | None = None
+    #: Test seam: replaces the session worker's ssh ``Popen``.
+    session_spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None
 
     def resolved_host_key(self) -> tuple[str | None, str, int | None]:
         return self.host_key or _host_key_tuple(self.loc)
@@ -557,6 +779,8 @@ class RemoteWorkspaceToolExecutor:
         sensitive_exclusions: Callable[[], tuple[Any, ...]] | None = None,
         expected_fingerprint: str | None = None,
         canonical_host_key: tuple[str | None, str, int | None] | None = None,
+        session_key: str | None = None,
+        session_spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None,
     ) -> RemoteWorkspaceToolExecutor:
         """Build the executor that drives one remote binding over ssh.
 
@@ -598,6 +822,12 @@ class RemoteWorkspaceToolExecutor:
                 locator with ``ssh -G`` and refuses a changed destination.
             canonical_host_key: The recorded ``ssh -G`` host identity; keys
                 the per-host call cap and probe debounce.
+            session_key: The Console run key. When set (and
+                ``[console_ssh] session_worker`` is on), calls ride one
+                per-run session worker per binding instead of one ssh
+                exchange each; ``None`` keeps the one-shot path.
+            session_spawn: TEST SEAM ONLY -- replaces the session worker's
+                ssh ``Popen`` (receives the ssh argv).
 
         Returns:
             An executor in ssh mode; :meth:`execute` and :meth:`ping`
@@ -646,6 +876,8 @@ class RemoteWorkspaceToolExecutor:
             recovery_probes=recovery_probes,
             expected_fingerprint=expected_fingerprint,
             host_key=canonical_host_key,
+            session_key=session_key,
+            session_spawn=session_spawn,
         )
         return executor
 
@@ -1057,6 +1289,10 @@ class RemoteWorkspaceToolExecutor:
     def _ssh_call(self, request_bytes: bytes, *, budget: float) -> RemoteCallResult:
         """One transport call under the master and the host cap.
 
+        With a ``session_key`` the call first tries the run's session
+        worker (:meth:`_ssh_session_call`); it falls through to the
+        one-shot exchange below only when no session applies.
+
         ``ensure_master`` is a cheap no-op while the tracked socket
         lives; the per-host semaphore bounds concurrent ssh clients
         (shared across bindings on one host); the transport never
@@ -1064,6 +1300,10 @@ class RemoteWorkspaceToolExecutor:
         """
         cfg = self._ssh
         assert cfg is not None
+        if cfg.session_key:
+            result = self._ssh_session_call(request_bytes, budget=budget)
+            if result is not None:
+                return result
         cfg.masters.ensure_master(cfg.loc)
         semaphore = _host_semaphore(
             cfg.resolved_host_key(), cfg.max_concurrent_calls
@@ -1072,6 +1312,90 @@ class RemoteWorkspaceToolExecutor:
             return cfg.transport.call(
                 cfg.loc, request_bytes, budget=budget, python=cfg.python
             )
+
+    def _ssh_session_call(
+        self, request_bytes: bytes, *, budget: float
+    ) -> RemoteCallResult | None:
+        """Carry one call over the run's session worker, if one applies.
+
+        Returns ``None`` when the call belongs on the one-shot path: the
+        kill switch is off, the binding is BLOCKED (recovery probes stay
+        one-shot), or the session is disabled for this run key (protocol
+        start failure, or a second death). A transport-class start failure
+        IS the call's result -- no one-shot retry, which would pay a second
+        connect timeout. Results are recorded by the caller exactly like
+        one-shot results (the worker already classifies them). A session
+        the laptop retired (idle reap, run end, app exit) between
+        ``acquire`` and ``call`` sent nothing, so this re-acquires once
+        rather than surfacing a tool error (TASK-33401).
+        """
+        from tldw_chatbook.config import get_console_ssh_settings
+        from tldw_chatbook.Tools.remote_binding_status import BindingState
+
+        cfg = self._ssh
+        assert cfg is not None and cfg.session_key
+        settings = get_console_ssh_settings()
+        if not settings.session_worker:
+            return None
+        if cfg.cache.status(cfg.binding_id).state is BindingState.BLOCKED:
+            return None
+
+        from tldw_chatbook.Tools.remote_session_registry import get_session_registry
+        from tldw_chatbook.Tools.remote_session_worker import (
+            RemoteSessionWorker,
+            SessionClosed,
+            SessionStartError,
+        )
+        from tldw_chatbook.Tools.remote_workspace_transport import (
+            RemoteCallResult,
+            TransportFailure,
+            TransportFailureKind,
+        )
+
+        registry = get_session_registry()
+
+        def create() -> RemoteSessionWorker:
+            # Raises destination_changed (and records BLOCKED) before any
+            # session exists for a retargeted alias.
+            self._verify_destination()
+            return RemoteSessionWorker(
+                cfg.loc,
+                transport=cfg.transport,
+                python=cfg.python,
+                max_children=cfg.max_concurrent_calls,
+                # The host idles out later than the laptop reaps, so the
+                # laptop always retires a session before the host would.
+                idle_s=settings.session_idle_s + cfg.transport.grace_seconds,
+                cache=settings.bundle_cache,
+                spawn=cfg.session_spawn,
+                # The start is part of this call: it may not outlive the
+                # call's own budget (same deadline as a one-shot handshake).
+                handshake_timeout=budget + cfg.transport.grace_seconds,
+            )
+
+        with _host_semaphore(cfg.resolved_host_key(), cfg.max_concurrent_calls):
+            registry.reap_idle(time.monotonic(), settings.session_idle_s)
+            for _attempt in range(2):
+                try:
+                    session = registry.acquire((cfg.session_key, cfg.binding_id), create)
+                except SessionStartError as error:
+                    return RemoteCallResult(
+                        False,
+                        None,
+                        error.failure
+                        or TransportFailure(TransportFailureKind.UNREACHABLE, None, str(error)),
+                    )
+                if session is None:
+                    return None
+                try:
+                    return session.call(request_bytes, budget=budget)
+                except SessionClosed:
+                    # Retired (idle reap, run end, app exit) after acquire
+                    # handed it out and before this request was sent: nothing
+                    # ran, so ask again -- a fresh session, or one-shot once
+                    # the run or app has ended.
+                    continue
+            return None
 
     def _map_ssh_result(
         self, result: RemoteCallResult, operation_id: str
@@ -1233,5 +1557,6 @@ __all__ = [
     "parse_fs_read_stamps",
     "run_bundle_loopback",
     "run_bundle_loopback_frames",
+    "run_session_loopback",
     "split_fs_read_result",
 ]

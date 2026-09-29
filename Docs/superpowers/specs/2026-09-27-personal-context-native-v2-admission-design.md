@@ -24,9 +24,9 @@ meaning components, V1 bytes, scopes and payloads remain unchanged. Do not widen
 the published V2 wire contract or import native controls into shared core.
 
 Governing decisions: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md),
-[ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md),
-[ADR-186](../../../backlog/decisions/186-dependency-aware-personal-context-forgetting.md),
-[ADR-187](../../../backlog/decisions/187-personal-context-provider-disclosure-authority.md),
+[ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md),
+[ADR-202](../../../backlog/decisions/202-dependency-aware-personal-context-forgetting.md),
+[ADR-203](../../../backlog/decisions/203-personal-context-provider-disclosure-authority.md),
 [ADR-191](../../../backlog/decisions/191-foreground-personal-context-source-inspection-authority.md)
 and [ADR-192](../../../backlog/decisions/192-personal-context-v2-canonical-data-contract.md).
 The [readiness audit](../../../backlog/docs/personal-context-v2-admission-readiness-audit.md)
@@ -45,7 +45,7 @@ its shared-data gaps are now closed, its native gaps remain.
    old global fact safe to use. Getters and Settings also bypass strict snapshots.
 3. **Local storage/source inspection first.** Deferred: device-only is not
    metadata-retirement coverage, disclosure consent, or server conformance.
-   No local-only exception to ADR-185/192 is introduced.
+   No local-only exception to ADR-201/192 is introduced.
 
 ## Inspected seams and required enforcement
 
@@ -62,7 +62,7 @@ an unregistered route inside it.
 | `profile-context-tools` | [authorized view](../../../tldw_chatbook/Personal_Context/service.py#L1647), [strict snapshot](../../../tldw_chatbook/Personal_Context/repository.py#L3201), [tool recheck](../../../tldw_chatbook/Agents/profile_tool_provider.py#L149), [cache key](../../../tldw_chatbook/Personal_Context/context_service.py#L72) | Profile-wide guard before scope filtering, ranking, serialization and tool advertising; current stamps invalidate snapshots and prepared results. |
 | `profile-export-recovery` | [export snapshot](../../../tldw_chatbook/Personal_Context/export_service.py#L113), [recovery decoder](../../../tldw_chatbook/Personal_Context/export_service.py#L274), [recovery loader](../../../tldw_chatbook/Personal_Context/export_service.py#L352) | Explicit mixed-version format and strict native import admission; grants and local qualification receipts are never exported/imported as authority. |
 | `profile-sync-link` | [link planning](../../../tldw_chatbook/Personal_Context/link_service.py#L151), [reconciliation schema check](../../../tldw_chatbook/Personal_Context/reconciliation.py#L463), [inbound adapter](../../../tldw_chatbook/Sync_Interop/personal_context_adapter.py#L205), [dispatchable outbox](../../../tldw_chatbook/Personal_Context/repository.py#L4153) | Authenticated cohort/server negotiation, staging and replay checks before canonical apply or content push. Sync V2 transport is not canonical Profile V2 support. |
-| `profile-derived-routes` | ADR-186/187 inventory: history, root/child/fallback rounds, tool arguments, interviews, summaries, capture/trace, run logs, embeddings, managed prompt caches, consolidation and repair | Each actual owner/route must qualify lineage, retirement and final publication or be disabled for governed data with authority retired. This family is an inventory obligation, not a claim of coverage. |
+| `profile-derived-routes` | ADR-202/203 inventory: history, root/child/fallback rounds, tool arguments, interviews, summaries, capture/trace, run logs, embeddings, managed prompt caches, consolidation and repair | Each actual owner/route must qualify lineage, retirement and final publication or be disabled for governed data with authority retired. This family is an inventory obligation, not a claim of coverage. |
 | `profile-source-inspection` | ADR-191 foreground Settings/app/Console owner contract | Qualified containing-record admission first; exact source owner/version/current permissions and final display fence remain separate prerequisites. No generic source resolver. |
 
 No gate is added to deprecated Settings surfaces. Any later UI uses the canonical
@@ -118,7 +118,7 @@ For linked profiles, the home peer must supply an authenticated current cohort
 and equivalent server-side grant fences before cutover. The wire/cohort protocol
 is a separate server-qualified unit; absence blocks cutover. For unlinked
 profiles, the absence of a linked cohort must be verified from native state;
-server byte/semantic conformance required by ADR-185/192 remains a release gate.
+server byte/semantic conformance required by ADR-201/192 remains a release gate.
 No canned server receipt or empty list stands in for that evidence.
 
 ## 2. Profile states and native interfaces
@@ -176,7 +176,7 @@ revision in the final guarded transaction. Restarts, retries, Sync and recovery
 must obtain fresh native admission. Durable receipts record completed outcomes
 without granting future access. Native controls are encrypted and excluded from
 Sync/recovery/ordinary logging; content-free shared retirement controls remain
-owned by the separately qualified ADR-186 protocol.
+owned by the separately qualified ADR-202 protocol.
 
 ## 3. Atomic admission and relation resolution
 
@@ -194,12 +194,12 @@ always unavailable to automatic context. Imported/authenticated claims do not
 inherit native approval or source access. Direct user assertions may remain
 assertions without documentary evidence; missing support is not proof they are
 false. Inference/import automatic-use eligibility requires qualified exact support,
-known reviewed validity and resolved relations as required by ADR-185. Confidence
+known reviewed validity and resolved relations as required by ADR-201. Confidence
 and salience never repair missing authority, review or evidence.
 
 The existing `BEGIN IMMEDIATE` transaction remains the profile atomic boundary.
 The service must first prepare permitted owner information outside SQLite, then
-enter the qualified ADR-186 publication coordinator, then the repository write
+enter the qualified ADR-202 publication coordinator, then the repository write
 transaction. Do not resolve sources, await a provider/network, run a model or
 invoke arbitrary callbacks inside that transaction. Cross-owner permissions and
 retirement changes must participate in the same coordinator/fence protocol;
@@ -310,8 +310,8 @@ unit gets its own acceptance criteria, applicable ADR review and native plan.
 | Unit | Independently reviewable outcome | Activation boundary |
 | --- | --- | --- |
 | A. Native barrier and explicit codec | New source-backed consumer registry, mixed-version validation and repository/service read/write guards; real temporary encrypted SQLite verifies V1 success and every V2 path denies without current qualification. App bootstrap/status and tools consume the guard, so it is not an unconsumed utility. | Production V2 creation/migration/import/Sync/source/model routes stay closed. Synthetic fixture admission cannot qualify a production owner. |
-| B. Retirement/publication owners | Qualified ADR-186 control journal, suppression, owner receipts, managed lineage coverage and restart/final-publication races for the actual enabled scope. | Unsupported logs/capture/caches or unknown coverage prevent that scope from being offered. No universal deletion claim. |
-| C. Deny disclosure and clean local enrollment | ADR-187 filtering, derivative restrictions, destination/purpose grants and final adapter gates cover all enabled routes and clean owned process/slot state. | Remote/replay/interview/summary/tool-egress routes remain disabled until each qualifies. No URL-label enrollment. |
+| B. Retirement/publication owners | Qualified ADR-202 control journal, suppression, owner receipts, managed lineage coverage and restart/final-publication races for the actual enabled scope. | Unsupported logs/capture/caches or unknown coverage prevent that scope from being offered. No universal deletion claim. |
+| C. Deny disclosure and clean local enrollment | ADR-203 filtering, derivative restrictions, destination/purpose grants and final adapter gates cover all enabled routes and clean owned process/slot state. | Remote/replay/interview/summary/tool-egress routes remain disabled until each qualifies. No URL-label enrollment. |
 | D. Atomic native admission and foreground review | Real owner transactions bind exact heads, support/source authority, actor intent, scopes/relations and all current revisions; app/service callers use them. | V2 data still cannot be activated until all release prerequisites, including server conformance, are satisfied. |
 | E. Companion contract/cohort qualification | Real client/server pinned fixture conformance, current cohort/grant retirement, bootstrap/Sync/recovery controls and honest offline acknowledgement. | No mocked server result qualifies rollout; no server work is done in this checkout. |
 | F. Reviewed cutover and source inspection | Eligible profile cutover plus ADR-191 exact foreground containing-record/source/display admission; no automatic source opening. | Only the fully qualified declared scope becomes usable; future consolidation/repair remain separate. |

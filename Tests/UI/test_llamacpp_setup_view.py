@@ -4,6 +4,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.LLM_Management.llamacpp_connection import LlamaCppProbeResult
 from tldw_chatbook.LLM_Management.llamacpp_profiles import LlamaCppProfileRepository
 from tldw_chatbook.UI.LLM_Management.llamacpp_setup_view import LlamaCppSetupView
@@ -156,14 +157,11 @@ async def test_real_models_pane_preserves_sources_snapshots_and_navigates_to_con
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False
             if (section, key) == ("splash_screen", "enabled")
             else get_cli_setting(section, key, default)
-        ),
-    )
+        ))
 
     async def probe(request, **kwargs):
         return LlamaCppProbeResult(request, "ready", ("org/model",), "org/model")

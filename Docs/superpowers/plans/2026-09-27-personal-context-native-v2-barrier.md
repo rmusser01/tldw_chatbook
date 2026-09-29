@@ -14,7 +14,7 @@
 
 ADR required: no new ADR; direct implementation of accepted Unit A.
 ADR path: [ADR-193](../../../backlog/decisions/193-native-v2-profile-compatibility-and-admission.md).
-Reason: implement its closed barrier without choosing a qualification/control storage protocol or activating V2. ADR-102/185/186/187/191/192 remain independent prerequisites.
+Reason: implement its closed barrier without choosing a qualification/control storage protocol or activating V2. ADR-102/201/202/203/191/192 remain independent prerequisites.
 
 ## Global constraints
 
@@ -22,7 +22,7 @@ Reason: implement its closed barrier without choosing a qualification/control st
 - Build on the existing one profile repository and one authorized service.
 - Existing binding and meaning components, V1 bytes, scopes and payloads remain unchanged.
 - Do not widen the published V2 wire contract or import native controls into shared core.
-- No local-only exception to ADR-185/192 is introduced.
+- No local-only exception to ADR-201/192 is introduced.
 - No UI change is part of this design. Use existing unavailable state and canonical F9 Settings behavior.
 - No periodic worker, new dependency, external provider or fourth memory store is needed for the barrier itself.
 - No physical migration/DDL/envelope version is implemented or approved here.
@@ -533,7 +533,7 @@ self._require_legacy_on_connection(
   scope ruling with its practical cost. Minor deferrals require real rationale,
   not an invented checklist; record unknown future qualification honestly.
 - [x] Write final component notes with exact behavior/check evidence and remaining
-  ADR-186/187/191/server/cohort gates. Link ADR-193 in task notes. Check all AC only
+  ADR-202/203/191/server/cohort gates. Link ADR-193 in task notes. Check all AC only
   after actual implementation/review/static/targeted tests pass; CLI marks Done.
 - [x] Commit only owned source/tests/docs/task and owned roadmap prefix. Local
   commits follow native checks; the configured pre-commit hook is absent and no

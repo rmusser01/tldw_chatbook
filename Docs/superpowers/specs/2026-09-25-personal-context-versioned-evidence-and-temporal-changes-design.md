@@ -4,11 +4,11 @@ Date: 2026-09-25
 Status: Accepted design direction, 2026-09-25; design only, no runtime or schema changes
 Task: TASK-25907.5
 ADR required: yes
-ADR path: backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md
+ADR path: backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md
 Reason: proposed shared-core schema, source authority, conflict semantics,
 retention and client/server compatibility require their own decision.
 
-Decision: [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md)
+Decision: [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md)
 Governance: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md), [ADR-024](../../../backlog/decisions/024-rag-citation-provenance-and-source-resolution.md)
 Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.md)
 Review: [Technical review](../reviews/2026-09-25-personal-context-versioned-evidence-and-temporal-changes-review.md)
@@ -21,7 +21,7 @@ examples and a technical review. It does not change Python models, JSON Schema,
 canonical fixtures, databases, migrations, Sync, tools, context selection,
 provider access or UI. Approval of the memory roadmap authorized this design
 work; it did not approve a new schema or source grant. The user approved this reviewed written contract by requesting continuation
-on 2026-09-25. ADR-185 accepts the design direction; implementation still needs
+on 2026-09-25. ADR-201 accepts the design direction; implementation still needs
 its own bounded tasks and qualification.
 
 The Muse image supplies ideas about evidence, supersession and forgetting.

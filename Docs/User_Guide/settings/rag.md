@@ -54,9 +54,11 @@ wall is collapsed. The editing card holds the ⚠ legend and five folds —
 
 The pinned **State banner** above them reads `State: Draft — save with s |
 Defaults affect future Library/RAG retrieval and display.`, switching to
-`State: Unsaved changes | …` once you edit a field. **Save (s)** and **Revert
-(r)** live in the **Scope Inspector** on the right, which also names the save
-targets: the active profile, and the profile pointer in your config file.
+`State: Draft — save with s · 1 unsaved · revert with r | …` once you edit a
+field; the count follows how many fields differ from their saved values.
+**Save (s)** and **Revert (r)** live in the **Scope Inspector** on the right,
+which also names the save targets: the active profile, and the profile pointer
+in your config file.
 
 ## Features & controls
 

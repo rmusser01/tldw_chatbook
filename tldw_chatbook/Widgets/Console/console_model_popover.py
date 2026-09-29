@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
+from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -423,6 +424,9 @@ class ConsoleModelPopover(
         settings = self._draft.settings
         return f"{settings.provider}/{settings.model or 'No model'}"
 
+    def _streaming_label(self) -> str:
+        return f"{MODEL_FIELD_LABELS['streaming']}: {'on' if self._streaming else 'off'}"
+
     def _default_target_copy(self) -> str:
         return f"Defaults target: {self._target_label()}"
 
@@ -494,7 +498,10 @@ class ConsoleModelPopover(
                     current_model=settings.model,
                     providers_models=self._providers_models,
                 )
-                yield Static("Temperature", classes="console-popover-field-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["temperature"],
+                    classes="console-popover-field-label",
+                )
                 yield ConsolePopoverInput(
                     value=(
                         ""
@@ -511,7 +518,7 @@ class ConsoleModelPopover(
                     markup=False,
                 )
                 yield Button(
-                    f"Streaming: {'on' if self._streaming else 'off'}",
+                    self._streaming_label(),
                     id="console-popover-streaming",
                     compact=True,
                 )
@@ -528,8 +535,7 @@ class ConsoleModelPopover(
                     markup=False,
                 )
                 yield Static(
-                    "Response max  "
-                    f"{format_context_tokens(settings.max_tokens)} tokens for the next reply",
+                    self._max_tokens_copy(settings),
                     id="console-popover-response-max",
                     classes="console-popover-context-row",
                     markup=False,
@@ -725,6 +731,15 @@ class ConsoleModelPopover(
             group="console-popover-context-window",
             exclusive=True,
             exit_on_error=False,
+        )
+
+    @staticmethod
+    def _max_tokens_copy(settings: ConsoleSessionSettings) -> str:
+        """The Max tokens row, labelled from the field table, in the 14-cell
+        label column the other context rows use."""
+        return (
+            f"{MODEL_FIELD_LABELS['max_tokens']:<14}"
+            f"{format_context_tokens(settings.max_tokens)} tokens for the next reply"
         )
 
     def _model_window_copy(self) -> str:
@@ -1001,7 +1016,7 @@ class ConsoleModelPopover(
                 )
             self.query_one(
                 "#console-popover-streaming", Button
-            ).label = f"Streaming: {'on' if self._streaming else 'off'}"
+            ).label = self._streaming_label()
             model_select = self.query_one("#console-popover-model", Select)
             options = [
                 (option.label, option.value)
@@ -1024,8 +1039,7 @@ class ConsoleModelPopover(
             else:
                 picker.set_model_value(settings.model)
             self.query_one("#console-popover-response-max", Static).update(
-                "Response max  "
-                f"{format_context_tokens(settings.max_tokens)} tokens for the next reply"
+                self._max_tokens_copy(settings)
             )
         finally:
             self._updating_controls = False
@@ -1147,7 +1161,7 @@ class ConsoleModelPopover(
         """
         event.stop()
         self._streaming = not self._streaming
-        event.button.label = f"Streaming: {'on' if self._streaming else 'off'}"
+        event.button.label = self._streaming_label()
         self._replace_quick_field(
             "streaming",
             self._streaming,

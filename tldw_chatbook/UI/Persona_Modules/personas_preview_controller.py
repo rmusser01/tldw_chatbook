@@ -23,8 +23,9 @@ from ...Chat.console_chat_models import (
 )
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
-from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
+from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness
+from ...Utils.input_validation import escape_markup
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -268,14 +269,21 @@ class PersonasPreviewController:
             ).warning("Could not close the preview provider gateway.")
 
     @staticmethod
-    def _provider_label(provider_key: str) -> str:
-        """Human-readable display name for a provider config key."""
-        key = str(provider_key or "").strip()
-        if not key:
-            return ""
-        return PROVIDER_DISPLAY_NAMES.get(
-            key.lower(), key.replace("_", " ").replace("-", " ").title()
-        )
+    def _provider_label(
+        provider_key: str, config: Mapping[str, Any] | None = None
+    ) -> str:
+        """Human-readable display name for a provider config key.
+
+        Args:
+            provider_key: Provider config key or ``custom-ep:`` registry id.
+            config: The caller's loaded app config; a registry id needs it to
+                show its entry's name.
+
+        Returns:
+            The display name as markup, since a registry entry's name is user
+            text.
+        """
+        return escape_markup(provider_display_name(str(provider_key or ""), config))
 
     def provider_readout(self) -> tuple[str, str]:
         """Compute the pre-send provider readout from current config.
@@ -301,13 +309,13 @@ class PersonasPreviewController:
         if not char_provider:
             if chat_provider:
                 text = (
-                    f"Provider: {self._provider_label(chat_provider)} / "
+                    f"Provider: {self._provider_label(chat_provider, config)} / "
                     f"{chat_model or 'default model'} (Console default)"
                 )
                 return text, chat_provider
             return "Provider: none configured - use Configure", ""
         text = (
-            f"Provider: {self._provider_label(char_provider)} / "
+            f"Provider: {self._provider_label(char_provider, config)} / "
             f"{char_model or 'default model'}"
         )
         # Note the fallback target only when it is a distinct provider. A
@@ -317,7 +325,7 @@ class PersonasPreviewController:
         if chat_provider and chat_provider.lower() != char_provider.lower():
             text += (
                 " - Console default if unavailable: "
-                f"{self._provider_label(chat_provider)}"
+                f"{self._provider_label(chat_provider, config)}"
             )
         return text, char_provider
 
@@ -754,8 +762,10 @@ class PersonasPreviewController:
             pane.set_status("Running")
         # Repaint the readout with the provider/model that actually resolved,
         # so it reflects reality (incl. a fallback) rather than config intent.
+        raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        config = raw_config if isinstance(raw_config, Mapping) else {}
         resolved_readout = (
-            f"Provider: {self._provider_label(resolution.provider)} / "
+            f"Provider: {self._provider_label(resolution.provider, config)} / "
             f"{resolution.model or 'default model'}"
         )
         if fallback_provider:

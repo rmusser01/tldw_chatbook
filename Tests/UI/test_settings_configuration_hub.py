@@ -35,6 +35,7 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _static_text,
     _visible_text,
     _wait_for_selector,
 )
@@ -50,7 +51,9 @@ import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_provider_support import MODEL_CONFIG_FIELDS
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
@@ -666,6 +669,15 @@ def _app(
     )
 
 
+def _provider_test_rows_of(result: str) -> list[tuple[str, str]]:
+    """TASK-33002.2: the Test result as (label, text) rows, in display order."""
+    rows = []
+    for line in str(result).splitlines():
+        label, _gap, text = line.partition("  ")
+        rows.append((label, text.strip()))
+    return rows
+
+
 async def _wait_for_settings_text(
     screen, pilot, expected_text: str, *, timeout: float = 5.0
 ) -> None:
@@ -1103,10 +1115,13 @@ def test_adapter_save_sections_batches_sections(monkeypatch):
     ]
 
 
-def test_settings_console_default_max_tokens_rejects_raw_zero():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_console_default_max_tokens_rejects_raw_zero(request):
     screen = SettingsScreen(_build_test_app())
 
-    with pytest.raises(ValueError, match="Response max tokens"):
+    # TASK-33002.1: the error names the field by its table label.
+    with pytest.raises(ValueError, match="^Max tokens must"):
         screen._normalise_console_default_max_tokens(0)
 
 
@@ -3608,8 +3623,24 @@ async def test_settings_overview_renders_ownership_contract_boundaries(request):
         assert "until source contracts exist" not in text
 
 
+def test_settings_copy_names_the_rail_category_and_the_real_control():
+    """TASK-33002.6: no Settings copy names a category or control that is not there."""
+    source = Path(settings_screen_module.__file__).read_text(encoding="utf-8")
+    rail = dict(settings_screen_module.ADVANCED_CONFIG_GUIDED_PATHS)[
+        SettingsCategoryId.CONSOLE_BEHAVIOR
+    ]
+    guidance = dict(
+        settings_screen_module._INSPECTOR_GUIDANCE[SettingsCategoryId.PROVIDERS_MODELS]
+    )
+
+    assert "console defaults" not in source.lower()
+    assert "Override current Console model" not in source
+    assert guidance["Boundary"].endswith(f"routed to {rail}")
+
+
 @pytest.mark.asyncio
-async def test_settings_provider_inspector_excludes_console_sampling_ownership():
+@private_profile_test
+async def test_settings_provider_inspector_excludes_console_sampling_ownership(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -3622,7 +3653,9 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership()
             "Affected config: provider, model, endpoint, and credential source defaults"
             in text
         )
-        assert "Sampling and transport defaults are routed to Console Defaults" in text
+        # TASK-33002.6: the route names the rail's category, on purpose.
+        assert "Sampling and transport defaults are routed to Console Behavior" in text
+        assert "Console Defaults" not in text
         assert "streaming, and temperature" not in text
 
 
@@ -3696,7 +3729,7 @@ def test_settings_provider_display_names_cover_every_catalog_key():
     screen = SettingsScreen(_app(defaults={"provider": "openai", "model": "gpt-4.1"}))
 
     for entry in screen._provider_catalog_entries():
-        assert entry.readiness_key in settings_screen_module.PROVIDER_DISPLAY_NAMES, (
+        assert entry.readiness_key in PROVIDER_DISPLAY_NAMES, (
             f"missing display name for provider key: {entry.readiness_key}"
         )
 
@@ -3715,7 +3748,8 @@ def test_settings_provider_catalog_summary_groups_display_names():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_toast_states_failure_reason(monkeypatch, request):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -4267,6 +4301,65 @@ async def test_settings_provider_picker_persistence_alias_saves_canonical_provid
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_settings_picker_legacy_alias_row_selects_saves_and_reloads(request):
+    """TASK-33002.5 AC#6: a "(legacy alias)" row stays selectable end to end.
+
+    The real writer runs on this private profile's TLDW_CONFIG_PATH (no mocked
+    config writer). Picking the labelled row saves the legacy key itself, not
+    the key it aliases, and Settings reopened on the reloaded config lands on
+    the same labelled row.
+    """
+    import os
+
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    config_path = Path(config_module.get_cli_config_path())
+    assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-provider-search", Input).value = "legacy"
+        await pilot.pause()
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        index = _provider_picker_option_index(picker, provider_id="local_llamacpp")
+        assert str(picker.get_option_at_index(index).prompt) == (
+            "llama.cpp (legacy alias)"
+        )
+        picker.highlighted = index
+        picker.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert (
+            screen.query_one("#settings-provider-value", Select).value
+            == "local_llamacpp"
+        )
+        screen.query_one("#settings-model-value", Input).value = "legacy-model"
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        assert host._exception is None
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["chat_defaults"]["provider"] == "local_llamacpp"
+    runtime = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert runtime["chat_defaults"]["provider"] == "local_llamacpp"
+
+    reopened = _build_test_app()
+    reopened.app_config["chat_defaults"] = dict(runtime["chat_defaults"])
+    host = DestinationHarness(reopened, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        option = picker.get_option_at_index(picker.highlighted)
+        assert getattr(option, "provider_id", None) == "local_llamacpp"
+        assert str(option.prompt) == "llama.cpp (legacy alias)"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("alias, canonical_provider", PERSISTED_PROVIDER_ALIASES)
 async def test_settings_provider_picker_current_alias_preserves_connection_drafts(
     alias,
@@ -4445,7 +4538,7 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
         summary = screen.query_one("#settings-provider-generation-support", Static)
         assert (
             str(summary.renderable)
-            == "Hidden for llama.cpp: Summary, Verbosity, Thinking."
+            == "Hidden for llama.cpp: Reasoning summary, Verbosity, Thinking."
         )
         assert not summary.has_class("settings-gated-profile-hidden")
         for row_id in (
@@ -4473,7 +4566,7 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
 
         assert (
             str(summary.renderable)
-            == "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+            == "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
         )
         assert not screen.query_one(
             "#settings-model-profile-reasoning-effort-row"
@@ -4533,15 +4626,15 @@ def test_settings_generation_summary_names_every_hidden_row():
     assert screen._provider_generation_support_copy(
         "anthropic", "claude-sonnet-4-5"
     ) == (
-        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
-        "Summary, Verbosity."
+        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
+        "Reasoning effort, Reasoning summary, Verbosity."
     )
     assert screen._provider_generation_support_copy("anthropic", "claude-sonnet-5") == (
-        "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
-        "Summary, Verbosity, Think budget."
+        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
+        "Reasoning effort, Reasoning summary, Verbosity, Thinking budget."
     )
     assert screen._provider_generation_support_copy("openai", "gpt-5") == (
-        "Hidden for OpenAI: Min P, Top K, Thinking, Think budget."
+        "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
     )
 
 
@@ -4587,7 +4680,9 @@ def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
+    request,
     monkeypatch,
 ):
     """task-191: URL-based providers get a live probe folded into the toast."""
@@ -4633,18 +4728,22 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
             )
         ]
         message, kwargs = toasts[-1]
+        # TASK-33002 rider: the reachable toast states generation once.
         assert message == (
             "Configuration check complete: Ollama is configured; model llama3. "
-            "Live generation has not been tested; model-listing evidence updated; "
-            "generation not tested."
+            "Model listing reached; generation not tested."
         )
         assert kwargs.get("severity") == "information"
-        assert "model listing reached" in screen._provider_test_result
-        assert "generation not tested" in screen._provider_test_result
+        rows = dict(_provider_test_rows_of(screen._provider_test_result))
+        assert rows["Endpoint"] == "http://127.0.0.1:11434 · model listing reached"
+        assert rows["Generation"] == "not tested"
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_toast_reports_unreachable_endpoint(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
     app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
@@ -4676,18 +4775,26 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
             await pilot.pause(0.01)
 
         message, kwargs = toasts[-1]
+        # TASK-33002.2 AC#2/AC#6: the first row and the toast lead with the
+        # failure and its next step, not with "configuration is complete".
         assert message == (
-            "Configuration valid; model-listing check failed (connection refused); "
-            "generation not tested."
+            "Model listing failed (connection refused) — start the server or "
+            "check the URL; generation not tested."
         )
         assert kwargs.get("severity") == "warning"
-        assert (
-            "model listing failed (connection refused)" in screen._provider_test_result
+        assert _provider_test_rows_of(screen._provider_test_result)[0] == (
+            "Endpoint",
+            (
+                "http://127.0.0.1:11434 · model listing failed (connection refused) "
+                "— start the server or check the URL"
+            ),
         )
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_does_not_treat_missing_models_route_as_chat_failure(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -4778,9 +4885,15 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
     host = DestinationHarness(app, "settings")
 
     def assert_each_fact_once(result: str) -> None:
-        facts = result.split(" | ")
-        assert len(facts) == len(set(facts)), result
-        assert result.count("generation not tested") == 1, result
+        # TASK-33002.2: labelled rows, each label once, no pipe dump.
+        rows = _provider_test_rows_of(result)
+        labels = [label for label, _text in rows]
+        assert sorted(labels) == sorted(
+            ("Config", "Key", "Endpoint", "Model", "Generation")
+        ), result
+        assert " | " not in result
+        assert result.count("model listing") == 1, result
+        assert dict(rows)["Generation"] == "not tested", result
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
@@ -4799,7 +4912,7 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
         screen.action_settings_test_category()
         await asyncio.wait_for(second_started.wait(), timeout=2)
         in_flight = screen._provider_test_result
-        assert "model listing checking" in in_flight
+        assert "checking the model listing" in in_flight
         assert "model listing failed" not in in_flight
         assert_each_fact_once(in_flight)
 
@@ -4809,8 +4922,10 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
         second = screen._provider_test_result
         assert "model listing reached" in second
         assert "model listing failed" not in second
-        assert "model listing checking" not in second
-        assert "selected model confirmed" in second
+        assert "checking the model listing" not in second
+        assert dict(_provider_test_rows_of(second))["Model"] == (
+            "llama3 · listed by the server"
+        )
         assert_each_fact_once(second)
         rendered = screen.query_one("#settings-provider-test-result", Static)
         assert str(rendered.renderable) == second
@@ -4822,7 +4937,10 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_skips_probe_for_cloud_providers(
+    request, monkeypatch
+):
     """task-191: key-based cloud providers keep the local-only Test toast."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     app = _build_test_app()
@@ -4856,10 +4974,18 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
             "Live generation has not been tested."
         )
         assert kwargs.get("severity") == "information"
+        # TASK-33002.2 AC#5: the rows keep the local-readiness honesty.
+        rows = dict(_provider_test_rows_of(screen._provider_test_result))
+        assert rows["Key"] == (
+            "from env var OPENAI_API_KEY · present, not verified"
+        )
+        assert rows["Generation"] == "not tested"
+        assert "model listing" not in screen._provider_test_result
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch, request):
     """task-191: a failed readiness check keeps the failure toast, no probe."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "Ollama", "model": ""}
@@ -5078,7 +5204,8 @@ async def test_settings_category_selection_updates_detail_and_inspector():
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_inspector_explains_visible_controls():
+@private_profile_test
+async def test_settings_console_behavior_inspector_explains_visible_controls(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5088,22 +5215,11 @@ async def test_settings_console_behavior_inspector_explains_visible_controls():
         text = _visible_text(screen)
 
         assert "Control guide" in text
-        assert (
-            "Streaming: Global fallback for streaming responses when no Console session "
-            "or provider+model profile overrides it"
-        ) in text
-        assert (
-            "Temperature: Creativity fallback, 0.0 is focused and 2.0 is exploratory"
-            in text
-        )
-        assert (
-            "Top P: Probability cutoff fallback; lower values narrow token choices"
-            in text
-        )
-        assert (
-            "Response max tokens: Optional response cap for new/default Console sends"
-            in text
-        )
+        # TASK-33002 final review I2: the Control guide's model-field rows
+        # read the one field table's help instead of private copy.
+        for name in ("streaming", "temperature", "top_p", "max_tokens"):
+            field = MODEL_CONFIG_FIELDS[name]
+            assert f"{field.label}: {field.help}" in text
         assert (
             "Paste collapse: Only pasted chunks over the threshold become compact placeholders; "
             "typed text stays literal"
@@ -7238,7 +7354,7 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             "#settings-console-default-max-tokens",
             "handle_console_default_max_tokens_changed",
             "0",
-            "Response max tokens must be a whole number of at least 1.",
+            "Max tokens must be a whole number of at least 1.",
         ),
         (
             "#settings-console-default-min-p",
@@ -7250,11 +7366,13 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             "#settings-console-default-thinking-budget-tokens",
             "handle_console_default_thinking_budget_tokens_changed",
             "128",
-            "Thinking budget tokens must be a whole number of at least 1024.",
+            "Thinking budget must be a whole number of at least 1024.",
         ),
     ),
 )
+@private_profile_test
 async def test_settings_console_behavior_rejects_invalid_global_defaults(
+    request,
     monkeypatch,
     field_id,
     handler_name,
@@ -8896,7 +9014,8 @@ async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_redacts_secrets(monkeypatch):
+@private_profile_test
+async def test_settings_provider_test_redacts_secrets(request, monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
@@ -8907,11 +9026,12 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Configuration check")
+        await _wait_for_settings_text(screen, pilot, "from env var OPENAI_API_KEY")
         text = _visible_text(screen)
 
-        assert "Configuration check" in text
-        assert "OPENAI_API_KEY=<redacted>" in text
+        assert dict(_provider_test_rows_of(screen._provider_test_result))["Key"] == (
+            "from env var OPENAI_API_KEY · present, not verified"
+        )
         assert "sk-" not in text
 
 
@@ -8957,7 +9077,10 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_selected_model_profile(monkeypatch):
+@private_profile_test
+async def test_settings_provider_category_saves_selected_model_profile(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -8985,7 +9108,8 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
         screen.query_one("#settings-model-profile-temperature", Input).value = "0.2"
         screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
         screen.query_one("#settings-model-profile-streaming", Select).value = "false"
-        assert "Global fallbacks live under Console Defaults" in _visible_text(screen)
+        # TASK-33002.6: the fallbacks live in the rail's Console Behavior.
+        assert "Global fallbacks live under Console Behavior" in _visible_text(screen)
 
         await pilot.click("#settings-save-category")
 
@@ -9110,7 +9234,7 @@ async def test_settings_provider_category_saves_openai_generation_profile(
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         # TASK-33001.2: OpenAI's request carries no min_p or top_k either.
-        assert "Hidden for OpenAI: Min P, Top K, Thinking, Think budget." in text
+        assert "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget." in text
         assert (
             screen.query_one("#settings-model-profile-thinking-effort", Select).disabled
             is True
@@ -9256,8 +9380,9 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(
         # TASK-33001.2: Anthropic's request carries no Min P, Seed or
         # penalties, and Opus 4.7 rejects a fixed thinking budget.
         assert (
-            "Hidden for Anthropic: Min P, Seed, Presence, Frequency, Reasoning, "
-            "Summary, Verbosity, Think budget."
+            "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency "
+            "penalty, Reasoning effort, Reasoning summary, Verbosity, Thinking "
+            "budget."
         ) in text
         for row_id in (
             "#settings-model-profile-min-p-row",
@@ -9923,6 +10048,13 @@ _ENV_KEY_CANARY = "sk-settings-env-canary-33001"
 # but is over the setup builder's 8192-char limit for a newly entered key.
 _OVER_LIMIT_STORED_KEY = "sk-settings-over-limit-33001-" + "x" * 8200
 
+# TASK-33002.3 (ADR-095 D1): rewritten on purpose from "Provider settings saved."
+_PROVIDER_SAVED_WITH_SCOPE = (
+    "Provider settings saved: new chats and open chats nobody has used yet "
+    "take them; chats with work keep their own settings (change them in "
+    "Console with Alt+M)."
+)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -10066,7 +10198,8 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
         await pilot.pause()
         await pilot.click("#settings-save-category")
         await pilot.pause()
-        assert screen._provider_save_result == "Provider settings saved."
+        # TASK-33002.3: the save result names its scope (ADR-095 D1).
+        assert screen._provider_save_result == _PROVIDER_SAVED_WITH_SCOPE
 
     assert len(writes) == 1
     provider_deletes = writes[0][1].get(f"api_settings.{provider}", ())
@@ -10496,15 +10629,29 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
     app.app_config["api_settings"] = {"llama_cpp": deepcopy(template)}
     host = DestinationHarness(app, "settings")
+    toasts: list[str] = []
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        host.notify = lambda message, **kwargs: toasts.append(str(message))
         model = screen.query_one("#settings-model-value", Input)
         model.value = "qwen3-coder"
         screen.handle_model_value_changed(Input.Changed(model, model.value))
         await pilot.click("#settings-save-category")
         await pilot.pause()
-        assert screen._provider_save_result == "Provider settings saved."
+        # TASK-33002.3: the result line and the toast name the save's scope:
+        # new chats and unused open chats; chats with work keep theirs.
+        assert screen._provider_save_result == _PROVIDER_SAVED_WITH_SCOPE
+        assert _static_text(
+            screen.query_one("#settings-provider-save-result", Static)
+        ) == _PROVIDER_SAVED_WITH_SCOPE
+        assert toasts == [
+            (
+                "Provider and model settings saved: new chats and open chats "
+                "nobody has used yet take them; chats with work keep their own "
+                "settings (change them in Console with Alt+M)."
+            )
+        ]
 
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
         "llama_cpp"
@@ -10662,7 +10809,10 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_state():
+@private_profile_test
+async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_state(
+    request,
+):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
@@ -10708,12 +10858,13 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
 
         text = _visible_text(screen)
         assert "Focused setting: Endpoint" in text
-        assert "Controls the provider endpoint used by Console generation." in text
+        # TASK-33002.1: Endpoint help and range come from the field table.
+        assert "Purpose: Server address the requests go to." in text
         # task-1716: the in-place refresh folds dotted keys at separators,
         # so the key spans two lines in visible text.
         assert "Saved as: api_settings.ollama." in text
         assert "api_url" in text
-        assert "Validation: must start with http:// or https:// when set" in text
+        assert "Validation: an http:// or https:// address when set" in text
 
 
 @pytest.mark.asyncio
@@ -10765,7 +10916,8 @@ async def test_settings_provider_manual_entry_promotes_known_provider_to_catalog
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_blocks_unknown_provider():
+@private_profile_test
+async def test_settings_provider_test_blocks_unknown_provider(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
     app.app_config["api_settings"] = {}
@@ -10779,11 +10931,15 @@ async def test_settings_provider_test_blocks_unknown_provider():
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
-        assert "configuration=blocked" in text
+        label, verdict = _provider_test_rows_of(screen._provider_test_result)[0]
+        assert label == "Config"
+        assert "is not ready: Unknown provider" in verdict
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_uses_api_settings_env_var_without_secret_leak(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -10803,11 +10959,14 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "GROQ_API_KEY=<redacted>")
+        await _wait_for_settings_text(screen, pilot, "from env var GROQ_API_KEY")
         text = _visible_text(screen)
 
         assert "env:GROQ_API_KEY" in text
-        assert "GROQ_API_KEY=<redacted>" in text
+        # TASK-33002.2 AC#3: the Key row names the source, never the value.
+        assert dict(_provider_test_rows_of(screen._provider_test_result))["Key"] == (
+            "from env var GROQ_API_KEY · present, not verified"
+        )
         assert "gsk-secret-token" not in text
 
 
@@ -11045,7 +11204,9 @@ def test_failure_status_text_never_carries_raw_exception_text():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_provider_test_does_not_depend_on_console_sampling_defaults(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -11084,11 +11245,12 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         ).value = "not-a-number"
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Configuration check")
+        await _wait_for_settings_text(screen, pilot, "model listing reached")
         text = _visible_text(screen)
 
-        assert "Configuration check" in text
-        assert "configuration=complete" in text
+        rows = _provider_test_rows_of(screen._provider_test_result)
+        assert rows[0] == ("Config", "Ollama is configured")
+        assert "configuration=" not in text
         assert "is ready" not in text
 
 
@@ -12709,9 +12871,12 @@ def test_state_banner_text_has_exactly_one_state_segment():
         assert text.count("State:") == 1, (category, text)
 
 
-def test_state_banner_dirty_branch_keeps_priority():
-    """Unsaved changes outrank the badge -- the dirty banner is the model
-    talking, and its copy must stay the strongest signal."""
+@pytest.mark.asyncio
+@private_profile_test
+async def test_state_banner_dirty_branch_keeps_priority(request):
+    """The dirty line keeps the save-model badge and adds the unsaved count
+    (TASK-33002.4, rewritten on purpose): it used to replace the badge with
+    "Unsaved changes", hiding ADR-033's label exactly when it mattered."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -12719,23 +12884,31 @@ def test_state_banner_dirty_branch_keeps_priority():
     screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
     text = screen._category_state_banner_text(SettingsCategoryId.CONSOLE_BEHAVIOR)
     assert text == (
-        "State: Unsaved changes | Save (s) or Revert (r) — switching "
-        "categories keeps this draft."
+        "State: Draft — save with s · 1 unsaved · revert with r | "
+        "Changes affect global Console fallbacks after save."
     )
 
 
-def test_speech_tts_dirty_banner_names_leave_resolution():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_speech_tts_dirty_banner_names_leave_resolution(request):
     """Speech & TTS resolves its draft through the leave modal (task-2708),
     so its dirty banner must not promise the generic 'switching categories
-    keeps this draft' contract that the other draft categories honor."""
+    keeps this draft' contract. TASK-33002.4 (rewritten on purpose): the
+    leave wording now sits beside the badge and the panel's field count."""
+    from Tests.UI.test_settings_state_line_unsaved_count import _speech_snapshot
+
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen._category_has_unsaved_changes = lambda category: (
         category is SettingsCategoryId.SPEECH_TTS
     )
+    screen._speech_tts_draft_snapshot = _speech_snapshot(
+        speed=1.5, providers={"kokoro": {"max_tokens": 600}}
+    )
     text = screen._category_state_banner_text(SettingsCategoryId.SPEECH_TTS)
     assert text == (
-        "State: Unsaved changes | Save (s) or Revert (r) — leaving "
+        "State: Draft — save with s · 2 unsaved | Leaving "
         "Speech & TTS resolves this draft: save or discard first."
     )
     assert "switching categories keeps this draft" not in text

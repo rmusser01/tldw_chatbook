@@ -11741,7 +11741,7 @@ class ChatScreen(BaseAppScreen):
         provider, model, settings = self._active_console_provider_model_display()
         active_session = self._session._active_native_console_session()
         return ConsoleControlState.from_values(
-            provider=provider,
+            provider=provider, app_config=self._provider_readiness_app_config(),
             model=model,
             # The AI side of the conversation: whatever character this session is
             # actually roleplaying, so the chip stops being a constant. The

@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 2 unsaved | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)   │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Unsaved changes                         │
+│  Core                        │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  Guided edits: Save or Revert changes.  │
+│     Overview (view)          │  │  │ │ ▊  ▶ Prompt-cache snapshots                                                                                         ▎ │  │  │  │     Save (s)                            │
+│   > Providers & Models *     │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │    Revert (r)                           │
+│     Web Search               │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │  │  │  │  Focused setting: Provider              │
+│     Appearance               │  │  │ │ Provider                                                                                                              │▂ │  │  │                                         │
+│     Theme                    │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  Purpose: Sets the provider new chats ▅ │
+│     Splash Screen            │  │  │ │ ▊  legacy                                                                                                           ▎ │  │  │  │  start with; open chats nobody has      │
+│     Console Behavior         │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  used yet follow it.                    │
+│  Data & Privacy              │  │  │ │ ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  │  │  │                                         │
+│     Storage                  │  │  │ │ │lama.cpp (legacy alias)                                                                                              │  │  │  │  Saved as: chat_defaults.provider       │
+│     Workspaces               │  │  │ │ │ocal LLM (legacy generic)                                                                                            │  │  │  │                                         │
+│     Tool Profiles            │  │  │ │ │istral AI (legacy alias)                                                                                             │  │  │  │  Save: staged - press s to save, r to   │
+│     Privacy & Security       │  │  │ │ │llama (legacy alias)                                                                                              ▄▄ │  │  │  │  revert                                 │
+│     Network                  │  │  │ │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  │  │  │                                         │
+│     My Profile               │  │  │ │ Choose a provider or enter a supported provider alias.                                                                │  │  │  │  Validation: choose a catalog         ▁ │
+│  Troubleshooting             │  │  │ │ Model                   │ custom-model-gamma                                                                          │  │  │  │  provider or use Manual for custom      │
+│     Diagnostics (view)       │  │  │ │ Endpoint                │ http://localhost:8001/v1/chat/completions                                                   │  │  │  │  aliases                                │
+│     About (view)             │  │  │ │                                                                                                                       │  │  │  │                                         │
+│     Agents                   │  │  │ │  Credentials                                                                                                          │  │  │  │  Runtime owner: Settings persisted      │
+│  Expert                      │  │  │ │  API key source: not required for this provider                                                                       │  │  │  │  defaults; Console runtime selection    │
+│     Internal Prompts         │  │  │ │ API key                 │ No credential required                                                                      │  │  │  │                                         │
+│     Advanced Config          │  │  │ │                          Clear saved key                                                                              │  │  │  │  Writes allowed: Yes                    │
+│   Domain Defaults ▸ (11)     │  │  │ │ Env var                 │ No credential required                                                                      │  │  │  │                                         │
+│                              │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.         │  │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │ │  Test Provider                                                                                                        │  │  │  │  chat_defaults.model                    │
+│                              │  │  │ │  Runs a local readiness check; URL-based local providers also get a short live endpoint probe.                        │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │ Configuration check has not run.                                                                                      │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

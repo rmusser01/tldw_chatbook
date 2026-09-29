@@ -7,7 +7,7 @@ Task: TASK-25907.15
 ADR required: yes.
 ADR path: [Accepted design ADR-191](../../../backlog/decisions/191-foreground-personal-context-source-inspection-authority.md).
 Reason: a new interface joins profile inspection, conversation ownership and UI publication.
-Existing evidence direction: [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md).
+Existing evidence direction: [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md).
 
 ## Outcome
 
@@ -307,7 +307,7 @@ successful control, and spies prove no body read/decryption before admission.
 Acceptance of this document approves the contract, not all V2 rollout. Before
 an implementation plan for quotations, require separately scoped, user-reviewed
 V2 local admission/record ownership with a real containing binding and the
-retirement/disclosure controls required by ADR-185. Binding IDs, roles, spans and
+retirement/disclosure controls required by ADR-201. Binding IDs, roles, spans and
 digests themselves are governed metadata even without a retained excerpt.
 Qualify canonical/outbox/Undo/cache retirement and source-policy revocation for
 that metadata. The current `device_only` model/tool disclosure gap is unresolved;

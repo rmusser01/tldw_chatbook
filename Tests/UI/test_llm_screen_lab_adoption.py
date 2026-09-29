@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from textual.widgets import Button, Input, Select, Static
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.Model_Artifacts.machine_memory import (
@@ -53,7 +54,7 @@ def _deterministic_models_mount(monkeypatch):
     async def ollama_unavailable(_window):
         return False
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
     monkeypatch.setattr(
         LLMManagementWindow,
         "_ollama_api_available",

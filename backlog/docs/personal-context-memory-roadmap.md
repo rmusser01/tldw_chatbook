@@ -1,7 +1,7 @@
 # Personal Context memory roadmap and tracker
 
-Updated: 2026-09-27
-Status: Closed native V2 barrier complete and verified; V2 activation, retirement/disclosure and server rollout remain gated
+Updated: 2026-09-29
+Status: PR #2862 is being qualified against pinned dev; the Canvas preview correction is complete, and V2 activation/disclosure/server rollout remain gated
 Foundation: [TASK-25907](../tasks/task-25907%20-%20Cross-session-persistent-memory-for-the-agent.md) — Done, @codex
 
 - [Written design](../../Docs/superpowers/specs/2026-09-25-personal-context-memory-evolution-design.md)
@@ -16,12 +16,12 @@ Foundation: [TASK-25907](../tasks/task-25907%20-%20Cross-session-persistent-memo
 - [Local retrieval execution plan](../../Docs/superpowers/plans/2026-09-25-personal-context-local-retrieval.md) — complete; native execution retained
 - [Local retrieval execution review](../../Docs/superpowers/reviews/2026-09-25-personal-context-local-retrieval-execution-review.md)
 - [Versioned evidence and temporal design](../../Docs/superpowers/specs/2026-09-25-personal-context-versioned-evidence-and-temporal-changes-design.md) — accepted design; no runtime change
-- [Accepted design ADR-185](../decisions/185-versioned-profile-evidence-and-temporal-claims.md)
+- [Accepted design ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md)
 - [Dependency-aware forgetting design](../../Docs/superpowers/specs/2026-09-25-personal-context-dependency-aware-forgetting-design.md) — accepted design; no deletion performed
-- [Accepted design ADR-186](../decisions/186-dependency-aware-personal-context-forgetting.md)
+- [Accepted design ADR-202](../decisions/202-dependency-aware-personal-context-forgetting.md)
 - [Forgetting technical review](../../Docs/superpowers/reviews/2026-09-25-personal-context-dependency-aware-forgetting-review.md)
 - [Provider disclosure design](../../Docs/superpowers/specs/2026-09-25-personal-context-provider-disclosure-controls-design.md) — accepted design; no permission changes
-- [Accepted design ADR-187](../decisions/187-personal-context-provider-disclosure-authority.md)
+- [Accepted design ADR-203](../decisions/203-personal-context-provider-disclosure-authority.md)
 - [Disclosure technical review](../../Docs/superpowers/reviews/2026-09-25-personal-context-provider-disclosure-controls-review.md)
 - [Proposal-only consolidation design](../../Docs/superpowers/specs/2026-09-25-personal-context-proposal-only-consolidation-design.md) — accepted design; no runtime change
 - [Accepted design ADR-188](../decisions/188-opt-in-proposal-only-memory-consolidation.md)
@@ -61,11 +61,11 @@ layout, database, cadence, and embedded instructions are not requirements.
 - [x] Prepare the first-release execution plans as their tasks start.
 - [x] Implement and verify first-release tasks.
 - [x] Write/review TASK-25907.5's proposed V2 contract; resolve three Important and two Minor design findings.
-- [x] User approved TASK-25907.5's written contract; ADR-185 accepts design direction only.
+- [x] User approved TASK-25907.5's written contract; ADR-201 accepts design direction only.
 - [x] Write/review TASK-25907.6's forgetting contract; resolve capture/trace inventory and publication-cancellation findings.
-- [x] User endorsed TASK-25907.6 subject to review; audit/log and queued-dispatch gaps resolved; ADR-186 accepts design direction only.
+- [x] User endorsed TASK-25907.6 subject to review; audit/log and queued-dispatch gaps resolved; ADR-202 accepts design direction only.
 - [x] Write/review TASK-25907.7; resolve model-cache state and indirect tool/publication egress findings.
-- [x] User explicitly approved TASK-25907.7; ADR-187 accepts design direction only and current permissions are unchanged.
+- [x] User explicitly approved TASK-25907.7; ADR-203 accepts design direction only and current permissions are unchanged.
 - [x] Inspect native proposal/accounting owners and write TASK-25907.8’s bounded new-source consolidation contract.
 - [x] Review TASK-25907.8; resolve whole-batch crash-recovery and correction-relation findings; scoped document/tracker checks pass.
 - [x] User endorsed TASK-25907.8 subject to follow-up review; resolve enrollment, quota-owner and malformed-output gaps; ADR-188 accepts design direction only.
@@ -73,6 +73,9 @@ layout, database, cadence, and embedded instructions are not requirements.
 - [x] Review TASK-25907.9; separate issue resolution from linked change approval; native scoped checks and targeted reviewer confirmation pass.
 - [x] User explicitly approved TASK-25907.9’s written contract; ADR-189 accepts design direction only.
 - [x] Complete all nine original tasks while retaining implementation/design-only boundaries.
+- [x] Create and attach [PR #2862](https://github.com/rmusser01/tldw_chatbook/pull/2862) against dev.
+- [x] Complete TASK-33165: reserve Canvas context through the shared request schema plan and reject stale preview publication after asynchronous work.
+- [ ] Close TASK-25907.23 integration qualification after resolving or explicitly accepting the recorded upstream guard debt.
 
 This is a program plan and status index. Task files are the source of truth
 for status and acceptance criteria. Design-only tasks do not represent shipped
@@ -147,8 +150,8 @@ disclosure, and recovery controls.
 | First-release evidence | Inspect existing metadata; label unresolved references and edit history honestly | Accepted in ADR-182 |
 | First-release recall | Local deterministic lexical ranking; measure relevance independently of eligibility | Accepted in ADR-182 |
 | First-release context | Preserve the 12 KiB / ten-percent budgets and existing priority groups | Existing behavior retained |
-| Rich source quotations | Authority-bound exact evidence and compatibility | Accepted design ADR-185; unimplemented |
-| Cross-owner forgetting and provider disclosure | Native lifecycles and independent destination/purpose controls | Accepted design ADR-186/187; unimplemented |
+| Rich source quotations | Authority-bound exact evidence and compatibility | Accepted design ADR-201; unimplemented |
+| Cross-owner forgetting and provider disclosure | Native lifecycles and independent destination/purpose controls | Accepted design ADR-202/203; unimplemented |
 | Background consolidation | Opt-in, new-signal-driven, bounded, and proposal-only | Accepted design ADR-188; unimplemented |
 | Reflection/repair | Approved facts and verified procedures; issue resolution separate from change approval | Accepted design ADR-189; unimplemented |
 
@@ -335,7 +338,7 @@ The [execution review](../../Docs/superpowers/reviews/2026-09-26-personal-contex
 records RED/GREEN receipts and one bounded independent review with no findings.
 The reviewer separately verified fixed digests and malformed-copy rejection;
 it did not rerun the root's full targeted selection. All eight criteria and
-scoped documentation/tracker checks are complete; ADR-185 applies directly.
+scoped documentation/tracker checks are complete; ADR-201 applies directly.
 
 This component provides data identity, never source access, support, approval
 or guaranteed historical text. Current V1 core/fixture/schema/consumer bytes,
@@ -370,7 +373,7 @@ boundaries. Hidden workspace overrides, relevance and budgets cannot change
 permitted selection or add omission hints. Manual owner inspection/management,
 V1 storage/schema, Sync controls, permissions and grants stay unchanged.
 [ADR-102](../decisions/102-personal-context-profile-authority-sync-and-encryption.md)
-and [ADR-187](../decisions/187-personal-context-provider-disclosure-authority.md)
+and [ADR-203](../decisions/203-personal-context-provider-disclosure-authority.md)
 govern this bounded privacy correction; no new ADR/schema or grant was added.
 
 The [execution review and native evidence](../../Docs/superpowers/reviews/2026-09-26-personal-context-device-only-read-review.md)
@@ -416,7 +419,7 @@ The recommended next deliverable is a reviewed concrete V2 canonical data
 contract with fixed digest/semantic/byte fixtures, kept inactive until native
 admission, consumer retirement, metadata privacy and required companion-server
 conformance qualify. A local-only flag or resolver over legacy IDs cannot waive
-those gates. ADR-102, ADR-185, ADR-186, ADR-187 and ADR-191 apply; no new policy,
+those gates. ADR-102, ADR-201, ADR-202, ADR-203 and ADR-191 apply; no new policy,
 schema, storage, grant, migration, resolver, provider or UI change was made.
 Scoped self-review, links/source anchors and unchanged prior task/runtime/core/
 fixture/independent follow-up bytes passed. Native branch/worktree retained;
@@ -530,3 +533,29 @@ The closed barrier is implemented and has one fresh final read-only review. Its 
 Final native Python 3.12.11 verification: 925 passes plus one Pilot harness failure in the 926-case owner selection, repaired and covered by a final 34/34 affected Library/closure rerun. Barrier/memory checks pass 176/176 with all 68 baseline tests and unchanged timeouts; import/package checks pass 15/15 and raw Settings 13/13. Budgets remain 641/660 app, 973/973 UI-ready and 498/500 + 377,190/378,740 LOC preimport. Ruff check/format passes 14 unit files; seven legacy UI/test files add no lint or formatter debt against immutable HEAD. TASK-25907.22 is Done with all eight AC checked. [Component evidence and remaining gates](personal-context-native-v2-barrier.md) records exact receipts and practical limits.
 
 All production V2 permit paths remain closed. Retirement/publication, disclosure, exact admission, foreground source, storage/AAD migration and companion-server/cohort cutover remain independent prerequisites. Shared profile-library schemas/fixtures/contracts and the independent generated-answer task/suffix remain unchanged.
+
+
+## Current dev PR integration
+
+[TASK-25907.23](../tasks/task-25907.23%20-%20Integrate-Personal-Context-memory-improvements-onto-current-dev.md)
+tracks [PR #2862](https://github.com/rmusser01/tldw_chatbook/pull/2862) against dev.
+The current qualification pins dev `64579cce2c8dc64053fb50c00eb4f59b56716b01`
+and retains native Python 3.12.11 execution in the isolated PR checkout. Task
+notes distinguish current candidate receipts from historical runs and carry
+remaining size/style debt without raising guards or claiming release readiness.
+
+[TASK-33165](../tasks/task-33165%20-%20Reserve-Canvas-context-in-the-Personal-Context-Next-Send-preview.md)
+is Done in `6e1bf2a6dd`. The disposable preview reuses the live request's ordered,
+permission-filtered schema plan through read-only metadata and schema loading.
+It creates no live Canvas authority. A shared owner guard rejects stale results
+after worker, project-preview and Inspector validation awaits, including exact
+session replacement. Native review regressions and compatibility checks are
+recorded in the task; the integration task separately qualifies the merged dev
+candidate.
+
+The reconciliation preserves both Settings suspend lifecycles, regenerates CSS,
+and renames three colliding memory ADRs to 201/202/203. Accepted decision bodies
+are unchanged. Source review found no actionable runtime integration regression;
+its stale cross-references and Dreams link are repaired. Production V2, Forget,
+source-opening, schema/AAD, disclosure and companion-server activation remain
+closed. The independent retirement qualification branch remains separate.

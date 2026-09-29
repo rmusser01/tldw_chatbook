@@ -6,11 +6,11 @@ import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from textual.widgets import Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -121,7 +121,7 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
     app._initial_tab_value = "home"
     payload = _core_loop_payload()
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

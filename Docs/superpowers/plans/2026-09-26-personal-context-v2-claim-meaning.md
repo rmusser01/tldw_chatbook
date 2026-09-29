@@ -12,7 +12,7 @@
 
 **Tracker:** [TASK-25907.19](../../../backlog/tasks/task-25907.19%20-%20Implement-the-inactive-V2-claim-meaning-component.md).
 
-ADR required: no new ADR; direct implementation of accepted [ADR-192](../../../backlog/decisions/192-personal-context-v2-canonical-data-contract.md) and [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md).
+ADR required: no new ADR; direct implementation of accepted [ADR-192](../../../backlog/decisions/192-personal-context-v2-canonical-data-contract.md) and [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md).
 Reason: approved inactive data-only projection and temporal shapes; no new native storage, grants, provider or activation boundary.
 
 ## Global Constraints

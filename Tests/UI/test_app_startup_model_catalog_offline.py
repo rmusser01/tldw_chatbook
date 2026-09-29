@@ -28,6 +28,7 @@ import logging
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
 
@@ -46,7 +47,7 @@ def _pin_consented_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         settings["model_catalog"] = section
         return settings
 
-    monkeypatch.setattr(app_module, "load_settings", load_settings_consented)
+    set_app_global(monkeypatch, "load_settings", load_settings_consented)
 
 
 def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,7 +59,7 @@ def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 async def _close_production_app(app: TldwCli) -> None:

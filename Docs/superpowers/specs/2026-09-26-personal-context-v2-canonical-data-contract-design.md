@@ -8,9 +8,9 @@ ADR path: [Accepted design ADR-192](../../../backlog/decisions/192-personal-cont
 Reason: new serialized models, semantic rules and privacy representation.
 
 Governance: [ADR-102](../../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md),
-[ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md),
-[ADR-186](../../../backlog/decisions/186-dependency-aware-personal-context-forgetting.md),
-[ADR-187](../../../backlog/decisions/187-personal-context-provider-disclosure-authority.md),
+[ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md),
+[ADR-202](../../../backlog/decisions/202-dependency-aware-personal-context-forgetting.md),
+[ADR-203](../../../backlog/decisions/203-personal-context-provider-disclosure-authority.md),
 [ADR-191](../../../backlog/decisions/191-foreground-personal-context-source-inspection-authority.md).
 Baseline: `f055c95797`; [native readiness audit](../../../backlog/docs/personal-context-v2-admission-readiness-audit.md).
 
@@ -176,7 +176,7 @@ SHA-256 the JCS bytes of this exact projection, including every key:
 
 Identity/scope/kind enter the projection to prevent approval or support being
 transplanted into a different record or promoted scope with identical text.
-This concretizes ADR-185's meaning projection; it excludes record version,
+This concretizes ADR-201's meaning projection; it excludes record version,
 timestamps, controls, provenance, evidence, approval, assessments, confidence,
 salience, hold and all digests. Changing wording, dates, basis or edges changes
 the digest. Privacy/control actions still invalidate exact-version review and
@@ -290,7 +290,7 @@ to clear the hold. No copied human receipt can name the new record version.
 
 The manifest epoch alone does not retire history/outboxes/Undo/recovery/caches.
 Shared retirement receipt/page schemas, native dependency journal, peer-local
-revision, source marks and profile purge remain separately scoped under ADR-186.
+revision, source marks and profile purge remain separately scoped under ADR-202.
 This first contract publishes no receipt and cannot qualify an epoch transition.
 Portable evidence waits for qualified receipt semantics and all managed owners;
 local device-only metadata still needs applicable retirement safeguards.

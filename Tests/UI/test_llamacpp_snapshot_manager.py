@@ -11,6 +11,7 @@ import httpx
 import pytest
 from textual.widgets import Button, Collapsible, DataTable, Input
 
+from Tests.app_module_patches import set_app_global
 from Tests.LLM_Management.test_snapshot_admission import (
     _explicit_command,
     _launch_files,
@@ -86,14 +87,11 @@ def snapshot_ui(tmp_path, monkeypatch):
     # The app factory has production CSS; disable only the competing splash timer.
     from tldw_chatbook.config import get_cli_setting
 
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: (
+    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
             False
             if (section, key) == ("splash_screen", "enabled")
             else get_cli_setting(section, key, default)
-        ),
-    )
+        ))
     state.app = app
     return state
 

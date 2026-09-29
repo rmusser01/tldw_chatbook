@@ -8,7 +8,7 @@ Execution: native Python 3.12.11 in the existing isolated worktree.
 
 [Plan](../plans/2026-09-26-personal-context-exact-span-digests.md)
 · [API and limits](../../../backlog/docs/personal-context-exact-span-digests.md)
-· [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md)
+· [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md)
 
 ## Result
 
@@ -106,7 +106,7 @@ slice does not activate V2, quoted evidence or consolidation. No real profile,
 app launch, full application test sweep, network/provider execution, push, PR
 or merge occurred. The independent TASK-25907.10 addition is preserved.
 
-ADR required: no new ADR. ADR-185 supplies this exact data convention and
+ADR required: no new ADR. ADR-201 supplies this exact data convention and
 ADR-182 retains ownership. The local branch/worktree stay in place.
 
 ## Closeout validation

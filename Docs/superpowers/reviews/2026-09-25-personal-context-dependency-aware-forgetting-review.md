@@ -5,7 +5,7 @@ Task: TASK-25907.6
 Status: User endorsed design; follow-up technical review complete; accepted design direction only
 
 Design: [Dependency-aware forgetting](../specs/2026-09-25-personal-context-dependency-aware-forgetting-design.md)
-Decision: [Accepted design ADR-186](../../../backlog/decisions/186-dependency-aware-personal-context-forgetting.md)
+Decision: [Accepted design ADR-202](../../../backlog/decisions/202-dependency-aware-personal-context-forgetting.md)
 Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.md)
 
 ## Deliverable and evidence boundary
@@ -21,13 +21,13 @@ qualified lineage/owner coverage. No deletion, migration, production schema,
 worker, provider call or real-profile access occurred under this design task.
 
 The user approved the preceding evidence/temporal design by requesting
-continuation; TASK-25907.5 is Done and ADR-185 accepts that design direction.
+continuation; TASK-25907.5 is Done and ADR-201 accepts that design direction.
 Its runtime/schema rollout is still unimplemented and separately scoped.
 
 ## Independent review and fixes
 
 A fresh read-only reviewer inspected `df9afcc39b..86a3985fdc` against all six
-criteria, ADR-102/182/185 and referenced native owners. It reported no Critical
+criteria, ADR-102/182/201 and referenced native owners. It reported no Critical
 or Minor finding and two Important design gaps. The parent resolved both in
 the design; a targeted reread of those amended contracts is recorded below.
 
@@ -57,7 +57,7 @@ claim adapter, erasure, gate/handoff or server conformance.
 | 1: Actual artifact owners | Inspected owner inventory and capture/trace/cache qualification; V1 unknown coverage is explicit |
 | 2: Distinct operations | Operations table, 24-hour Undo evidence and source/manual-content retention choices |
 | 3: New IDs/restart/replay/jobs | Source object-wide marks, per-scope keyed family selectors, admission/publication gate and restore checks |
-| 4: ADR/crash/privacy/offline | ADR-186, durable phase/ticket protocol, private versus portable controls and honest peer acknowledgement |
+| 4: ADR/crash/privacy/offline | ADR-202, durable phase/ticket protocol, private versus portable controls and honest peer acknowledgement |
 | 5: Synthetic cases | Mixed sources/manual Notes, promoted/recreated proposals, captures/late normalization, last-check/commit race, stale snapshots/Sync/recovery and unmanaged exports |
 | 6: Reviewed bounded design only | Proposed unlinked V2 release gates, independent review/fixes and scoped documentation boundary checks |
 
@@ -71,7 +71,7 @@ dependencies point backward. TASK-25907.5 was Done and TASK-25907.6 then remaine
 In Progress with its six technical criteria checked. The new spec/ADR contain
 no placeholders; whitespace and the documentation-only diff boundary pass.
 The final offline allocation check inspected 585 refs and 84 worktrees without
-a competing ADR-186; no network fetch or open-PR audit was performed, so the
+a competing ADR-202; no network fetch or open-PR audit was performed, so the
 integration-time allocation recheck remains required.
 No runtime tests or full sweep are required by this documentation-only task.
 The reviewer did not judge runtime correctness, actual physical erasure, server
@@ -87,7 +87,7 @@ scope claim. Offline remote decryption, delivered provider data, arbitrary
 exports/backups and forensic/WAL remnants cannot be promised erased.
 
 TASK-25907.6 is Done after the user endorsed the written design subject to the
-follow-up review below. ADR-186 accepts design direction only, with allocation
+follow-up review below. ADR-202 accepts design direction only, with allocation
 provisional until integration-time branch/PR checks.
 All work was executed natively in the existing isolated worktree. The separate
 unstaged evaluation task/roadmap addition was preserved outside this task's

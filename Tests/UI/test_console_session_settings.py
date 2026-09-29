@@ -30,6 +30,7 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
+from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import persist_seeded_config
 
@@ -11303,9 +11304,9 @@ def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_de
     assert summary_state.endpoint_row == "Endpoint: http://127.0.0.1:9099"
 
 
-def test_console_readiness_uses_saved_session_settings_over_stale_global_provider() -> (
-    None
-):
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_readiness_uses_saved_session_settings_over_stale_global_provider(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -11328,12 +11329,43 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     )
 
     assert screen._console_provider_blocker_copy() == ""
-    assert control_state.provider_label == "Provider: llama_cpp"
+    # TASK-33002.5 rewrote this pin on purpose: the chip shows the catalog
+    # name, while identity consumers (recovery navigation, readiness,
+    # prompts) still receive the config key.
+    assert control_state.provider_label == "Provider: llama.cpp"
+    assert screen._active_console_provider_model_display()[0] == "llama_cpp"
     assert control_state.model_label == "Model: local-model"
     assert "llama.cpp / local-model" in run_recipe_row.value
     assert "llama_cpp" not in run_recipe_row.value
     assert provider_row.value == "ready"
     assert provider_row.recovery == ""
+
+
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_provider_chip_names_a_custom_endpoint_by_its_registry_entry(request) -> None:
+    """TASK-33002.5: a custom-ep chip reads its entry name, as the pickers do."""
+    app = _build_test_app()
+    app.app_config["custom_endpoints"] = {
+        "gpu-box": {
+            "display_name": "GPU Box",
+            "family": "openai_compatible",
+            "base_url": "http://127.0.0.1:9000/v1",
+            "models": ["served-model"],
+        }
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="served-model"),
+    )
+
+    control_state = screen._build_console_control_state(None)
+
+    assert control_state.provider_label == "Provider: GPU Box"
+    assert screen._active_console_provider_model_display()[0] == "custom-ep:gpu-box"
 
 
 def test_console_control_state_reads_persona_label_without_storing_it_on_session(
@@ -12602,7 +12634,7 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
             ".console-settings-modal-label",
             Static,
         )
-        assert str(response_label.renderable) == "Response max tokens"
+        assert str(response_label.renderable) == "Max tokens"  # TASK-33002.1
 
 
 @pytest.mark.asyncio
@@ -12656,7 +12688,7 @@ def _build_live_config_test_app():
 
     with ExitStack() as stack:
         stack.enter_context(
-            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
+            patch_app_global("get_chachanotes_db_lazy", return_value=None)
         )
         stack.enter_context(
             patch(
@@ -12666,7 +12698,7 @@ def _build_live_config_test_app():
         )
         stack.enter_context(
             patch(
-                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                "tldw_chatbook.app_service_wiring.ServerCharacterPersonaService.from_config",
                 return_value=MagicMock(),
             )
         )
@@ -12713,20 +12745,20 @@ def _build_live_config_test_app():
             "get_writing_db_path",
         ):
             stack.enter_context(
-                patch(f"tldw_chatbook.app.{db_path_getter}", return_value=":memory:")
+                patch(f"tldw_chatbook.app_service_wiring.{db_path_getter}", return_value=":memory:")
             )
         stack.enter_context(
-            patch(
-                "tldw_chatbook.app.get_subscriptions_db_path",
+            patch_app_global(
+                "get_subscriptions_db_path",
                 return_value=user_data_dir / "subscriptions.sqlite",
             )
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
+            patch_app_global("get_user_data_dir", return_value=user_data_dir)
         )
         stack.enter_context(
             patch(
-                "tldw_chatbook.app.get_workspaces_db_path",
+                "tldw_chatbook.app_service_wiring.get_workspaces_db_path",
                 return_value=user_data_dir / "workspaces.sqlite",
             )
         )
@@ -15015,7 +15047,7 @@ async def test_console_settings_modal_ready_state_has_one_primary_action() -> No
             ConsoleSessionSettings(
                 provider="llama_cpp", model="model-a", base_url="ftp://127.0.0.1:9099"
             ),
-            "Enter a valid llama.cpp Base URL to continue.",
+            "Enter a valid llama.cpp endpoint to continue.",
         ),
         (
             "missing model",

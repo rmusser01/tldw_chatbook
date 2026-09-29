@@ -16,7 +16,9 @@ from uuid import UUID
 import pytest
 
 import tldw_chatbook.app as app_module
+import tldw_chatbook.app_speech as speech_module
 import tldw_chatbook.TTS as tts_package
+from Tests.app_module_patches import set_app_global
 from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli
@@ -101,14 +103,29 @@ def _method_node(
     )
 
 
-def _self_method_calls(node: ast.AST, method_name: str) -> list[ast.Call]:
+def _function_node(
+    path: Path,
+    function_name: str,
+) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    )
+
+
+def _self_method_calls(
+    node: ast.AST, method_name: str, receiver: str = "self"
+) -> list[ast.Call]:
     return [
         call
         for call in ast.walk(node)
         if isinstance(call, ast.Call)
         and isinstance(call.func, ast.Attribute)
         and isinstance(call.func.value, ast.Name)
-        and call.func.value.id == "self"
+        and call.func.value.id == receiver
         and call.func.attr == method_name
     ]
 
@@ -124,15 +141,15 @@ def _isolate_constructor_paths(
         raising=False,
     )
     monkeypatch.setattr(
-        "tldw_chatbook.app.get_library_collections_db_path",
+        "tldw_chatbook.app_service_wiring.get_library_collections_db_path",
         lambda: tmp_path / "library_collections.sqlite",
     )
     monkeypatch.setattr(
-        "tldw_chatbook.app.get_library_ingest_jobs_db_path",
+        "tldw_chatbook.app_ingest_queue.get_library_ingest_jobs_db_path",
         lambda: tmp_path / "library_ingest_jobs.sqlite",
     )
     monkeypatch.setattr(
-        "tldw_chatbook.app.get_scheduled_tasks_db_path",
+        "tldw_chatbook.app_service_wiring.get_scheduled_tasks_db_path",
         lambda: tmp_path / "scheduled_tasks.sqlite",
     )
 
@@ -799,7 +816,7 @@ async def test_removal_evidence_uses_bounded_profile_snapshot_and_fails_closed(
 
     owner._ensure_tts_profile_service = ensure_profiles
     owner._audio_cpp_removal_settings_inputs = lambda: (
-        app_module.AudioCppSettingsConfig(),
+        speech_module.AudioCppSettingsConfig(),
         None,
         TTSPreferencesSnapshot(
             provider_id="openai",
@@ -813,7 +830,7 @@ async def test_removal_evidence_uses_bounded_profile_snapshot_and_fails_closed(
         None,
     )
     monkeypatch.setattr(
-        app_module,
+        speech_module,
         "project_audio_cpp_artifact_removal_evidence",
         lambda *_args, **_kwargs: object(),
     )
@@ -850,7 +867,7 @@ async def test_model_library_bulk_observation_collects_shared_evidence_once() ->
     def settings_inputs():
         calls["settings"] += 1
         return (
-            app_module.AudioCppSettingsConfig(),
+            speech_module.AudioCppSettingsConfig(),
             None,
             TTSPreferencesSnapshot(
                 provider_id="openai",
@@ -1378,7 +1395,10 @@ def test_existing_mount_binds_before_screen_work() -> None:
 
 
 def test_unmount_closes_owned_tts_resources_from_outer_finally() -> None:
-    method = _method_node(REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "on_unmount")
+    # TASK-33011: TldwCli.on_unmount moved verbatim to LifecycleMixin.
+    method = _method_node(
+        REPO_ROOT / "tldw_chatbook/app_lifecycle.py", "LifecycleMixin", "on_unmount"
+    )
     close_calls = _self_method_calls(method, "_close_owned_tts_resources")
 
     assert len(close_calls) == 1
@@ -1405,20 +1425,32 @@ def test_unmount_closes_owned_tts_resources_from_outer_finally() -> None:
         assert not isinstance(ancestor, ast.If)
         ancestor = parent_by_node[ancestor]
 
-    owner_close = _method_node(
-        REPO_ROOT / "tldw_chatbook/app.py",
-        "TldwCli",
+    # TASK-33011: TldwCli._close_owned_tts_resources delegates to the
+    # same-named ``app_speech`` function, whose app parameter is ``app``.
+    owner_close = _function_node(
+        REPO_ROOT / "tldw_chatbook/app_speech.py",
         "_close_owned_tts_resources",
     )
     portability_calls = _self_method_calls(
-        owner_close, "_close_tts_voice_bundle_service"
+        owner_close, "_close_tts_voice_bundle_service", "app"
     )
-    repository_calls = _self_method_calls(owner_close, "_close_tts_profile_repository")
+    repository_calls = _self_method_calls(
+        owner_close, "_close_tts_profile_repository", "app"
+    )
     assert len(portability_calls) == 1
     assert len(repository_calls) == 1
     assert portability_calls[0].lineno < repository_calls[0].lineno
-    assert len(_self_method_calls(owner_close, "_close_tts_profile_repository")) == 1
-    assert len(_self_method_calls(owner_close, "_close_tts_service")) == 1
+    assert (
+        len(_self_method_calls(owner_close, "_close_tts_profile_repository", "app"))
+        == 1
+    )
+    assert len(_self_method_calls(owner_close, "_close_tts_service", "app")) == 1
+    stub = _method_node(
+        REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "_close_owned_tts_resources"
+    )
+    assert ast.unparse(stub.body[-1]) == (
+        "return await _speech()._close_owned_tts_resources(self)"
+    )
 
 
 @pytest.mark.asyncio
@@ -1466,7 +1498,7 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
     monkeypatch.setattr(
         voice_bundle_module, "TTSVoiceBundlePortabilityService", build
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     owner = SimpleNamespace(
         _tts_voice_bundle_service=None,
         _tts_voice_bundle_service_close_task=None,
@@ -1540,6 +1572,8 @@ async def test_composite_shutdown_joins_each_owner_in_authority_order() -> None:
 def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:
     paths = (
         REPO_ROOT / "tldw_chatbook/app.py",
+        # TASK-33011: TldwCli's service composition moved here from app.py.
+        REPO_ROOT / "tldw_chatbook/app_service_wiring.py",
         REPO_ROOT / "tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py",
     )
     for path in paths:

@@ -7,6 +7,7 @@ import pytest
 
 from textual.widgets import Button
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIP_IDS
@@ -49,7 +50,7 @@ def _deterministic_models_mount(monkeypatch):
             return False
         return _real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
 
 
 async def _models(app):

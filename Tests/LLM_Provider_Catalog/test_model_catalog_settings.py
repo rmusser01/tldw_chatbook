@@ -78,6 +78,10 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         "DeepInfra",
         "Nebius",
         "Novita",
+        # TASK-33350: model-maker presets with a documented /models route
+        # (MiMo and BytePlus are seeded-only).
+        "TokenHub",
+        "StepFun",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 16
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 18
     assert SELECTOR_MERGE_CAP == 50

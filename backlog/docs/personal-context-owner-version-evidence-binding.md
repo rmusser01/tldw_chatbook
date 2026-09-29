@@ -5,7 +5,7 @@ identity to its authority/scope/container/object, immutable owner version,
 exact representation/span digests, source role and capture time. It does not
 resolve a source or admit anything into a Personal Context profile.
 
-Governance: [ADR-185](../decisions/185-versioned-profile-evidence-and-temporal-claims.md).
+Governance: [ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md).
 Contract: [reviewed specification](../../Docs/superpowers/specs/2026-09-26-personal-context-owner-version-evidence-binding-design.md).
 Task: [TASK-25907.14](../tasks/task-25907.14%20-%20Add-bounded-owner-version-evidence-bindings-to-shared-profile-core.md).
 

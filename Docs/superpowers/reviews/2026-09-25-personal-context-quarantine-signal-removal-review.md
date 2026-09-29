@@ -6,7 +6,7 @@ Status: Complete — approved native fix, targeted verification and bounded revi
 
 Plan: [Approved native plan](../plans/2026-09-25-personal-context-quarantine-signal-removal.md)
 Design: [Accepted disclosure contract](../specs/2026-09-25-personal-context-provider-disclosure-controls-design.md#noninterference-and-user-facing-explanation)
-ADR: [ADR-187](../../../backlog/decisions/187-personal-context-provider-disclosure-authority.md), [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md)
+ADR: [ADR-203](../../../backlog/decisions/203-personal-context-provider-disclosure-authority.md), [ADR-182](../../../backlog/decisions/182-personal-context-memory-evolution.md)
 Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.md)
 
 ## Change and scope
@@ -122,7 +122,7 @@ rerun without a cache because the default sandbox cannot write the worktree's
 cache; all scoped checks passed with the original two Chat diagnostics excluded
 and documented. The reviewer finding is resolved and there is no blocking issue.
 
-Existing ADR-187/182 govern the correction; no new ADR is required. Task criteria,
+Existing ADR-203/182 govern the correction; no new ADR is required. Task criteria,
 implementation notes, plan and evaluation/tracker documentation are updated via
 the Backlog workflow. Original 59 child criteria and all six .11 criterion texts
 remain unchanged; independent .10 and roadmap suffix bytes remain preserved.

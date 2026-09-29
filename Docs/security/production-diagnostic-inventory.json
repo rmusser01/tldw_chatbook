@@ -554,8 +554,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "173977a71ab9c9e3811f",
+      "call_count": 4,
+      "diagnostic_digest": "0862eae2a1eb9e2a81a8",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/custom_endpoint_registry.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2549,6 +2549,20 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 5,
+      "diagnostic_digest": "93adca632aeec0d17d27",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_session_registry.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "adb8552185aa74541fc4",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Tools/remote_session_worker.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 10,
       "diagnostic_digest": "fed19a3536371c29ee23",
       "owner": "TASK-492",
@@ -4250,10 +4264,17 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 350,
-      "diagnostic_digest": "291403852ae64b7513f0",
+      "call_count": 119,
+      "diagnostic_digest": "0dd6af7a42adf4a0b555",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "ef31667cd9a9f0d85e44",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_command_providers.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -4268,6 +4289,48 @@
       "diagnostic_digest": "3ee90cdaafc682f9f563",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_entry.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 14,
+      "diagnostic_digest": "7c7a2f952e80b15b9358",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_feature_glue.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 48,
+      "diagnostic_digest": "1f026d93569682c394ef",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_ingest_queue.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 81,
+      "diagnostic_digest": "afcec76dd69dd1f9a10c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 37,
+      "diagnostic_digest": "93663400daed5c1bf47d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_navigation.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 25,
+      "diagnostic_digest": "e786d4b5223187ff0d3c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_service_wiring.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 26,
+      "diagnostic_digest": "f2b5f0a51b778a2c308c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_speech.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10568,93 +10631,12 @@
     {
       "candidates": [
         {
-          "call_digest": "3aef1d3ee8d4bed1",
-          "method": "warning",
-          "path_expressions": [
-            "source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._expand_library_ingest_source",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "5fcc24e58b863179",
-          "method": "error",
-          "path_expressions": [
-            "job.source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "edd2f12aaf46a1f7",
-          "method": "warning",
-          "path_expressions": [
-            "job.source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "3a5b5b3fe0493385",
-          "method": "error",
-          "path_expressions": [
-            "source_path"
-          ],
-          "scope": "LibraryIngestQueueMixin._top_up_ingest_parse_pool",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "223c765bca0719fa",
-          "method": "error",
-          "path_expressions": [
-            "db_path"
-          ],
-          "scope": "TldwCli._backfill_subscription_items_fts_owned",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "43b25b09e349343b",
-          "method": "error",
-          "path_expressions": [
-            "db_path"
-          ],
-          "scope": "TldwCli._backfill_subscription_items_fts_owned",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "4e8bde470b2be502",
-          "method": "warning",
-          "path_expressions": [
-            "db_path"
-          ],
-          "scope": "TldwCli._backfill_subscription_items_fts_owned",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "261de4eb5d0ecc0d",
           "method": "info",
           "path_expressions": [
             "media_db_path"
           ],
           "scope": "TldwCli._init_media_db",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "1dbb7451cea17971",
-          "method": "error",
-          "path_expressions": [
-            "cache_path"
-          ],
-          "scope": "TldwCli._init_model_catalog_disk_store",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "0ae58a4de8c785a6",
-          "method": "warning",
-          "path_expressions": [
-            "cache_path"
-          ],
-          "scope": "TldwCli._init_model_catalog_disk_store",
           "status": "legacy_unreviewed"
         },
         {
@@ -10709,6 +10691,97 @@
         }
       ],
       "path": "tldw_chatbook/app_entry.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "223c765bca0719fa",
+          "method": "error",
+          "path_expressions": [
+            "db_path"
+          ],
+          "scope": "FeatureGlueMixin._backfill_subscription_items_fts_owned",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "43b25b09e349343b",
+          "method": "error",
+          "path_expressions": [
+            "db_path"
+          ],
+          "scope": "FeatureGlueMixin._backfill_subscription_items_fts_owned",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "4e8bde470b2be502",
+          "method": "warning",
+          "path_expressions": [
+            "db_path"
+          ],
+          "scope": "FeatureGlueMixin._backfill_subscription_items_fts_owned",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "1dbb7451cea17971",
+          "method": "error",
+          "path_expressions": [
+            "cache_path"
+          ],
+          "scope": "FeatureGlueMixin._init_model_catalog_disk_store",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "0ae58a4de8c785a6",
+          "method": "warning",
+          "path_expressions": [
+            "cache_path"
+          ],
+          "scope": "FeatureGlueMixin._init_model_catalog_disk_store",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/app_feature_glue.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "3aef1d3ee8d4bed1",
+          "method": "warning",
+          "path_expressions": [
+            "source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._expand_library_ingest_source",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "5fcc24e58b863179",
+          "method": "error",
+          "path_expressions": [
+            "job.source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "edd2f12aaf46a1f7",
+          "method": "warning",
+          "path_expressions": [
+            "job.source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._run_library_ingest_queue",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "3a5b5b3fe0493385",
+          "method": "error",
+          "path_expressions": [
+            "source_path"
+          ],
+          "scope": "LibraryIngestQueueMixin._top_up_ingest_parse_pool",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/app_ingest_queue.py"
     },
     {
       "candidates": [

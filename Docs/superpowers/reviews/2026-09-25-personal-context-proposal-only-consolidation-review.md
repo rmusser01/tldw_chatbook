@@ -12,7 +12,7 @@ Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.
 
 A design-only opt-in new-source workflow produces canonical Personal Context proposals through exact evidence, source enrollment, native disclosure and durable accounting/recovery. No fourth authoritative store, self-approval, goal mutation or background procedural writes. The first future slice uses Run now, a qualified owned on-device closed extraction adapter, new native user evidence and finite foreground batch review. Accepted designs do not enable runtime work.
 
-The user approved TASK-25907.7's disclosure design. Its ADR-187, task and review now record accepted design direction, with a future-amendment link from ADR-102. No existing permissions, schema, provider routes or model calls changed.
+The user approved TASK-25907.7's disclosure design. Its ADR-203, task and review now record accepted design direction, with a future-amendment link from ADR-102. No existing permissions, schema, provider routes or model calls changed.
 
 ## Native inspection and review findings
 
@@ -23,7 +23,7 @@ A fresh read-only reviewer checked the proposed spec/ADR against all seven task 
 | Finding | Resolution |
 | --- | --- |
 | Important: candidate-slot numbers cannot recover only the unfinished work from a lost transient response after partial publication | Publish the entire validated batch of at most five proposals, exact operation receipt, dependency edges and durable counts in one all-or-none Personal Context owner transaction. Before COMMIT an uncertain attempt pauses with no partial proposals; after COMMIT recover the complete receipt without a model call. Foreground acceptance remains separate per item. No durable response cache was added. |
-| Minor: correction wording could imply a temporal change_from relation | Use the exact ADR-185 correction relation/effect and supporting span; do not infer change_from or transition_at from chronology. |
+| Minor: correction wording could imply a temporal change_from relation | Use the exact ADR-201 correction relation/effect and supporting span; do not infer change_from or transition_at from chronology. |
 
 Parent self-review corrected the ADR-106 link, made native GOAL kind exclusions explicit, added stable source-coverage identities across re-enrollment/catch-up/pipeline changes, and refreshed a stale historical roadmap status. Retired restricted coverage cannot permit replay; suppression or refused unknown coverage wins.
 

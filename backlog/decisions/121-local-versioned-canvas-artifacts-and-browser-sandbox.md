@@ -544,7 +544,7 @@ Reuse interactive-owner capture/validation plus exact session identity through
 final snapshot publication and the Inspector's later async validation. Closure,
 disable, durable/temporary replacement, promotion or branch changes discard
 the result and buffered diagnostic sidecar. Schema-only planning cannot change Canvas selection or grant
-permission. This corrects the existing preview boundary under ADR-186; it does
+permission. This corrects the existing preview boundary under ADR-202; it does
 not activate memory capture or forgetting.
 
 ### Runtime quota qualification record

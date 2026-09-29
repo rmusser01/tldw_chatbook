@@ -5,7 +5,7 @@ Task: TASK-25907.5
 Status: Technical review complete; user approved written design, 2026-09-25
 
 Design: [Versioned evidence and temporal changes](../specs/2026-09-25-personal-context-versioned-evidence-and-temporal-changes-design.md)
-Decision: [Accepted design ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md)
+Decision: [Accepted design ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md)
 Tracker: [Memory roadmap](../../../backlog/docs/personal-context-memory-roadmap.md)
 
 ## Delivered design
@@ -75,10 +75,10 @@ retirement cannot promise immediate remote offline erasure or deletion of
 unmanaged exports/backups; outstanding peer acknowledgements remain visible.
 
 After presentation of the reviewed contract, the user requested continuation
-on 2026-09-25. ADR-185 accepts this design direction and TASK-25907.5 is Done.
+on 2026-09-25. ADR-201 accepts this design direction and TASK-25907.5 is Done.
 No schema/runtime rollout is approved by completing a design-only task.
 The native executor has made no implementation plan for V2, no push, PR or merge.
-The final offline allocation check found no competing ADR-185 path across
+The final offline allocation check found no competing ADR-201 path across
 584 local refs and 83 registered worktrees. No network fetch or open-PR scan
 was performed; the number stays provisional until integration-time checks
 against then-current branches and open PRs.

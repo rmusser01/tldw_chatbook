@@ -27,6 +27,7 @@ from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
+from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
     DEFAULT_LLAMACPP_BASE_URL,
     MODEL_OPTION_PLACEHOLDER_VALUES,
@@ -518,7 +519,10 @@ class ConsoleEndpointTemplateModal(SafeModalDismissMixin, ModalScreen[str | None
                     classes="console-settings-control console-endpoint-template-modal-select",
                 )
             with Horizontal(classes="console-settings-modal-row"):
-                yield Static("Base URL", classes="console-endpoint-template-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["endpoint"],
+                    classes="console-endpoint-template-label",
+                )
                 yield ConsoleSettingsInput(
                     value=template.base_url,
                     placeholder=self._url_placeholder_for_family(template.family),

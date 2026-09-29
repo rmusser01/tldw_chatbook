@@ -1,0 +1,41 @@
+== before: real profile
+194e7c5b82f2ccce3b88eff815838f9a70be6275  ~/.config/tldw_cli/config.toml
+mtime=1790431296
+2026-09-27T21:01:50-0700
+== live process (tmux -L ffwlive)
+window=211x44 pane_pid=81276 cmd=python3.12
+81276 ~/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app
+env: HOME=<scratchpad>/ffw/live/home XDG_CONFIG_HOME=<scratchpad>/ffw/live/home/.config XDG_DATA_HOME=<scratchpad>/ffw/live/data TLDW_CONFIG_PATH=<scratchpad>/ffw/live/config/config.toml PYTHONPATH=<worktree>; users_name=verify_33002_ffw
+scratch config seeded with [api_settings.llama_cpp.model_defaults.qwen3-8b] reasoning_effort=minimal, temperature=0.5
+== after: real profile
+194e7c5b82f2ccce3b88eff815838f9a70be6275  ~/.config/tldw_cli/config.toml
+mtime=1790431296
+real-profile files newer than launch stamp (empty = none):
+2026-09-27T21:09:33-0700
+== scratch config model_defaults after the run
+1407:[api_settings.llama_cpp.model_defaults.qwen3-8b]
+1408-reasoning_effort = "minimal"
+1409-temperature = 0.9
+== captures
+console-behavior-control-guide-211x44.txt lines=44 maxw=211
+console-behavior-reasoning-replay-override-211x44.txt lines=44 maxw=211
+console-behavior-temperature-focused-guide-211x44.txt lines=44 maxw=211
+console-behavior-temperature-focused-guide-235x52.txt lines=52 maxw=235
+pm-after-revert-211x44.txt lines=44 maxw=211
+pm-model-purpose-211x44.txt lines=44 maxw=211
+pm-reasoning-effort-options-211x44.txt lines=44 maxw=211
+pm-reasoning-effort-saved-minimal-211x44.txt lines=44 maxw=211
+pm-reasoning-effort-saved-minimal-235x52.txt lines=52 maxw=235
+pm-revert-confirm-211x44.txt lines=44 maxw=211
+pm-unrelated-save-211x44.txt lines=44 maxw=211
+storage-invalid-draft-state-211x44.txt lines=44 maxw=211
+storage-invalid-draft-state-235x52.txt lines=52 maxw=235
+== what was driven (211x44 unless the file says 235x52)
+- P&M, llama.cpp / qwen3-8b saved with reasoning_effort = "minimal": the Reasoning effort row reads "minimal (not supported here)"; its list offers Inherit default, none, low, medium, high, xhigh and the saved "minimal (not supported here)".
+- Edit Temperature 0.5 -> 0.9, r, Discard changes: no crash, Temperature back to 0.5, Reasoning effort still "minimal (not supported here)" (pm-revert-confirm, pm-after-revert).
+- Edit Temperature 0.5 -> 0.9, s: the scratch config keeps reasoning_effort = "minimal" beside temperature = 0.9 (pm-unrelated-save; config lines above).
+- Console Behavior: the Control guide rows read the field table's help; focusing the Temperature fallback shows Focused setting / Purpose / Saved as chat_defaults.temperature / Validation 0.0 to 2.0; the Reasoning replay override target line reads "llama.cpp / qwen3-8b — http://localhost:8080".
+- Storage: Prompts DB edited to end in .txt reads "State: Draft — save with s · 1 unsaved | Needs correction: Prompts DB must end with .db, .sqlite, or .sqlite3."; reverted with r, Discard changes (config unchanged).
+- P&M Model focused: Purpose "Sets the model new chats start with; open chats nobody has used yet follow it."
+- Not driven live (tests only): the model-switch-then-Revert path, the swap notice's "not selected", the Personas preview provider label.
+- One slip, recorded: a "/" typed after a search jump landed in the P&M Temperature input ("/console temperature"); it was discarded with r before any save.

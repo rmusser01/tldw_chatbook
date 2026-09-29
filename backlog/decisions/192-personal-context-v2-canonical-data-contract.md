@@ -12,13 +12,13 @@ Design: [Concrete contract](../../Docs/superpowers/specs/2026-09-26-personal-con
 
 ## Context
 
-[ADR-185](185-versioned-profile-evidence-and-temporal-claims.md) accepts a
+[ADR-201](201-versioned-profile-evidence-and-temporal-claims.md) accepts a
 distinct V2 model, but field names, closed shapes and digest projections still
 need a concrete contract. The [readiness audit](../docs/personal-context-v2-admission-readiness-audit.md)
 found V1 canonical dispatch throughout the native owners. The existing complete
 18-field binding is data-only and already published; widening it would alter
-its digest and compatibility. [ADR-186](186-dependency-aware-personal-context-forgetting.md),
-[ADR-187](187-personal-context-provider-disclosure-authority.md) and
+its digest and compatibility. [ADR-202](202-dependency-aware-personal-context-forgetting.md),
+[ADR-203](203-personal-context-provider-disclosure-authority.md) and
 [ADR-191](191-foreground-personal-context-source-inspection-authority.md)
 remain independent lifecycle, disclosure and source-authority obligations.
 
@@ -42,7 +42,7 @@ Manifest semantics are profile-wide, including effects on V1 records. Declared
 requirements are not consumer acknowledgements. Activation still requires all
 native consumers, old-grant retirement, metadata controls and companion-server
 conformance under [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md)
-and ADR-185. No new grant, source factory, provider enrollment or forgetting
+and ADR-201. No new grant, source factory, provider enrollment or forgetting
 receipt protocol is created here. Those protocols must be concretized and
 qualified before this data can become usable.
 
@@ -51,7 +51,7 @@ qualified before this data can become usable.
 1. Distinct data-only V2 aggregates with existing binding composition: recommended;
    gives one testable contract without enabling unqualified consumers.
 2. Optional V2 fields in V1 or a parallel evidence sidecar: rejected for this
-   flow by ADR-185; silently changes bytes or splits canonical authority.
+   flow by ADR-201; silently changes bytes or splits canonical authority.
 3. Ship local V2 storage and resolver first: deferred; a device-only flag does
    not qualify binding metadata, restore, old clients or disclosure gates.
 

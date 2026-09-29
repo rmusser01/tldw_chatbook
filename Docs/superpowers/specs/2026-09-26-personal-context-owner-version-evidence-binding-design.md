@@ -5,7 +5,7 @@ Date: 2026-09-26
 Task: TASK-25907.14
 
 ADR required: no new ADR for this scoped data-only component.
-ADR path: [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md).
+ADR path: [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md).
 Reason: implement a subset of its accepted exact-binding convention without
 changing repository ownership, source-access policy, persistence or consumers.
 Any later adapter/service boundary still needs its own scoped ADR check.
@@ -176,7 +176,7 @@ contains no capability, native flag, path, URL or executable resolver hint.
 
 Canonical binding metadata can itself expose relationships and source identity.
 Do not persist, sync, inject into prompts, expose to agent tools or resolve it
-from a real profile in this task. Future runtime adoption must satisfy ADR-185's
+from a real profile in this task. Future runtime adoption must satisfy ADR-201's
 retirement/forgetting and disclosure controls before portable evidence ships.
 Local-only sources must not become portable through this component. An
 attachment origin annotation does not make attachment bytes resolvable here.

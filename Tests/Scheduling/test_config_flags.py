@@ -48,9 +48,11 @@ def test_watchlist_flag_fallbacks_match_shipped_config(flag, expected) -> None:
     keys silently get different scheduling behaviour from new users -- which is how
     TASK-1210 stayed invisible.
     """
-    from tldw_chatbook import app as app_module
+    # TASK-33011: the scheduling wiring moved out of app.py into TldwCli's
+    # ServiceWiringMixin.
+    from tldw_chatbook import app_service_wiring
 
-    source = inspect.getsource(app_module)
+    source = inspect.getsource(app_service_wiring)
     match = re.search(
         r'get_cli_setting\(\s*"scheduling",\s*"' + flag + r'",\s*(True|False)\s*,?\s*\)',
         source,
@@ -83,9 +85,11 @@ def test_briefing_projection_is_only_wired_when_the_flag_is_on() -> None:
     shape -- just gated on the (already flag-derived) projection being
     non-``None``, rather than re-reading the flag a second time.
     """
-    from tldw_chatbook import app as app_module
+    # TASK-33011: the scheduling wiring moved out of app.py into TldwCli's
+    # ServiceWiringMixin.
+    from tldw_chatbook import app_service_wiring
 
-    source = inspect.getsource(app_module)
+    source = inspect.getsource(app_service_wiring)
 
     # `briefing_projection` is `None` whenever `briefing_schedules_enabled`
     # is `False` -- pinned as a ternary assigned straight to the name, since

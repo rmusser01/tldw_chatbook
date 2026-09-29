@@ -4,7 +4,7 @@
 implements the first data-only slice of the accepted
 [V2 contract](../../Docs/superpowers/specs/2026-09-26-personal-context-v2-canonical-data-contract-design.md).
 [ADR-192](../decisions/192-personal-context-v2-canonical-data-contract.md) and
-[ADR-185](../decisions/185-versioned-profile-evidence-and-temporal-claims.md)
+[ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md)
 apply directly; no new architecture decision or runtime activation occurs.
 The [implementation plan](../../Docs/superpowers/plans/2026-09-26-personal-context-v2-claim-meaning.md)
 is scoped to typed validity/relations, the meaning projection, its digest and
@@ -134,7 +134,7 @@ and review basis are untrusted inputs, not proof of evidence or consent.
 No application import, schema migration, profile storage, source inspection,
 retrieval/consolidation, policy/approval flow, consumer retirement, privacy
 metadata deletion, Sync/recovery, provider/server or UI path uses this component.
-Those remain separately qualified units under ADR-102/185/186/187/191/192.
+Those remain separately qualified units under ADR-102/201/202/203/191/192.
 No dependency, package version, published V1 exports/helpers/schemas/fixtures or
 existing complete-binding bytes change. This evidence establishes only the
 inactive component; no full application sweep or live-user/provider/server

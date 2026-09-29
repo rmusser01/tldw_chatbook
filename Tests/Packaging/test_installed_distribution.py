@@ -705,18 +705,51 @@ root_owner_classes = []
 seen_root_classes = set()
 
 
-def add_root_owner_class(class_node):
+def package_imported_class(tree, name):
+    # TASK-33011: LibraryIngestQueueMixin moved to app_ingest_queue.py; follow
+    # a base imported by name from another installed tldw_chatbook module.
+    for node in tree.body:
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and (node.module or "").startswith("tldw_chatbook.")
+            and any((alias.asname or alias.name) == name for alias in node.names)
+        ):
+            module_path = package_root.joinpath(
+                *node.module.split(".")[1:]
+            ).with_suffix(".py")
+            if not module_path.is_file():
+                return None
+            module_tree = ast.parse(
+                module_path.read_text(encoding="utf-8"), filename=str(module_path)
+            )
+            return module_tree, {
+                item.name: item
+                for item in module_tree.body
+                if isinstance(item, ast.ClassDef)
+            }
+    return None
+
+
+def add_root_owner_class(class_node, tree=app_tree, classes=local_classes):
     if class_node.name in seen_root_classes:
         return
     seen_root_classes.add(class_node.name)
     root_owner_classes.append(class_node)
     for base in class_node.bases:
-        base_class = local_classes.get(base.id) if isinstance(base, ast.Name) else None
-        if base_class is not None:
-            add_root_owner_class(base_class)
+        if not isinstance(base, ast.Name):
+            continue
+        if base.id in classes:
+            add_root_owner_class(classes[base.id], tree, classes)
+            continue
+        imported = package_imported_class(tree, base.id)
+        if imported is not None and base.id in imported[1]:
+            add_root_owner_class(imported[1][base.id], *imported)
 
 
 add_root_owner_class(app_class)
+assert "LibraryIngestQueueMixin" in seen_root_classes
+assert "ServiceWiringMixin" in seen_root_classes
 assert (
     frozenset().union(
         *(class_body_reactives(node) for node in root_owner_classes)
@@ -788,7 +821,8 @@ for method_name in wiring_methods:
     setattr(TldwCli, method_name, counted)
 
 sync_consumer_classes = (
-    sys.modules[TldwCli.__module__].ChatConversationScopeService,
+    # TASK-33011: the chat conversation wiring moved into ServiceWiringMixin.
+    sys.modules["tldw_chatbook.app_service_wiring"].ChatConversationScopeService,
     sys.modules[TldwCli.__module__].MediaReadingScopeService,
 )
 initial_sync_arguments = {

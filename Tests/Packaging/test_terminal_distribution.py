@@ -107,8 +107,11 @@ def test_windows_terminal_backend_availability_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook import app as app_module
+    from tldw_chatbook import app_service_wiring
 
-    monkeypatch.setattr(app_module, "os", SimpleNamespace(name="nt"))
+    # TASK-33011: `_build_terminal_backend` lives in `app_service_wiring` (the
+    # app module re-exports it), so the platform check reads that module's `os`.
+    monkeypatch.setattr(app_service_wiring, "os", SimpleNamespace(name="nt"))
 
     with pytest.raises(OSError, match="^persistent Terminal backend unavailable$"):
         app_module._build_terminal_backend()

@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Input, OptionList, Static
 
+from Tests.app_module_patches import patch_app_global, set_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli, setup_owns_startup_networking
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
@@ -143,8 +144,8 @@ class _CatalogRefreshScheduleHost:
 
 
 def _pin_consented_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "tldw_chatbook.app.load_settings",
+    set_app_global(
+        monkeypatch, "load_settings",
         lambda: {"model_catalog": {"refresh_consent_recorded": True}},
     )
 
@@ -193,7 +194,7 @@ def test_unconsented_startup_shows_consent_modal_instead_of_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ADR-020 amendment: no consent on file means a dialog, not network I/O."""
-    monkeypatch.setattr("tldw_chatbook.app.load_settings", lambda: {})
+    set_app_global(monkeypatch, "load_settings", lambda: {})
     host = _CatalogRefreshScheduleHost(
         {"first_run": {"setup_completed": True}}
     )
@@ -269,7 +270,7 @@ async def test_clean_first_run_mount_suppresses_global_catalog_refresh(
     )
 
     with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
+        patch_app_global("get_cli_setting", side_effect=_test_cli_setting),
         patch.object(app, "notify", wraps=app.notify) as notify_spy,
     ):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -487,7 +488,7 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
 ) -> None:
     app = _build_clean_first_run_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
@@ -569,7 +570,7 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
 ) -> None:
     app = _build_clean_first_run_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot,
@@ -616,7 +617,7 @@ async def test_fresh_config_auto_offers_wizard_over_initial_screen(
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

@@ -17,7 +17,7 @@ import asyncio
 import threading
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from loguru import logger
@@ -25,6 +25,7 @@ from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.app import ComposeResult
 from textual.widgets import Button, Select, Static, TextArea
@@ -4868,8 +4869,8 @@ async def test_the_approval_route_reaches_a_pending_skill_install_card():
     the controller's next projection tick clears the pending payload again.
     """
     app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    with patch_app_global(
+        "get_cli_setting", side_effect=_settings_without_splash
     ):
         async with app.run_test(size=(200, 40)) as pilot:
             deadline = time.monotonic() + 10.0
@@ -4914,8 +4915,8 @@ async def test_a_route_with_nothing_pending_can_decline_to_warn():
     ordinary tab press, not warn -- so the shared route takes
     `notify_missing=False` and reports whether it focused anything."""
     app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    with patch_app_global(
+        "get_cli_setting", side_effect=_settings_without_splash
     ):
         async with app.run_test(size=(200, 40)) as pilot:
             deadline = time.monotonic() + 10.0

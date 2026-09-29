@@ -13,7 +13,7 @@
 **Task:** [TASK-25907.14](../../../backlog/tasks/task-25907.14%20-%20Add-bounded-owner-version-evidence-bindings-to-shared-profile-core.md).
 
 **ADR required:** no new ADR; direct scoped implementation of accepted exact-binding convention.
-**ADR path:** [ADR-185](../../../backlog/decisions/185-versioned-profile-evidence-and-temporal-claims.md).
+**ADR path:** [ADR-201](../../../backlog/decisions/201-versioned-profile-evidence-and-temporal-claims.md).
 **Reason:** Data-only structure/identity and existing packaging, with no new repository, runtime consumer or authority boundary.
 
 ## Global Constraints

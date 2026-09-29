@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ │ ▐X▌ Cerebras: refresh ▐X▌ save to config                                                                          │ │  │  │  │                                         │
+│  category search             │  │  │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │                                                                                                                       │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │  Custom endpoints                                                                                                     │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  Save (s) — no changes                  │
+│   > Providers & Models       │  │  │ │ │  No named endpoints yet. Create one from a template in Console conversation settings (New endpoint…), or convert  │ │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ │  a built-in custom slot below.                                                                                    │ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ │  Custom OpenAI-compatible: http://localhost:1234/v1/chat/completions (built-in slot)                              │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ │  Convert to named endpoint                                                                                        │ │  │  │  │    api_key_env_var                      │
+│     Appearance               │  │  │ │ │  Custom OpenAI-compatible #2: http://localhost:5678/v1/chat/completions (built-in slot)                           │ │  │  │  │  api_settings.<provider>.               │
+│     Theme                    │  │  │ │ │  Convert to named endpoint                                                                                        │ │  │  │  │    api_mode                             │
+│     Splash Screen            │  │  │ │ │                                                                                                                   │ │  │  │  │  api_settings.<provider>.               │
+│     Console Behavior         │  │  │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │    model_defaults.<model>               │
+│  Data & Privacy              │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  model_capabilities.models.             │
+│     Storage                  │  │  │ │ ▊  ▶ Generation defaults                                                                                            ▎ │  │  │  │    <model>.context_window               │
+│     Workspaces               │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │  llamacpp_snapshots.enabled             │
+│     Tool Profiles            │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │  llamacpp_snapshots.                    │
+│     Privacy & Security       │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │    keep_count                           │
+│     Network                  │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │                                         │
+│     My Profile               │  │  │ │                                                                                                                       │  │  │  │  Affected config: provider, model,      │
+│  Troubleshooting             │  │  │ │  Provider catalog | Cloud: Anthropic, Cerebras, Cohere, Databricks, DeepSeek, Fireworks, Google Gemini, Groq,         │  │  │  │  endpoint, and credential source        │
+│     Diagnostics (view)       │  │  │ │  Hugging Face, Mistral AI, Moonshot AI, OpenAI, OpenRouter, QwenCloud, Together, Z.ai | Local: Aphrodite Engine,      │  │  │  │  defaults                             ▃ │
+│     About (view)             │  │  │ │  KoboldCpp, llama.cpp, Llamafile, MLX-LM (Apple silicon), Ollama, TabbyAPI, Text Generation WebUI (Oobabooga), vLLM   │▅ │  │  │                                         │
+│     Agents                   │  │  │ │  | Custom & legacy aliases: Custom OpenAI-compatible, Custom OpenAI-compatible #2, llama.cpp (legacy alias), Local    │  │  │  │  Recovery: test provider readiness      │
+│  Expert                      │  │  │ │  LLM (legacy generic), Mistral AI (legacy alias), Ollama (legacy alias), vLLM (legacy alias)                          │  │  │  │  before saving provider-backed          │
+│     Internal Prompts         │  │  │ │  Credential policy: 17 require keys; 15 local/keyless providers                                                       │  │  │  │  defaults                               │
+│     Advanced Config          │  │  │ │  Choose a catalog provider (type in the open list to jump to one), or use Manual / custom provider for other keys.    │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │  Sampling and transport defaults are routed to Console Behavior.                                                      │  │  │  │  Boundary: Sampling and transport       │
+│                              │  │  │ │  Endpoint key: api_settings.llama_cpp.                                                                                │  │  │  │  defaults are routed to Console         │
+│                              │  │  │ │    api_url                                                                                                            │  │  │  │  Behavior                               │
+│                              │  │  │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

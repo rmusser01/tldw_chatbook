@@ -8,7 +8,7 @@ date: 2026-09-26
 
 ## Context
 
-[ADR-185](185-versioned-profile-evidence-and-temporal-claims.md) defines exact
+[ADR-201](201-versioned-profile-evidence-and-temporal-claims.md) defines exact
 version-bound evidence, but a structural binding is not a source capability.
 Personal Context profile reads, Console conversation ownership and citation
 source namespaces have independent authority. Current V1 provenance is legacy

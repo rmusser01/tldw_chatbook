@@ -8,12 +8,12 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 from textual.css.query import NoMatches, QueryError, TooManyMatches
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
@@ -239,7 +239,7 @@ async def test_phase6_visual_chrome_survives_release_terminal_size_matrix(
 ) -> None:
     app = _build_release_sweep_app()
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot,
@@ -291,7 +291,7 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
 ):
     app = _build_release_sweep_app()
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
             await _wait_until(
                 pilot,

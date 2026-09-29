@@ -51,6 +51,9 @@ def test_console_ssh_defaults_exist_in_the_default_toml():
         "enable_multiplexing": True,
         "connect_timeout_s": 3,
         "max_concurrent_calls": 8,
+        "session_worker": True,
+        "session_idle_s": 60,
+        "bundle_cache": True,
     }
 
 
@@ -114,3 +117,33 @@ def test_console_ssh_control_persist_rejects_malformed_durations(raw_section, va
 def test_console_ssh_control_persist_accepts_ssh_time_formats(raw_section, value):
     raw_section({"control_persist": value})
     assert get_console_ssh_settings().control_persist == value
+
+
+def test_console_ssh_session_worker_defaults(raw_section):
+    raw_section({})
+    settings = get_console_ssh_settings()
+    assert (settings.session_worker, settings.session_idle_s, settings.bundle_cache) == (
+        True,
+        60,
+        True,
+    )
+
+
+def test_console_ssh_session_worker_overrides(raw_section):
+    raw_section({"session_worker": False, "session_idle_s": 5, "bundle_cache": False})
+    settings = get_console_ssh_settings()
+    assert (settings.session_worker, settings.session_idle_s, settings.bundle_cache) == (
+        False,
+        5,
+        False,
+    )
+
+
+def test_console_ssh_session_worker_rejects_unusable_values(raw_section):
+    raw_section({"session_worker": "no", "session_idle_s": 0, "bundle_cache": 1})
+    settings = get_console_ssh_settings()
+    assert (settings.session_worker, settings.session_idle_s, settings.bundle_cache) == (
+        True,
+        60,
+        True,
+    )

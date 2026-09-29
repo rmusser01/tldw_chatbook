@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
@@ -97,7 +97,7 @@ async def test_destination_body_text_helper_excludes_navigation_chrome(
 ) -> None:
     app = _build_clean_navigation_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
@@ -124,7 +124,7 @@ async def test_clean_run_top_level_navigation_reaches_every_destination(
 ) -> None:
     app = _build_clean_navigation_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
@@ -178,7 +178,7 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
 ) -> None:
     app = _build_clean_navigation_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
@@ -249,7 +249,7 @@ async def test_ce007_reused_console_nav_bar_resyncs_active_after_warm_return(
     """
     app = _build_clean_navigation_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,

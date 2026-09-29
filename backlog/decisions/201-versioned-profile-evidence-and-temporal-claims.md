@@ -1,4 +1,4 @@
-# ADR-185: Bind Personal Context evidence to source authority and represent temporal claims explicitly
+# ADR-201: Bind Personal Context evidence to source authority and represent temporal claims explicitly
 
 Status: Accepted — design direction approved, 2026-09-25; no runtime or schema rollout approved
 Date: 2026-09-25
@@ -137,5 +137,5 @@ no production model, migration, resolver, provider access or behavior. The
 companion server's current implementation has not been audited by this task.
 No implementation may claim verified quotations or complete forgetting until
 the separate evidence, forgetting and disclosure slices ship and pass their
-own acceptance tests. ADR-185's number remains provisional against concurrent
+own acceptance tests. ADR-201's number remains provisional against concurrent
 branches until integration-time collision checks.

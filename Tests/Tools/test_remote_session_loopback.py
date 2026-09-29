@@ -1,0 +1,142 @@
+"""Session loopback: the real bundle through the real bootstrap + loader.
+
+No ssh: ``run_session_loopback`` spawns ``python -I -c <bootstrap>``
+locally, feeds the stage-1 loader, answers ``NEED`` with the bundle,
+asserts ``READY <stamp>``, then drives the bundle's ``serve_session``
+fork-server over binary frames.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from Tests.Tools.test_remote_worker_bundle import _python_310_interpreter
+from tldw_chatbook.Tools.remote_workspace_executor import (
+    RemoteWorkspaceLoopbackError,
+    run_session_loopback,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import MAX_RESPONSE_BYTES
+
+
+def _ws(tmp_path: Path) -> Path:
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha\n")
+    (root / "big.txt").write_text("a" * 60000 + "b\n")
+    return root
+
+
+def test_ping_then_reads_share_one_session(tmp_path: Path) -> None:
+    root = _ws(tmp_path)
+    out = run_session_loopback(
+        root,
+        [{"op": "ping"}, {"op": "fs_read", "path": "a.txt"}, {"op": "fs_list", "path": "."}],
+    )
+    assert out[1][-2]["outcome"] == "success" and "alpha" in out[1][-2]["result"]
+    assert all(frames[-1]["status"] == (0, None) for frames in out.values())
+
+
+def test_catastrophic_regex_dies_alone(tmp_path: Path) -> None:
+    root = _ws(tmp_path)
+    out = run_session_loopback(
+        root,
+        [
+            {"op": "fs_grep", "pattern": "(a+)+$", "budget": 2},
+            {"op": "fs_read", "path": "a.txt"},
+        ],
+    )
+    exit_code, signal_no = out[0][-1]["status"]
+    assert exit_code == 75 or signal_no is not None
+    assert out[1][-2]["outcome"] == "success"
+    # Out-of-order completion: the fast read's STATUS beats the slow grep's.
+    assert out[1][-1]["arrival"] < out[0][-1]["arrival"]
+
+
+def test_near_max_terminal_frame_survives_the_per_child_cap(tmp_path: Path) -> None:
+    """Admitted + a near-MAX_RESPONSE_BYTES terminal frame must not be capped.
+
+    One diff line of 1.2 MB of ``\\x01`` (no NUL, so git treats it as
+    text): git truncates at 1 MB and every byte JSON-escapes to six, the
+    worst case ``MAX_RESPONSE_BYTES`` is sized for.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    (root / "x.txt").write_text("seed\n")
+    git("add", "x.txt")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed")
+    (root / "x.txt").write_bytes(b"\x01" * 1_200_000 + b"\n")
+
+    out = run_session_loopback(root, [{"op": "git_diff"}])
+    admitted, terminal, status = out[0]
+    assert admitted["outcome"] == "admitted"
+    assert terminal["outcome"] == "success"
+    assert len(json.dumps(terminal)) > MAX_RESPONSE_BYTES - 128 * 1024
+    assert status["status"] == (0, None)
+
+
+def test_pin_failure_leaves_session_up(tmp_path: Path) -> None:
+    root = _ws(tmp_path)
+    out = run_session_loopback(
+        root,
+        [
+            {"op": "fs_read", "path": "a.txt", "stale_identity": True},
+            {"op": "fs_read", "path": "a.txt"},
+        ],
+    )
+    assert out[0][-2]["code"] == "root_pin_failed"
+    assert out[1][-2]["outcome"] == "success"
+
+
+def test_cache_hit_on_second_session(tmp_path: Path) -> None:
+    root = _ws(tmp_path)
+    cache = tmp_path / "run"
+    cache.mkdir(mode=0o700)
+    run_session_loopback(root, [{"op": "ping"}], cache_dir=cache)
+    assert any((cache / "tldw-worker").iterdir())
+    # Must not ask for the bundle again: READY without NEED.
+    run_session_loopback(root, [{"op": "ping"}], cache_dir=cache, require_cache_hit=True)
+
+
+def test_tampered_cache_entry_is_refetched(tmp_path: Path) -> None:
+    """A cache file exists but fails the loader's hash check: NEED, the
+    bundle is sent anyway, READY -- the pre-existing file never short-cuts it."""
+    root = _ws(tmp_path)
+    cache = tmp_path / "run"
+    cache.mkdir(mode=0o700)
+    run_session_loopback(root, [{"op": "ping"}], cache_dir=cache)
+    (entry,) = (cache / "tldw-worker").iterdir()
+    entry.write_bytes(b"tampered")  # keeps 0o600: only the hash is wrong
+    out = run_session_loopback(root, [{"op": "ping"}], cache_dir=cache)
+    assert out[0][-1]["status"] == (0, None)
+    # The re-sent bundle repaired the entry: the next session is a hit.
+    run_session_loopback(root, [{"op": "ping"}], cache_dir=cache, require_cache_hit=True)
+
+
+def test_require_cache_hit_refuses_a_need(tmp_path: Path) -> None:
+    root = _ws(tmp_path)
+    cache = tmp_path / "run"
+    cache.mkdir(mode=0o700)
+    with pytest.raises(RemoteWorkspaceLoopbackError):
+        run_session_loopback(root, [{"op": "ping"}], cache_dir=cache, require_cache_hit=True)
+
+
+def test_session_executes_on_python_310_floor(tmp_path: Path) -> None:
+    """Bootstrap + loader + serve + bundle EXECUTE under a real 3.10."""
+    interpreter = _python_310_interpreter()
+    if interpreter is None:
+        pytest.skip("no 3.10 interpreter — CI must install one (python3.10 on PATH)")
+    root = _ws(tmp_path)
+    out = run_session_loopback(
+        root, [{"op": "ping"}, {"op": "fs_read", "path": "a.txt"}], python=interpreter
+    )
+    assert out[1][-2]["outcome"] == "success" and "alpha" in out[1][-2]["result"]
+    assert all(frames[-1]["status"] == (0, None) for frames in out.values())

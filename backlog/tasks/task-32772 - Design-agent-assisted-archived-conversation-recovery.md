@@ -1,10 +1,11 @@
 ---
 id: TASK-32772
 title: Design agent-assisted archived conversation recovery
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-18 05:55'
+updated_date: '2026-09-27 15:30'
 labels: []
 dependencies: []
 priority: medium
@@ -15,6 +16,19 @@ priority: medium
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Define how a user can ask a Console agent to find a missing archived conversation without knowing its name or workspace, identify it from bounded results and explicitly restore it.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Renumbering provenance
+
+Backlog CLI assigned TASK-32746. A fresh fetch plus all-ref object-path and existing-worktree sweep found a task ceiling of 32771 before filing. Renumbered this newly created design task to TASK-32772 before creating inbound references; no existing task was changed. The ADR ceiling was 165.
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 The design defines cross-workspace archive discovery and truthful archive-time behavior.
+- [x] #2 The design defines exact-target confirmation and state-dependent chat or workspace restoration through both user entry points.
+- [x] #3 The architecture decision defines Library authority, RAG-only recovery, local storage and Console runtime boundaries.
+- [x] #4 The spec defines bounded results, stale and partial outcomes, cancellation ownership and targeted verification.
+- [x] #5 The written spec is reviewed and approved before implementation planning.
+<!-- AC:END -->
 
 ## Implementation Plan
 
@@ -38,27 +52,16 @@ Spec: [Agent archive recovery design](../../Docs/superpowers/specs/2026-09-17-ag
 ADR: [ADR-166](../decisions/166-agent-assisted-archive-recovery.md)
 <!-- SECTION:PLAN:END -->
 
-## Renumbering provenance
-
-Backlog CLI assigned TASK-32746. A fresh fetch plus all-ref object-path and existing-worktree sweep found a task ceiling of 32771 before filing. Renumbered this newly created design task to TASK-32772 before creating inbound references; no existing task was changed. The ADR ceiling was 165.
-
-## Acceptance Criteria
-<!-- AC:BEGIN -->
-- [x] #1 The design defines cross-workspace archive discovery and truthful archive-time behavior.
-- [x] #2 The design defines exact-target confirmation and state-dependent chat or workspace restoration through both user entry points.
-- [x] #3 The architecture decision defines Library authority, RAG-only recovery, local storage and Console runtime boundaries.
-- [x] #4 The spec defines bounded results, stale and partial outcomes, cancellation ownership and targeted verification.
-- [ ] #5 The written spec is reviewed and approved before implementation planning.
-<!-- AC:END -->
-
 ## Implementation Notes
 
-Design artifacts only: wrote the linked spec and proposed ADR-166 and added its index entry. The user approved both recovery entry points, explicit chat/workspace choices and the review correction allowing recovery in RAG-only mode under Assistant Library access. The written spec still requires user review; this task remains In Progress and implementation planning has not started.
+<!-- SECTION:NOTES:BEGIN -->
+Designed agent-assisted recovery of local archived chats across workspaces and documented the approved contracts in the linked specification and ADR-166. The user approved the written spec and both review rounds before planning. ADR-166 is Accepted; ADR-030/079 now identify only the narrow recovery amendment in metadata, preserving their original decision bodies.
 
-Self-review made unknown-time inclusion an explicit search argument, bounded result/confirmation/receipt retention, prevented result renumbering from changing targets, separated runtime-owned restore from exact resume, and specified transaction-level workspace lifecycle checks and honest cross-store partial completion. Search excludes private control content and labels inactive-branch matches.
+The design separates real archive dates from workspace concurrency revisions, matches either applicable archive event, bounds search and result retention, and binds confirmation to an immutable target. It also defines interactive-origin admission, RAG-only recovery under Library authority, role-restricted search, cancellation ownership, deduplication, cross-store partial outcomes and separate Preview/Open actions.
 
-Verification: document-link, placeholder and whitespace checks pass; the new task passes the scoped Backlog ID/path guard and its ID is unique in the checkout. The repository-wide ID guard reports existing duplicate task IDs unrelated to TASK-32772; those records were not changed. No application tests were run because this change contains only design documentation. ADR-166 amends the relevant parts of ADR-030/079 and preserves ADR-147; existing accepted ADR bodies were not rewritten.
+Implementation plan: [Agent archive recovery](../../Docs/superpowers/plans/2026-09-27-agent-archive-recovery.md). The plan defines seven independently testable delivery tasks, concrete interfaces, targeted red/green checks and disposable-data live qualification. No application code or migration was implemented by this design task.
 
-2026-09-19 second written-spec review: current registry code accepts only one exact Direct/RAG provider, so the spec now requires a separate narrowly authenticated recovery seam without weakening that boundary. Replaced unreliable timestamp-based workspace concurrency with a local archive revision and real wall-clock display dates. Date filters now match either applicable archive event; formerly, taking the latest event could hide a chat matching an earlier interval. Added live keyset continuation and explicit incomplete-search handling, session/run/call/argument-bound deduplication that survives receipt eviction, post-write availability rechecks for workspace-only recovery, and shutdown ownership. Clarified manual-refresh/model-history separation, imported-card authority, unavailable-workspace actions and role-restricted matching. Existing reader request state has no branch/message-jump contract, so Preview no longer promises one. Spec/ADR and targeted verification requirements are synchronized; user review remains pending before planning.
+Verification: reviewed spec-to-plan coverage and interface consistency; 19 plan/spec/ADR/task links resolve, all 12 Python examples parse, placeholder checks pass, and all seven new delivery tasks pass the scoped Backlog ID/path guard with unique IDs and earlier-only dependencies. Document whitespace is checked separately before commit. Application tests and Python lint/format are not applicable to these Markdown-only changes; implementation tests remain prospective.
 
-Second-review verification: all 10 local links across the three documents resolve; placeholder/whitespace checks, selected spec/ADR consistency assertions and the scoped Backlog task guard pass. Changes are documentation only; application behavior and migrations remain unimplemented and untested.
+Task closeout was performed through Backlog CLI in a temporary Git workspace to avoid repeated branch-history scanning in the shared checkout. The returned ID, filename, approval criterion and status were verified before copying the updated record back. Unrelated records and application changes were preserved.
+<!-- SECTION:NOTES:END -->

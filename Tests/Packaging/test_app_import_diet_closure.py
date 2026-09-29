@@ -151,8 +151,6 @@ assert not panel_subtree, (
 # closure. If one leaves entirely, the assertions above would pass without
 # testing the conversion at all.
 for expected in (
-    # The payload seam app.py now imports instead of the panel.
-    "tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types",
     # The pure settings model the payload seam depends on -- already on the
     # boot path via Event_Handlers/STTS_Events/stts_events, which is why the
     # seam costs nothing. If this leaves, the seam starts ADDING boot cost.
@@ -163,6 +161,34 @@ for expected in (
     "tldw_chatbook.Notes.notes_scope_service",
 ):
     assert expected in sys.modules, f"expected closure member missing: {expected}"
+
+# TASK-33011 PR-E: the payload seam's one reader (the audio.cpp removal
+# settings snapshot) moved into the lazy ``app_speech`` module, so the seam
+# is off the app import closure entirely -- and loading ``app_speech`` must
+# still take the payload seam, never the panel or its subtree.
+seam = "tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types"
+assert seam not in sys.modules, "the payload seam is back on the app import path"
+import tldw_chatbook.app_speech  # noqa: E402,F401
+
+assert seam in sys.modules, f"expected app_speech closure member missing: {seam}"
+assert "tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel" not in sys.modules
+panel_subtree = tuple(
+    m for m in sys.modules
+    if sys.modules[m] is not None
+    and (
+        m == "tldw_chatbook.Third_Party.textual_fspicker"
+        or m.startswith("tldw_chatbook.Third_Party.textual_fspicker.")
+        or m in (
+            "tldw_chatbook.UI.Lab_Modules.lab_speech_status",
+            "tldw_chatbook.UI.Speech.speech_runtime_status",
+            "tldw_chatbook.Chat.console_voice_input",
+        )
+    )
+)
+assert not panel_subtree, (
+    "Speech/TTS panel subtree resident after app_speech import: "
+    + repr(sorted(panel_subtree))
+)
 
 print("APP_IMPORT_DIET_OK")
 """
@@ -258,7 +284,7 @@ def test_deferred_seams_resolve_and_stay_single_sourced(tmp_path: Path) -> None:
 
     Three properties in one subprocess: the payload seam imports without the
     panel and the panel re-exports the same class objects (so the ``type(x)
-    is SpeechTTSPanelDraftSnapshot`` checks in ``app.py`` keep matching); the
+    is SpeechTTSPanelDraftSnapshot`` checks in ``app_speech.py`` keep matching); the
     TTS package facade defers ``voice_bundle_service`` but still serves its
     five exports as the submodule's own objects; and the facade raises
     ``AttributeError`` for names it does not own, so ``from tldw_chatbook.TTS

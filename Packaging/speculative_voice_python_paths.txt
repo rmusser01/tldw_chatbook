@@ -217,4 +217,7 @@ tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py
 tldw_chatbook/Widgets/__init__.py
 tldw_chatbook/__init__.py
 tldw_chatbook/app.py
+tldw_chatbook/app_ingest_queue.py
+tldw_chatbook/app_service_wiring.py
+tldw_chatbook/app_speech.py
 tldw_chatbook/config.py

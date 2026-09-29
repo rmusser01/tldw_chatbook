@@ -372,8 +372,8 @@ conversation's **Auto** replay policy. **Automatic** is the default: reviewed
 server templates select either the current exchange (including its tool calls)
 or all available compatible thinking. An unrecognized or unavailable template
 uses the server default. You can choose **Current exchange**, **All available**,
-or **Off**, globally or for the active endpoint and model. A target override can
-be cleared with **Use default**. These choices never erase saved thinking. **All available** includes compatible
+or **Off**, globally or for the active endpoint and model (under **Reasoning
+replay override**). A target override can be cleared with **Use default**. These choices never erase saved thinking. **All available** includes compatible
 fields in the request; the server template can still omit older reasoning. For
 example, Gemma 4 can preserve older tool-call thinking while omitting older final
 answer thinking.
