@@ -429,7 +429,11 @@ before saving.
 #### Inference clouds
 
 **Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
-**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** are
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, **MiniMax**, the
+gateways and hosts **Vercel AI Gateway**, **ZenMux**, **Kilo Gateway**,
+**SiliconFlow**, **Baseten**, **GMI Cloud**, and **Ollama Cloud**, and the
+model makers **Upstage**, **Arcee AI**, **Baidu Qianfan**, **Nous Research**,
+**Venice**, and **Meta (Muse Spark)** are
 engine presets: each one is
 a provider registry record served through the shared strict hosted-provider
 engine (the same path Databricks uses), not a per-provider adapter. There is
@@ -446,6 +450,19 @@ no API mode selector for any of them.
 | **Nebius Token Factory** | `https://api.tokenfactory.nebius.com/v1` | `NEBIUS_API_KEY` |
 | **Novita AI** | `https://api.novita.ai/openai/v1` | `NOVITA_API_KEY` |
 | **MiniMax** | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` |
+| **Vercel AI Gateway** | `https://ai-gateway.vercel.sh/v1` | `AI_GATEWAY_API_KEY` |
+| **ZenMux** | `https://zenmux.ai/api/v1` | `ZENMUX_API_KEY` |
+| **Kilo Gateway** | `https://api.kilo.ai/api/gateway` | `KILO_API_KEY` |
+| **SiliconFlow** | `https://api.siliconflow.com/v1` | `SILICONFLOW_API_KEY` |
+| **Baseten** | `https://inference.baseten.co/v1` | `BASETEN_API_KEY` |
+| **GMI Cloud** | `https://api.gmi-serving.com/v1` | `GMI_API_KEY` |
+| **Ollama Cloud** | `https://ollama.com/v1` | `OLLAMA_API_KEY` |
+| **Upstage** | `https://api.upstage.ai/v1` | `UPSTAGE_API_KEY` |
+| **Arcee AI** | `https://api.arcee.ai/api/v1` | `ARCEE_API_KEY` |
+| **Baidu Qianfan** | `https://qianfan.baidubce.com/v2` | `QIANFAN_API_KEY` |
+| **Nous Research** | `https://inference-api.nousresearch.com/v1` | `NOUS_API_KEY` |
+| **Venice** | `https://api.venice.ai/api/v1` | `VENICE_API_KEY` |
+| **Meta (Muse Spark)** | `https://api.meta.ai/v1` | `META_API_KEY` |
 
 All except MiniMax are **discovery-first**: no models ship in the config
 because each account serves a different catalog. The provider model list
@@ -483,6 +500,26 @@ a provider error rather than a partial reply.
 
 GitHub Models and Hyperbolic are not offered: both services retired their
 hosted inference APIs in 2026.
+
+The gateways, hosts, and model makers added from the Hermes and oh-my-pi
+comparison follow the same rules. A few notes:
+
+- **Upstage** and **Baidu Qianfan** document no models route, so their lists
+  ship seeded from each API reference and are not refreshed; enter any other
+  model as a **Custom model**. Qianfan keys are the whole `bce-v3/ALTAK-...`
+  string and require Baidu Cloud real-name verification.
+- **Vercel AI Gateway** and **ZenMux** are asked to leave reasoning out of
+  replies (their reasoning format is a list the strict parser rejects).
+- **Meta's SDKs** read `MODEL_API_KEY`; this preset reads `META_API_KEY` so an
+  unrelated key with that generic name is never sent to Meta. Set
+  `api_key_env_var = "MODEL_API_KEY"` in `[api_settings.meta]` to use Meta's
+  name. Meta accepts only automatic tool choice.
+- **Nous Research** ships with function tools off until its response format
+  is verified against a live call.
+- **SiliconFlow** China users set `api_base_url` to
+  `https://api.siliconflow.cn/v1`.
+- **Kilo Gateway** reports a failure after the reply has started as a
+  provider error rather than a cut-off reply.
 
 If Test Provider reports invalid settings, keep exactly one canonical
 `[api_settings.<provider>]` table (for example `[api_settings.together]`), set the API key (or its env var), and leave

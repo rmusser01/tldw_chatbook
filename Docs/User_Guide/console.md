@@ -603,7 +603,10 @@ The default test suite makes no paid request.
 #### Inference clouds in Console
 
 **Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
-**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** run
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, **MiniMax**, and the
+gateways, hosts, and model makers listed in the Settings guide (Vercel AI
+Gateway, ZenMux, Kilo, SiliconFlow, Baseten, GMI Cloud, Ollama Cloud, Upstage,
+Arcee AI, Baidu Qianfan, Nous Research, Venice, and Meta) run
 on the ordinary streaming Console path — set the provider's API key (for
 example `TOGETHER_API_KEY` or `NVIDIA_API_KEY`) in Settings and pick a model.
 Chatbook function tools use the standard approval and execution loop for the
