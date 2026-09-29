@@ -1,10 +1,11 @@
 ---
 id: TASK-33165
 title: Reserve Canvas context in the Personal Context Next Send preview
-status: To Do
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 05:52'
+updated_date: '2026-09-29 18:18'
 labels:
   - memory
   - canvas
@@ -28,18 +29,29 @@ When Canvas tools are enabled and the model input budget is tight, the Personal 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A native production preview regression reproduces the Canvas-enabled budget mismatch before the fix.
-- [ ] #2 With identical profile, model, message and tool inputs, the Inspector and dispatched request agree on selected records and their available input budget, including Canvas schemas and runtime guidance.
-- [ ] #3 Preview does not register an executable Canvas run, create staging records, grant mutation authority, or change the selected Canvas.
-- [ ] #4 Disabled, unavailable and stale Canvas states preserve their existing fail-closed behavior, with native Python >=3.12 targeted verification and a recorded ADR check.
+- [x] #1 A native production preview regression reproduces the Canvas-enabled budget mismatch before the fix.
+- [x] #2 With identical profile, model, message and tool inputs, the Inspector and dispatched request agree on selected records and their available input budget, including Canvas schemas and runtime guidance.
+- [x] #3 Preview does not register an executable Canvas run, create staging records, grant mutation authority, or change the selected Canvas.
+- [x] #4 Disabled, unavailable and stale Canvas states preserve their existing fail-closed behavior, with native Python >=3.12 targeted verification and a recorded ADR check.
 <!-- AC:END -->
 
-## Review Evidence
+## Implementation Plan
 
-TASK-25907.23 current-dev refresh review traced the production controller preview into `ConsoleAgentBridge.build_personal_context_preview_snapshot`: that path omits Canvas provider/authority inputs, while dispatch supplies both. The shared first-request planner includes Canvas schemas and runtime guidance only when that provider is registered. This source mismatch exists in both dev `89dd84943abe8feacc5320d27a5c076641b83893` and original PR head `c945cf0278f5793417b7c9fd43201ed797a921fa`; it is not introduced by their merge. A native production-seam reproduction is still required by AC #1; the existing direct-planner Canvas test does not cover that seam.
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR
+ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md; backlog/decisions/186-dependency-aware-personal-context-forgetting.md
+Reason: bounded correction of disposable first-request budgeting under existing Canvas ownership and Personal Context publication boundaries; document the pure-schema preview contract in ADR-121 before implementation.
+1. Reproduce missing Canvas reservation through the real controller/bridge preview and real Personal Context selection, with synthetic private state and native Python 3.12.
+2. Reuse the Canvas schema loader and shared disclosure planner for a data-only preview catalog. Preserve live registry authentication, schema order, persona narrowing, native/fenced protocol and progressive discovery; do not register a preview run or issue Canvas authority.
+3. Reuse capture_interactive_owner/validate_interactive_owner and exact session identity to fence late publication against close, disable, durable/temporary replacement, promotion and branch changes. Carry the guard through project-preview assembly and Inspector async validation; release diagnostic sidecars only at final snapshot publication. Keep schema loading incremental inside the shared guarded probe, including denied and unreadable schemas.
+4. Verify production preview versus dispatched first-request budgets/records and absent run/staging/selection effects, plus disabled/unavailable/stale controls. Run only affected native tests and scoped static checks.
+5. Obtain one fresh final review, update receipts/task notes and the existing PR against dev. Record current-dev qualification debt and any newly advanced base separately.
+<!-- SECTION:PLAN:END -->
 
-This task can proceed independently of the integration task's repository size/style qualification debt because the affected preview and dispatch owners already exist on dev.
+## Implementation Notes
 
-The current Canvas owner requires `register_run` before its tools advertise. Registration creates run/staging ownership, so reusing it during disposable inspection is not an acceptable budget workaround. Read ADR-121 and ADR-186 before selecting the preview contract; record the ADR decision in the implementation plan before coding.
+<!-- SECTION:NOTES:BEGIN -->
+Corrected disposable Personal Context budgeting using the existing Canvas owner profile, ordered catalog metadata and a lazy read-only schema loader inside the shared guarded planner. Live Canvas provider authentication and execution authority remain unchanged. One shared currentness callback fences exact session identity, Canvas enablement/controller/interactive owner and branch through final snapshot publication and later Inspector validation; diagnostic sidecars publish only after that fence.
 
-The task was created with Backlog CLI, then its offered ID 33126 was corrected before linking: an all-ref/worktree sweep found the current ceiling at 33164 (92 remote refs and 88 worktrees).
+Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatch on unchanged head 295ee2a02a. Seven fresh-review regressions failed before correction (unreadable/denied schemas, closure/disable/replacement during project preview, durable replacement and later Inspector validation). Final affected groups passed 93 context/Inspector cases and 367 agent/Canvas cases, followed by 19 shared-probe checks after simplifying the loop. All 41 exact private-profile children passed without skips; parent/child application and profile-library imports were verified against this PR worktree. Three legacy suites now use the existing bootstrap-profile marker; the unchanged control reproduced their config-source setup failure. Targeted lint, regression-file formatting, AST-preserving helper formatting and whitespace pass. ADR-121 and ADR-186 apply; no new policy or activation was selected. Current-dev integration qualification remains separately tracked.
+<!-- SECTION:NOTES:END -->

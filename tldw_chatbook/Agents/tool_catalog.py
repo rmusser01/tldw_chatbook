@@ -2328,6 +2328,9 @@ def probe_initial_catalog(
     allowed_names: Iterable[str],
     max_schema_tokens: int,
     measure_schema_set: Callable[[tuple[ToolSchema, ...]], int],
+    *,
+    catalog_entries: tuple[ToolCatalogEntry, ...] | None = None,
+    schema_loader: Callable[[str], ToolSchema] | None = None,
 ) -> tuple[ToolSchema, ...] | None:
     """Return every allowed schema only when each cumulative set is proven fit.
 
@@ -2336,6 +2339,9 @@ def probe_initial_catalog(
         allowed_names: Tool names eligible for initial disclosure.
         max_schema_tokens: Maximum measured size for the full disclosed set.
         measure_schema_set: Callback that measures each cumulative schema set.
+        catalog_entries: Optional disposable catalog metadata, without authority.
+        schema_loader: Read-only loader for that metadata; called only inside
+            the guarded, incremental probe.
 
     Returns:
         Every allowed schema when all cumulative measurements fit; otherwise
@@ -2346,10 +2352,14 @@ def probe_initial_catalog(
     allowed = frozenset(allowed_names)
     schemas: list[ToolSchema] = []
     try:
-        for entry in registry.list_catalog():
+        load = schema_loader or registry.load_schema
+        entries = (
+            catalog_entries if catalog_entries is not None else registry.list_catalog()
+        )
+        for entry in entries:
             if entry.name not in allowed or entry.name in MESSAGE_TOOL_NAMES:
                 continue
-            schemas.append(registry.load_schema(entry.id))
+            schemas.append(load(entry.id))
             measured = measure_schema_set(tuple(schemas))
             if type(measured) is not int or measured <= 0:
                 return None

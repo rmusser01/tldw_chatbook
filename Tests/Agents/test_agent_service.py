@@ -79,6 +79,9 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import join_fleet_children
 
+# Real service/catalog config getters retain their selected private source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"

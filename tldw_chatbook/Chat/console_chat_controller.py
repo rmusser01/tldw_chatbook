@@ -21104,6 +21104,55 @@ class ConsoleChatController:
             trusted_profile_user_message_id=edited_message.id,
         )
 
+    def capture_personal_context_preview_guard(self, session_id: str) -> Callable[[], bool]:
+        """Fence disposable profile inspection across every later await boundary."""
+        try:
+            session = next(item for item in self.store.sessions() if item.id == session_id)
+            temporary = session.ephemeral
+            controller = self.store.canvas_turn_controller
+            enabled = self._canvas_enabled_reader() is True
+            scope = None
+            if enabled and controller is not None:
+                from tldw_chatbook.Canvas.models import CanvasScope
+
+                scope = CanvasScope(
+                    session_id,
+                    self._agent_conversation_id(session_id),
+                    self.store.canvas_active_path_message_ids(session_id),
+                    None,
+                    None,
+                    f"preview:{session_id}",
+                )
+                owner = controller.capture_interactive_owner(scope, temporary=temporary)
+        except Exception:  # noqa: BLE001 - an unavailable owner denies inspection.
+            return lambda: False
+
+        def current() -> bool:
+            try:
+                if (
+                    next(
+                        (item for item in self.store.sessions() if item.id == session_id),
+                        None,
+                    )
+                    is not session
+                    or session.ephemeral != temporary
+                    or self.store.canvas_turn_controller is not controller
+                    or (self._canvas_enabled_reader() is True) != enabled
+                ):
+                    return False
+                if scope is not None:
+                    controller.validate_interactive_owner(scope, owner, temporary=temporary)
+                    return (
+                        self._agent_conversation_id(session_id) == scope.conversation_id
+                        and self.store.canvas_active_path_message_ids(session_id)
+                        == scope.active_message_ids
+                    )
+                return True
+            except Exception:  # noqa: BLE001 - stale inspection fails closed.
+                return False
+
+        return current
+
     async def build_context_snapshot(
         self,
         draft: str,
@@ -21137,6 +21186,8 @@ class ConsoleChatController:
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
+        preview_current = self.capture_personal_context_preview_guard(session_id)
+        profile_selections = []
         turn_context = self.resolve_turn_execution_context(session_id)
         provider_selection = turn_context.provider_selection
         current_messages = list(self.store.messages_for_session(session_id))
@@ -21284,7 +21335,7 @@ class ConsoleChatController:
                     turn_skill_bindings=skill_bindings,
                     turn_bundle_block=skill_bundle_block,
                     **(
-                        {"profile_selection_sink": profile_selection_sink}
+                        {"profile_selection_sink": lambda *args: profile_selections.append(args)}
                         if profile_selection_sink is not None
                         else {}
                     ),
@@ -21382,6 +21433,13 @@ class ConsoleChatController:
                 )
             if preview is not None:
                 next_send_payload = preview.next_send_payload
+            if not preview_current():
+                return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+            for selection in profile_selections:
+                try:
+                    profile_selection_sink(*selection)
+                except Exception:  # noqa: BLE001, S110 - diagnostics cannot change the model block.
+                    pass
             return ConsoleContextSnapshot(
                 current_messages=copied_messages,
                 next_send_payload=next_send_payload,
@@ -21389,6 +21447,8 @@ class ConsoleChatController:
                 personal_context_snapshot=personal_context_snapshot,
             )
         except Exception as exc:
+            if not preview_current():
+                return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
             logger.exception(
                 "Failed to build context snapshot: session_id={session_id} "
                 "draft_length={draft_length} attachments={attachments_count} "
@@ -21668,6 +21728,14 @@ class ConsoleChatController:
                 if turn_configuration is not None
                 else self.resolve_turn_execution_context(session.id)
             )
+            canvas_controller = getattr(self.store, "canvas_turn_controller", None)
+            canvas_profile_snapshot = None
+            try:
+                canvas_enabled = self._canvas_enabled_reader() is True
+            except Exception:  # noqa: BLE001 - match live fail-closed enablement
+                canvas_enabled = False
+            if canvas_enabled and canvas_controller is not None:
+                canvas_profile_snapshot = canvas_controller.profile_snapshot
             library_provider: Any | None = None
             library_authority: Any | None = None
             if self._library_provider_factory is not None:
@@ -21799,6 +21867,7 @@ class ConsoleChatController:
                 library_provider=library_provider,
                 library_authority=library_authority,
                 profile_provider=profile_provider,
+                canvas_profile_snapshot=canvas_profile_snapshot,
                 scratch_root=(
                     scratch_snapshot.root if scratch_snapshot is not None else None
                 ),
@@ -21819,6 +21888,7 @@ class ConsoleChatController:
                     self.set_pending_skill_script is not None
                 ),
                 profile_context_service=builder,
+                persona_policy_rules=configuration.persona_policy_rules,
             )
             if profile_selection_sink is not None:
                 preview_args["selection_sink"] = profile_selection_sink

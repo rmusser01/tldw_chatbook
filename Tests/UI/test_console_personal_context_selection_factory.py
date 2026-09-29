@@ -78,6 +78,10 @@ class _Controller:
         self.builder = object()
         self.valid = AsyncMock(return_value=True)
         self.release: asyncio.Event | None = None
+        self.canvas_current = True
+
+    def capture_personal_context_preview_guard(self, _session_id):
+        return lambda: self.canvas_current
 
     def _lifecycle_revision_for(self, _session_id):
         return self.revision
@@ -173,6 +177,28 @@ async def test_screen_factory_rechecks_inputs_after_async_validation():
     screen.draft = "edited during validation"
     release.set()
 
+    assert not await pending
+
+
+@pytest.mark.asyncio
+async def test_screen_factory_rechecks_canvas_after_async_validation():
+    screen, controller = _Screen(), _Controller()
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def validate(*_args):
+        started.set()
+        await release.wait()
+        return True
+
+    controller.valid.side_effect = validate
+    factory, *_ = ChatScreen._console_inspector_next_send_factories(
+        screen, controller, "session-1"
+    )
+    result = await factory()
+    pending = asyncio.create_task(result.is_current())
+    await started.wait()
+    controller.canvas_current = False
+    release.set()
     assert not await pending
 
 

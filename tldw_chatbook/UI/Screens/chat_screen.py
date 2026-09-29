@@ -6391,6 +6391,7 @@ class ChatScreen(BaseAppScreen):
             captured_turn_context = controller.resolve_turn_execution_context(
                 session_id
             )
+            canvas_current = controller.capture_personal_context_preview_guard(session_id)
             owner = (
                 controller.store.active_session_id,
                 _session_workspace(),
@@ -6418,7 +6419,8 @@ class ChatScreen(BaseAppScreen):
             def inputs_current() -> bool:
                 try:
                     return (
-                        owner
+                        canvas_current()
+                        and owner
                         == (
                             controller.store.active_session_id,
                             _session_workspace(),

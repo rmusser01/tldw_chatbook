@@ -62,6 +62,9 @@ SOURCE_SENTINEL = "<!doctype html><p>CANVAS-SOURCE-7f941a</p>"
 PROJECTION_BYTE_CAP = 64 * 1024
 RESULT_BYTE_CAP = MAX_DURABLE_SOURCE_BYTES_PER_REVISION + PROJECTION_BYTE_CAP
 
+# Real provider policy getters retain the collection-time private config source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _revision(
     *, revision_id: str = REVISION_ID, parent: str | None = None, sequence: int = 1

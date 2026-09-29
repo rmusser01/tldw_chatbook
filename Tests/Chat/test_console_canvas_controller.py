@@ -37,6 +37,9 @@ ASSISTANT_ID = "assistant-1"
 SOURCE_SENTINEL = "CANVAS_SOURCE_SENTINEL_3_3"
 DIAGRAM_SOURCE = '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>'
 
+# Real Canvas provider policy reads use the collection-time private config.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _scope(**changes: object) -> CanvasScope:
     values = {

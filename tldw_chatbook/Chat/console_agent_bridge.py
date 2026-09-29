@@ -4409,6 +4409,7 @@ def _compose_run_registry_and_allowed(
     profile_provider: Any | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    preview_canvas_profile_snapshot: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -4535,6 +4536,10 @@ def _compose_run_registry_and_allowed(
         canvas_provider, canvas_authority
     ):
         canvas_names = tuple(entry.name for entry in canvas_provider.list_catalog())
+    elif canvas_provider is None and preview_canvas_profile_snapshot is not None:
+        from tldw_chatbook.Agents.canvas_tool_provider import build_canvas_tool_catalog
+
+        canvas_names = tuple(entry.name for entry in build_canvas_tool_catalog())
     local_names: tuple[str, ...] = ()
     if local_provider is not None:
         registry.register_provider(local_provider)
@@ -4747,6 +4752,7 @@ def build_console_first_request_plan(
     personal_context_snapshot: ProfileContextSnapshot | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    preview_canvas_profile_snapshot: Any | None = None,
     progress_inbox_exists: bool = False,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
@@ -4787,6 +4793,8 @@ def build_console_first_request_plan(
         persona_policy_rules: Optional persona rules applied to tool composition.
         profile_context_service: Optional profile snapshot builder for this turn.
         personal_context_snapshot: Optional prebuilt snapshot used verbatim.
+        preview_canvas_profile_snapshot: Immutable Canvas profile data for budgeting;
+            no Canvas provider is registered and no authority is issued.
 
     Returns:
         A frozen catalog, config, message, schema, and run-log plan shared by
@@ -4807,6 +4815,7 @@ def build_console_first_request_plan(
         or library_provider is not None
         or profile_provider is not None
         or canvas_provider is not None
+        or preview_canvas_profile_snapshot
         or scratch_root is not None
         or scratch_lease is not None
     )
@@ -4833,6 +4842,7 @@ def build_console_first_request_plan(
                 profile_provider=profile_provider,
                 canvas_provider=canvas_provider,
                 canvas_authority=canvas_authority,
+                preview_canvas_profile_snapshot=preview_canvas_profile_snapshot,
             )
         )
     else:
@@ -4928,6 +4938,31 @@ def build_console_first_request_plan(
                     "content": f"{content}\n\n{turn_bundle_block}",
                 }
                 break
+    catalog_entries = None
+    schema_loader = None
+    if preview_canvas_profile_snapshot is not None:
+        if canvas_provider is not None:
+            raise ValueError("Canvas preview cannot accompany a live provider")
+        from tldw_chatbook.Agents.canvas_tool_provider import (
+            build_canvas_tool_catalog,
+            load_canvas_tool_schema,
+        )
+
+        entries = registry.list_catalog()
+        canvas_entries = build_canvas_tool_catalog()
+        canvas_ids = frozenset(entry.id for entry in canvas_entries)
+        # Match live order, retaining metadata for discovery without eagerly
+        # loading denied, oversized or unreadable schemas.
+        catalog_entries = (
+            *(entry for entry in entries if entry.source == "builtin"),
+            *canvas_entries,
+            *(entry for entry in entries if entry.source != "builtin"),
+        )
+
+        def schema_loader(tool_id: str) -> ToolSchema:
+            if tool_id in canvas_ids:
+                return load_canvas_tool_schema(tool_id, preview_canvas_profile_snapshot)
+            return registry.load_schema(tool_id)
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -4952,6 +4987,8 @@ def build_console_first_request_plan(
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
+        catalog_entries=catalog_entries,
+        schema_loader=schema_loader,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
@@ -5652,6 +5689,7 @@ class ConsoleAgentBridge:
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         profile_provider: Any | None = None,
+        canvas_profile_snapshot: Any | None = None,
         scratch_root: Path | None = None,
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
@@ -5661,6 +5699,7 @@ class ConsoleAgentBridge:
         worktree_merge_enabled: bool = False,
         fork_chat_enabled: bool = False,
         new_chat_enabled: bool = False,
+        persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         selection_sink: Callable[
             [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
@@ -5717,6 +5756,7 @@ class ConsoleAgentBridge:
             library_provider=library_provider,
             library_authority=library_authority,
             profile_provider=profile_provider,
+            preview_canvas_profile_snapshot=canvas_profile_snapshot,
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
@@ -5739,6 +5779,7 @@ class ConsoleAgentBridge:
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
             run_budget=run_budget,
+            persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             progress_inbox_exists=(
                 session_id is not None
