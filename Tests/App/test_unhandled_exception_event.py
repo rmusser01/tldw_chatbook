@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
+
 pytestmark = pytest.mark.unit
 
 
@@ -30,8 +32,7 @@ def test_unhandled_exception_is_recorded(monkeypatch):
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event",
+    set_app_global(monkeypatch, "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),
@@ -75,8 +76,7 @@ def test_worker_failed_wrapper_is_unwrapped(monkeypatch):
         pass
 
     recorded: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event",
+    set_app_global(monkeypatch, "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),
@@ -107,8 +107,7 @@ def test_the_override_still_delegates_to_textual(monkeypatch):
     # Patched for symmetry with the siblings above. Unpatched, this test ran
     # the real `persist_event` against whatever sinks the session happened to
     # have installed, which is not what it is testing.
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event", lambda *args, **kwargs: None
+    set_app_global(monkeypatch, "persist_event", lambda *args, **kwargs: None
     )
 
     app = _build_test_app()

@@ -11,6 +11,8 @@ from loguru import logger
 import tldw_chatbook.app as module
 # TASK-33011: the handler initializers read these names from app_speech.
 import tldw_chatbook.app_speech as speech_module
+# on_unmount (and its shutdown helpers) read these names from app_lifecycle.
+import tldw_chatbook.app_lifecycle as lifecycle_module
 from tldw_chatbook.app import TldwCli
 
 kind, scenario = sys.argv[1:]
@@ -50,7 +52,7 @@ async def main():
             observed.append(getattr(app, '_'+kind+'_handler'))
             raise ReachedCleanup()
         app._shutdown_app_owned_lifecycles = cleanup_boundary
-        module.persist_event = lambda *args: None
+        lifecycle_module.persist_event = lambda *args: None
         if scenario == 'shutdown_deferred':
             app._speech_initialization_close_admission()
             schedule_init()

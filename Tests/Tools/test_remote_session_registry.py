@@ -205,7 +205,10 @@ def test_app_exit_closes_sessions_before_masters_in_one_best_effort_try():
 
     import tldw_chatbook
 
-    tree = ast.parse((Path(tldw_chatbook.__file__).parent / "app.py").read_text("utf-8"))
+    # TASK-33011: on_unmount moved verbatim into LifecycleMixin (app_lifecycle.py).
+    tree = ast.parse(
+        (Path(tldw_chatbook.__file__).parent / "app_lifecycle.py").read_text("utf-8")
+    )
     unmount = next(
         node
         for node in ast.walk(tree)

@@ -714,8 +714,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         ),
         (
             "set_interval",
-            "tldw_chatbook/app.py",
-            "TldwCli",
+            "tldw_chatbook/app_lifecycle.py",
+            "LifecycleMixin",
             "_perform_change_review_retention",
         ),
         (
@@ -732,8 +732,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         ),
         (
             "set_interval",
-            "tldw_chatbook/app.py",
-            "TldwCli",
+            "tldw_chatbook/app_lifecycle.py",
+            "LifecycleMixin",
             "perform_media_cleanup",
         ),
     }

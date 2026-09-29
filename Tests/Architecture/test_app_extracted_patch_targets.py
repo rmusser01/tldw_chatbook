@@ -60,6 +60,7 @@ EXTRACTED_MODULES = (
     "app_ingest_queue",
     "app_service_wiring",
     "app_speech",
+    "app_lifecycle",
 )
 
 #: Rule 2 exemptions: (test file, name) -> why a bare app-module patch is right.
@@ -179,17 +180,34 @@ def _call_name(node: ast.Call) -> str:
 def _embedded_code(tree: ast.AST) -> list[tuple[int, ast.Module]]:
     """(first line, parsed module) for string constants that are Python source."""
     found = []
+    # An f-string script is a JoinedStr, not a Constant: rebuild its text with a
+    # placeholder name for each interpolation (the literal parts are already
+    # unescaped, so ``{{`` reads back as ``{``). Its literal parts are also
+    # Constant nodes; skip them so a site is never reported twice.
+    fragments = {
+        id(value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.JoinedStr)
+        for value in node.values
+    }
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and "\n" in node.value
-            and _APP_MODULE in node.value
-        ):
-            try:
-                found.append((node.lineno, ast.parse(textwrap.dedent(node.value))))
-            except SyntaxError:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) in fragments:
                 continue
+            text = node.value
+        elif isinstance(node, ast.JoinedStr):
+            text = "".join(
+                value.value if isinstance(value, ast.Constant) else "_FSTRING_VALUE"
+                for value in node.values
+            )
+        else:
+            continue
+        if "\n" not in text or _APP_MODULE not in text:
+            continue
+        try:
+            found.append((node.lineno, ast.parse(textwrap.dedent(text))))
+        except SyntaxError:
+            continue
     return found
 
 
@@ -344,7 +362,13 @@ def test_scanner_flags_each_patch_form(tmp_path: Path) -> None:
         "import tldw_chatbook.app as app_module\n"
         "app_module.get_user_data_dir = None\n"
         '"""\n'
-        "app_module.no_longer_defined = None\n",
+        "app_module.no_longer_defined = None\n"
+        "value = None\n"
+        'FSCRIPT = f"""\n'
+        "import tldw_chatbook.app as app_module\n"
+        'state = {{"k": 1}}\n'
+        "app_module.get_user_data_dir = {value}\n"
+        '"""\n',
         encoding="utf-8",
     )
     _module_reads.cache_clear()
@@ -361,9 +385,15 @@ def test_scanner_flags_each_patch_form(tmp_path: Path) -> None:
         "Tests/test_x.py:8",
         "Tests/test_x.py:13",
         "Tests/test_x.py:15",
+        "Tests/test_x.py:20",
     ]
-    assert all("patch tldw_chatbook.app_service_wiring." in line for line in stale[:-1])
-    assert "does not define" in stale[-1]
+    unbound = [line for line in stale if line.startswith("Tests/test_x.py:15 ")]
+    assert len(unbound) == 1 and "does not define" in unbound[0]
+    assert all(
+        "patch tldw_chatbook.app_service_wiring." in line
+        for line in stale
+        if not line.startswith("Tests/test_x.py:15 ")
+    )
     assert [line.split(" ", 1)[0] for line in shared] == ["Tests/test_x.py:9"]
 
 
