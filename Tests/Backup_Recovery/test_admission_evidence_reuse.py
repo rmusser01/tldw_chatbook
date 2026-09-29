@@ -426,3 +426,32 @@ def test_an_in_process_admission_write_drops_reused_evidence(
         startup.close()
 
     assert calls["permission"] >= 1, "evidence survived an epoch advance"
+
+
+def test_concurrent_derivations_keep_confirmed_evidence(
+    local_scope, reuse_switch, monkeypatch  # noqa: F811
+):
+    """Parallel warm-ups on unrelated paths must converge, not churn the evidence.
+
+    Each full derivation publishes fresh stamps. Before this was pinned, four
+    threads kept replacing each other's confirmed selector evidence with
+    unconfirmed copies, so no call ever reused it (234 vs 226 acquisitions/s).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    reuse_switch(True)
+    paths = [data / f"db{i}.db" for i in range(4)]
+    startup = storage.acquire_storage()
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for _ in range(4):
+                assert all(v[0] == "allowed" for v in pool.map(_verdict, paths))
+        calls = _count_derivations(monkeypatch)
+        for path in paths:
+            assert _verdict(path)[0] == "allowed"
+    finally:
+        startup.close()
+
+    assert calls == {"permission": 0, "scope": 0}, calls

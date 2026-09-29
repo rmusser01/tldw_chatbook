@@ -1033,11 +1033,26 @@ def _note_evidence(hold, root, selector, path, related_paths, names, roots, befo
             if entry is None:
                 store.pop(name, None)
                 continue
+            current = store.get(name)
+            if (
+                current is not None
+                and current.confirmed
+                and current.epoch == entry.epoch
+                and current.names == entry.names
+                and current.dependencies() == entry.dependencies()
+                and current.stamps() == entry.stamps()
+            ):
+                # Concurrent derivations over unchanged inputs must not replace
+                # confirmed evidence with a fresh, unconfirmed copy of itself.
+                if store is hold.path_evidence:
+                    store.move_to_end(name)
+                continue
+            # Sound when this derivation was bracketed by identical stamps over
+            # the same inputs: observed before it, and observed again after.
             previous, observed, observed_at = observations.get(name, (None, None, 0))
             entry.confirmed = (
                 bootstrap._admission_epoch == epoch_before == entry.epoch
                 and previous is not None
-                and store.get(name) is previous
                 and previous.names == entry.names
                 and previous.dependencies() == entry.dependencies()
                 and previous.stamps() == observed == entry.stamps()
