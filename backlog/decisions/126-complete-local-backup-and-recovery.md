@@ -47,6 +47,12 @@ This also accepts external absence of that same redundant child; missing roots
 without such already owned coverage still refuse. The selectable-group spec
 records admission, fresh recovery and finalization requirements for this case.
 
+2026-09-29 owner-approved amendment (PERF-07/PERF-08, TASK-33266/33267):
+ordinary storage admission may reuse the allowed result of an unmodified
+derivation while per-call `lstat` stamps of every walked chain and the
+records/registry/selector content stay identical. See "PERF-07/PERF-08
+amendment" at the end of this ADR.
+
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
 Design: [Complete local backup and restore](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
@@ -914,11 +920,16 @@ framework.
 
 ### PERF-07/PERF-08 amendment — reusable admission evidence (TASK-33266, TASK-33267)
 
-Status: **Proposed — awaiting owner approval.** The owner approved the direction
+Status: **Approved by the owner on 2026-09-29.** The owner approved the direction
 as decisions D1 and D2 of the
 [2026-09-27 structural perf audit](../../qa/perf-structural-audit-2026-09-27/report.md)
-(§4 PERF-07, PERF-08) on 2026-09-29. This text is the amendment that approval
-asked to see. Nothing below is implemented until it is approved.
+(§4 PERF-07, PERF-08), then settled the mechanism with a criterion: choose
+whichever option aligns with the planned Python 3.13 then 3.14 migration.
+
+Held descriptors and per-call `lstat` stamps are equally version-neutral, but
+only stamps meet the invariant (see below). So the amendment uses stamps, plus
+the version-alignment requirements in "Python 3.13 and 3.14" at the end of this
+section.
 
 **Deviation from the approved wording.** D1/D2 said ancestors would be re-checked
 "via held handles". Research showed that cannot work. `fstat` on a held
@@ -1044,6 +1055,26 @@ weaker than today.
 - A dependency-completeness trace test.
 - A full `Tests/Backup_Recovery` run with the settle margin at 0.
 - Benchmarks for PERF-08 AC#3/#4.
+
+**Python 3.13 and 3.14.** The owner plans to move from 3.12 to 3.13 and then
+3.14. The reuse path must not need rework at either step:
+
+- **Version-neutral fields.** Stamps use only `stat` fields that have the same
+  POSIX meaning on 3.12, 3.13 and 3.14: `st_dev`, `st_ino`, `st_mode`, `st_uid`,
+  `st_size`, `st_mtime_ns` and `st_ctime_ns`. They are compared as Python ints,
+  never packed to a fixed width; on Windows `st_ino` can be up to 128 bits
+  since 3.12.
+- **No raw `st_ctime` on Windows.** Since 3.12 it holds the creation time,
+  deprecated, and a future release changes it to change time. A Windows stamp
+  must take change time from the repository's `platform_files` /
+  `windows_files` shim. Windows still keeps the full derivation until that is
+  verified (below).
+- **Free-threading safe.** Free-threaded builds are officially supported from
+  3.14 (PEP 779). All shared evidence state (`hold.evidence`, the epoch) is
+  read and written only under the existing coordinator `_lock`. Nothing may
+  rely on the GIL making dict or int operations atomic.
+- **Tested on the supported versions.** The oracle and trace-completeness tests
+  must run on each Python version the project supports when this lands.
 
 **Open until measured.**
 - Windows keeps the full derivation until its `stat` cost and NTFS directory
