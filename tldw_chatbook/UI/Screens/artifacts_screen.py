@@ -416,24 +416,38 @@ class ArtifactsScreen(BaseAppScreen):
     # --- Dreams Phase 1 (Task 7): row click / Enter opens the story modal ---
 
     def on_click(self, event: Click) -> None:
-        """Open the Dreams story modal when a dreams row is clicked.
+        """Open a Dreams surface when a dreams row is clicked.
 
         Dreams rows are bare Statics (Task 6's idiom), so the click is
         dispatched here after bubbling; unrelated clicks fall through
-        untouched.
+        untouched. Task-33164 widens the routing: a Tracked row
+        (``artifacts-dream-track-row-*``) opens its origin story (or a
+        summary notice when the origin is gone) instead of being a
+        focusable dead end.
 
         Args:
             event: The bubbled click; stopped only on a dreams row.
         """
         widget_id = getattr(event.widget, "id", None) or ""
+        if widget_id.startswith("artifacts-dream-track-row-"):
+            event.stop()
+            self._open_dreams_tracked_row(widget_id)
+            return
         if not widget_id.startswith("artifacts-dream-row-"):
             return
         event.stop()
         self._open_dreams_story_row(widget_id)
 
     def action_open_dreams_story(self) -> None:
-        """Open the focused dreams row's story modal (hidden `enter` binding)."""
+        """Open the focused dreams row's story modal (hidden `enter` binding).
+
+        Routes both row families (task-33164): story/synthetic rows and
+        Tracked rows, so Enter is never a dead end on a focusable row.
+        """
         focused_id = getattr(self.focused, "id", None) or ""
+        if focused_id.startswith("artifacts-dream-track-row-"):
+            self._open_dreams_tracked_row(focused_id)
+            return
         if not focused_id.startswith("artifacts-dream-row-"):
             return
         self._open_dreams_story_row(focused_id)
@@ -473,9 +487,11 @@ class ArtifactsScreen(BaseAppScreen):
     def _open_dreams_story_row(self, widget_id: str) -> None:
         """Push the story modal for one dreams row (story or synthetic).
 
-        The DB handle is read lazily through the getter (the modal calls
-        it at action time), and ``on_changed`` re-reads the list rows so
-        keep/unkeep badges flip as soon as the modal acts.
+        Resolves the row id against the landed ``_dreams`` rows (story
+        ids, or ``cycle-<date>`` for a synthetic failed-cycle row) and
+        defers to :meth:`_push_dreams_story_modal`; an unknown id is a
+        silent no-op (a refresh may have dropped the row between paint
+        and click).
         """
         key = widget_id.removeprefix("artifacts-dream-row-")
         story = next(
@@ -488,6 +504,15 @@ class ArtifactsScreen(BaseAppScreen):
         )
         if story is None:
             return
+        self._push_dreams_story_modal(story)
+
+    def _push_dreams_story_modal(self, story: dict[str, Any]) -> None:
+        """Push the story modal for one shaped ``dreams_view`` row.
+
+        The DB handle is read lazily through the getter (the modal calls
+        it at action time), and ``on_changed`` re-reads the list rows so
+        keep/unkeep badges flip as soon as the modal acts.
+        """
         # Lazy import (ADR-097 census note at the top of this file): the
         # modal chain stays out of the module import set until first use.
         from .artifacts_dreams_modal import DreamsStoryModal
@@ -513,6 +538,70 @@ class ArtifactsScreen(BaseAppScreen):
                 on_changed=self._start_dreams_refresh,
             )
         )
+
+    # --- Tracked-row interaction (task-33164): open the origin story ---
+
+    def _open_dreams_tracked_row(self, widget_id: str) -> None:
+        """Open one Tracked row's origin story, or a summary notice.
+
+        A Tracked row is focusable Static, so a click or Enter lands here
+        (R2): when the tracked item carries an ``origin_story_id`` that
+        still resolves to a story row, the SAME story modal the story's
+        own row opens is pushed (reshaped as a ``dreams_view`` row -- the
+        origin may sit outside the recent-stories window, which is why
+        the lookup goes through the targeted ``get_story`` read). A gone
+        origin (deleted story, or a question watch created with no origin)
+        is a dismissible summary notice: label, mechanism, status, last
+        run, event date -- no modal, no write. DB read failures degrade
+        to the same notice; the interaction must never crash the screen.
+        """
+        key = widget_id.removeprefix("artifacts-dream-track-row-")
+        update = next(
+            (row for row in self._dreams_tracked if str(row.get("id")) == key),
+            None,
+        )
+        if update is None:
+            return
+        db = self._dreams_db()
+        story: dict[str, Any] | None = None
+        if db is not None:
+            try:
+                item = db.get_tracked_item(int(update["id"]))
+                origin_story_id = item.get("origin_story_id") if item else None
+                if origin_story_id is not None:
+                    story = db.get_story(int(origin_story_id))
+            except Exception:  # noqa: BLE001 - a broken read is the summary path
+                story = None
+        if story is None:
+            self._notify_tracked_summary(update)
+            return
+        # ``dreams_view`` row shape: the modal reads ``label``/
+        # ``collection_date``/``tracked`` alongside the story columns, and
+        # this story IS an active tracked origin by construction (the
+        # Tracked group only renders active items).
+        from ...Dreams.dreams_view import LABEL_MAX_LENGTH
+
+        story_row = dict(story)
+        story_row["collection_date"] = str(story.get("local_date") or "")
+        story_row["label"] = str(story.get("title") or "")[:LABEL_MAX_LENGTH]
+        story_row["tracked"] = True
+        self._push_dreams_story_modal(story_row)
+
+    def _notify_tracked_summary(self, update: dict[str, Any]) -> None:
+        """The unresolvable-origin fallback: one dismissible summary notice.
+
+        The label embeds the query template (user/LLM text), so the notice
+        never parses markup.
+        """
+        parts = [str(update.get("label") or f"Tracked item {update.get('id')}")]
+        if update.get("mechanism"):
+            parts.append(f"mechanism: {update['mechanism']}")
+        if update.get("status"):
+            parts.append(f"status: {update['status']}")
+        parts.append(f"last run: {update.get('last_run_status') or 'none yet'}")
+        if update.get("event_date"):
+            parts.append(f"event: {update['event_date']}")
+        self.notify(" · ".join(parts), markup=False)
 
     # --- TASK-21514: previewing one Daily Report in the detail pane ---------
 

@@ -40,6 +40,26 @@ def test_insert_and_list_stories_roundtrip_with_metadata(db):
     assert stories[0]["kept"] == 0
 
 
+def test_get_story_returns_full_row_and_none_for_missing(db):
+    cid = db.create_collection("2026-09-22", "scheduled", "d")
+    sid = db.insert_story(
+        cid, title="Cheap flights to Japan", url="https://example.com/f",
+        snippet="Fares from $89", body="A story about fares.", status="complete",
+        source="web", kind="deal", event_date=None, location="Japan",
+        matched_topics=["visit japan"], query="cheap flights japan",
+    )
+    story = db.get_story(sid)
+    assert story["title"] == "Cheap flights to Japan"
+    assert story["query"] == "cheap flights japan"
+    assert story["matched_topics"] == ["visit japan"], (
+        "the JSON column must come back parsed"
+    )
+    assert story["local_date"] == "2026-09-22", (
+        "the owning collection's local date rides the row"
+    )
+    assert db.get_story(99999) is None
+
+
 def test_insert_story_rejects_duplicate_url_within_collection(db):
     cid = db.create_collection("2026-09-22", "scheduled", "d")
     db.insert_story(cid, title="a", url="https://x/1", snippet="", body="",
