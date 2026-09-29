@@ -510,6 +510,96 @@ def test_cancelled_query_stops_without_migration(tmp_path, monkeypatch):
     assert validate_candidate(owner, path, cancel, migrate=True) == ("cancelled",)
 
 
+def test_extension_restrictions_without_optional_enable_method(tmp_path, monkeypatch):
+    from tldw_chatbook.DB import private_sqlite
+
+    owner, path = research_candidate(tmp_path)
+    connector = private_sqlite._connect_registered_sqlite
+
+    class MissingOptionalMethod:
+        def __init__(self, connection):
+            self.connection = connection
+            enable_extensions = getattr(connection, "enable_load_extension", None)
+            if enable_extensions is None:
+                connection.setconfig(
+                    sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, True
+                )
+            else:
+                enable_extensions(True)
+            assert connection.getconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION)
+
+        def __getattr__(self, name):
+            if name == "enable_load_extension":
+                raise AttributeError(name)
+            return getattr(self.connection, name)
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        lambda *a, **kw: MissingOptionalMethod(connector(*a, **kw)),
+    )
+    assert validate_candidate(owner, path, Event(), migrate=True) == ()
+    with open_recovery_validation(owner.owner_id, path, writable=False) as connection:
+        assert (
+            connection.getconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION) is False
+        )
+        with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+            connection.execute("SELECT load_extension('surprise')")
+        # Verify the configuration itself also refuses loading, apart from the authorizer.
+        connection.set_authorizer(None)
+        with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+            connection.execute("SELECT load_extension('surprise')")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing_setconfig",
+        "missing_getconfig",
+        "failed_setconfig",
+        "failed_getconfig",
+        "inert_setconfig",
+        "false_lookalike",
+        "missing_option",
+    ],
+)
+def test_extension_config_fallback_fails_closed(monkeypatch, failure):
+    option = sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION
+
+    class BrokenConfiguration:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            if name == "enable_load_extension":
+                raise AttributeError(name)
+            return getattr(self.connection, name)
+
+        def setconfig(self, *args):
+            if failure == "missing_setconfig":
+                raise AttributeError("setconfig")
+            if failure == "failed_setconfig":
+                raise NotImplementedError
+            if failure != "inert_setconfig":
+                self.connection.setconfig(*args)
+
+        def getconfig(self, *args):
+            if failure == "missing_getconfig":
+                raise AttributeError("getconfig")
+            if failure == "failed_getconfig":
+                raise sqlite3.OperationalError
+            if failure == "false_lookalike":
+                return 0
+            return self.connection.getconfig(*args)
+
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.setconfig(option, True)
+        if failure == "missing_option":
+            monkeypatch.delattr(sqlite3, "SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION")
+        with pytest.raises(ValueError, match="^sqlite_security_unavailable$"):
+            validation._restrict_connection(BrokenConfiguration(connection))
+
+
 @pytest.mark.parametrize(
     "missing",
     [
@@ -531,7 +621,10 @@ def test_missing_security_primitive_fails_closed(tmp_path, monkeypatch, missing)
             self.connection = connection
 
         def __getattr__(self, name):
-            if name == missing:
+            if name == missing or (
+                missing == "enable_load_extension"
+                and name in {"setconfig", "getconfig"}
+            ):
                 raise AttributeError(name)
             return getattr(self.connection, name)
 

@@ -220,7 +220,14 @@ class _Restrictions:
 def _restrict_connection(connection, cancel=None):
     """Install and verify mandatory primitives before any candidate query."""
     try:
-        connection.enable_load_extension(False)
+        disable_extensions = getattr(connection, "enable_load_extension", None)
+        if disable_extensions is None:
+            option = sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION
+            connection.setconfig(option, False)
+            if connection.getconfig(option) is not False:
+                raise ValueError("sqlite_security_unavailable")
+        else:
+            disable_extensions(False)
         connection.execute("PRAGMA trusted_schema=OFF")
         if connection.execute("PRAGMA trusted_schema").fetchone() != (0,):
             raise ValueError("sqlite_security_unavailable")
