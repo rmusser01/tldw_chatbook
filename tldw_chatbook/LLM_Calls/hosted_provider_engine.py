@@ -1169,6 +1169,7 @@ def _normalize_tool_choice(
 ) -> str | None:
     if value is None:
         return None
+    _require_payload_flag(record, "tool_choice")
     if value == "auto" and tools is not None:
         return "auto"
     raise _validators_for(record).bad_request(

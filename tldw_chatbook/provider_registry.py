@@ -164,7 +164,17 @@ class ProviderRecord:
     finish_terminal: frozenset[str] = frozenset({"stop", "tool_calls", "length"})
     finish_provider_errors: frozenset[str] = frozenset()
     payload_flags: frozenset[str] = frozenset(
-        {"temperature", "top_p", "max_tokens", "stop", "response_format", "seed", "n", "user"}
+        {
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "stop",
+            "response_format",
+            "seed",
+            "n",
+            "user",
+            "tool_choice",
+        }
     )
     reasoning_effort_key: str | None = None
     extra_body_fields: Mapping[str, object] = field(default_factory=dict)
@@ -955,6 +965,11 @@ OLLAMA_CLOUD = ProviderRecord(
     pricing_seeds={},
     engine_driven=True,
     base_url_suffix=None,
+    # Documented-unsupported ``n``/``user``/``tool_choice`` are flagged off:
+    # a caller value fails closed instead of being sent (Qodo #2896).
+    payload_flags=frozenset(
+        {"temperature", "top_p", "max_tokens", "stop", "response_format", "seed"}
+    ),
     response_allowances=frozenset({"timings"}),
     message_allowances=frozenset({"reasoning"}),
     stream_include_usage=True,
@@ -1213,6 +1228,7 @@ CUSTOM_HOSTED = ProviderRecord(
             "logprobs",
             "top_logprobs",
             "thinking_budget_tokens",
+            "tool_choice",
         }
     ),
     # "logprobs": evidence-backed (non-null once the forwarded logprobs

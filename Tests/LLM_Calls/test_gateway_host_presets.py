@@ -26,7 +26,7 @@ from Tests.LLM_Calls.test_doc_derived_presets import (
     _replay,
     _resolution,
 )
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError
 from tldw_chatbook.LLM_Calls.hosted_provider_engine import build_hosted_chat_payload
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
@@ -232,6 +232,44 @@ def test_gateways_ask_to_exclude_reasoning(key: str) -> None:
         messages_payload=[{"role": "user", "content": "hi"}], streaming=False,
     )
     assert payload["reasoning"] == {"exclude": True}
+
+
+_OLLAMA_TOOL = {
+    "type": "function",
+    "function": {"name": "add", "description": "Add.", "parameters": {"type": "object"}},
+}
+
+
+def test_ollama_cloud_sends_tools_without_tool_choice() -> None:
+    """Ollama documents ``tool_choice`` as unsupported: tools still go out,
+    ``tool_choice`` never does."""
+    record = RECORDS_BY_KEY["ollama_cloud"]
+    payload = build_hosted_chat_payload(
+        record, resolution=_resolution(record, streaming=False),
+        messages_payload=[{"role": "user", "content": "hi"}], streaming=False,
+        tools=[_OLLAMA_TOOL],
+    )
+    assert payload["tools"] == [_OLLAMA_TOOL]
+    assert not {"tool_choice", "n", "user"} & payload.keys()
+
+
+@pytest.mark.parametrize(
+    "field", [{"n": 2}, {"user": "someone"}, {"tool_choice": "auto"}]
+)
+def test_ollama_cloud_refuses_documented_unsupported_fields(field: dict[str, Any]) -> None:
+    """A caller-supplied ``n``/``user``/``tool_choice`` fails closed locally
+    instead of reaching Ollama Cloud.
+
+    Args:
+        field: One documented-unsupported request field and a value for it.
+    """
+    record = RECORDS_BY_KEY["ollama_cloud"]
+    with pytest.raises(ChatBadRequestError):
+        build_hosted_chat_payload(
+            record, resolution=_resolution(record, streaming=False),
+            messages_payload=[{"role": "user", "content": "hi"}], streaming=False,
+            tools=[_OLLAMA_TOOL], **field,
+        )
 
 
 # --- responses: documented extras parse, undocumented ones fail closed ---

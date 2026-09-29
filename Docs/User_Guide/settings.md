@@ -464,15 +464,16 @@ no API mode selector for any of them.
 | **Venice** | `https://api.venice.ai/api/v1` | `VENICE_API_KEY` |
 | **Meta (Muse Spark)** | `https://api.meta.ai/v1` | `META_API_KEY` |
 
-All except MiniMax are **discovery-first**: no models ship in the config
-because each account serves a different catalog. The provider model list
-starts empty — fill it with **Discover models** (an authenticated
+All except MiniMax, Upstage, and Baidu Qianfan are **discovery-first**: no
+models ship in the config because each account serves a different catalog.
+The provider model list starts empty — fill it with **Discover models** (an authenticated
 `GET {base}/models` that reuses the chat credential) or by seeding the
 provider's `[providers]` entry (for example `[providers].Together`) manually.
 Until a model is set, readiness blocks sends with the model named as the
 missing piece. **MiniMax** documents no models route, so its list ships
 seeded with the models its API reference names (`MiniMax-M3`,
-`MiniMax-M2.7`, …) and is not refreshed automatically.
+`MiniMax-M2.7`, …) and is not refreshed automatically. Upstage and
+Baidu Qianfan ship seeded the same way (see the notes below).
 
 SambaNova, NVIDIA NIM, DeepInfra, Nebius, Novita, and MiniMax were set up
 from each provider's public API documentation rather than from a recorded
