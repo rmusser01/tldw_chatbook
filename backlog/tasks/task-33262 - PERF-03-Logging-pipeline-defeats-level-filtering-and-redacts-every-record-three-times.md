@@ -27,7 +27,7 @@ Logging_Config.py forwards every loguru record to stdlib at level TRACE, so logu
 <!-- AC:BEGIN -->
 - [x] #1 A dropped debug record costs under 1 us (measured) and opt(lazy=True) callables are not evaluated when DEBUG is off
 - [x] #2 Each INFO+ record is redacted exactly once, with redaction regression tests unchanged or extended
-- [x] #3 File and Logs-buffer handlers do not perform file I/O on the event-loop thread
+- [x] #3 Off-loop file and Logs-buffer I/O is deferred to TASK-33530; a first implementation (log-writer thread) was removed in review, and sinks stay synchronous here
 - [x] #4 Per-row DB/importer INFO logs are demoted, and app-owned worker transitions no longer emit a WARNING each
 <!-- AC:END -->
 
@@ -36,7 +36,7 @@ Logging_Config.py forwards every loguru record to stdlib at level TRACE, so logu
 <!-- SECTION:PLAN:BEGIN -->
 1. Level gate: install the loguru->stdlib forwarder at the effective stdlib threshold (min of root and tldw_chatbook levels; TRACE kept when DEBUG) instead of TRACE; add sync_loguru_forward_level() and call it wherever those levels change (configure_application_logging, TldwCli.__init__).
 2. Single-pass redaction: redact message+exception+stack once per record (cached on the record) and have RedactingFileFormatter compose each sink's prefix around it; the Logs-buffer handler (moved to Logging_Config as LogsBufferHandler) reuses the same formatter, so shouldRollover, the file emit and the buffer share one redaction.
-3. Off-thread sinks: one daemon log-writer thread; the private file handler and the Logs buffer defer emit to it (handlers stay on the root logger, so existing lookups keep working); the buffer hands stored lines back to the UI loop with call_soon_threadsafe; close()/maintenance pause drain first; stop at unmount and atexit (before logging.shutdown).
+3. Off-thread sinks (built, then removed in review -- see Implementation Notes and TASK-33530): one daemon log-writer thread; the private file handler and the Logs buffer defer emit to it (handlers stay on the root logger, so existing lookups keep working); the buffer hands stored lines back to the UI loop with call_soon_threadsafe; close()/maintenance pause drain first; stop at unmount and atexit (before logging.shutdown).
 4. Volume: demote per-row ChaChaNotes CRUD and chatbook-importer per-item INFO to DEBUG; unhandled app-owned worker transitions log DEBUG, WARNING only for ERROR; make @timeit coroutine-aware and log its summary at DEBUG.
 5. Tests first for each step; isolated micro-benchmark before/after; run logging/redaction/worker suites + preflight; compare failures to base c174e30f6b.
 <!-- SECTION:PLAN:END -->
@@ -44,7 +44,7 @@ Logging_Config.py forwards every loguru record to stdlib at level TRACE, so logu
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Single-pass, level-gated, off-thread logging pipeline. Centralised in Logging_Config.py; app.py, base_handler.py and metrics_logger.py carry small call-site changes, and ChaChaNotes_DB.py and chatbook_importer.py only change log levels.
+Single-pass, level-gated logging pipeline (sinks synchronous; see AC #3). Centralised in Logging_Config.py; app.py, base_handler.py and metrics_logger.py carry small call-site changes, and ChaChaNotes_DB.py and chatbook_importer.py only change log levels.
 
 Level gate (AC #1)
 - configure_application_logging installs the loguru->stdlib forwarder at _loguru_forward_level(): the lower of the root and tldw_chatbook effective levels, or 0 when that is DEBUG or lower (TRACE is forwarded as DEBUG). It no longer uses TRACE. sync_loguru_forward_level() re-levels the forwarder by adding the new sink before removing the old one, and never brings back a forwarder that someone else removed.
@@ -55,20 +55,27 @@ Single redaction (AC #2)
 - The Logs-buffer handler moved from a class defined inside app.py to Logging_Config.LogsBufferHandler, which uses the same formatter. Its " - " layout is unchanged; Logs_Window._styled_line parses it.
 - The truncation cap now applies to the body rather than the whole line. The new test walks a secret across the cap to prove nothing leaks there. No existing redaction or sanitizer test was edited.
 
-Off-thread sinks (AC #3)
-- A shared daemon thread, tldw-log-writer, does the work. PrivateRotatingFileHandler and LogsBufferHandler hand records to it once routed. Each record is frozen into one snapshot, with its message rendered at the call site, and all routed sinks share that snapshot and so its one redaction.
-- LogsBufferHandler formats on the writer and returns the finished line to the app loop with call_soon_threadsafe. Only the loop touches the deques and widgets. This also fixes the old pattern where worker threads wrote to widgets directly.
-- Handlers stay on the root logger, so these keep working unchanged: runtime_maintenance's file-handler lookup, the on_unmount cleanup, the reconfigure detection, and the backup roundtrip test.
-- close() and _maintenance_close_admission() drain queued records first. The drain in the pause runs before taking the handler lock, because the writer needs that lock.
-- on_unmount and an atexit hook stop the writer. The hook is registered after logging's own, so it runs before logging.shutdown.
-- When the writer is stopped, or no app loop is known (tests, early boot), handlers fall back to writing directly.
-- The writer never prints: handleError goes to sys.stderr, which Textual captures while the TUI is running.
+Off-thread sinks (AC #3): built, then removed in review (b2358c4d09), deferred to TASK-33530
+- A daemon tldw-log-writer thread took file and Logs-buffer work off the emitting thread. It saved about 80 us per INFO record: 97.5 us of the 350 us moved off-thread, since single redaction already cut most of the cost.
+- Qodo found six hazards in it on #2904:
+  - last records lost on os._exit, os.execve or a fatal signal;
+  - a timed-out drain closing handlers still in use;
+  - stop() racing concurrent callers to direct writes;
+  - a record skipped between a maintenance drain and the closed flag;
+  - a 5 s join on the loop at unmount;
+  - Logs entries lost with pending loop callbacks.
+- INFO volume is low after AC #4, so the thread was removed rather than hardened. Sinks write synchronously on the emitting thread, as before PERF-03.
+- One redaction per record still holds: the cache lives on the LogRecord, which stdlib hands to every handler.
+- LogsBufferHandler appends to the Copy-all buffer and records at emit time (deque.append is thread-safe). Only the widget update goes to the app loop via call_soon_threadsafe, which also stops worker threads from touching widgets.
+- Why a stdlib QueueHandler/QueueListener was rejected (recorded for TASK-33530):
+  - it moves the file handler off root, which breaks four lookups and the backup roundtrip test;
+  - it still needs custom prepare() to redact once;
+  - QueueListener cannot drain without stopping.
 
-Why not a stdlib QueueHandler/QueueListener
-- It would move the file handler off root. Four lookups would then need changing: runtime_maintenance, on_unmount, the reconfigure detection, and root-level lowering. It would also break Tests/Backup_Recovery/test_selected_local_options_roundtrip.py, which asserts the handler is on root.
-- Redacting once, off the emitting thread, still needs custom prepare() on both the QueueHandler and the QueueListener.
-- QueueListener cannot drain without stopping, and the maintenance pause and close() need exactly that.
-- So it gives no smaller change. The custom writer is about 55 lines (submit, run, drain, stop), plus a 30-line mixin.
+Review fixes on #2904 (b2358c4d09)
+- Logger names are redacted and flattened to one line in both sink layouts (_safe_logger_name, cached per name). The record is copied only when the name actually changes.
+- During sync_loguru_forward_level's add-then-remove swap, a record both forwarders see is forwarded once. The key is (id(record), record["time"]), so no record or traceback is retained.
+- LogsBufferHandler's app parameter is typed (TYPE_CHECKING import).
 
 Volume (AC #4)
 - ChaChaNotes_DB: 40 per-row CRUD INFO calls demoted to DEBUG (add/update/soft-delete/restore of conversations, messages, variants, notes, character cards, generic items, links). list_all_active_conversations is left alone because it is a read, not a row write.
@@ -94,7 +101,7 @@ Isolated micro-benchmark: scratch HOME/XDG/TLDW_CONFIG_PATH, Py 3.12.11, loguru 
 Both trees wrote all 2,050 records to the file and to the buffer. The in-suite fresh-process probe asserts less than 2 µs per dropped debug.
 
 Tests
-- New: Tests/test_logging_pipeline_single_pass.py, 17 tests (level gate, single redaction, exception and cap-straddle redaction, writer thread, argument rendering at the call site, drain on close, stop, and the maintenance pause, the Logs-buffer loop hand-back, every-sink masking of a forwarded loguru secret, sandboxed production wiring, DB and importer demotion, worker warning, @timeit).
+- New: Tests/test_logging_pipeline_single_pass.py, 15 tests after review: level gate, single redaction, exception and cap-straddle redaction, Logs-buffer store-at-emit with loop display, logger-name sanitizing (secret and multi-line), forward-once during a forwarder swap, every-sink masking of a forwarded loguru secret, sandboxed production wiring, DB and importer demotion, worker warning, @timeit. The writer-thread tests were removed with the writer.
 - At base the full file fails to import (the new API does not exist yet). A base-compatible subset fails on the behaviour itself: 2 redactions per record, per-row INFO present, no ERROR warning, @timeit not a coroutine function.
 
 Verification against base c174e30f6b (throwaway detached worktree; app pre-imported at collection per lessons-testing-evidence, one pytest per top-level Tests/ directory because a directory conftest loads at startup)
