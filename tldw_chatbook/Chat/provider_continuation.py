@@ -51,6 +51,20 @@ ContinuationProvider = Literal[
     "tokenhub",
     "byteplus",
     "stepfun",
+    # TASK-33351 gateway/host presets.
+    "vercel",
+    "zenmux",
+    "kilo",
+    "siliconflow",
+    "baseten",
+    "gmi",
+    "ollama_cloud",
+    "upstage",
+    "arcee",
+    "qianfan",
+    "nous",
+    "venice",
+    "meta",
 ]
 ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
@@ -116,6 +130,19 @@ _PAIRINGS = frozenset(
         ("tokenhub", "chat_completions"),
         ("byteplus", "chat_completions"),
         ("stepfun", "chat_completions"),
+        ("vercel", "chat_completions"),
+        ("zenmux", "chat_completions"),
+        ("kilo", "chat_completions"),
+        ("siliconflow", "chat_completions"),
+        ("baseten", "chat_completions"),
+        ("gmi", "chat_completions"),
+        ("ollama_cloud", "chat_completions"),
+        ("upstage", "chat_completions"),
+        ("arcee", "chat_completions"),
+        ("qianfan", "chat_completions"),
+        ("nous", "chat_completions"),
+        ("venice", "chat_completions"),
+        ("meta", "chat_completions"),
     }
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})

@@ -737,6 +737,428 @@ TOKENHUB = ProviderRecord(
     auth_scheme="bearer",
 )
 
+# --- Gateway and host presets from the Hermes / oh-my-pi comparison (TASK-33351) ---
+# Thirteen OpenAI Chat Completions presets that Hermes (NousResearch/
+# hermes-agent) and/or oh-my-pi (can1357/oh-my-pi) support and this registry
+# did not. Like TASK-33201/33350, every value comes from the provider's own
+# public docs (read 2026-09-28) plus unauthenticated probes of each host;
+# every allowance is a documented field and everything else stays strict.
+#
+# Vercel AI Gateway -- vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-
+# completions: Bearer ``AI_GATEWAY_API_KEY``; public OpenAI-shaped ``/v1/models``
+# (probe: 390 models). Reasoning comes back as ``reasoning`` plus a
+# ``reasoning_details`` ARRAY the strict value rule rejects, so every request
+# sends the documented ``reasoning: {exclude: true}``; reasoning is not shown
+# for gateway presets anyway. Streamed usage is undocumented: requested and
+# its absence tolerated.
+VERCEL = ProviderRecord(
+    key="vercel",
+    config_key="Vercel",
+    display_name="Vercel AI Gateway",
+    classification=_CLOUD,
+    api_key_env_var="AI_GATEWAY_API_KEY",
+    api_key_env_candidates=("AI_GATEWAY_API_KEY",),
+    default_base_url="https://ai-gateway.vercel.sh/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "AI_GATEWAY_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    extra_body_fields={"reasoning": {"exclude": True}},
+    message_allowances=frozenset({"reasoning"}),
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# ZenMux -- zenmux.ai/docs/api/openai/create-chat-completion.html: Bearer
+# ``ZENMUX_API_KEY``, public ``/api/v1/models``. Documented extras: top-level
+# ``service_tier``; message ``refusal``/``reasoning`` and delta
+# ``reasoning_content``; ``reasoning_details`` and ``annotations`` are arrays
+# (rejected -- reasoning is excluded per request as for Vercel; annotations
+# only appear with web search, never requested). ``content_filter`` finishes
+# are provider errors; streamed usage only on request.
+ZENMUX = ProviderRecord(
+    key="zenmux",
+    config_key="ZenMux",
+    display_name="ZenMux",
+    classification=_CLOUD,
+    api_key_env_var="ZENMUX_API_KEY",
+    api_key_env_candidates=("ZENMUX_API_KEY",),
+    default_base_url="https://zenmux.ai/api/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "ZENMUX_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"content_filter"}),
+    extra_body_fields={"reasoning": {"exclude": True}},
+    response_allowances=frozenset({"service_tier"}),
+    message_allowances=frozenset({"refusal", "reasoning", "reasoning_content"}),
+    stream_include_usage=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# Kilo Gateway -- kilo.ai/docs/gateway/api-reference and /streaming: Bearer
+# ``KILO_API_KEY``, public ``/api/gateway/models``; the gateway injects
+# ``include_usage`` itself (trailing ``choices: []`` usage chunk). A failure
+# after the 200 arrives as a frame carrying a top-level ``error`` object and
+# ``finish_reason: "error"`` -- allowed at the top level so the finish policy
+# can turn it into a provider error.
+KILO = ProviderRecord(
+    key="kilo",
+    config_key="Kilo",
+    display_name="Kilo Gateway",
+    classification=_CLOUD,
+    api_key_env_var="KILO_API_KEY",
+    api_key_env_candidates=("KILO_API_KEY",),
+    default_base_url="https://api.kilo.ai/api/gateway",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "KILO_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"error"}),
+    response_allowances=frozenset({"error"}),
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# SiliconFlow (international) -- docs.siliconflow.com/en/api-reference/chat-
+# completions: Bearer (samples use a placeholder; ``SILICONFLOW_API_KEY`` is
+# the integration convention), OpenAI-shaped ``/v1/models``. Reasoning in
+# ``reasoning_content`` (kept private, sent back -- DeepSeek models need the
+# replay in tool loops). Finish reasons add ``eos`` (a normal end). Streamed
+# usage is undocumented: requested and its absence tolerated. China users
+# point ``api_base_url`` at https://api.siliconflow.cn/v1.
+SILICONFLOW = ProviderRecord(
+    key="siliconflow",
+    config_key="SiliconFlow",
+    display_name="SiliconFlow",
+    classification=_CLOUD,
+    api_key_env_var="SILICONFLOW_API_KEY",
+    api_key_env_candidates=("SILICONFLOW_API_KEY",),
+    default_base_url="https://api.siliconflow.com/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "SILICONFLOW_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_terminal=frozenset({"stop", "tool_calls", "length", "eos"}),
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# Baseten Model APIs -- docs.baseten.co/reference/inference-api/chat-
+# completions: Bearer ``BASETEN_API_KEY``, OpenAI-shaped ``/v1/models``,
+# ``stream_options.include_usage`` documented. Choices carry ``stop_reason``
+# (int/str/null) and ``logprobs``; reasoning in ``reasoning_content``. A
+# mid-stream failure just ends the stream early, which the strict parser
+# already treats as a failure.
+BASETEN = ProviderRecord(
+    key="baseten",
+    config_key="Baseten",
+    display_name="Baseten",
+    classification=_CLOUD,
+    api_key_env_var="BASETEN_API_KEY",
+    api_key_env_candidates=("BASETEN_API_KEY",),
+    default_base_url="https://inference.baseten.co/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "BASETEN_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    choice_allowances=frozenset({"stop_reason", "logprobs"}),
+    stream_include_usage=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# GMI Cloud -- docs.gmicloud.ai/inference-engine/api-reference/llm-api-
+# reference: Bearer ``GMI_API_KEY`` (probe confirms the header is read),
+# ``/v1/models``; "streaming responses include usage statistics in the final
+# data chunk". Its docs document no extras, so it is fully strict.
+GMI = ProviderRecord(
+    key="gmi",
+    config_key="GMI",
+    display_name="GMI Cloud",
+    classification=_CLOUD,
+    api_key_env_var="GMI_API_KEY",
+    api_key_env_candidates=("GMI_API_KEY",),
+    default_base_url="https://api.gmi-serving.com/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "GMI_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# Ollama Cloud -- docs.ollama.com/api/openai-compatibility: ollama.com/v1 is
+# OpenAI Chat Completions (not only the native /api/chat); Bearer
+# ``OLLAMA_API_KEY`` (unused by the keyless local Ollama provider); public
+# ``/v1/models``; ``include_usage`` supported. From Ollama's own server source
+# (openai/openai.go): top-level ``timings``, message/delta ``reasoning``. A
+# bare ``{"error": ...}`` written after the 200 fails closed as a protocol
+# error. ``tool_choice``/``user``/``n`` are documented as unsupported.
+OLLAMA_CLOUD = ProviderRecord(
+    key="ollama_cloud",
+    config_key="OllamaCloud",
+    display_name="Ollama Cloud",
+    classification=_CLOUD,
+    api_key_env_var="OLLAMA_API_KEY",
+    api_key_env_candidates=("OLLAMA_API_KEY",),
+    default_base_url="https://ollama.com/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "OLLAMA_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    response_allowances=frozenset({"timings"}),
+    message_allowances=frozenset({"reasoning"}),
+    stream_include_usage=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# Upstage (Solar) -- console.upstage.ai/api/chat: Bearer ``UPSTAGE_API_KEY``.
+# No models route is documented, so models are seeded from the API
+# reference. Reasoning is ``reasoning`` (not ``reasoning_content``);
+# ``logprobs`` is present but always null. Streamed usage is unconfirmed:
+# requested and its absence tolerated.
+UPSTAGE = ProviderRecord(
+    key="upstage",
+    config_key="Upstage",
+    display_name="Upstage",
+    classification=_CLOUD,
+    api_key_env_var="UPSTAGE_API_KEY",
+    api_key_env_candidates=("UPSTAGE_API_KEY",),
+    default_base_url="https://api.upstage.ai/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "UPSTAGE_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    choice_allowances=frozenset({"logprobs"}),
+    message_allowances=frozenset({"reasoning"}),
+    discovery_route=None,  # seeded-only: no documented models route
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# Arcee AI -- docs.arcee.ai/api-reference/chat-completion and /models: Bearer
+# ``ARCEE_API_KEY`` (``rcai-`` keys; probe confirms the header is read),
+# ``GET /api/v1/models`` returns ``{"data": [...]}`` (no ``object`` wrapper --
+# discovery only needs ``data``). Reasoning in ``reasoning_content``.
+# Streamed usage is unconfirmed: requested and its absence tolerated.
+ARCEE = ProviderRecord(
+    key="arcee",
+    config_key="Arcee",
+    display_name="Arcee AI",
+    classification=_CLOUD,
+    api_key_env_var="ARCEE_API_KEY",
+    api_key_env_candidates=("ARCEE_API_KEY",),
+    default_base_url="https://api.arcee.ai/api/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "ARCEE_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# Baidu Qianfan (ERNIE, v2 OpenAI-compatible API) -- cloud.baidu.com/doc/
+# qianfan-api/s/3m7of64lb: ``Authorization: Bearer bce-v3/ALTAK-...`` (the
+# whole string is the key); no env var is named (``QIANFAN_API_KEY`` is the
+# integration convention); no models route, so models are seeded. Extras:
+# top-level ``search_results`` (web search only), choice ``flag``/``ban_round``
+# (safety classification). ``content_filter`` finishes are provider errors.
+# Requires Baidu Cloud real-name verification.
+QIANFAN = ProviderRecord(
+    key="qianfan",
+    config_key="Qianfan",
+    display_name="Baidu Qianfan",
+    classification=_CLOUD,
+    api_key_env_var="QIANFAN_API_KEY",
+    api_key_env_candidates=("QIANFAN_API_KEY",),
+    default_base_url="https://qianfan.baidubce.com/v2",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "QIANFAN_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"content_filter"}),
+    response_allowances=frozenset({"search_results"}),
+    choice_allowances=frozenset({"flag", "ban_round"}),
+    discovery_route=None,  # seeded-only: no documented models route
+    stream_include_usage=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# Nous Research -- portal.nousresearch.com/api-docs (bot-walled; facts via
+# NousResearch/hermes-agent#47950 quoting it): Chat Completions with a plain
+# Bearer key, ``NOUS_API_KEY`` as used in its examples; public ``/v1/models``
+# (probe: 421 models). The response schema could not be read, so the record
+# is fully strict, tools stay off until a live check, and streamed usage is
+# requested with its absence tolerated.
+NOUS = ProviderRecord(
+    key="nous",
+    config_key="Nous",
+    display_name="Nous Research",
+    classification=_CLOUD,
+    api_key_env_var="NOUS_API_KEY",
+    api_key_env_candidates=("NOUS_API_KEY",),
+    default_base_url="https://inference-api.nousresearch.com/v1",
+    native_tools=False,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "NOUS_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# Venice -- docs.venice.ai/api-reference/endpoint/chat/completions: Bearer
+# ``VENICE_API_KEY``, public ``/api/v1/models``, include_usage documented.
+# Extras: top-level ``cost``, ``prompt_logprobs``, ``venice_parameters``;
+# choice ``stop_reason``/``logprobs``; message ``refusal``,
+# ``thought_signature``; reasoning in ``reasoning_content``. The documented
+# ``reasoning_details`` ARRAY fails closed if a model sends it.
+# ``content_filter`` finishes are provider errors.
+VENICE = ProviderRecord(
+    key="venice",
+    config_key="Venice",
+    display_name="Venice",
+    classification=_CLOUD,
+    api_key_env_var="VENICE_API_KEY",
+    api_key_env_candidates=("VENICE_API_KEY",),
+    default_base_url="https://api.venice.ai/api/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "VENICE_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"content_filter"}),
+    response_allowances=frozenset({"cost", "prompt_logprobs", "venice_parameters"}),
+    choice_allowances=frozenset({"stop_reason", "logprobs"}),
+    message_allowances=frozenset({"refusal", "thought_signature"}),
+    stream_include_usage=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# Meta Model API (Muse Spark; replaced the retired Llama API) -- dev.meta.ai/
+# docs/protocols/chat-completions and /models: Chat Completions is supported
+# ("Available on: Responses, Chat Completions, Messages"); Bearer key; Meta's
+# SDKs read the generic ``MODEL_API_KEY`` -- this record reads
+# ``META_API_KEY`` so an unrelated MODEL_API_KEY is never sent to Meta (set
+# ``api_key_env_var = "MODEL_API_KEY"`` to use Meta's name). Only
+# ``tool_choice: "auto"`` is accepted and ``reasoning_effort: "none"`` is a
+# 400 (never sent: reasoning_effort is off). Reasoning is redacted for
+# external callers. Extras: top-level ``service_tier``; choice ``logprobs``;
+# message ``refusal``/``reasoning_content``. ``content_filter`` is a provider
+# error; include_usage documented.
+META = ProviderRecord(
+    key="meta",
+    config_key="Meta",
+    display_name="Meta (Muse Spark)",
+    classification=_CLOUD,
+    api_key_env_var="META_API_KEY",
+    api_key_env_candidates=("META_API_KEY",),
+    default_base_url="https://api.meta.ai/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "META_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"content_filter"}),
+    response_allowances=frozenset({"service_tier"}),
+    choice_allowances=frozenset({"logprobs"}),
+    message_allowances=frozenset({"refusal"}),
+    stream_include_usage=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+
 # --- Custom hosted family (ADR-179 Phase 2 Task 6) ---
 # The engine-driven execution surface for the ADR-146 custom-endpoint
 # ``openai_compatible`` family, swapped in at the Console gateway identity
@@ -966,6 +1388,8 @@ ALL_RECORDS: tuple[ProviderRecord, ...] = (
     TOGETHER, FIREWORKS, CEREBRAS, CUSTOM_HOSTED,
     SAMBANOVA, NVIDIA, DEEPINFRA, NEBIUS, NOVITA, MINIMAX,
     MIMO, TOKENHUB, BYTEPLUS, STEPFUN,
+    VERCEL, ZENMUX, KILO, SILICONFLOW, BASETEN, GMI, OLLAMA_CLOUD,
+    UPSTAGE, ARCEE, QIANFAN, NOUS, VENICE, META,
     LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )

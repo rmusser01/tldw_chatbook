@@ -87,6 +87,8 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         # DeepInfra's OpenAI-compatible base (TASK-33201); models live at
         # /v1/openai/models.
         "/v1/openai",
+        # Kilo Gateway base (TASK-33351); models live at /api/gateway/models.
+        "/api/gateway",
     }
 )
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
@@ -364,6 +366,7 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
         "/openai/v1",
         "/inference/v1",
         "/v1/openai",
+        "/api/gateway",
     }:
         return f"{normalized_path}/models"
     if normalized_path in {"/completion", "/completions"}:
