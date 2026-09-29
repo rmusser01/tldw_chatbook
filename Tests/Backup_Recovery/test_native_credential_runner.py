@@ -14,6 +14,96 @@ import pytest
 from Tests.Backup_Recovery import run_platform_product as runner
 
 
+def test_native_worker_observer_is_optional(monkeypatch):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    monkeypatch.delenv("TLDW_NATIVE_FAILURE_ROOT", raising=False)
+    service = SimpleNamespace()
+    assert product._observe_workers(service) is service
+
+
+def test_native_worker_failure_is_observed_before_service_maps_it(
+    tmp_path, monkeypatch
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    monkeypatch.setenv("TLDW_NATIVE_FAILURE_ROOT", str(failure_root))
+    service = RecoveryService(tmp_path / "control")
+
+    def fail_worker(operation, cancel):
+        raise RuntimeError("positive-native-secret")
+
+    try:
+        assert product._observe_workers(service) is service
+        operation = service._start("backup", fail_worker)
+        state = service.wait(operation, timeout=5)
+        assert state["state"] == "failed"
+        assert state["issues"] == ("backup_operation_failed",)
+        runner._publish_native_failures(private, artifacts)
+        path = artifacts / "native-failures.json"
+        receipt = json.loads(path.read_text())
+        assert [row["error_class"] for row in receipt["failures"]] == ["RuntimeError"]
+        assert any(
+            frame["function"] == "fail_worker"
+            for row in receipt["failures"]
+            for frame in row["frames"]
+        )
+        assert "positive-native-secret" not in path.read_text()
+    finally:
+        service.close()
+
+
+def test_native_destinations_seed_retargeted_profile_before_negative_checks(
+    tmp_path, monkeypatch
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    transfer = tmp_path / "transfer"
+    transfer.mkdir()
+    run = tmp_path / "run"
+    run.mkdir()
+    for system in ("Darwin", "Linux", "Windows"):
+        source = transfer / f"source-{system.lower()}.age"
+        source.write_bytes(b"synthetic-encrypted-placeholder")
+        source.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "system": system,
+                    "status": "passed",
+                    "archive_sha256": product._digest(source),
+                }
+            )
+        )
+    setups = {}
+
+    def child(root, installed, route, *, role="retargeted", source=None):
+        if route == "setup":
+            setups.setdefault(root, []).append(role)
+        elif route == "transfer":
+            (root / "direction.json").write_text("{}")
+        else:
+            assert route == "negative"
+            assert setups.get(root) == ["retargeted"]
+            (root / "negative-results.json").write_text('{"negative_checks":7}')
+
+    monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", str(transfer))
+    monkeypatch.setattr(runner, "validate_native_credential_environment", lambda: None)
+    monkeypatch.setattr(product, "_child", child)
+    monkeypatch.setattr(product, "_receipt", lambda installed, **extra: extra)
+    product.test_native_credential_destinations(run, tmp_path / "installed")
+    assert (
+        json.loads((transfer / "outbound/destination-results.json").read_text())[
+            "negative_checks"
+        ]
+        == 7
+    )
+
+
 def test_native_fixture_installs_owners_before_destination_discovery(
     tmp_path, monkeypatch
 ):

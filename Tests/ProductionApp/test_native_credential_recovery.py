@@ -155,6 +155,29 @@ def _manual(issues):
     return tuple(issues)
 
 
+def _observe_workers(service):
+    failure_root = os.environ.get("TLDW_NATIVE_FAILURE_ROOT")
+    if not failure_root:
+        return service
+    from Tests.Backup_Recovery.run_platform_product import _record_native_failure
+
+    root = Path(failure_root)
+    start = service._start
+
+    def start_observed(kind, function):
+        def observed(operation, cancel):
+            try:
+                return function(operation, cancel)
+            except Exception as error:
+                _record_native_failure(root, error)
+                raise
+
+        return start(kind, observed)
+
+    service._start = start_observed
+    return service
+
+
 async def _setup(role):
     from tldw_chatbook.Utils.config_encryption import ConfigEncryption
 
@@ -258,7 +281,7 @@ async def _capture():
     config.set_encryption_password(CONFIG_PASSWORD)
     app = TldwCli()
     monitoring = asyncio.create_task(monitor_app(app))
-    service = RecoveryService(default_control_root())
+    service = _observe_workers(RecoveryService(default_control_root()))
     transfer = Path(os.environ["TLDW_CREDENTIAL_TRANSFER_ROOT"])
     outbound = transfer / "outbound"
     outbound.mkdir(mode=0o700, exist_ok=True)
@@ -433,7 +456,7 @@ def _transfer(source):
     install_adapters()
     config.set_encryption_password(CONFIG_PASSWORD)
     source_system = json.loads(source.with_suffix(".json").read_text())["system"]
-    service = RecoveryService(default_control_root())
+    service = _observe_workers(RecoveryService(default_control_root()))
     unselected = {
         item.path: _digest(item.path)
         for item in discover(_selectors()).items
@@ -788,6 +811,7 @@ def test_native_credential_destinations(tmp_path, native_package):
         results.append(json.loads((root / "direction.json").read_text()))
     negative_root = tmp_path / "negative-checks"
     negative_root.mkdir(mode=0o700)
+    _child(negative_root, native_package, "setup", role="retargeted")
     _child(negative_root, native_package, "negative", source=sources[0])
     negative_checks = json.loads((negative_root / "negative-results.json").read_text())[
         "negative_checks"
