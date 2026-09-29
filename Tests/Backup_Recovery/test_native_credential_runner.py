@@ -50,6 +50,147 @@ def test_native_fixture_installs_owners_before_destination_discovery(
         product._transfer(source)
 
 
+def test_native_isolated_preview_has_no_replacement_acknowledgments(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery import (
+        archive_reader,
+        inventory,
+        recovery_service,
+    )
+
+    class PreviewReached(Exception):
+        pass
+
+    source = tmp_path / "source-linux.age"
+    with product.zipfile.ZipFile(source, "w"):
+        pass
+    source.with_suffix(".json").write_text(json.dumps({"system": "Linux"}))
+    stores = []
+    for number in range(2):
+        path = tmp_path / f"unselected-{number}.sqlite"
+        path.write_bytes(b"synthetic-unselected")
+        stores.append(
+            SimpleNamespace(path=path, owner="db.prompts.primary", status="included")
+        )
+
+    class Service:
+        def __init__(self, root):
+            pass
+
+        def start_inspection(self, source, *, password):
+            return "inspection"
+
+        def wait(self, operation, *, timeout):
+            return {"state": "succeeded"}
+
+        def inspection(self, operation):
+            return SimpleNamespace(path=source)
+
+        def preview_restore(self, inspection, **options):
+            assert options["mode"] == "isolated"
+            assert "acknowledged_credential_issues" not in options
+            raise PreviewReached()
+
+        def close(self):
+            pass
+
+    config = SimpleNamespace(set_encryption_password=lambda password: None)
+    monkeypatch.setattr(tldw_chatbook, "config", config, raising=False)
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
+    monkeypatch.setattr(recovery_service, "RecoveryService", Service)
+    monkeypatch.setattr(recovery_service, "default_control_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        inventory, "discover", lambda selectors: SimpleNamespace(items=stores)
+    )
+    monkeypatch.setattr(
+        archive_reader,
+        "verify_sealed",
+        lambda archive: SimpleNamespace(
+            files=(), profile_ids=("default", "retargeted")
+        ),
+    )
+    monkeypatch.setattr(
+        product,
+        "_material",
+        lambda archive: [{"remappable": False, "id": "synthetic-manual"}],
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(PreviewReached):
+        product._transfer(source)
+
+
+@pytest.mark.parametrize(
+    ("first_issue", "expected_attempts"),
+    (
+        ("credential_manual_recovery_required:synthetic-id", 2),
+        ("scope_changed:positive-native-secret", 1),
+    ),
+    ids=("manual-review-retry", "first-scope-refusal"),
+)
+def test_native_capture_reports_review_category_with_bounded_manual_retry(
+    tmp_path, monkeypatch, first_issue, expected_attempts
+):
+    import tldw_chatbook
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery import recovery_service, runtime_maintenance
+
+    async def idle(*args):
+        pass
+
+    class Service:
+        def __init__(self, root):
+            self.attempts = 0
+
+        def preview_backup_details(self, selectors, *, options, destination):
+            return {
+                "inventory": SimpleNamespace(complete=True, scope_digest="synthetic")
+            }
+
+        def start_backup(self, *args, **kwargs):
+            self.attempts += 1
+            return self.attempts
+
+        def wait(self, operation, *, timeout):
+            return {
+                "state": "failed",
+                "issues": ("review_required",),
+                "review_issues": (
+                    first_issue
+                    if operation == 1
+                    else "scope_changed:positive-native-secret",
+                ),
+            }
+
+        def close(self):
+            pass
+
+    service = Service(tmp_path)
+    config = SimpleNamespace(set_encryption_password=lambda password: None)
+    monkeypatch.setattr(tldw_chatbook, "config", config, raising=False)
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.app",
+        SimpleNamespace(
+            TldwCli=lambda: SimpleNamespace(
+                _shutdown_app_owned_lifecycles=idle,
+                tts_service=SimpleNamespace(close=idle, wait_closed=idle),
+            )
+        ),
+    )
+    monkeypatch.setattr(recovery_service, "RecoveryService", lambda root: service)
+    monkeypatch.setattr(recovery_service, "default_control_root", lambda: tmp_path)
+    monkeypatch.setattr(runtime_maintenance, "monitor_app", idle)
+    monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", str(tmp_path))
+    with pytest.raises(ValueError) as caught:
+        product.asyncio.run(product._capture())
+    assert service.attempts == expected_attempts
+    assert caught.value.args == ("scope_changed",)
+
+
 def test_native_child_thread_samples_publish_only_safe_late_frames(
     tmp_path, monkeypatch
 ):
@@ -504,7 +645,11 @@ def test_native_failures_publish_only_exception_types_and_code_locations(tmp_pat
         private_root=private,
         artifacts=artifacts,
         environment=dict(
-            os.environ, PYTHONPATH=str(workspace), PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"
+            os.environ,
+            PYTHONPATH=os.pathsep.join(
+                (str(workspace), str(Path(runner.__file__).resolve().parents[2]))
+            ),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
         ),
         phase="product",
         tests=(str(test),),
@@ -546,6 +691,83 @@ def test_native_failure_publication_refuses_unsafe_frame_fields(tmp_path):
     with pytest.raises(RuntimeError):
         runner._publish_native_failures(private, artifacts)
     assert not list(artifacts.iterdir())
+
+
+def test_native_failure_preserves_only_canonical_worker_issue(tmp_path):
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    runner._record_native_failure(failure_root, ValueError("scope_changed"))
+    runner._record_native_failure(failure_root, RuntimeError("positive-native-secret"))
+    (failure_root / "untrusted.json").write_text(
+        json.dumps(
+            {
+                "error_class": "ValueError",
+                "frames": [],
+                "issue": "positive-native-secret",
+                "message": "positive-native-secret",
+            }
+        )
+    )
+    runner._publish_native_failures(private, artifacts)
+    path = artifacts / "native-failures.json"
+    receipt = json.loads(path.read_text())
+    assert {row["issue"] for row in receipt["failures"]} == {
+        "scope_changed",
+        "backup_operation_failed",
+    }
+    assert "positive-native-secret" not in path.read_text()
+
+
+@pytest.mark.parametrize(
+    ("kind", "argument", "expected"),
+    (
+        ("interrupted", "positive-native-secret", "cancelled"),
+        ("capture", ("positive-native-secret",), "review_required"),
+        (
+            "compression",
+            ("positive-native-secret", 1024),
+            "compression_review_required",
+        ),
+        ("crypto", "helper_unavailable", "encryption_unavailable"),
+        ("crypto", "positive-native-secret", "encryption_failed"),
+    ),
+    ids=(
+        "interrupted",
+        "capture-review",
+        "compression-review",
+        "crypto-unavailable",
+        "crypto-failed",
+    ),
+)
+def test_native_failure_preserves_safe_type_derived_issue(
+    tmp_path, kind, argument, expected
+):
+    from tldw_chatbook.Backup_Recovery.archive_reader import CompressionReviewRequired
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+    from tldw_chatbook.Backup_Recovery.crypto import CryptoError
+
+    constructors = {
+        "interrupted": InterruptedError,
+        "capture": CaptureReviewRequired,
+        "crypto": CryptoError,
+    }
+    error = (
+        CompressionReviewRequired(*argument)
+        if kind == "compression"
+        else constructors[kind](argument)
+    )
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    runner._record_native_failure(failure_root, error)
+    runner._publish_native_failures(private, artifacts)
+    path = artifacts / "native-failures.json"
+    receipt = json.loads(path.read_text())
+    assert [row["issue"] for row in receipt["failures"]] == [expected]
+    assert "positive-native-secret" not in path.read_text()
 
 
 def test_native_failure_keeps_import_stack_locations_without_exception_text(tmp_path):

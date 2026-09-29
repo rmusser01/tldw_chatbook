@@ -872,15 +872,36 @@ def _native_failure_metadata(record: Mapping[str, object]) -> dict[str, object]:
         ):
             raise RuntimeError("unsafe_native_failure_frame")
         projected.append({"file": filename, "function": function, "line": line})
-    return {"error_class": kind, "frames": projected}
+    result = {"error_class": kind, "frames": projected}
+    if "issue" in record:
+        from tldw_chatbook.Backup_Recovery.recovery_service import issue_code
+
+        issue = record["issue"]
+        result["issue"] = (
+            issue
+            if isinstance(issue, str)
+            and issue
+            in {
+                "cancelled",
+                "review_required",
+                "compression_review_required",
+                "encryption_unavailable",
+                "encryption_failed",
+            }
+            else issue_code(ValueError(issue))
+        )
+    return result
 
 
 def _record_native_failure(root: Path, error: BaseException) -> None:
     """Record metadata without allowing an observation error to mask the failure."""
     try:
         from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
+        from tldw_chatbook.Backup_Recovery.recovery_service import issue_code
 
-        record = _native_failure_metadata(_error_metadata(error))
+        record = _native_failure_metadata(
+            {**_error_metadata(error), "issue": issue_code(error)}
+        )
         _write_json(root / f"{os.getpid()}-{uuid4().hex}.json", record)
     except Exception:  # noqa: BLE001 - preserve the original private failure.
         return

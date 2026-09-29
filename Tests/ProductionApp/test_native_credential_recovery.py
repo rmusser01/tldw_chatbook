@@ -285,7 +285,18 @@ async def _capture():
             state = await asyncio.to_thread(service.wait, operation, timeout=500)
             if state["state"] == "succeeded":
                 break
-            assert attempt == 0 and state["review_issues"], "native_backup_failed"
+            if (
+                attempt != 0
+                or not state["review_issues"]
+                or not all(
+                    issue.startswith("credential_manual_recovery_required:")
+                    for issue in state["review_issues"]
+                )
+            ):
+                issues = state["review_issues"] or state["issues"]
+                raise ValueError(
+                    issues[0].split(":", 1)[0] if issues else "native_backup_failed"
+                )
             options["acknowledged_credential_issues"] = _manual(state["review_issues"])
         assert state["state"] == "succeeded"
         # Captured manual-recovery material is disclosed as partial recovery
@@ -463,7 +474,6 @@ def _transfer(source):
                 profile: "separate_" + str(index)
                 for index, profile in enumerate(doc.profile_ids)
             },
-            acknowledged_credential_issues=incoming_manual,
         )
         operation = service.start_restore(inspection, isolated)
         assert service.wait(operation, timeout=180)["state"] == "succeeded", (
