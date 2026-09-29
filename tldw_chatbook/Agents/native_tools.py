@@ -92,6 +92,19 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "mimo",
         "tokenhub",
         "byteplus",
+        # TASK-33351 gateway/host presets (Nous ships tools off: schema unread).
+        "vercel",
+        "zenmux",
+        "kilo",
+        "siliconflow",
+        "baseten",
+        "gmi",
+        "ollama_cloud",
+        "upstage",
+        "arcee",
+        "qianfan",
+        "venice",
+        "meta",
     }
 )
 

@@ -80,21 +80,34 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
 from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
+    ARCEE,
+    BASETEN,
     BYTEPLUS,
     CEREBRAS,
     CUSTOM_HOSTED,
     DATABRICKS,
     DEEPINFRA,
     FIREWORKS,
+    GMI,
+    KILO,
+    META,
     MIMO,
     MINIMAX,
     NEBIUS,
+    NOUS,
     NOVITA,
     NVIDIA,
+    OLLAMA_CLOUD,
+    QIANFAN,
     SAMBANOVA,
+    SILICONFLOW,
     STEPFUN,
     TOGETHER,
     TOKENHUB,
+    UPSTAGE,
+    VENICE,
+    VERCEL,
+    ZENMUX,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
@@ -200,6 +213,20 @@ API_CALL_HANDLERS = {
     "tokenhub": _LazyHostedChatHandler(TOKENHUB),
     "byteplus": _LazyHostedChatHandler(BYTEPLUS),
     "stepfun": _LazyHostedChatHandler(STEPFUN),
+    # Gateway/host presets from the Hermes / oh-my-pi comparison (TASK-33351).
+    "vercel": _LazyHostedChatHandler(VERCEL),
+    "zenmux": _LazyHostedChatHandler(ZENMUX),
+    "kilo": _LazyHostedChatHandler(KILO),
+    "siliconflow": _LazyHostedChatHandler(SILICONFLOW),
+    "baseten": _LazyHostedChatHandler(BASETEN),
+    "gmi": _LazyHostedChatHandler(GMI),
+    "ollama_cloud": _LazyHostedChatHandler(OLLAMA_CLOUD),
+    "upstage": _LazyHostedChatHandler(UPSTAGE),
+    "arcee": _LazyHostedChatHandler(ARCEE),
+    "qianfan": _LazyHostedChatHandler(QIANFAN),
+    "nous": _LazyHostedChatHandler(NOUS),
+    "venice": _LazyHostedChatHandler(VENICE),
+    "meta": _LazyHostedChatHandler(META),
     # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
     # gateway identity site swaps ``openai_compatible`` custom-ep entries to
     # this key when ``[console] custom_endpoints_use_engine`` is on. The
@@ -901,6 +928,19 @@ PROVIDER_PARAM_MAP = {
     "tokenhub": ENGINE_PROVIDER_PARAM_MAP,
     "byteplus": ENGINE_PROVIDER_PARAM_MAP,
     "stepfun": ENGINE_PROVIDER_PARAM_MAP,
+    "vercel": ENGINE_PROVIDER_PARAM_MAP,
+    "zenmux": ENGINE_PROVIDER_PARAM_MAP,
+    "kilo": ENGINE_PROVIDER_PARAM_MAP,
+    "siliconflow": ENGINE_PROVIDER_PARAM_MAP,
+    "baseten": ENGINE_PROVIDER_PARAM_MAP,
+    "gmi": ENGINE_PROVIDER_PARAM_MAP,
+    "ollama_cloud": ENGINE_PROVIDER_PARAM_MAP,
+    "upstage": ENGINE_PROVIDER_PARAM_MAP,
+    "arcee": ENGINE_PROVIDER_PARAM_MAP,
+    "qianfan": ENGINE_PROVIDER_PARAM_MAP,
+    "nous": ENGINE_PROVIDER_PARAM_MAP,
+    "venice": ENGINE_PROVIDER_PARAM_MAP,
+    "meta": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
 

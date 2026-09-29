@@ -4318,6 +4318,23 @@ MiMo = ["mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed", "mimo-v2
 TokenHub = [] # Tencent TokenHub: fills via /v1/models discovery (Hy4 is hy4-preview)
 BytePlus = ["seed-2-0-lite-260228", "seed-1-8-251228"] # also accepts your own ep-... endpoint IDs
 StepFun = [] # fills via /v1/models discovery or manual seeding
+# Gateway/host presets from the Hermes / oh-my-pi comparison (TASK-33351).
+# Upstage and Qianfan document no models route and ship seeded from their API
+# references; the rest fill via discovery. Any other ID can be entered as a
+# custom model.
+Vercel = []
+ZenMux = []
+Kilo = []
+SiliconFlow = []
+Baseten = []
+GMI = []
+OllamaCloud = []
+Upstage = ["solar-pro4", "solar-mini4", "solar-pro3", "solar-pro2", "solar-mini", "syn-pro"]
+Arcee = []
+Qianfan = ["ernie-5.1", "ernie-5.0", "ernie-5.0-thinking-latest", "ernie-4.5-turbo-128k", "ernie-4.5-turbo-32k", "ernie-3.5-8k"]
+Nous = []
+Venice = []
+Meta = []
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4654,6 +4671,124 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     api_key_env_var = "STEPFUN_API_KEY" # or "STEP_API_KEY", the name StepFun's own samples use
     # api_key = "" # Less secure fallback - use env var instead
     api_base_url = "https://api.stepfun.ai/v1" # China: https://api.stepfun.com/v1
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # Gateway/host presets (TASK-33351): same shape as above.
+    [api_settings.vercel] # Matches key in [providers]
+    api_key_env_var = "AI_GATEWAY_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://ai-gateway.vercel.sh/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.zenmux] # Matches key in [providers]
+    api_key_env_var = "ZENMUX_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://zenmux.ai/api/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.kilo] # Matches key in [providers]
+    api_key_env_var = "KILO_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.kilo.ai/api/gateway"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.siliconflow] # Matches key in [providers]
+    api_key_env_var = "SILICONFLOW_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.siliconflow.com/v1" # China: https://api.siliconflow.cn/v1
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.baseten] # Matches key in [providers]
+    api_key_env_var = "BASETEN_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://inference.baseten.co/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.gmi] # Matches key in [providers]
+    api_key_env_var = "GMI_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.gmi-serving.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.ollama_cloud] # Matches key in [providers]
+    api_key_env_var = "OLLAMA_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://ollama.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.upstage] # Matches key in [providers]
+    api_key_env_var = "UPSTAGE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.upstage.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.arcee] # Matches key in [providers]
+    api_key_env_var = "ARCEE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.arcee.ai/api/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.qianfan] # Matches key in [providers]
+    api_key_env_var = "QIANFAN_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://qianfan.baidubce.com/v2" # key is the whole bce-v3/ALTAK-... string
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.nous] # Matches key in [providers]
+    api_key_env_var = "NOUS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://inference-api.nousresearch.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.venice] # Matches key in [providers]
+    api_key_env_var = "VENICE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.venice.ai/api/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.meta] # Matches key in [providers]
+    api_key_env_var = "META_API_KEY" # or "MODEL_API_KEY", the name Meta's SDKs read
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.meta.ai/v1"
     timeout = 90
     retries = 3
     retry_delay = 5.0
