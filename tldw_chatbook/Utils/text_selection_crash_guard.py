@@ -154,6 +154,17 @@ class FreshContextExecutor(ThreadPoolExecutor):
     """A ThreadPoolExecutor whose jobs never share a ``contextvars`` context."""
 
     def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future:
+        """Schedule ``fn(*args, **kwargs)`` in a new, empty ``contextvars`` context.
+
+        Args:
+            fn: Callable to run on a pool thread.
+            *args: Positional arguments for ``fn``.
+            **kwargs: Keyword arguments for ``fn``.
+
+        Returns:
+            The future for the call. Context variables the job sets die with
+            its context instead of staying on the pool thread.
+        """
         return super().submit(contextvars.Context().run, fn, *args, **kwargs)
 
 
@@ -179,6 +190,7 @@ class ThreadWorkerContextGuard:
     """
 
     def on_load(self) -> None:
+        """Install :class:`FreshContextExecutor` as the running loop's default executor."""
         # "asyncio" keeps asyncio's own thread names (asyncio_0, ...), which
         # the boot thread census allowlists.
         asyncio.get_running_loop().set_default_executor(

@@ -266,3 +266,18 @@ def test_signal_guard_flags_a_subscription_without_unsubscribe() -> None:
     )
     assert _unpaired_app_signal_subscriptions(leaky, "w.py")
     assert not _unpaired_app_signal_subscriptions(paired, "w.py")
+
+
+def test_fresh_context_executor_jobs_do_not_share_context() -> None:
+    """A context variable one job sets is gone for the next job on the same thread."""
+    import contextvars
+
+    from tldw_chatbook.Utils.text_selection_crash_guard import FreshContextExecutor
+
+    marker: contextvars.ContextVar[str] = contextvars.ContextVar("marker", default="unset")
+    executor = FreshContextExecutor(max_workers=1)
+    try:
+        assert executor.submit(marker.set, "job-1").result(timeout=5) is not None
+        assert executor.submit(marker.get).result(timeout=5) == "unset"
+    finally:
+        executor.shutdown(wait=True)

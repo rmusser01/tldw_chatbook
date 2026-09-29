@@ -391,6 +391,7 @@ class ThemePicker(Vertical):
         self.refresh_catalog(highlight=str(self.app.theme))
 
     def on_unmount(self) -> None:
+        """Drop the app-level ``theme_changed_signal`` subscription."""
         # TASK-33264: the app-level signal would otherwise pin this widget
         # (and through its parents the whole Settings screen).
         self.app.theme_changed_signal.unsubscribe(self)
