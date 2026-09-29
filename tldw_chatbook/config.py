@@ -4335,6 +4335,16 @@ Qianfan = ["ernie-5.1", "ernie-5.0", "ernie-5.0-thinking-latest", "ernie-4.5-tur
 Nous = []
 Venice = []
 Meta = []
+# Follow-up presets (TASK-33505..33509). Azure lists your DEPLOYMENT names
+# (add them as custom models); W&B fills via discovery. Cloudflare has no
+# models route, and OpenCode Zen / Command Code list models on several
+# protocols, so they ship seeded with their Chat Completions models (read
+# from each provider's model pages, 2026-09-29).
+Azure = []
+WandB = []
+Cloudflare = ["@cf/moonshotai/kimi-k2.6", "@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.3-flash", "@cf/deepseek-ai/deepseek-v4-pro-0813", "@cf/deepseek-ai/deepseek-v4-flash-0731", "@cf/openai/gpt-oss-120b", "@cf/qwen/qwen3.8-27b", "@cf/google/gemma-4-26b-a4b-it", "@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
+OpenCodeZen = ["qwen3.8-max", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "glm-5.3", "glm-5.3-flash", "glm-5.2", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "big-pickle", "mimo-v2.6-flash-free", "nemotron-3-ultra-free"]
+CommandCode = ["gpt-5.5", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash", "Qwen/Qwen3.7-Max", "Qwen/Qwen3.6-Plus", "moonshotai/Kimi-K3", "moonshotai/Kimi-K2.6", "zai-org/GLM-5.3", "zai-org/GLM-5.1", "MiniMaxAI/MiniMax-M3", "MiniMaxAI/MiniMax-M2.7", "stepfun/Step-3.5-Flash", "xiaomi/mimo-v2.5-pro", "google/gemini-3.5-flash"]
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4789,6 +4799,58 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     api_key_env_var = "META_API_KEY" # or "MODEL_API_KEY", the name Meta's SDKs read
     # api_key = "" # Less secure fallback - use env var instead
     api_base_url = "https://api.meta.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # Follow-up presets (TASK-33505..33509): same shape as above.
+    [api_settings.azure] # Matches key in [providers]
+    # Azure OpenAI v1 API. The resource host is per-account, so NO
+    # api_base_url ships: set yours (e.g. "https://my-resource.openai.azure.com");
+    # the /openai/v1 path is appended. Models are your deployment names.
+    api_key_env_var = "AZURE_OPENAI_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.wandb] # Matches key in [providers]
+    api_key_env_var = "WANDB_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.inference.wandb.ai/v1"
+    # project = "my-team/my-project" # optional: sent as the OpenAI-Project header
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.cloudflare] # Matches key in [providers]
+    # Workers AI REST API. The account id is part of the URL, so NO
+    # api_base_url ships: set
+    # "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1".
+    api_key_env_var = "CLOUDFLARE_API_TOKEN"
+    # api_key = "" # Less secure fallback - use env var instead
+    # gateway_id = "my-gateway" # optional: sent as the cf-aig-gateway-id header
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.opencode_zen] # Matches key in [providers]
+    api_key_env_var = "OPENCODE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://opencode.ai/zen/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.commandcode] # Matches key in [providers]
+    api_key_env_var = "COMMANDCODE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.commandcode.ai/provider/v1"
     timeout = 90
     retries = 3
     retry_delay = 5.0

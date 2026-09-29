@@ -95,6 +95,8 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         "Nous",
         "Venice",
         "Meta",
+        # TASK-33506 (the other four follow-up presets are seeded-only).
+        "WandB",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 29
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 30
     assert SELECTOR_MERGE_CAP == 50

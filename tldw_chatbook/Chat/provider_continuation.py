@@ -65,6 +65,12 @@ ContinuationProvider = Literal[
     "nous",
     "venice",
     "meta",
+    # TASK-33505..33509 follow-up presets.
+    "azure",
+    "wandb",
+    "cloudflare",
+    "opencode_zen",
+    "commandcode",
 ]
 ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
@@ -143,6 +149,11 @@ _PAIRINGS = frozenset(
         ("nous", "chat_completions"),
         ("venice", "chat_completions"),
         ("meta", "chat_completions"),
+        ("azure", "chat_completions"),
+        ("wandb", "chat_completions"),
+        ("cloudflare", "chat_completions"),
+        ("opencode_zen", "chat_completions"),
+        ("commandcode", "chat_completions"),
     }
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})

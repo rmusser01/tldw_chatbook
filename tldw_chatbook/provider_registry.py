@@ -106,6 +106,16 @@ class ProviderRecord:
             whose chat template switches thinking with one boolean
             ``chat_template_kwargs`` key, mapped to that key. A matching
             model sends ``{key: effort != "none"}`` instead of a refusal.
+        max_tokens_key: Payload key for ``max_tokens`` when the provider
+            requires another spelling (Azure's ``max_completion_tokens``);
+            ``None`` keeps ``max_tokens``.
+        stream_annotation_key: A top-level key (also in
+            ``response_allowances``) marking a provider annotation frame: a
+            stream event with no choices and no usage that carries it is
+            accepted and dropped (Azure's ``prompt_filter_results``).
+        config_headers: Optional request headers read from the preset's
+            ``api_settings`` table, as header name -> setting name; a header
+            is sent only when its setting is a non-empty single-line string.
         extra_body_fields: Preset-authored extra body fields merged last,
             each validated bounded.
         response_allowances: Tolerated extra top-level response/stream
@@ -184,6 +194,9 @@ class ProviderRecord:
     )
     reasoning_effort_key: str | None = None
     thinking_toggle_models: Mapping[str, str] = field(default_factory=dict)
+    max_tokens_key: str | None = None
+    stream_annotation_key: str | None = None
+    config_headers: Mapping[str, str] = field(default_factory=dict)
     extra_body_fields: Mapping[str, object] = field(default_factory=dict)
     # Tolerated extra response/stream keys, LEVEL-KEYED (ADR-179 Phase 2):
     # ``response_allowances`` keeps its Phase 1 meaning (top-level response
@@ -1203,6 +1216,214 @@ META = ProviderRecord(
     auth_scheme="bearer",
 )
 
+# --- Follow-up presets from the Hermes / oh-my-pi comparison (TASK-33505..33509) ---
+# Deferred from TASK-33351 because each needed a small engine capability:
+# a user-supplied host (Azure, Cloudflare -- the Databricks pattern), a
+# ``max_completion_tokens`` spelling and content-filter annotation frames
+# (Azure), or a config-sourced optional header (W&B, Cloudflare). Built from
+# public documentation (read 2026-09-29) plus unauthenticated probes, like
+# TASK-33201: every allowance is documented or captured in a public
+# fixture, anything else fails closed, and the first live capture
+# reconciles the sets (amend, never silent).
+#
+# Azure OpenAI (Foundry) v1 API -- learn.microsoft.com/azure/ai-foundry/
+# openai/api-version-lifecycle: POST {resource}/openai/v1/chat/completions
+# with no api-version; the documented REST key header is ``api-key``;
+# ``model`` is the DEPLOYMENT name, and the models route lists base models,
+# not deployments, so the list is user-seeded (discovery off). The resource
+# host is per-account: the user sets api_base_url and /openai/v1 is
+# appended. v1 deprecates ``max_tokens`` (o-series and gpt-5 reject it), so
+# ``max_completion_tokens`` is sent. Content filtering annotates replies:
+# top-level ``prompt_filter_results`` (a list; top-level allowances carry no
+# value rule), choice ``content_filter_results`` (sometimes the singular
+# ``content_filter_result``), message ``refusal`` and ``annotations: []``,
+# stream-chunk ``obfuscation``/``service_tier``, the trailing usage chunk's
+# ``latency_checkpoint``/``routing``, and a leading stream frame with no
+# choices and no usage that carries only ``prompt_filter_results``
+# (stream_annotation_key). A ``content_filter`` finish is a provider error.
+# NOT supported: Asynchronous Filter mode (opt-in per deployment; it sends
+# delta-less choices after the finish) and Entra ID bearer tokens.
+AZURE = ProviderRecord(
+    key="azure",
+    config_key="Azure",
+    display_name="Azure OpenAI",
+    classification=_CLOUD,
+    api_key_env_var="AZURE_OPENAI_API_KEY",
+    api_key_env_candidates=("AZURE_OPENAI_API_KEY",),
+    default_base_url=None,  # resource host is per-account; user-configured
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "AZURE_OPENAI_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix="/openai/v1",
+    finish_provider_errors=frozenset({"content_filter"}),
+    max_tokens_key="max_completion_tokens",
+    response_allowances=frozenset(
+        {"prompt_filter_results", "obfuscation", "service_tier", "latency_checkpoint", "routing"}
+    ),
+    choice_allowances=frozenset({"content_filter_results", "content_filter_result", "logprobs"}),
+    message_allowances=frozenset({"refusal", "annotations"}),
+    stream_annotation_key="prompt_filter_results",
+    stream_include_usage=True,
+    discovery_route=None,  # the models route lists base models, not deployments
+    reasoning_disposition="ignored",
+    auth_scheme="api_key_header",
+)
+# W&B Inference by CoreWeave -- docs.wandb.ai/inference/api-reference;
+# coreweave.com/products/serverless-inference is this API. Bearer W&B API
+# key (probe: 401 "Missing bearer authentication in header"). The optional
+# ``OpenAI-Project: <team>/<project>`` header picks the billing project
+# (unset: the key's default entity, project "inference"), sent from
+# ``[api_settings.wandb] project``. ``GET /v1/models`` is authenticated and
+# OpenAI-shaped. Function tools only. Reasoning arrives in message
+# ``reasoning`` (null for non-reasoning models); streamed usage is
+# undocumented, so it is requested and its absence tolerated.
+WANDB = ProviderRecord(
+    key="wandb",
+    config_key="WandB",
+    display_name="W&B Inference (CoreWeave)",
+    classification=_CLOUD,
+    api_key_env_var="WANDB_API_KEY",
+    api_key_env_candidates=("WANDB_API_KEY",),
+    default_base_url="https://api.inference.wandb.ai/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "WANDB_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    message_allowances=frozenset({"reasoning"}),
+    config_headers={"OpenAI-Project": "project"},
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+# Cloudflare Workers AI through the REST API -- developers.cloudflare.com/
+# ai-gateway/usage/rest-api, which Cloudflare recommends for new
+# integrations: POST https://api.cloudflare.com/client/v4/accounts/
+# {account_id}/ai/v1/chat/completions with a Cloudflare API token (Bearer;
+# needs Account > Workers AI > Read). The account id is part of the path, so
+# the user sets the full ``.../ai/v1`` base URL (no suffix: the URL already
+# has a path). There is no models route (GET answers 405), so Workers AI
+# ``@cf/...`` models are seeded. An optional ``cf-aig-gateway-id`` header
+# routes through a named AI Gateway, from ``[api_settings.cloudflare]
+# gateway_id``. Documented extras: message ``refusal``, choice ``logprobs``;
+# reasoning arrives as ``reasoning_content`` (private). Not used: the
+# gateway.ai.cloudflare.com compat endpoint, which takes two credential
+# headers (``cf-aig-authorization`` plus the upstream provider key).
+CLOUDFLARE = ProviderRecord(
+    key="cloudflare",
+    config_key="Cloudflare",
+    display_name="Cloudflare Workers AI",
+    classification=_CLOUD,
+    api_key_env_var="CLOUDFLARE_API_TOKEN",
+    api_key_env_candidates=("CLOUDFLARE_API_TOKEN",),
+    default_base_url=None,  # the account id is in the path; user-configured
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "CLOUDFLARE_API_TOKEN",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    choice_allowances=frozenset({"logprobs"}),
+    message_allowances=frozenset({"refusal"}),
+    config_headers={"cf-aig-gateway-id": "gateway_id"},
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    discovery_route=None,  # no models route (405)
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# OpenCode Zen -- opencode.ai/docs/zen: a pay-per-request gateway at
+# opencode.ai/zen/v1 with a Bearer key. Each model lives on ONE protocol and
+# Zen does not translate (anomalyco/opencode zen/util/handler.ts: "Zen
+# provider format must match request format"), so only its Chat Completions
+# models are seeded; the public /models list has no protocol field, so
+# discovery stays off. Same-protocol replies are the upstream's bytes plus a
+# top-level ``cost`` string on non-streaming replies; the streamed cost frame
+# arrives after [DONE] and is never read. Reasoning arrives as
+# ``reasoning_content`` and must be replayed on thinking tool turns
+# (proprietary). Upstream extras beyond these stay strict until a live
+# capture. OpenCode Go is NOT offered: a subscription "designed for OpenCode
+# and other coding agents" that requires a per-conversation
+# ``x-opencode-session`` header, which record data cannot express.
+OPENCODE_ZEN = ProviderRecord(
+    key="opencode_zen",
+    config_key="OpenCodeZen",
+    display_name="OpenCode Zen",
+    classification=_CLOUD,
+    api_key_env_var="OPENCODE_API_KEY",
+    api_key_env_candidates=("OPENCODE_API_KEY",),
+    default_base_url="https://opencode.ai/zen/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "OPENCODE_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    response_allowances=frozenset({"cost"}),
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    discovery_route=None,  # /models lists every protocol's models
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# Command Code Provider API -- commandcode.ai/docs/provider:
+# api.commandcode.ai/provider/v1 with a Bearer key (Provider plan, or GOAT/
+# Pro/Max/Team). "Every endpoint emits token usage at the end of every
+# stream... No opt-in required", so ``stream_options`` is not sent and usage
+# is required. Claude models are served only on /messages (400 here), so
+# only Chat Completions models are seeded; the public /models rows would
+# also list the Messages-only ones, so discovery stays off. The API follows
+# the OpenAI schema: message ``refusal`` and ``annotations`` (an empty list)
+# are tolerated; anything else stays strict until a live capture.
+COMMANDCODE = ProviderRecord(
+    key="commandcode",
+    config_key="CommandCode",
+    display_name="Command Code",
+    classification=_CLOUD,
+    api_key_env_var="COMMANDCODE_API_KEY",
+    api_key_env_candidates=("COMMANDCODE_API_KEY",),
+    default_base_url="https://api.commandcode.ai/provider/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "COMMANDCODE_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    message_allowances=frozenset({"refusal", "annotations"}),
+    discovery_route=None,  # /models would list Messages-only Claude rows
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+
 # --- Custom hosted family (ADR-179 Phase 2 Task 6) ---
 # The engine-driven execution surface for the ADR-146 custom-endpoint
 # ``openai_compatible`` family, swapped in at the Console gateway identity
@@ -1435,6 +1656,7 @@ ALL_RECORDS: tuple[ProviderRecord, ...] = (
     MIMO, TOKENHUB, BYTEPLUS, STEPFUN,
     VERCEL, ZENMUX, KILO, SILICONFLOW, BASETEN, GMI, OLLAMA_CLOUD,
     UPSTAGE, ARCEE, QIANFAN, NOUS, VENICE, META,
+    AZURE, WANDB, CLOUDFLARE, OPENCODE_ZEN, COMMANDCODE,
     LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )

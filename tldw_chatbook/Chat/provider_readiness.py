@@ -56,10 +56,13 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
         "anthropic",
         "arcee",
+        "azure",
         "baseten",
         "byteplus",
         "cerebras",
+        "cloudflare",
         "cohere",
+        "commandcode",
         "databricks",
         "deepinfra",
         "deepseek",
@@ -81,6 +84,7 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "nvidia",
         "ollama_cloud",
         "openai",
+        "opencode_zen",
         "openrouter",
         "qianfan",
         "qwencloud",
@@ -92,6 +96,7 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "upstage",
         "venice",
         "vercel",
+        "wandb",
         "zai",
         "zenmux",
     }
@@ -156,7 +161,29 @@ _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 #: mark them ready -- the send path (``LLM_Calls/hosted_provider_engine``)
 #: raises on a missing base URL -- so readiness blocks with copy naming the
 #: workspace URL until one of ``_BASE_URL_SETTING_KEYS`` is configured.
-PROVIDERS_REQUIRING_BASE_URL_KEYS = frozenset({"databricks"})
+PROVIDERS_REQUIRING_BASE_URL_KEYS = frozenset({"databricks", "azure", "cloudflare"})
+#: Blocking copy per :data:`PROVIDERS_REQUIRING_BASE_URL_KEYS` entry:
+#: (reason, what to set, example value, how the path is handled).
+_BASE_URL_RECOVERY = {
+    "databricks": (
+        "Missing workspace URL",
+        "workspace host",
+        "https://adb-1234567890123456.7.azuredatabricks.net",
+        "the /openai/v1 path is appended automatically.",
+    ),
+    "azure": (
+        "Missing resource URL",
+        "resource host",
+        "https://my-resource.openai.azure.com",
+        "the /openai/v1 path is appended automatically.",
+    ),
+    "cloudflare": (
+        "Missing account URL",
+        "account URL",
+        "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1",
+        "use your account id from the Cloudflare dashboard.",
+    ),
+}
 #: Setting aliases that satisfy :data:`PROVIDERS_REQUIRING_BASE_URL_KEYS`,
 #: in the same precedence order ``provider_setup_persistence`` persists
 #: endpoint keys (its ``_ENDPOINT_KEY_PRECEDENCE``).
@@ -196,6 +223,10 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     # half, so the structured issue is endpoint_missing, and the blocked
     # record still never retains the credential.
     "Missing workspace URL": ("incomplete", "endpoint_missing"),
+    # Same shape for Azure's resource host and Cloudflare's account URL
+    # (TASK-33505/33507).
+    "Missing resource URL": ("incomplete", "endpoint_missing"),
+    "Missing account URL": ("incomplete", "endpoint_missing"),
     "Invalid provider settings": ("incomplete", "invalid_settings"),
     "Unknown provider": ("incomplete", "invalid_settings"),
     ENDPOINT_NOT_FOUND_REASON: ("incomplete", "endpoint_missing"),
@@ -838,12 +869,13 @@ def get_provider_readiness(
             api_key=None,
             api_key_source=None,
             env_var=env_var,
-            reason="Missing workspace URL",
+            reason=_BASE_URL_RECOVERY[provider_key][0],
             recovery=(
-                f"Set api_base_url to your {provider_name} workspace host "
-                f"under [api_settings.{provider_key}] (for example "
-                "https://adb-1234567890123456.7.azuredatabricks.net); the "
-                "/openai/v1 path is appended automatically."
+                f"Set api_base_url to your {provider_name} "
+                f"{_BASE_URL_RECOVERY[provider_key][1]} under "
+                f"[api_settings.{provider_key}] (for example "
+                f"{_BASE_URL_RECOVERY[provider_key][2]}); "
+                f"{_BASE_URL_RECOVERY[provider_key][3]}"
             ),
         )
     if configured_key:

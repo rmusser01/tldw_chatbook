@@ -179,6 +179,9 @@ class HostedProviderResolution:
     seed: int | None = None
     stop: object = None
     response_format: object = None
+    # Headers from ``record.config_headers`` whose settings are set
+    # (TASK-33506/33507); empty for every other record.
+    extra_headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class HostedProviderSettings(BaseModel):
@@ -458,6 +461,7 @@ def resolve_hosted_request(
         if record.defaults_settings_section is not None
         else None
     )
+    extra_headers = _resolve_config_headers(record, settings)
     return HostedProviderResolution(
         provider=record.key,
         model=_resolve_string(
@@ -485,8 +489,44 @@ def resolve_hosted_request(
             settings=settings,
             default=_settings_default(defaults, "streaming", True),
         ),
+        extra_headers=extra_headers,
         **(section_sampling or {}),
     )
+
+
+def _resolve_config_headers(
+    record: ProviderRecord, settings: Mapping[str, object]
+) -> dict[str, str]:
+    """Resolve ``record.config_headers`` from the preset's settings table.
+
+    An unset or blank setting sends no header. A set one must be a
+    single-line string of at most 256 characters, since it goes on the wire.
+
+    Args:
+        record: Preset whose optional headers are resolved.
+        settings: The preset's ``api_settings`` table.
+
+    Returns:
+        Header name -> value for every configured header.
+
+    Raises:
+        ChatConfigurationError: When a set value is not a usable header value.
+    """
+    headers: dict[str, str] = {}
+    for header, setting in record.config_headers.items():
+        value = settings.get(setting)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        if (
+            not isinstance(value, str)
+            or len(value) > 256
+            or any(char in value for char in "\r\n\x00")
+        ):
+            raise _validators_for(record).configuration_error(
+                f"{record.display_name} api_settings.{record.key}.{setting} is invalid."
+            )
+        headers[header] = value.strip()
+    return headers
 
 
 def _validators_for(record: ProviderRecord) -> ProviderPayloadValidators:
@@ -971,7 +1011,9 @@ def build_hosted_chat_payload(
         payload["top_k"] = top_k
     if max_tokens is not None:
         _require_payload_flag(record, "max_tokens")
-        payload["max_tokens"] = validators.positive_integer("max_tokens", max_tokens)
+        payload[record.max_tokens_key or "max_tokens"] = validators.positive_integer(
+            "max_tokens", max_tokens
+        )
     if stop is not None:
         _require_payload_flag(record, "stop")
         payload["stop"] = validators.normalize_stop(stop)
@@ -2103,6 +2145,7 @@ def _send_hosted_chat_request(
                 retries=resolution.retries,
                 retry_delay=resolution.retry_delay,
                 auth_scheme=record.auth_scheme,
+                extra_headers=resolution.extra_headers,
             ),
             route="chat/completions",
             payload=payload,
@@ -2119,6 +2162,7 @@ def _send_hosted_chat_request(
                     tolerant_top_level_extras=record.tolerant_response_extras,
                     usage_optional=record.stream_usage_optional,
                     event_check=provider_event_check(record),
+                    annotation_key=record.stream_annotation_key,
                 ),
                 record=record,
                 resolution=resolution,
