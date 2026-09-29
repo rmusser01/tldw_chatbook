@@ -90,6 +90,8 @@ class AutomaticWakeAttempt:
     owner_id: str
     state: str
     run_ids: tuple[str, ...]
+    cause: str = "completion"
+    message_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

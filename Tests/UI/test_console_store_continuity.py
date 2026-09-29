@@ -40,6 +40,7 @@ from types import SimpleNamespace
 
 import pytest
 from loguru import logger
+from textual.widgets import Button
 
 from Tests.Chat.test_console_fleet_wake import _drain, _settle, _survivor
 from Tests.private_profile import private_profile_test
@@ -47,18 +48,15 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
-from textual.widgets import Button
-
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 SEEDED_USER = "first user message"
 SEEDED_REPLY = "assistant one"
@@ -93,6 +91,7 @@ class _StallingWakeGateway:
         self.release_stream = asyncio.Event()
 
     def cached_context_window(self, settings):
+        """Use the real gateway's offline metadata fallback for mounted UI."""
         from tldw_chatbook.Utils.token_counter import resolve_context_window
 
         return resolve_context_window(settings.provider, settings.model or "")
@@ -491,8 +490,9 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_wake_that_ran_while_console_was_unmounted_is_in_the_transcript(
-    tmp_path,
+    tmp_path, request: pytest.FixtureRequest,
 ):
     """P3b. Executed on unmodified production: the user saw 2 of 4 rows.
 

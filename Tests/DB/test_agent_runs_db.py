@@ -1365,7 +1365,7 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
         assert [tuple(row) for row in caps] == sorted(
             [(deleted_id, None), (disabled_id, None), (live_id, None)]
         )
-        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
+        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION
         capped_id = first.create_agent_definition(
             _defn(
                 name="migrated-capped",
@@ -1396,6 +1396,7 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
             "id": capped_id,
             "provider": "",
             "params": {},
+            "fallback_models": [],
             "name": "migrated-capped",
             "description": "Created after v18 migration.",
             "instructions": "Work within the migrated cap.",
@@ -1410,6 +1411,7 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
             "id": uncapped_id,
             "provider": "",
             "params": {},
+            "fallback_models": [],
             "name": "migrated-uncapped",
             "description": "Created after v18 migration without a cap.",
             "instructions": "Use inherited timing policy.",
@@ -1453,7 +1455,7 @@ def test_v18_upgrade_is_guarded_when_definition_cap_column_already_exists(tmp_pa
                 "SELECT MAX(version) FROM schema_version"
             ).fetchone()[0]
         assert columns.count("max_wall_seconds") == 1
-        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
+        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION
     finally:
         database.close()
 
@@ -1704,7 +1706,7 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert "spawn_event_id" in columns
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
     parent = first.create_run(conversation_id="c", agent_kind="primary")
     child = first.create_run(
         conversation_id="c",
@@ -1760,7 +1762,7 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
     assert "CHECK(transition_revision > 0)" in table_sql
     assert "CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL)" in table_sql
     assert "idx_console_activity_receipts_unseen" in indexes
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
     assert database.receipt_capability_available is True
 
 
@@ -1862,7 +1864,6 @@ def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
         assert (
             conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
             == AgentRunsDB._CURRENT_SCHEMA_VERSION
-            == 21
         )
         assert (
             conn.execute("SELECT 1 FROM schema_version WHERE version = 15").fetchone()
@@ -2255,7 +2256,7 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
                     conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[
                         0
                     ]
-                    == 21
+                    == AgentRunsDB._CURRENT_SCHEMA_VERSION
                 )
                 assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         finally:

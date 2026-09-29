@@ -7,6 +7,7 @@ deliberately excluded: child runs keep the run loop's streaming policy.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, overload
 
@@ -323,3 +324,47 @@ def bool_setting_from_sources(
             if normalized in {"false", "0"}:
                 return False
     return default
+
+
+_INT_LITERAL = re.compile(r"[+-]?\d+")
+
+
+def parse_params_text(text: str) -> tuple[dict[str, object], list[str]]:
+    """Parse a ``key = value``-per-line sampling-params draft.
+
+    Numeric literals become ``int``/``float``; anything else stays a string.
+    Non-finite float literals (``inf``/``nan``) stay strings so validation
+    rejects them as non-numbers rather than smuggling an un-JSON-able float
+    into the DB or the config file.
+
+    Args:
+        text: The raw TextArea draft.
+
+    Returns:
+        ``(params, errors)``: the parsed mapping (insertion-ordered by line)
+        and grammar errors only — validate the mapping itself with
+        ``validate_sampling_params``. Empty ``errors`` means every non-blank
+        line parsed.
+    """
+    params: dict[str, object] = {}
+    errors: list[str] = []
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        key, sep, raw_value = line.partition("=")
+        key = key.strip()
+        value = raw_value.strip()
+        if not sep or not key:
+            errors.append(f"params line {lineno}: expected 'key = value'")
+            continue
+        if _INT_LITERAL.fullmatch(value):
+            params[key] = int(value)
+            continue
+        try:
+            number = float(value)
+        except ValueError:
+            params[key] = value
+        else:
+            params[key] = number if math.isfinite(number) else value
+    return params, errors

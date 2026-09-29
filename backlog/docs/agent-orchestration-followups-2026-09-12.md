@@ -1,6 +1,31 @@
 # Agent orchestration remaining work — 2026-09-12
 
-## Current completion status
+## September 29 authorized burn-down — complete
+
+The user subsequently authorized all remaining routing/progress follow-ups and
+three formerly optional communication extensions. The historical September 12
+completion below describes that earlier scope. Its optional-design language does
+not defer the newly authorized tasks.
+
+| Work | Tasks | Current disposition |
+| --- | --- | --- |
+| Selected endpoint identity and provider sampling | TASK-32929, TASK-33001.9 | Done; targeted checks and independent review passed. |
+| Progress timer, refusal diagnostics and shared parser | TASK-32517, TASK-32639, TASK-32499 | Done; mounted/routing checks and independent review passed. |
+| Truthful child targets and explicit pre-tool fallback | TASK-32497, TASK-32508 | Done; all three independent review findings corrected and re-reviewed with 50 passing checks. |
+| Historical task closeouts and guide guard | TASK-22061, TASK-32477, TASK-32520 | Done; actual navigation-away behavior qualified and historical statuses reconciled. |
+| Scoped sibling messaging | TASK-33430 | Done; exact ownership, bounded delivery, privacy checks and independent review passed. |
+| Durable saved-chat progress | TASK-33431 | Done; atomic persistence, responsive lifecycle and all four new SQL worker cache entries pass targeted checks and independent physical-drain review. |
+| Progress-triggered supervisor wakes | TASK-33432 | Done; final source-scope, Canvas and mixed scheduling corrections passed 72 affected checks and independent re-review. |
+
+Contracts: [ADR-199](../decisions/199-scoped-peers-durable-progress-and-wakes.md)
+and [ADR-200](../decisions/200-preset-pre-tool-fallback-targets.md).
+The [implementation plan](../../Docs/superpowers/plans/2026-09-29-agent-orchestration-burndown.md)
+tracks this scope. All 13 tasks are Done with checked acceptance criteria and implementation
+notes. The [final review and qualification record](../../Docs/superpowers/reviews/2026-09-29-agent-orchestration-burndown.md)
+records the corrections, independent approvals, passing targeted selections and disclosed limits.
+Latest-dev integration and draft PR publication follow local completion; no merge is claimed.
+
+## September 12 completion status (historical)
 
 PR #2641 merged the earlier five reliability/verification follow-ups at
 `d66908a69ef03066fed77a92edf77a326f44bd89`. The remaining approved work is now

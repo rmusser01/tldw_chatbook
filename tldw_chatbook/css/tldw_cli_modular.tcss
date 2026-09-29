@@ -11110,7 +11110,8 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 }
 
 
-#agents-instructions-area {
+#agents-instructions-area,
+#agents-fallback-models-area {
     height: $ds-size-5;
     min-height: $ds-size-3;
 }

@@ -13,8 +13,6 @@ persist through the atomic config writer; presets persist through the DB.
 
 from __future__ import annotations
 
-import math
-import re
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -60,6 +58,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.sampling_params import (
+    parse_params_text,
     params_to_tuple,
     validate_sampling_params,
 )
@@ -73,50 +72,6 @@ ENABLED_DEFINITIONS_SOFT_CAP = 20
 
 #: Prompt shown by the routing provider Selects for the empty (inherit) value.
 INHERIT_PARENT_PROMPT = "(inherit parent)"
-
-_INT_LITERAL = re.compile(r"[+-]?\d+")
-
-
-def parse_params_text(text: str) -> tuple[dict[str, object], list[str]]:
-    """Parse a ``key = value``-per-line sampling-params draft.
-
-    Numeric literals become ``int``/``float``; anything else stays a string.
-    Non-finite float literals (``inf``/``nan``) stay strings so validation
-    rejects them as non-numbers rather than smuggling an un-JSON-able float
-    into the DB or the config file.
-
-    Args:
-        text: The raw TextArea draft.
-
-    Returns:
-        ``(params, errors)``: the parsed mapping (insertion-ordered by line)
-        and grammar errors only — validate the mapping itself with
-        ``validate_sampling_params``. Empty ``errors`` means every non-blank
-        line parsed.
-    """
-    params: dict[str, object] = {}
-    errors: list[str] = []
-    for lineno, raw_line in enumerate(text.splitlines(), start=1):
-        line = raw_line.strip()
-        if not line:
-            continue
-        key, sep, raw_value = line.partition("=")
-        key = key.strip()
-        value = raw_value.strip()
-        if not sep or not key:
-            errors.append(f"params line {lineno}: expected 'key = value'")
-            continue
-        if _INT_LITERAL.fullmatch(value):
-            params[key] = int(value)
-            continue
-        try:
-            number = float(value)
-        except ValueError:
-            params[key] = value
-        else:
-            params[key] = number if math.isfinite(number) else value
-    return params, errors
-
 
 def _parse_requested_tools(raw: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Split ordered tool names into stored and runtime-only selections."""
@@ -245,6 +200,12 @@ class AgentsSettingsPanel(Vertical):
                 classes="settings-input-label",
             )
             yield TextArea(id="agents-params-area")
+            yield Static(
+                "Fallback models (one provider/model per line, at most 8; empty = off). "
+                "Used only before any proposed tool activity; continued children keep their active target.",
+                classes="settings-input-label",
+            )
+            yield TextArea(id="agents-fallback-models-area")
             with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Child time cap (seconds)", classes="settings-input-label")
                 yield Input(
@@ -420,6 +381,8 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-params-area", TextArea).text = "\n".join(
             f"{key} = {value}" for key, value in definition_from_row(row).params
         )
+        self.query_one("#agents-fallback-models-area", TextArea).text = "\n".join(
+            f"{provider}/{model}" for provider, model in definition_from_row(row).fallback_models)
         wall_seconds = row.get("max_wall_seconds")
         self.query_one("#agents-wall-seconds-input", Input).value = (
             "" if wall_seconds is None else str(wall_seconds)
@@ -454,6 +417,7 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-model-input", Input).value = ""
         self.query_one("#agents-provider-select", Select).value = Select.NULL
         self.query_one("#agents-params-area", TextArea).text = ""
+        self.query_one("#agents-fallback-models-area", TextArea).text = ""
         self.query_one("#agents-wall-seconds-input", Input).value = ""
         self.query_one("#agents-tools-input", Input).value = ""
         self.query_one("#agents-enabled-switch", Switch).value = True
@@ -474,6 +438,8 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-params-area", TextArea).text = "\n".join(
             f"{key} = {value}" for key, value in preset.params
         )
+        self.query_one("#agents-fallback-models-area", TextArea).text = "\n".join(
+            f"{provider}/{model}" for provider, model in preset.fallback_models)
         self.query_one("#agents-wall-seconds-input", Input).value = ""
         tools_input = self.query_one("#agents-tools-input", Input)
         tools_input.value = ", ".join(preset.tool_allowlist)
@@ -521,6 +487,8 @@ class AgentsSettingsPanel(Vertical):
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
             provider=("" if provider_value is Select.NULL else str(provider_value)),
             params=params_to_tuple(params),
+            fallback_models=tuple(tuple(line.strip().split("/", 1))
+                for line in self.query_one("#agents-fallback-models-area", TextArea).text.splitlines() if line.strip()),
             max_wall_seconds=max_wall_seconds,
         )
 
@@ -691,8 +659,8 @@ class AgentsSettingsPanel(Vertical):
             )
         except RoutingError as exc:
             if exc.level == "inherit":
-                return f"{label} -> inherit parent's endpoint at spawn"
-            return f"{label} -> [{exc.code}] {exc}"
+                return f"{label} -> (inherit) parent's endpoint is resolved at spawn"
+            return f"{label} -> [{exc.code}] ({exc.level}) {exc}"
         return f"{label} -> {target.provider} / {target.model} — ready"
 
     async def _delete(self) -> None:

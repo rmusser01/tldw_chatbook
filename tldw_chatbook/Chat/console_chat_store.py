@@ -2924,6 +2924,7 @@ class ConsoleChatStore:
         activate: bool = True,
         prepared_data: ConsoleConversationHydrationData | None = None,
         initial_project_instruction_state: ProjectInstructionControlState | None = None,
+        prepare_progress: bool = True,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -3176,6 +3177,13 @@ class ConsoleChatStore:
                 )
             self._seed_console_settings_owned_bases(session)
             self._bump_payload_revision(session.id)
+            from tldw_chatbook.Agents.fleet_messages import MessageError
+
+            if prepare_progress:
+                try:
+                    self.prepare_progress_inbox(session.id)
+                except MessageError:
+                    pass  # Saved capacity/load refusal must not roll back the chat.
             return session
         except BaseException:
             self.rollback_restored_session(
@@ -5249,6 +5257,7 @@ class ConsoleChatStore:
         *,
         release: bool = False,
         message_store: MessageStore | None = None,
+        defer_close: bool = False,
     ) -> Iterator[str | None]:
         """Fence inbox binding against native release; never do external work here.
 
@@ -5273,16 +5282,194 @@ class ConsoleChatStore:
                 ):
                     owner_id = None
                 if owner_id is not None and self._progress_message_store is not None:
-                    self._progress_message_store.close_inbox(owner_id)
+                    inbox = self._progress_message_store.begin_close_inbox(owner_id)
+                    if not defer_close:
+                        try:
+                            # Rollback and direct native release use the existing
+                            # finite Chat worker; no UI/identity waiter owns SQL.
+                            self._stream_persistence_executor.submit(
+                                self._progress_message_store.finish_close_inbox,
+                                owner_id,
+                                inbox,
+                            )
+                        except RuntimeError:
+                            # Runtime teardown already owns whole-store cleanup.
+                            pass
             yield owner_id
 
-    def register_progress_message_store(self, message_store: MessageStore) -> None:
-        """Bind one runtime; replacement invalidates only the previous runtime."""
+    def register_progress_message_store(
+        self, message_store: MessageStore, *, publish_hints: bool = True
+    ) -> None:
+        """Bind one runtime; saved queues may defer without blocking other owners."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
         with self._progress_identity_lock:
             previous = self._progress_message_store
             if previous is not None and previous is not message_store:
-                previous.close()
+                previous.begin_close()
             self._progress_message_store = message_store
+            session_ids = tuple(self._sessions)
+        if previous is not None and previous is not message_store:
+            # Drain admitted SQL before reloading its committed rows; native
+            # identity and UI metadata reads remain available during the wait.
+            previous.close()
+        for session_id in session_ids:
+            try:
+                self.prepare_progress_inbox(
+                    session_id, message_store=message_store, publish_hints=publish_hints
+                )
+            except MessageError:
+                # Saved rows remain authoritative; authorized entry retries later.
+                continue
+
+
+    def prepare_progress_inbox(
+        self,
+        session_id: str,
+        *,
+        message_store: MessageStore | None = None,
+        publish_hints: bool = True,
+        create_temporary: bool = False,
+        expected_owner_id: str | None = None,
+    ) -> str | None:
+        """Load bounded saved data outside identity locks, then bind its exact owner."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        with self._progress_identity_lock:
+            current_store = self._progress_message_store
+            if current_store is None or (
+                message_store is not None and current_store is not message_store
+            ):
+                return None
+            session = self._sessions.get(session_id)
+            owner_id = session._progress_owner_id if session is not None else None
+            if owner_id is None or (
+                expected_owner_id is not None and owner_id != expected_owner_id
+            ):
+                return None
+            conversation_id = session.persisted_conversation_id
+        if conversation_id is None and not create_temporary:
+            # Temporary/toolless sessions stay noncreating until a fleet needs one.
+            return owner_id
+        inbox = current_store.get_inbox(owner_id)
+        if inbox is None or inbox.saved_conversation_id != conversation_id:
+            repository = None
+            messages = ()
+            database = getattr(self.persistence, "db", None)
+            if database is not None and conversation_id is not None:
+                from tldw_chatbook.DB.fleet_progress_repository import (
+                    FleetProgressRepository,
+                )
+
+                repository = FleetProgressRepository(database)
+                messages = repository.load(conversation_id)
+            while True:
+                with self._progress_identity_lock:
+                    if (
+                        self._progress_message_store is not current_store
+                        or self._sessions.get(session_id) is not session
+                        or session._progress_owner_id != owner_id
+                        or session.persisted_conversation_id != conversation_id
+                    ):
+                        return None
+                    inbox = None
+                    try:
+                        inbox = current_store.open_inbox(
+                            owner_id,
+                            repository=repository,
+                            saved_conversation_id=conversation_id,
+                            messages=messages,
+                            blocking=False,
+                        )
+                    except MessageError as error:
+                        if error.code != "queue_full" or current_store.defer_inbox(
+                            owner_id, len(messages), blocking=False
+                        ):
+                            raise
+                if inbox is not None:
+                    break
+                # Never retain native identity through another queue's SQL.
+                # The loop rechecks exact session/store/owner after the wait.
+                current_store.wait_for_writer()
+        if publish_hints:
+            self.publish_progress_inbox_hints(session_id, message_store=current_store)
+        return owner_id
+
+
+    async def prepare_progress_inbox_owned(self, session_id: str) -> str | None:
+        """Keep one exact owner's physical preparation off-loop through cancellation."""
+        with self.progress_owner_scope(session_id) as owner_id:
+            message_store = self._progress_message_store
+        if owner_id is None or message_store is None:
+            return None
+        database = getattr(self.persistence, "db", None)
+        if getattr(database, "is_memory_db", False):
+            # SQLite memory databases are connection-local and have no external writer.
+            return self.prepare_progress_inbox(
+                session_id, message_store=message_store, expected_owner_id=owner_id
+            )
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        try:
+            # The existing finite Chat worker owns the physical receipt;
+            # asyncio teardown can cancel observers without cancelling SQL.
+            physical = self._stream_persistence_executor.submit(
+                run_finite_local_worker,
+                self.prepare_progress_inbox,
+                session_id,
+                message_store=message_store,
+                expected_owner_id=owner_id,
+            )
+        except RuntimeError:
+            raise MessageError("unavailable") from None
+        observed = asyncio.wrap_future(physical)
+        cancelled = False
+        while True:
+            try:
+                result = await asyncio.shield(observed)
+                break
+            except asyncio.CancelledError:
+                if physical.done():
+                    raise  # Terminal cancellation has no unfinished leaf to own.
+                cancelled = True
+                if observed.cancelled():
+                    observed = asyncio.wrap_future(physical)
+            except Exception:
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    def publish_progress_inbox_hints(
+        self, session_id: str, *, message_store: MessageStore
+    ) -> None:
+        """Publish cached metadata after initialization and ownership locks exit."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        with self.progress_owner_scope(session_id, message_store=message_store) as owner_id:
+            inbox = message_store.get_inbox(owner_id) if owner_id is not None else None
+        if inbox is None:
+            return
+        try:
+            metadata = inbox.pending_metadata()
+        except MessageError:
+            return
+        callback = message_store.on_enqueue
+        if callback is not None:
+            for message_id, identity in metadata:
+                with self.progress_owner_scope(
+                    session_id, message_store=message_store
+                ) as current_owner:
+                    if current_owner != owner_id:
+                        return
+                # A hint is never authority; the consumer rechecks before admission.
+                try:
+                    callback(owner_id, message_id, identity)
+                except Exception:  # noqa: BLE001, S112 - hints cannot affect authoritative data
+                    continue
 
     def progress_owner_id(self, session_id: str) -> str | None:
         """Read a live native progress identity without allocating an inbox."""
@@ -10660,6 +10847,13 @@ class ConsoleChatStore:
             )
             self._bump_payload_revision(session.id)
 
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        for restored_session_id in self._sessions:
+            try:
+                self.prepare_progress_inbox(restored_session_id)
+            except MessageError:
+                continue
         for replaced_session_id in replaced_binding_revisions:
             self._cleanup_console_settings_lifecycle_if_idle(replaced_session_id)
 
@@ -18831,7 +19025,19 @@ class ConsoleChatStore:
             self.retry_pending_workspace_projection(session_id)
             return None
         canvas_contribution: CanvasPromotionContribution | None = None
+        progress_inbox = None
+        progress_contribution = None
         try:
+            with self.progress_owner_scope(session_id) as progress_owner_id:
+                if (
+                    self._progress_message_store is not None
+                    and progress_owner_id is not None
+                ):
+                    progress_inbox = self._progress_message_store.get_inbox(
+                        progress_owner_id
+                    )
+            if progress_inbox is not None:
+                progress_contribution = progress_inbox.prepare_promotion()
             activity_contribution = (
                 self._library_activity_buffer.promotion_contribution(session_id)
             )
@@ -18853,6 +19059,11 @@ class ConsoleChatStore:
                     *combined_contributions,
                     activity_contribution,
                 )
+            if progress_contribution is not None:
+                combined_contributions = (
+                    *combined_contributions,
+                    progress_contribution,
+                )
             return self._promote_ephemeral_session_atomically(
                 session,
                 reservation=reservation,
@@ -18863,6 +19074,21 @@ class ConsoleChatStore:
             )
         finally:
             try:
+                if progress_contribution is not None:
+                    repository = None
+                    if reservation.committed:
+                        from tldw_chatbook.DB.fleet_progress_repository import (
+                            FleetProgressRepository,
+                        )
+
+                        repository = FleetProgressRepository(self.persistence.db)
+                    progress_inbox.settle_promotion(
+                        progress_contribution,
+                        repository=repository,
+                        saved_conversation_id=session.persisted_conversation_id,
+                    )
+                    if reservation.committed:
+                        self.prepare_progress_inbox(session_id)
                 self._settle_canvas_promotion_contribution(
                     reservation,
                     canvas_contribution,

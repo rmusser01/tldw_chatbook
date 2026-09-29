@@ -346,6 +346,7 @@ def _message_shape(store, session_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("preload", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_production_hydration_restores_before_first_cursor(
     tmp_path, preload
 ) -> None:
@@ -456,6 +457,7 @@ def test_the_screen_tree_walk_still_flattens_every_branch(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
     """The equivalence pin: both callers, one fixture, identical sessions.
 
@@ -543,6 +545,7 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_production_hydration_never_activates_placeholder_authority(
     tmp_path, monkeypatch
 ):
@@ -580,6 +583,7 @@ async def test_production_hydration_never_activates_placeholder_authority(
     "failure_boundary",
     ("hydrate_session_library_policy", "reconcile_pending_workspace_projection"),
 )
+@pytest.mark.bootstrap_profile
 async def test_hydration_rollback_is_atomic_across_policy_boundaries(
     failure_boundary,
     monkeypatch,
@@ -629,6 +633,7 @@ async def test_hydration_rollback_is_atomic_across_policy_boundaries(
     "failure_boundary",
     ("hydrate_session_library_policy", "reconcile_pending_workspace_projection"),
 )
+@pytest.mark.bootstrap_profile
 async def test_hydration_cancellation_rolls_back_then_propagates(
     failure_boundary,
     monkeypatch,
@@ -674,6 +679,7 @@ async def test_hydration_cancellation_rolls_back_then_propagates(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hydration_restores_v2_local_character_snapshot_for_future_projections(
     tmp_path,
 ):
@@ -725,6 +731,7 @@ async def test_hydration_restores_v2_local_character_snapshot_for_future_project
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hydration_keeps_v1_roleplay_without_unsaved_character_identity(tmp_path):
     """Legacy templates survive, but v1 never guesses a current card name."""
     app = _fixture_app(tmp_path)
@@ -771,6 +778,7 @@ async def test_hydration_keeps_v1_roleplay_without_unsaved_character_identity(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hydration_keeps_generic_sessions_without_character_identity(tmp_path):
     """A snapshot never grants a generic conversation character authority."""
     app = _fixture_app(tmp_path)
@@ -813,6 +821,7 @@ async def test_hydration_keeps_generic_sessions_without_character_identity(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_canonical_hydration_makes_persisted_generic_console_forkable(tmp_path):
     """Resume the ordinary saved Console identity as one unscoped identity."""
     app = _fixture_app(tmp_path)
@@ -869,6 +878,7 @@ async def test_canonical_hydration_makes_persisted_generic_console_forkable(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_canonical_settings_apply_refreshes_the_durable_resume_snapshot(tmp_path):
     app = _fixture_app(tmp_path)
     service = ChatPersistenceService(app.chachanotes_db)
@@ -949,6 +959,7 @@ async def test_canonical_settings_apply_refreshes_the_durable_resume_snapshot(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_first_persist_and_canonical_hydration_round_trip_persona_memory_mode(
     tmp_path,
 ):

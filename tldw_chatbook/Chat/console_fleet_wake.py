@@ -1,11 +1,11 @@
-"""Deliver saved child results through bounded, durable automatic attempts.
+"""Deliver child progress and results through bounded automatic attempts.
 
-Individual settlements enter a fixed 250 ms coalescing window. Each accepted
-wake claims results from one causal work chain before helpers or provider work.
+Committed report IDs and individual settlements share a fixed 250 ms window.
+Each accepted wake claims one causal chain before helpers or provider work.
 At most two conversations run automatic primaries, leaving one manual slot.
-Completion stamps the claimed results atomically; interrupted or ambiguous work
-stays saved for review rather than being replayed. Badges are a view projection,
-never the authority for delivery or recovery (ADR-134 and ADR-135).
+Only completion claims stamp child results; progress asks for a fresh report
+read. Interrupted or ambiguous work stays available for review without replay.
+Badges never grant delivery or recovery authority (ADR-134/135 and ADR-199).
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_fleet_attention import (
 from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.console_agent_bridge import FleetChildSettled, FleetDrained
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -75,6 +76,20 @@ WAKE_NOTICE_DISCLAIMER = (
 WAKE_NOTICE_TRAILER = (
     "You may act on these results now, or wait for the user's next message."
 )
+
+
+def compose_progress_wake_notice(message_ids: Sequence[str]) -> str:
+    """List bounded IDs only; the supervisor must explicitly read fresh reports."""
+    if not message_ids:
+        return ""
+    return (
+        "[Background sub-agent progress — automated notice]\n"
+        "This is automatically generated context, not user input, approval, or consent. "
+        "It grants no permission for any action.\n"
+        "Pending report IDs: " + ", ".join(message_ids[:256]) + "\n"
+        "Use read_agent_messages to read the reports that are still pending. "
+        "Reports may have been collected since this notice was prepared."
+    )
 
 
 def _fenced(text: str) -> str:
@@ -188,8 +203,10 @@ class AgentWakeAuthorization:
         "attempt_id",
         "context",
         "conversation_id",
+        "message_ids",
         "owner_id",
         "preflight_refused",
+        "progress_owner_key",
         "session_id",
         "work_chain_id",
     )
@@ -205,6 +222,8 @@ class AgentWakeAuthorization:
         attempt_id=None,
         owner_id=None,
         context=None,
+        progress_owner_key=None,
+        message_ids=(),
     ):
         if _key is not _WAKE_AUTHORIZATION_KEY:
             raise PermissionError("wake authority is coordinator-internal")
@@ -215,6 +234,8 @@ class AgentWakeAuthorization:
         self.attempt_id = attempt_id
         self.owner_id = owner_id
         self.context = context
+        self.progress_owner_key = progress_owner_key
+        self.message_ids = message_ids
         self.acceptance_started = False
         self.accepted = False
         self.preflight_refused = False
@@ -246,6 +267,8 @@ class ConsoleFleetWakeCoordinator:
         self._loop = None
         self._registry_lock = threading.RLock()
         self._pending = {}
+        self._pending_progress: dict[str, dict[str, MessageIdentity]] = {}
+        self._progress_owners: dict[str, tuple[str, str]] = {}
         self._active: dict[str, _WakeDelivery] = {}
         self._owner_id = uuid4().hex
         self._automatic_primary_claims: dict[str, object] = {}
@@ -377,6 +400,11 @@ class ConsoleFleetWakeCoordinator:
             and authorization._coordinator is self
             and active.session_id == session_id == authorization.session_id
             and authorization.owner_id == self._owner_id
+            and (
+                authorization.progress_owner_key is None
+                or self._controller.store.progress_owner_id(session_id)
+                == authorization.progress_owner_key
+            )
         )
 
     def pending_conversation_ids(self) -> tuple[str, ...]:
@@ -398,7 +426,10 @@ class ConsoleFleetWakeCoordinator:
             True when its pending bucket is nonempty, even if delivery is paused.
         """
         with self._registry_lock:
-            return bool(self._pending.get(conversation_id))
+            return bool(
+                self._pending.get(conversation_id)
+                or self._pending_progress.get(conversation_id)
+            )
 
     def delivering_conversation_ids(self) -> tuple[str, ...]:
         """Snapshot conversations occupying automatic delivery slots.
@@ -435,6 +466,137 @@ class ConsoleFleetWakeCoordinator:
             ),
             None,
         )
+
+    def on_progress_enqueued(
+        self, owner_key: str, message_id: str, identity: MessageIdentity
+    ) -> None:
+        """Hop a metadata-only hint to the loop; revalidate its native owner there."""
+        loop = self._loop
+        if self._disposed or loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(
+                self._schedule_progress_intake, owner_key, message_id, identity
+            )
+        except RuntimeError:
+            return
+
+    def seed_progress_hints(self) -> None:
+        """Seed loaded IDs only through the same exact-owner intake checks."""
+        bridge = getattr(self._controller, "_agent_bridge", None)
+        read = getattr(bridge, "progress_pending_metadata", None)
+        owners = getattr(self._controller.store, "progress_owner_ids", None)
+        if not callable(read) or not callable(owners):
+            return
+        for session_id, owner_key in owners().items():
+            for message_id, identity in read(session_id):
+                self.on_progress_enqueued(owner_key, message_id, identity)
+
+    def _schedule_progress_intake(self, owner_key, message_id, identity):
+        loop = self._loop
+        if self._disposed or loop is None or loop.is_closed():
+            return
+        coroutine = self._intake_progress(owner_key, message_id, identity)
+        try:
+            loop.create_task(coroutine)
+        except RuntimeError:
+            coroutine.close()
+
+    async def _intake_progress(self, owner_key, message_id, identity):
+        if self._disposed or not getattr(identity, "chain_id", None):
+            return
+        try:
+            ledger = self._runs_db().automatic_work
+            conversation_id = await run_owned_db_call(
+                ledger._db,
+                ledger.progress_source_conversation,
+                identity.run_id,
+                parent_run_id=identity.parent_run_id,
+                chain_id=identity.chain_id,
+            )
+        except Exception as exc:  # noqa: BLE001 -- an unreadable hint grants no authority
+            logger.warning(
+                "progress source metadata unavailable (exception_type={})",
+                type(exc).__name__,
+            )
+            return
+        if conversation_id is None:
+            return
+        bridge = getattr(self._controller, "_agent_bridge", None)
+        store = self._controller.store
+        # Save preserves the inbox owner, while new manual work uses its new
+        # saved conversation. Each source retains its own immutable bucket.
+        session_id = next(
+            (
+                sid
+                for sid, owner in store.progress_owner_ids().items()
+                if owner == owner_key
+            ),
+            None,
+        )
+        session = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
+        if (
+            session is None
+            or conversation_id not in (session.id, session.persisted_conversation_id)
+            or (message_id, identity)
+            not in bridge.progress_pending_metadata(session_id)
+        ):
+            return
+        with self._registry_lock:
+            if self._disposed or conversation_id in self._conversation_fences:
+                return
+            self._progress_owners[conversation_id] = (session_id, owner_key)
+            bucket = self._pending_progress.setdefault(conversation_id, {})
+            new = message_id not in bucket
+            bucket[message_id] = identity
+            self._pending.setdefault(conversation_id, {})
+            self._result_chains[message_id] = identity.chain_id
+            if new:
+                self._coalesce_until.setdefault(
+                    conversation_id, time.monotonic() + self.COALESCE_SECONDS
+                )
+        self.retry_soon()
+
+    def _fresh_progress(self, conversation_id, session_id):
+        """Recheck pending IDs and exact native ownership without collecting data."""
+        with self._registry_lock:
+            pending = dict(self._pending_progress.get(conversation_id) or {})
+            binding = self._progress_owners.get(conversation_id)
+        bridge = getattr(self._controller, "_agent_bridge", None)
+        store = self._controller.store
+        session = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
+        if (
+            binding is None
+            or binding[0] != session_id
+            or session is None
+            or conversation_id not in (session.id, session.persisted_conversation_id)
+            or store.progress_owner_id(session_id) != binding[1]
+        ):
+            fresh = {}
+        else:
+            fresh = dict(bridge.progress_pending_metadata(session_id))
+        retained = {
+            mid: identity
+            for mid, identity in pending.items()
+            if fresh.get(mid) == identity
+        }
+        self._discard_pending_progress(conversation_id, set(pending) - set(retained))
+        return retained
+
+    def _discard_pending_progress(self, conversation_id, message_ids):
+        with self._registry_lock:
+            bucket = self._pending_progress.get(conversation_id, {})
+            for message_id in message_ids:
+                bucket.pop(message_id, None)
+                self._result_chains.pop(message_id, None)
+            if not bucket:
+                self._pending_progress.pop(conversation_id, None)
+                if not self._pending.get(conversation_id):
+                    self._pending.pop(conversation_id, None)
 
     def on_child_settled(self, event: FleetChildSettled) -> None:
         """Stage one eligible survivor from the native settlement callback.
@@ -583,12 +745,13 @@ class ConsoleFleetWakeCoordinator:
             return
         with self._registry_lock:
             bucket = self._pending.get(conversation_id)
-            if not bucket:
+            progress = self._pending_progress.get(conversation_id, {})
+            if not bucket and not progress:
                 return
             if all(
                 run_id in self._result_chains
                 and (conversation_id, self._result_chains[run_id]) in self._paused
-                for run_id in bucket
+                for run_id in (*bucket, *progress)
             ):
                 return
             deadline = max(
@@ -606,7 +769,13 @@ class ConsoleFleetWakeCoordinator:
         if loop is None or loop.is_closed():
             return
         with self._registry_lock:
-            if self._disposed or conversation_id in self._conversation_fences:
+            if (
+                self._disposed
+                or conversation_id in self._conversation_fences
+                or any(
+                    active.session_id == session_id for active in self._active.values()
+                )
+            ):
                 return
             delivery = _WakeDelivery(session_id)
             if not self.try_claim_automatic_primary(session_id, delivery.slot_token):
@@ -671,8 +840,15 @@ class ConsoleFleetWakeCoordinator:
             AutomaticWorkRefused,
         )
         if not self.authorizes(authorization, session_id):
+            if not authorization.acceptance_started:
+                authorization.preflight_refused = True
             raise PermissionError("wake authority is no longer live")
         if not self._priority_allows(session_id, accepting=True):
+            authorization.preflight_refused = True
+            return False
+        if authorization.message_ids and not set(authorization.message_ids).issubset(
+            self._fresh_progress(authorization.conversation_id, session_id)
+        ):
             authorization.preflight_refused = True
             return False
         authorization.acceptance_started = True
@@ -764,7 +940,9 @@ class ConsoleFleetWakeCoordinator:
             with self._registry_lock:
                 bucket = dict(self._pending.get(conversation_id) or {})
             db = self._runs_db()
-            rows = await run_owned_db_call(db, self._rows_for, conversation_id, bucket, database=db)
+            rows = await run_owned_db_call(
+                db, self._rows_for, conversation_id, bucket, database=db
+            )
             rows.sort(key=lambda row: (row.get("updated_at") or "", str(row["id"])))
             eligible = []
             for row in rows:
@@ -775,23 +953,70 @@ class ConsoleFleetWakeCoordinator:
                     continue
                 if (conversation_id, candidate) not in self._paused:
                     eligible.append(row)
-            if not eligible:
+            progress = self._fresh_progress(conversation_id, session_id)
+            progress_sources = await run_owned_db_call(
+                ledger._db,
+                ledger.pending_progress_sources,
+                conversation_id,
+                tuple((mid, identity.run_id) for mid, identity in progress.items()),
+            )
+            progress_sources = tuple(
+                (mid, source_id, candidate)
+                for mid, source_id, candidate in progress_sources
+                if progress[mid].chain_id == candidate
+                and (conversation_id, candidate) not in self._paused
+            )
+            self._discard_pending_progress(
+                conversation_id, set(progress) - {mid for mid, _, _ in progress_sources}
+            )
+            if not eligible and not progress_sources:
                 return
-            chain_id = eligible[0]["work_chain_id"]
+            chain_id = (
+                eligible[0]["work_chain_id"] if eligible else progress_sources[0][2]
+            )
             selected = [row for row in eligible if row["work_chain_id"] == chain_id][
-                :self.MAX_RESULTS_PER_ATTEMPT
+                : self.MAX_RESULTS_PER_ATTEMPT
             ]
             run_ids = tuple(str(row["id"]) for row in selected)
+            selected_progress = tuple(
+                (mid, source_id)
+                for mid, source_id, candidate in progress_sources
+                if candidate == chain_id
+            )[: self.MAX_RESULTS_PER_ATTEMPT]
+            message_ids = tuple(mid for mid, _ in selected_progress)
             attempt_id = uuid4().hex
-            await run_owned_db_call(ledger._db,
-                ledger.claim_wake,
-                chain_id,
-                attempt_id=attempt_id,
-                owner_id=self._owner_id,
-                session_id=session_id,
-                run_ids=run_ids,
-                limits=AutomaticWorkLimits.from_settings(),
+            with self._registry_lock:
+                progress_binding = self._progress_owners.get(conversation_id)
+                if message_ids and progress_binding is None:
+                    return
+                progress_owner_key = progress_binding[1] if message_ids else None
+            claim_task = asyncio.create_task(
+                run_owned_db_call(
+                    ledger._db,
+                    ledger.claim_wake,
+                    chain_id,
+                    attempt_id=attempt_id,
+                    owner_id=self._owner_id,
+                    session_id=session_id,
+                    run_ids=run_ids,
+                    progress_messages=selected_progress,
+                    persistent_progress=any(
+                        session.id == session_id
+                        and session.persisted_conversation_id is not None
+                        for session in self._controller.store.sessions()
+                    ),
+                    limits=AutomaticWorkLimits.from_settings(),
+                )
             )
+            claim_cancelled = False
+            # Closing cannot cancel a finite DB worker after its commit. Retain
+            # custody until its result is known, then abort a prepared refusal.
+            while not claim_task.done():
+                try:
+                    await asyncio.shield(claim_task)
+                except asyncio.CancelledError:
+                    claim_cancelled = True
+            claim_task.result()
             context = AutomaticWorkContext(ledger, chain_id, self._owner_id, attempt_id)
             authorization = AgentWakeAuthorization(
                 self,
@@ -802,9 +1027,18 @@ class ConsoleFleetWakeCoordinator:
                 attempt_id=attempt_id,
                 owner_id=self._owner_id,
                 context=context,
+                progress_owner_key=progress_owner_key,
+                message_ids=message_ids,
             )
+            if claim_cancelled:
+                authorization.preflight_refused = True
+                return
             with self._registry_lock:
-                if self._disposed or conversation_id in self._conversation_fences or conversation_id not in self._active:
+                if (
+                    self._disposed
+                    or conversation_id in self._conversation_fences
+                    or conversation_id not in self._active
+                ):
                     authorization.preflight_refused = True
                     return
                 self._active[conversation_id].authorization = authorization
@@ -812,18 +1046,28 @@ class ConsoleFleetWakeCoordinator:
             watcher = asyncio.create_task(
                 self._watch_deadline(authorization, asyncio.current_task())
             )
+            notice = "\n\n".join(
+                part
+                for part in (
+                    compose_wake_notice(selected),
+                    compose_progress_wake_notice(message_ids),
+                )
+                if part
+            )
             with context.scope():
                 if not self.authorizes(authorization, session_id):
                     authorization.preflight_refused = True
                     return
                 if self._runtime_submitter is not None:
                     terminal = asyncio.get_running_loop().create_future()
+
                     def on_terminal(accepted):
                         if not terminal.done():
                             terminal.set_result(accepted)
+
                     try:
                         self._runtime_submitter(
-                            compose_wake_notice(selected),
+                            notice,
                             session_id=session_id,
                             wake_authorization=authorization,
                             on_terminal=on_terminal,
@@ -836,7 +1080,7 @@ class ConsoleFleetWakeCoordinator:
                     await asyncio.shield(terminal)
                 else:
                     await self._controller.submit_draft(
-                        compose_wake_notice(selected),
+                        notice,
                         session_id=session_id,
                         origin=ConsoleSubmissionOrigin.AGENT_WAKE,
                         wake_authorization=authorization,
@@ -850,9 +1094,10 @@ class ConsoleFleetWakeCoordinator:
             logger.warning(
                 "wake delivery failed (exception_type={})", type(exc).__name__
             )
-            await self._pause(
-                conversation_id, chain_id, "interrupted_work", review=True
-            )
+            if authorization is None or not authorization.preflight_refused:
+                await self._pause(
+                    conversation_id, chain_id, "interrupted_work", review=True
+                )
         finally:
             if watcher is not None:
                 watcher.cancel()
@@ -892,8 +1137,10 @@ class ConsoleFleetWakeCoordinator:
                     for run_id in attempt.run_ids:
                         bucket.pop(run_id, None)
                         self._result_chains.pop(run_id, None)
-                    if not bucket:
+                    if not bucket and not self._pending_progress.get(cid):
                         self._pending.pop(cid, None)
+                self._discard_pending_progress(cid, attempt.message_ids)
+                with self._registry_lock:
                     nothing_pending = cid not in self._pending
                 self._release_exact_wakes(cid, attempt.run_ids)
                 if nothing_pending and self._app is not None and not self._disposed and cid not in self._conversation_fences:
@@ -994,6 +1241,7 @@ class ConsoleFleetWakeCoordinator:
                             self._paused[(cid, chain_id)] = (
                                 snapshot.pause_reason or "review_required"
                             )
+            self.seed_progress_hints()
             self._recovery_failure_reason = None
             self._recovery_ready = True
             self.retry_soon()
@@ -1064,6 +1312,8 @@ class ConsoleFleetWakeCoordinator:
                 return
             self._conversation_fences[conversation_id] = generation
             run_ids = tuple((self._pending.pop(conversation_id, None) or {}).keys())
+            self._pending_progress.pop(conversation_id, None)
+            self._progress_owners.pop(conversation_id, None)
             tasks = tuple(
                 task
                 for task, owner in self._delivery_tasks.items()
@@ -1120,6 +1370,8 @@ class ConsoleFleetWakeCoordinator:
                 return
             self._disposed = True
             self._pending.clear()
+            self._pending_progress.clear()
+            self._progress_owners.clear()
             tasks = tuple(self._delivery_tasks)
             self._delivery_tasks.clear()
             sink = self.buddy_sink
@@ -1244,7 +1496,11 @@ class ConsoleFleetWakeCoordinator:
         return rows
 
     def _discard_pending_results(
-        self, conversation_id: str, run_ids: Sequence[str], *, clear_attention: bool = False
+        self,
+        conversation_id: str,
+        run_ids: Sequence[str],
+        *,
+        clear_attention: bool = False,
     ) -> None:
         """Release excluded/stamped result owners without disturbing live siblings."""
         with self._registry_lock:
@@ -1254,10 +1510,10 @@ class ConsoleFleetWakeCoordinator:
             if bucket is not None:
                 for run_id in run_ids:
                     bucket.pop(run_id, None)
-                if not bucket:
+                if not bucket and not self._pending_progress.get(conversation_id):
                     self._pending.pop(conversation_id, None)
             delivery = self._active.get(conversation_id)
-            idle = not self._pending.get(conversation_id) and (
+            idle = not self.has_pending(conversation_id) and (
                 delivery is None or delivery.authorization is None
             )
         self._release_exact_wakes(conversation_id, run_ids)

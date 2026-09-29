@@ -31,6 +31,8 @@ from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
+    ChatAPIError,
+    project_provider_error,
     ChatBadRequestError,
     ChatConfigurationError,
     ChatProviderError,
@@ -2192,9 +2194,13 @@ class _QueueItem:
 
     @classmethod
     def error(
-        cls, text: str, status_code: int | None = None, *, local: bool = False
-    ) -> "_QueueItem":
-        return cls("error", text, status_code=status_code, local=local)
+        cls, text: str, status_code: int | None = None, *,
+        typed_error: ChatAPIError | None = None,
+        local: bool = False,
+    ) -> _QueueItem:
+        return cls(
+            "error", text, status_code=status_code, payload=typed_error, local=local
+        )
 
     @classmethod
     def trace_verification_error(cls) -> "_QueueItem":
@@ -2901,6 +2907,14 @@ def build_llamacpp_chat_payload(
             **template_options,
         }
     return payload
+
+
+def _adapter_api_base_url(resolution: ConsoleProviderResolution) -> str | None:
+    """The custom engine adds its route; legacy slots accept the full endpoint."""
+    base_url = resolution.base_url
+    if resolution.execution_key == "custom-hosted":
+        base_url = base_url.rstrip("/").removesuffix("/chat/completions")
+    return base_url or None
 
 
 class ConsoleProviderGateway:
@@ -4372,11 +4386,27 @@ class ConsoleProviderGateway:
         # id executes through its entry's family -- llama_cpp entry -> direct
         # llama path, openai_compatible -> generic custom path, ollama ->
         # ollama -- with the entry, not ``api_settings``, as the
-        # provider-settings and endpoint source. Unresolvable ids keep the
-        # generic fallback identity resolved by
-        # ``resolve_console_provider_identity``.
+        # provider-settings and endpoint source. A frozen execution family
+        # never substitutes for the raw registry entry's current authority.
         custom_entry = entry_for(app_config, selection.provider)
-        if custom_entry is not None:
+        if split_custom_endpoint_id(selection.provider) and custom_entry is None:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy=(
+                    "Provider blocked: this custom endpoint is no longer configured. "
+                    "Restore its entry or choose another provider before sending."
+                ),
+            )
+        if selection.execution_provider:
+            # ADR-200: a routed child freezes execution as well as its URL.
+            # The raw registry entry still resolves credentials and readiness.
+            frozen_execution = selection.execution_provider
+            identity = resolve_console_provider_identity(
+                "custom" if frozen_execution == "custom-hosted" else frozen_execution
+            )
+            identity = replace(identity, execution_key=frozen_execution)
+        elif custom_entry is not None:
             identity = _apply_custom_endpoint_engine_swap(
                 resolve_console_provider_identity(
                     family_execution_key(custom_entry.family)
@@ -4646,6 +4676,7 @@ class ConsoleProviderGateway:
         # guard: their endpoint is config-backed by construction (the entry).
         if (
             selection.configured_endpoint_fallback_allowed
+            and not selection.base_url_is_pinned
             and custom_entry is None
             and provider_uses_endpoint(identity.readiness_key, provider_settings)
             and endpoint_differs
@@ -5456,6 +5487,9 @@ class ConsoleProviderGateway:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            typed_error = project_provider_error(exc, provider)
+            if typed_error is not None:
+                raise typed_error from None
             if isinstance(exc, ChatConfigurationError) and exc.status_code is None:
                 # task-32342: a status-less configuration error never reached
                 # the provider -- the request could not be built or its reply
@@ -5602,7 +5636,7 @@ class ConsoleProviderGateway:
                 system_parts.append(content)
         kwargs: dict[str, Any] = {
             "api_endpoint": resolution.execution_key,
-            "api_base_url": resolution.base_url or None,
+            "api_base_url": _adapter_api_base_url(resolution),
             "system_message": "\n\n".join(system_parts) or None,
             "messages_payload": payload,
             "api_key": resolution.api_key,
@@ -5633,7 +5667,7 @@ class ConsoleProviderGateway:
         }
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
             kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
@@ -6802,6 +6836,7 @@ class ConsoleProviderGateway:
                     _QueueItem.error(
                         error_copy,
                         status_code=status_code,
+                        typed_error=project_provider_error(exc, resolution.provider),
                         local=isinstance(exc, ChatConfigurationError)
                         and status_code is None,
                     )
@@ -6835,14 +6870,16 @@ class ConsoleProviderGateway:
                 item = await queue.get()
                 if item.kind == "done":
                     break
-                if item.kind == "error" and item.local:
-                    # TASK-32369: as the non-stream path does (task-32342), a
-                    # failure that never left the client stays status-less;
-                    # wrapping it as ChatProviderError(502) blamed the provider.
-                    raise ChatConfigurationError(
-                        item.text, provider=resolution.provider, status_code=None
-                    )
                 if item.kind == "error":
+                    if isinstance(item.payload, ChatAPIError):
+                        raise item.payload
+                    if item.local:
+                        # TASK-32369: as the non-stream path does (task-32342), a
+                        # failure that never left the client stays status-less;
+                        # wrapping it as ChatProviderError(502) blamed the provider.
+                        raise ChatConfigurationError(
+                            item.text, provider=resolution.provider, status_code=None
+                        )
                     # F5: carry the real status the worker captured -- never
                     # re-derive it by parsing item.text back out (that text
                     # is redacted prose, not a machine-readable status).
@@ -7249,11 +7286,11 @@ class ConsoleProviderGateway:
         if template_options:
             kwargs["chat_template_kwargs"] = template_options
         if local:
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             kwargs["api_key_resolved"] = True
         elif resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (
             _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
         ):
@@ -7262,9 +7299,9 @@ class ConsoleProviderGateway:
             # record/settings defaults never shadow a session-selected or
             # alias-configured URL. The custom family keeps its own branch
             # below (it also pins the gateway credential decision).
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in {"moonshot", "zai"}:
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             kwargs["request_timeout"] = resolution.request_timeout
             kwargs["request_retries"] = resolution.request_retries
             kwargs["request_retry_delay"] = resolution.request_retry_delay
@@ -7279,7 +7316,7 @@ class ConsoleProviderGateway:
             "vllm",
             "local_vllm",
         } | CUSTOM_OPENAI_EXECUTION_KEYS:
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
         elif (
@@ -7288,7 +7325,7 @@ class ConsoleProviderGateway:
             # Evaluator-only structured-output requests pin the endpoint that
             # was resolved and capability-checked. Ordinary Console sends have
             # no response_format and retain their existing adapter behavior.
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         if (
             resolution.execution_key in _ENGINE_EXECUTION_KEYS
             and request.continuation_groups
@@ -7362,14 +7399,14 @@ class ConsoleProviderGateway:
         }
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (
             _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
         ):
             # Engine-driven presets outside the custom family (ADR-179,
             # Qodo finding 2): pin the resolved endpoint on the plain-message
             # path too; the custom family keeps its branch below.
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in {
             "anthropic",
             "mistral",
@@ -7379,7 +7416,7 @@ class ConsoleProviderGateway:
             # Console has resolved a provider-scoped endpoint and credential.
             # Pinning the resolved base keeps that pair intact, including the
             # custom aliases and distinct mistral config owners.
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
