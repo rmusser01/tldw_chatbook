@@ -508,10 +508,12 @@ class RemoteSessionWorker:
         Raises:
             _NotSent: The lock stayed busy (another caller's slow upload)
                 until the deadline: nothing written, the stream is intact.
-            _WriteStalled: Holding the lock, the pipe stopped draining for
-                the whole write window before the frame was out: the host is
-                not reading (and a partial frame corrupts the stream), so
-                the session must die.
+            _WriteStalled: Holding the lock, the frame was not fully out by
+                the absolute write deadline, ``max(deadline, now + grace)``
+                taken once the lock is held. Progress does not extend it, so
+                a write still draining slowly ends here too, not only a pipe
+                that stopped draining. A partial frame corrupts the stream,
+                so the session must die.
             _StdinClosed: stdin was closed before anything was written.
             OSError: The pipe broke (the process is gone).
         """
@@ -529,9 +531,10 @@ class RemoteSessionWorker:
             write_deadline = max(deadline, time.monotonic() + self._transport.grace_seconds)
             while view:
                 if not _wait_fd(fd, selectors.EVENT_WRITE, write_deadline - time.monotonic()):
-                    # Holding the lock, the pipe took nothing (or stopped
-                    # mid-frame) for a full write window: the host is not
-                    # reading, so this is a stuck parent either way.
+                    # Holding the lock, the absolute write deadline passed
+                    # before the frame was out: the pipe took nothing, stopped
+                    # mid-frame, or drained too slowly. Progress never extends
+                    # the deadline; any partial frame kills the stream.
                     raise _WriteStalled()
                 try:
                     view = view[os.write(fd, view) :]
