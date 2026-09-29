@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-09-29 21:02'
+updated_date: '2026-09-29 22:36'
 labels: []
 dependencies: []
 priority: high
@@ -55,4 +55,6 @@ Independent review follow-up corrected a remaining artifact-leaf gap: validating
 PR2910 rebase on dev64e140bb after gateway/provider additions preserves the reviewed patch exactly. Separate fresh/upgrade headless qualification passed16 tests in191.58s; all11 preflight guards passed. New source-hashed receipts are in Docs/Reviews/artifacts/buddy-v1-32108/rebased-dev-20260929; previous receipts retain their original source attribution. Native terminal and physical voice acceptance remain open; no full local suite.
 
 PR2910 rebase onto dev6423c4fb (conversation-search FTS query change) preserved all four reviewed patches exactly. At source52bb6f10d2f7d0b5e7a834286a7cd42f6f55eb59, separate Buddy qualification passed16 tests in93.94s and the three incoming FTS query-plan/result cases passed in6.37s. Fresh and schema69-upgraded profiles still reach schema73 and retain ownership/default/Static-Dynamic checks. Sanitized source-bound receipt: Docs/Reviews/artifacts/buddy-v1-32108/fts-dev-20260929/verification.json. The MCP CI repair is unchanged; its prior50-run and negative-control evidence retains the original source attribution. Native/physical voice acceptance remains open and the task stays In Progress. ADR required: no; existing ADR126 and ADR139 apply. No full local suite.
+
+PR2910 provider-control dev rebase onto 5216de505826f2fb2036ccbb740fd667802d5b90 preserves all five prior patches exactly. At tested source 7659f69fe3d690288bb250e1feda69b6d3da9fd8, the combined targeted run passed 562 cases in 111.51s (16 Buddy qualification and 546 Console provider-control cases). Fresh and schema69 upgrade journeys still reach schema73 and retain ownership, workspace-default and Static/Dynamic assertions. Sanitized receipt: Docs/Reviews/artifacts/buddy-v1-32108/provider-dev-20260929/verification.json. Earlier MCP/Buddy evidence keeps original attribution. Native and physical voice acceptance remains open; task stays In Progress. ADR required: no; existing ADR126 and ADR139 apply. No full local suite or paid providers.
 <!-- SECTION:NOTES:END -->

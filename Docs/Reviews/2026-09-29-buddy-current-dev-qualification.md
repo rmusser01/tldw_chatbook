@@ -64,3 +64,15 @@ The [FTS rebase receipt](artifacts/buddy-v1-32108/fts-dev-20260929/verification.
 records the tested source, sanitized profile outcomes and local-log hashes.
 Earlier receipts retain their original source attribution. Native and physical
 voice acceptance remains open; no full local suite ran.
+
+
+The later provider-control dev rebase onto
+`5216de505826f2fb2036ccbb740fd667802d5b90` preserves all five preceding
+PR patches exactly. At source `7659f69fe3d690288bb250e1feda69b6d3da9fd8`,
+the two targeted files passed **562 cases in 111.51s**: 16 Buddy qualification
+cases and 546 Console provider-control cases. The fresh and schema69 upgrade
+journeys still reach schema73 with the same ownership, workspace-default and
+Static/Dynamic assertions. The [provider rebase receipt](artifacts/buddy-v1-32108/provider-dev-20260929/verification.json)
+records sanitized profile outcomes and the local execution-log hash. Prior
+MCP and Buddy evidence retains its original source attribution. No full local
+suite or paid provider calls ran; native and physical voice acceptance remains open.
