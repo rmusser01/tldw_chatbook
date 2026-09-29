@@ -83,7 +83,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_lifecycle.py": 2140,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
-    "tldw_chatbook/app_navigation.py": 1102,
+    "tldw_chatbook/app_navigation.py": 1110,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,

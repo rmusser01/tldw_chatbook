@@ -26,17 +26,19 @@ from loguru import logger
 from textual.css.query import NoMatches, QueryError
 
 from tldw_chatbook.Constants import TAB_CHAT, TAB_RESEARCH_WORKSPACE
-
-from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
-from .UI.Navigation.screen_registry import (
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
+from tldw_chatbook.UI.Navigation.screen_registry import (
     resolve_screen_route,
     resolve_screen_target,
     screen_load_error,
 )
-from .UI.Navigation.screen_state_store import ConsolePromptTargetProjection
+from tldw_chatbook.UI.Navigation.screen_state_store import ConsolePromptTargetProjection
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .UI.Navigation.screen_state_store import RuntimeIdentity
+    from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
 
 
 
@@ -277,7 +279,13 @@ class NavigationMixin:
         self._screen_navigation_paused = False
 
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
-        """Handle navigation to a different screen using switch_screen for better performance."""
+        """Handle navigation to a different screen using switch_screen for better performance.
+
+        Args:
+            message: The navigation request. It reports completion ``False`` without
+                navigating while navigation is paused or the app is shutting down;
+                otherwise it runs under the navigation admission lock.
+        """
         if getattr(self, "_screen_navigation_paused", False) or getattr(self, "_shutting_down", False):
             message.report_completion(False)
             return
