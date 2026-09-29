@@ -13985,11 +13985,12 @@ class SettingsScreen(BaseAppScreen):
     def _provider_registry_endpoint(
         self, provider: str
     ) -> tuple[str, str | None] | None:
-        """Config key and display URL (markup) of a registry id's endpoint.
+        """Config key and display URL (plain text) of a registry id's endpoint.
 
         Qodo #2876: a registry id has no ``api_settings`` table; its URL is
-        the entry's ``base_url``. Both parts are escaped -- a hand-edited id
-        (rider TASK-33002.18) or an IPv6 host is markup otherwise.
+        the entry's ``base_url``. Both parts are plain: every sink is a
+        ``_detail_row`` (``markup=False``), where an escape would show its
+        backslash on a hand-edited id (rider TASK-33002.18) or an IPv6 host.
 
         Args:
             provider: Provider id shown in Providers & Models.
@@ -14003,10 +14004,10 @@ class SettingsScreen(BaseAppScreen):
             return None
         entry = self._provider_registry_entry(provider)
         if entry is None:
-            return f"custom_endpoints.{escape_markup(slug)}.base_url", None
+            return f"custom_endpoints.{slug}.base_url", None
         return (
             f"custom_endpoints.{entry.slug}.base_url",
-            escape_markup(safe_endpoint_display(entry.base_url)),
+            safe_endpoint_display(entry.base_url),
         )
 
     def _sync_provider_registry_lock(self, provider: str) -> None:
@@ -14029,9 +14030,10 @@ class SettingsScreen(BaseAppScreen):
     def _provider_display_name(self, provider: str) -> str:
         """Markup display name (see :meth:`_provider_display_label`).
 
-        Its sinks are Statics, Buttons and toasts, and a registry entry's
-        name or a hand-edited id is user text: "[local]" would render as a
-        tag and "[/]" would crash (TASK-33002.12).
+        For markup sinks (Statics, Buttons, toasts): a registry entry's name
+        or a hand-edited id is user text, where "[local]" would render as a
+        tag and "[/]" would crash (TASK-33002.12). Plain sinks -- every
+        ``_detail_row`` and the Test rows -- take the label instead.
         """
         return escape_markup(self._provider_display_label(provider))
 
@@ -16951,7 +16953,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
         resolved = self._resolve_provider_model_for_settings()
-        provider = self._provider_display_name(str(resolved.provider or ""))
+        # Plain: every Overview row is a ``_detail_row`` (``markup=False``).
+        provider = self._provider_display_label(str(resolved.provider or ""))
         model = str(resolved.model or "not selected")
         source_rows = dict(self.server_sync_workspace_handoff_rows)
         conversation_updates = "; ".join(

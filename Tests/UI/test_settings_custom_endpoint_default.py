@@ -208,18 +208,34 @@ def test_dangling_registry_readiness_never_echoes_an_invalid_slug(provider):
     )
 
 
-@pytest.mark.parametrize("api_key_env", [None, "GPU_KEY"])
-def test_settings_test_findings_render_a_markup_like_entry_name(api_key_env):
-    """Round 1 review: the Test line and toast are markup; the name is text."""
-    config = _config(display_name="GPU [/]", api_key_env=api_key_env)
+def _test_rows(provider: str, config) -> tuple[dict[str, str], str]:
     screen = SettingsScreen.__new__(SettingsScreen)
     screen.app_instance = SimpleNamespace(app_config=config)
-    readiness = get_provider_readiness("custom-ep:gpu-box", config, environ={})
+    readiness = get_provider_readiness(provider, config, environ={})
     detail, summary, _passed = screen._build_provider_readiness_findings(
-        "custom-ep:gpu-box", "model-a", readiness, draft_endpoint="", dirty=set()
+        provider, "model-a", readiness, draft_endpoint="", dirty=set()
     )
-    for text in (detail, summary):
-        assert "GPU [/]" in Content.from_markup(text).plain, text
+    rows = {line[:12].strip(): line[12:] for line in detail.split("\n")}
+    return rows, summary
+
+
+@pytest.mark.parametrize("api_key_env", [None, "GPU_KEY"])
+def test_settings_test_findings_render_a_markup_like_entry_name(api_key_env):
+    """Round 1 review: the name is text. Phase 2's Test rows are plain
+    (``markup=False``); the toast is markup. The Endpoint row names the
+    entry's URL, never the family's provider default."""
+    config = _config(display_name="GPU [/]", api_key_env=api_key_env)
+    rows, summary = _test_rows("custom-ep:gpu-box", config)
+    assert "GPU [/]" in rows["Config"], rows
+    assert "GPU [/]" in Content.from_markup(summary).plain, summary
+    assert rows["Endpoint"] == "http://192.168.1.5:8080", rows
+    assert "API key field" not in rows["Key"], rows
+
+
+def test_settings_test_rows_state_a_dangling_registry_endpoint():
+    rows, _summary = _test_rows("custom-ep:gone", _config())
+    assert rows["Endpoint"].startswith("not found"), rows
+    assert list(rows)[0] == "Endpoint", rows
 
 
 @pytest.mark.parametrize("spelling", ["custom-ep:gpu-box", "custom_ep:gpu_box"])
