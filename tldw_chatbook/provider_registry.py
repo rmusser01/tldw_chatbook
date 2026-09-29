@@ -38,6 +38,7 @@ xAI/Grok is deliberately absent (ADR-179: maintainer decision).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from typing import Mapping
 
 _CLOUD = "cloud"
@@ -100,6 +101,11 @@ class ProviderRecord:
             flag-off field with a caller-supplied value is a bad request.
         reasoning_effort_key: Payload key for ``reasoning_effort`` when the
             provider spells it differently; ``None`` keeps the standard key.
+        thinking_toggle_models: For a preset that refuses
+            ``reasoning_effort``, model globs (``fnmatch``, case-sensitive)
+            whose chat template switches thinking with one boolean
+            ``chat_template_kwargs`` key, mapped to that key. A matching
+            model sends ``{key: effort != "none"}`` instead of a refusal.
         extra_body_fields: Preset-authored extra body fields merged last,
             each validated bounded.
         response_allowances: Tolerated extra top-level response/stream
@@ -177,6 +183,7 @@ class ProviderRecord:
         }
     )
     reasoning_effort_key: str | None = None
+    thinking_toggle_models: Mapping[str, str] = field(default_factory=dict)
     extra_body_fields: Mapping[str, object] = field(default_factory=dict)
     # Tolerated extra response/stream keys, LEVEL-KEYED (ADR-179 Phase 2):
     # ``response_allowances`` keeps its Phase 1 meaning (top-level response
@@ -282,9 +289,26 @@ DATABRICKS = ProviderRecord(
 # string (the prompt tokens actually shown) and choice-level ``logprobs``;
 # Cerebras -- a top-level ``time_info`` object on some responses.
 #
-# Fireworks hides reasoning behind its own API surface (response_format
-# modes), so its disposition is "proprietary"; Together and Cerebras
-# reason transparently but are not wired to a reasoning_effort parameter.
+# Fireworks returns reasoning in ``message.reasoning_content`` (and stream
+# deltas) and requires it replayed on interleaved tool turns
+# (docs.fireworks.ai/guides/reasoning, read 2026-09-29), so its
+# disposition is "proprietary" (private, replayed through continuations).
+# Its guide says a request carrying both ``thinking`` and
+# ``reasoning_effort`` fails validation; this record sends neither
+# (reasoning_effort=False, no extra body), which
+# test_no_engine_preset_can_send_thinking_with_reasoning_effort pins
+# (TASK-33503). Together and Cerebras reason transparently but are not
+# wired to a reasoning_effort parameter.
+#
+# Cerebras function tools are sent WITHOUT ``strict``. oh-my-pi's note that
+# Cerebras needs ``strict: true`` on every tool is wrong: the API reference
+# (inference-docs.cerebras.ai/api-reference/chat-completions, read
+# 2026-09-29) documents ``strict`` as optional, default false; only
+# kimi-k2.7-code requires the SAME value on every tool (omitting it
+# everywhere satisfies that). Under strict, API version 2 (default since
+# 2026-07-22) rejects schemas lacking ``additionalProperties: false`` or
+# using pattern/format/minLength/oneOf -- most of Chatbook's tool schemas --
+# so opting in would break tool turns (TASK-33500).
 TOGETHER = ProviderRecord(
     key="together",
     config_key="Together",
@@ -330,7 +354,7 @@ FIREWORKS = ProviderRecord(
     pricing_seeds={},
     engine_driven=True,
     base_url_suffix=None,
-    reasoning_disposition="proprietary",  # reasoning behind its own API surface
+    reasoning_disposition="proprietary",  # reasoning_content, replayed on tool turns
     auth_scheme="bearer",
 )
 CEREBRAS = ProviderRecord(
@@ -408,6 +432,10 @@ SAMBANOVA = ProviderRecord(
 # no ``stream_options`` request field, so streams may end without usage.
 # ``GET /v1/models`` is not in the official docs but answers OpenAI-shaped
 # (unauthenticated probe, 2026-09-27), so the catalog auto-refreshes.
+# Qwen3.5 thinks by default; its schema (build.nvidia.com/qwen/qwen3.5-397b-
+# a17b, read 2026-09-29) takes no ``reasoning_effort``, only
+# ``chat_template_kwargs: {"enable_thinking": bool}`` -- so effort "none"
+# turns thinking off and any other level leaves it on (TASK-33502).
 NVIDIA = ProviderRecord(
     key="nvidia",
     config_key="NVIDIA",
@@ -418,6 +446,7 @@ NVIDIA = ProviderRecord(
     default_base_url="https://integrate.api.nvidia.com/v1",
     native_tools=True,
     reasoning_effort=False,  # enum varies per model page
+    thinking_toggle_models={"qwen/qwen3.5-*": "enable_thinking"},
     auto_refresh=True,
     settings_defaults={
         "api_key_env_var": "NVIDIA_API_KEY",
@@ -1426,6 +1455,25 @@ ALIASES: dict[str, str] = {
 for _alias, _canonical in ALIASES.items():
     RECORDS_BY_KEY[_alias] = RECORDS_BY_KEY[_canonical]
 del _alias, _canonical
+
+
+def thinking_toggle_key(record: ProviderRecord, model: str | None) -> str | None:
+    """Return the ``chat_template_kwargs`` key that toggles ``model``'s thinking.
+
+    Args:
+        record: Provider record whose ``thinking_toggle_models`` is consulted.
+        model: Selected model identifier, if any.
+
+    Returns:
+        The toggle key for the first matching glob, or ``None`` when the
+        record declares no toggle for this model.
+    """
+    if not model:
+        return None
+    for pattern, key in record.thinking_toggle_models.items():
+        if fnmatchcase(model, pattern):
+            return key
+    return None
 
 CLOUD_PROVIDER_CONFIG_KEYS: tuple[str, ...] = tuple(
     record.config_key for record in ALL_RECORDS if record.classification == _CLOUD

@@ -19,6 +19,7 @@ from tldw_chatbook.model_capabilities import (
     moonshot_model_supports_reasoning_effort,
     zai_model_supports_reasoning_effort,
 )
+from tldw_chatbook.provider_registry import RECORDS_BY_KEY, thinking_toggle_key
 
 DIRECT_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 
@@ -326,6 +327,29 @@ _DIRECT_PROVIDER_GENERATION_FIELDS = {
 }
 
 
+def _engine_reasoning_effort_support(
+    execution_key: str | None, model: str | None
+) -> ConsoleControlSupport | None:
+    """Decide reasoning effort for an engine preset whose record refuses it.
+
+    Such a preset fails the send locally, so the Console must not offer the
+    control (TASK-33501) -- unless the model has a thinking toggle the engine
+    sends instead (TASK-33502).
+
+    Args:
+        execution_key: ``chat_api_call`` provider key.
+        model: Selected model identifier, if any.
+
+    Returns:
+        ``supported`` or ``unsupported`` for such a preset; ``None`` for any
+        other provider, whose answer is decided elsewhere.
+    """
+    record = RECORDS_BY_KEY.get(execution_key or "")
+    if record is None or not record.engine_driven or record.reasoning_effort:
+        return None
+    return "supported" if thinking_toggle_key(record, model) else "unsupported"
+
+
 def _capability_generation_fields(
     provider: str | None, model: str | None
 ) -> frozenset[str]:
@@ -345,6 +369,8 @@ def _capability_generation_fields(
 
     execution_key = resolve_console_provider_identity(provider_key).execution_key
     if build_local_thinking_payload_fields(execution_key, "low", None):
+        supported.add("reasoning_effort")
+    if _engine_reasoning_effort_support(execution_key, model) == "supported":
         supported.add("reasoning_effort")
     if execution_key in _LOCAL_BUDGET_EXECUTION_KEYS:
         supported.add("thinking_budget_tokens")
@@ -486,6 +512,11 @@ def console_generation_control_support(
             ):
                 return "unknown"
             return "supported"
+
+    if control == "reasoning_effort":
+        engine_answer = _engine_reasoning_effort_support(execution_key, model)
+        if engine_answer is not None:
+            return engine_answer
 
     if identity.is_supported:
         from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP

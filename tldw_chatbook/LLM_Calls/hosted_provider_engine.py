@@ -47,7 +47,9 @@ Payload-layer (Task 5) divergences from the zai template:
   field with a caller-supplied value is a bad request (never silently
   dropped -- hidden caller intent is the failure the strict engine exists
   to surface), and ``reasoning_effort`` is gated by ``record.reasoning_effort``
-  with the key from ``record.reasoning_effort_key``.
+  with the key from ``record.reasoning_effort_key`` -- or, for a model in
+  ``record.thinking_toggle_models``, sent as a boolean
+  ``chat_template_kwargs`` thinking switch.
 - ``record.extra_body_fields`` merge into the payload last, each validated
   bounded (preset authoring data, not caller input).
 - No provider-invented fields: zai's ``thinking``/``request_id``/``user_id``
@@ -130,6 +132,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.provider_readiness import configured_workspace_base_url
+from tldw_chatbook.Chat.sampling_params import REASONING_EFFORT_VALUES
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,
@@ -149,7 +152,7 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
-from tldw_chatbook.provider_registry import ProviderRecord
+from tldw_chatbook.provider_registry import ProviderRecord, thinking_toggle_key
 
 
 @dataclass(frozen=True)
@@ -868,7 +871,7 @@ def build_hosted_chat_payload(
         tools: OpenAI function-tool descriptors.
         tool_choice: Only ``"auto"`` (with tools) is supported.
         reasoning_effort: Reasoning-effort request; requires
-            ``record.reasoning_effort``.
+            ``record.reasoning_effort`` or a thinking-toggle model.
         provider_continuations: Durable continuation checkpoints to restore
             onto the message history.
         temperature: Sampler in [0, 1]; requires the ``temperature`` flag.
@@ -1032,13 +1035,21 @@ def build_hosted_chat_payload(
     if validated_choice is not None:
         payload["tool_choice"] = validated_choice
     if reasoning_effort is not None:
-        if not record.reasoning_effort:
+        toggle_key = thinking_toggle_key(record, resolution.model)
+        if record.reasoning_effort:
+            payload[record.reasoning_effort_key or "reasoning_effort"] = (
+                _bounded_identifier(record, "reasoning effort", reasoning_effort)
+            )
+        elif toggle_key is not None:
+            # A boolean switch cannot pass an unknown level through for the
+            # provider to reject, so validate against the shared set (Qodo).
+            if reasoning_effort not in REASONING_EFFORT_VALUES:
+                raise bad_request(f"{record.display_name} reasoning effort is invalid.")
+            payload["chat_template_kwargs"] = {toggle_key: reasoning_effort != "none"}
+        else:
             raise bad_request(
                 f"{record.display_name} reasoning effort is unsupported."
             )
-        payload[record.reasoning_effort_key or "reasoning_effort"] = (
-            _bounded_identifier(record, "reasoning effort", reasoning_effort)
-        )
     for key, value in record.extra_body_fields.items():
         if not validators.json_shape_is_bounded(value):
             raise bad_request(f"{record.display_name} extra body field {key} is invalid.")
@@ -1356,7 +1367,8 @@ class HostedPresetFinishPolicy:
         Raises:
             ChatProviderError: When the reason is one of the preset's
                 provider-terminal errors (record identity, 502, reason
-                text never included in the message).
+                text never included in the message), or a ``length`` stop
+                produced no text and no calls (400, token limit named).
             HostedChatProtocolError: When the reason is outside the
                 preset's terminal set, or the reason/state pairing is
                 inconsistent (``tool_calls`` without calls; ``stop``/
@@ -1382,6 +1394,24 @@ class HostedPresetFinishPolicy:
                 raise HostedChatProtocolError(
                     f"{record.display_name} finish state is inconsistent."
                 )
+        elif (
+            finish_reason == "length"
+            and not has_text
+            and not has_calls
+            and not record.tolerant_response_extras
+        ):
+            # A reasoning model can spend the whole token budget thinking and
+            # stop on the limit with no reply. Say so, as a 400: the agent
+            # runtime retries 5xx, and this request cannot succeed unchanged
+            # (TASK-33504).
+            raise ChatProviderError(
+                provider=record.key,
+                message=(
+                    f"{record.display_name} reached the max-tokens limit "
+                    "before writing a reply. Raise Max tokens and try again."
+                ),
+                status_code=400,
+            )
         elif has_calls or (
             not has_text and not record.tolerant_response_extras
         ):

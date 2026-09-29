@@ -250,13 +250,36 @@ def test_tolerant_finish_policy_still_fails_non_terminal_reasons():
         )
 
 
-@pytest.mark.parametrize("finish_reason", ["stop", "length"])
-def test_strict_finish_policy_still_rejects_empty_text(finish_reason):
-    """Default (non-tolerant) records keep the Phase 1 byte-identical
-    behavior: an empty-text stop/length finish is a protocol failure."""
+def test_strict_finish_policy_still_rejects_empty_text():
+    """Default (non-tolerant) records keep the Phase 1 behavior for ``stop``:
+    an empty-text finish is a protocol failure. (``length`` is the token
+    limit -- see the next test.)"""
     with pytest.raises(HostedChatProtocolError):
         HostedPresetFinishPolicy(DATABRICKS).validate_finish(
-            finish_reason=finish_reason, has_text=False, has_calls=False
+            finish_reason="stop", has_text=False, has_calls=False
+        )
+
+
+def test_empty_length_finish_names_the_token_limit_and_is_not_retried():
+    """A reasoning model can spend the whole budget thinking and stop on the
+    limit with no reply: the error says so, as a non-retryable 400
+    (TASK-33504)."""
+    from tldw_chatbook.Agents.model_retry import is_transient_model_error
+
+    with pytest.raises(ChatProviderError) as caught:
+        HostedPresetFinishPolicy(DATABRICKS).validate_finish(
+            finish_reason="length", has_text=False, has_calls=False
+        )
+    assert caught.value.status_code == 400
+    assert caught.value.provider == "databricks"
+    assert "max-tokens limit before writing a reply" in str(caught.value)
+    assert is_transient_model_error(caught.value) is False
+
+
+def test_length_finish_with_calls_is_still_inconsistent():
+    with pytest.raises(HostedChatProtocolError):
+        HostedPresetFinishPolicy(DATABRICKS).validate_finish(
+            finish_reason="length", has_text=False, has_calls=True
         )
 
 
