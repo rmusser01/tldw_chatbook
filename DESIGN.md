@@ -253,7 +253,10 @@ one-row field. The Console composer joined the convention in
 task-17651 — it renders as a one-row bar (growing to four with the
 draft) whose left edge recolors for the has-draft state and flips to
 the thick focus accent, and the Console workbench frame now closes at
-the workspace grid's single bottom border. The convention for these
+the workspace grid's single bottom border. Chat settings (the Console's
+`ConsoleSettingsModal`) is a dense form too (TASK-33003.2): every Input,
+Select and in-form Button is one row from `$ds-control-height-compact`,
+and its Inputs and Selects carry the left edge described below. The convention for these
 fields (task-1586):
 
 - **Rest:** every editable field carries a one-column left edge

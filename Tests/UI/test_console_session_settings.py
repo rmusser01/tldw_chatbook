@@ -36,9 +36,10 @@ from Tests.UI.app_factory import persist_seeded_config
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp, app_css_text
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_non_obscuring_focus_contract import css_blocks
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -113,8 +114,6 @@ from tldw_chatbook.Widgets.Console.console_provider_picker import (
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
-    MODAL_BODY_MIN_HEIGHT,
-    MODAL_CONTROL_HEIGHT,
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
     PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
@@ -4562,12 +4561,280 @@ async def test_console_settings_body_uses_exact_twenty_line_content_ceiling() ->
         assert body.hint.region.height == 1
 
 
-def test_console_settings_modal_sizing_uses_named_constants() -> None:
-    assert MODAL_BODY_MIN_HEIGHT == 0
-    assert MODAL_CONTROL_HEIGHT == 3
-    assert f"min-height: {MODAL_BODY_MIN_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
-    assert f"height: {MODAL_CONTROL_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
-    assert f"min-height: {MODAL_CONTROL_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
+def _one_row_settings_modal(app_config) -> ConsoleSettingsModal:
+    return ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+            temperature=0.7,
+        ),
+        app_config=app_config,
+        providers_models={"llama_cpp": ["model-a", "model-b"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+
+
+def _painted_rows(screen) -> list[str]:
+    return [strip.text for strip in screen._compositor.render_strips()]
+
+
+def _content_rows(widget) -> int:
+    """Rows the widget's own text needs, before any min-height inflation."""
+    width = widget.content_region.width
+    return widget.get_content_height(widget.size, widget.app.size, width)
+
+
+def _assert_one_row_controls(screen, view: str) -> None:
+    footer = screen.query_one("#console-settings-actions")
+    controls = [
+        widget
+        for widget in screen.query("Input, Select, Button")
+        if widget.region.area and footer not in widget.ancestors
+    ]
+    assert len(controls) >= 3, f"{view}: nothing to measure"
+    for widget in controls:
+        assert widget.region.height == 1, (view, widget.id, widget.region)
+    labels = [
+        label
+        for label in screen.query(".console-settings-modal-label")
+        if label.region.area
+    ]
+    for label in labels:
+        tallest = max(
+            (
+                child.region.height
+                for child in label.parent.children
+                if child is not label and child.region.area
+            ),
+            default=0,
+        )
+        assert label.region.height <= max(tallest, _content_rows(label)), (
+            view,
+            str(label.render()),
+            label.region,
+        )
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_console_settings_modal_controls_render_one_row_tall(size) -> None:
+    """TASK-33003.2: every Chat settings control renders one row tall.
+
+    Deliberately rewritten from
+    ``test_console_settings_modal_sizing_uses_named_constants``, which pinned
+    ``MODAL_CONTROL_HEIGHT == 3``. The contract is now the rendered one: under
+    the production stylesheets every Input, Select and non-footer Button in
+    both views is one row, labels and the one-line summaries add no rows, and
+    each Context-view Select paints on its label's row. The heights come from
+    ``$ds-control-height-compact`` in app-tier sheets, not widget DEFAULT_CSS
+    (which loses to app CSS anyway, lessons-textual.md).
+    """
+    app = StyledModalHarness()
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        assert screen.query_one("#console-settings-view-tabs").region.height == 1
+        for summary_id in ("#console-settings-scope", "#console-settings-readiness"):
+            summary = screen.query_one(summary_id, Static)
+            assert summary.region.height == _content_rows(summary), (
+                summary_id,
+                summary.region,
+            )
+        _assert_one_row_controls(screen, "model")
+
+        for section in screen.query(Collapsible):
+            section.collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        _assert_one_row_controls(screen, "model expanded")
+
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        _assert_one_row_controls(screen, "context")
+        painted = _painted_rows(screen)
+        paired = 0
+        for select in screen.query("#console-settings-context-view Select"):
+            if not select.region.area:
+                continue
+            label = next(
+                child
+                for child in select.parent.children
+                if child.has_class("console-settings-modal-label")
+            )
+            assert label.region.y == select.region.y, (select.id, label.region)
+            row = painted[select.region.y]
+            assert str(label.render()).strip() in row, (select.id, row)
+            assert "▼" in row[select.region.x : select.region.right], (select.id, row)
+            paired += 1
+        assert paired >= 3
+
+    default_css = ConsoleSettingsModal.DEFAULT_CSS
+    for selector in (
+        "ConsoleSettingsModal Input",
+        "ConsoleSettingsModal .console-settings-modal-row",
+        "ConsoleSettingsModal .console-settings-modal-label",
+        "ConsoleSettingsModal #console-settings-view-tabs",
+        "ConsoleSettingsModal #console-settings-default-recovery-actions",
+        "ConsoleSettingsModal .console-context-action-row",
+    ):
+        assert selector not in default_css, selector
+    assert not hasattr(settings_modal_module, "MODAL_CONTROL_HEIGHT")
+    app_css = app_css_text()
+    for selector in (
+        "ConsoleSettingsModal Input",
+        "ConsoleSettingsModal Select",
+        "ConsoleSettingsModal Button",
+    ):
+        assert any(
+            "$ds-control-height-compact" in block
+            for block in css_blocks(app_css, selector)
+        ), selector
+
+
+@pytest.mark.asyncio
+async def test_console_settings_default_recovery_actions_render_one_row_tall() -> None:
+    """TASK-33003.2 AC#1: the default-save recovery actions are one row too."""
+    from Tests.UI.test_console_resize_reflow import _failed_default_state
+    from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultSavePhase
+
+    app = StyledModalHarness()
+    modal = _one_row_settings_modal(app.app_config)
+    modal._default_durability_state = _failed_default_state(
+        ConsoleDefaultSavePhase.BEFORE_REPLACE
+    )
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+        actions = modal.query_one("#console-settings-default-recovery-actions")
+        assert actions.display
+        assert actions.region.height == 1, actions.region
+        shown = [button for button in actions.query(Button) if button.region.area]
+        assert len(shown) == 2
+        for button in shown:
+            assert button.region.height == 1, (button.id, button.region)
+
+
+def _style_at(strip, offset: int):
+    position = 0
+    for segment in strip:
+        if position + len(segment.text) > offset:
+            return segment.style
+        position += len(segment.text)
+    raise AssertionError(f"offset {offset} outside strip")
+
+
+@pytest.mark.asyncio
+async def test_console_settings_focused_one_row_field_paints_value_and_focus_edge() -> None:
+    """TASK-33003.2 AC#4: a focused one-row field paints its value, not an outline.
+
+    Removing a field's border box exposes it to the global ``*:focus``
+    outline (lessons-testing-evidence.md, task-17651), which reading
+    ``.value`` cannot see. Real key presses open Advanced generation, move to
+    Temperature and type; the compositor row must then show the typed value
+    behind the thick focus edge, with no outline glyphs, while the unfocused
+    field below keeps the thin rest edge and a different fill.
+    """
+    app = StyledModalHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one(
+            "#console-settings-generation-advanced CollapsibleTitle"
+        ).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        temperature = screen.query_one("#console-settings-temperature", Input)
+        assert screen.focused is temperature
+        await pilot.press("end", "backspace", "backspace", "backspace")
+        await pilot.press("0", ".", "4", "2")
+        await pilot.pause()
+        await pilot.pause()
+
+        strips = screen._compositor.render_strips()
+        focused_region = temperature.region
+        top_p = screen.query_one("#console-settings-top-p", Input)
+        rest_region = top_p.region
+        assert focused_region.height == rest_region.height == 1
+        focused = strips[focused_region.y].text[
+            focused_region.x : focused_region.right
+        ]
+        rest = strips[rest_region.y].text[rest_region.x : rest_region.right]
+        assert "0.42" in focused, focused
+        assert focused[0] == "█", focused
+        assert rest[0] == "│", rest
+        for glyph in "┌┐└┘─▔▁":
+            assert glyph not in focused, (glyph, focused)
+        value_x = focused_region.x + focused.index("0.42")
+        rest_value_x = rest_region.x + 2
+        focused_style = _style_at(strips[focused_region.y], value_x)
+        rest_style = _style_at(strips[rest_region.y], rest_value_x)
+        assert focused_style.bold
+        assert focused_style.bgcolor != rest_style.bgcolor
+
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        budget = screen.query_one("#console-context-budget-mode", Select)
+        compaction = screen.query_one("#console-context-compaction-mode", Select)
+        budget.focus()
+        await pilot.pause()
+        strips = screen._compositor.render_strips()
+        painted = strips[budget.region.y].text[budget.region.x : budget.region.right]
+        resting = strips[compaction.region.y].text[
+            compaction.region.x : compaction.region.right
+        ]
+        assert "Automatic" in painted, painted
+        assert painted[0] == "█", painted
+        assert resting[0] == "│", resting
+        for glyph in "┌┐└┘─▔▁":
+            assert glyph not in painted, (glyph, painted)
+        assert _style_at(
+            strips[budget.region.y], budget.region.x + painted.index("Automatic")
+        ).bgcolor != _style_at(
+            strips[compaction.region.y], compaction.region.x + 2
+        ).bgcolor
+
+
+@pytest.mark.asyncio
+async def test_endpoint_template_modal_keeps_its_three_row_controls() -> None:
+    """TASK-33003.2 AC#7: the one-row rules stay scoped to Chat settings."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        MODAL_CONTROL_HEIGHT as ENDPOINT_MODAL_CONTROL_HEIGHT,
+    )
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app = StyledModalHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleEndpointTemplateModal(
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+            )
+        )
+        await pilot.pause()
+        controls = [
+            widget
+            for widget in app.screen.query(
+                ".console-endpoint-template-modal-input, "
+                ".console-endpoint-template-modal-select"
+            )
+            if widget.region.area
+        ]
+        assert len(controls) == 4
+        for widget in controls:
+            assert widget.region.height == ENDPOINT_MODAL_CONTROL_HEIGHT == 3, (
+                widget.id,
+                widget.region,
+            )
 
 
 def test_pending_launch_inspector_auto_open_docstring_is_google_style() -> None:

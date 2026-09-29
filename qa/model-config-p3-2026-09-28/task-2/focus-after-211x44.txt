@@ -1,0 +1,6 @@
+#console-settings-temperature y=26 ' █ 0.42                                                                                                                          '
+#console-settings-top-p y=27 ' │ 0.95                                                                                                                          '
+select y=10 '                                                                                                                                   '
+select y=11 ' █ Automatic                                                                                                                    ▼  '
+select y=12 's│ Required in Custom mode                                                                                                         '
+tab y=5 '       Model and generation        '

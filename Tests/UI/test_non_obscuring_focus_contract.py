@@ -921,21 +921,30 @@ def test_console_structural_separators_use_visible_column_line_token():
 
 
 @pytest.mark.unit
-def test_console_settings_modal_select_uses_compact_focus_outline():
+def test_console_settings_modal_select_uses_dense_form_focus_edge():
+    """TASK-33003.2 deliberately rewrote this pin (was ..._compact_focus_outline).
+
+    Chat settings follows the dense-form convention: a one-row Select carries
+    a one-column left edge that turns thick on focus. The old `outline: solid`
+    was invisible behind SelectCurrent, but once the Select paints its own edge
+    cell the outline's corner glyph lands on it, so the outline is now off.
+    """
     for _, text in (
         ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Select")
         focus = css_block(text, "ConsoleSettingsModal Select:focus")
-        assert "height: 1;" in base
+        assert "height: $ds-control-height-compact;" in base
         assert "border: none;" in base
+        assert "border-left: solid $ds-control-edge;" in base
         assert "border: none;" in focus
         assert "border-bottom: none;" in focus
         assert "border: solid" not in focus
         assert "border-bottom: solid" not in focus
         assert "border: thick" not in focus
-        assert "outline: solid $ds-input-focus-accent;" in focus
+        assert "border-left: thick $ds-input-focus-accent;" in focus
+        assert "outline: none;" in focus
         assert "background: $ds-input-focus-bg;" in focus
         assert "color: $ds-text-primary;" in focus
         assert "$primary" not in focus
@@ -946,7 +955,13 @@ def test_console_settings_modal_select_uses_compact_focus_outline():
 
 @pytest.mark.unit
 def test_console_settings_modal_focused_inputs_keep_value_row_visible():
-    """Focused settings inputs must keep Textual's editable value row visible."""
+    """Focused settings inputs must keep Textual's editable value row visible.
+
+    TASK-33003.2 deliberately rewrote this pin from the 3-row tall-border box
+    to the one-row dense-form field: a left edge at rest, a thick left edge on
+    focus, and no outline (which would paint over the only row). The painted
+    proof is test_console_settings_focused_one_row_field_paints_value_and_focus_edge.
+    """
     for _, text in (
         ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
@@ -954,12 +969,16 @@ def test_console_settings_modal_focused_inputs_keep_value_row_visible():
         base = css_block(text, "ConsoleSettingsModal Input")
         focus = css_block(text, "ConsoleSettingsModal Input:focus")
 
-        assert "height: 3;" in base
-        assert "min-height: 3;" in base
-        assert "border: tall $ds-grid-line;" in base
-        assert "height: 3;" in focus
-        assert "min-height: 3;" in focus
-        assert "border: tall $ds-input-focus-accent;" in focus
+        assert "height: $ds-control-height-compact;" in base
+        assert "min-height: $ds-control-height-compact;" in base
+        assert "border: none;" in base
+        assert "border-left: solid $ds-control-edge;" in base
+        assert "border: tall" not in base
+        assert "height: $ds-control-height-compact;" in focus
+        assert "min-height: $ds-control-height-compact;" in focus
+        assert "border: none;" in focus
+        assert "border-left: thick $ds-input-focus-accent;" in focus
+        assert "border: tall" not in focus
         assert "outline: none;" in focus
 
 

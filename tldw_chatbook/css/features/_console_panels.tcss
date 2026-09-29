@@ -80,9 +80,25 @@ ConsoleSettingsModal Collapsible {
     min-width: $ds-size-10;
     max-width: $ds-size-23;
     height: auto;
-    min-height: $ds-size-3;
+    min-height: $ds-control-height-compact;
     content-align: left middle;
     text-wrap: wrap;
+}
+
+/* TASK-33003.2: one-row controls (the Input/Select rules live with the rest
+   of the modal's field styling in components/_agentic_terminal.tcss). These
+   moved here from the modal's DEFAULT_CSS, which loses to app CSS anyway. */
+ConsoleSettingsModal Button,
+ConsoleSettingsModal #console-settings-view-tabs,
+ConsoleSettingsModal #console-settings-default-recovery-actions,
+ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+ConsoleSettingsModal .console-context-action-row {
+    height: auto;
+    min-height: $ds-control-height-compact;
 }
 
 .console-settings-control {

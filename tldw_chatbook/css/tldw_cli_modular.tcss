@@ -2475,13 +2475,15 @@ ConsoleSettingsModal {
     align: center middle;
 }
 
+
 ConsoleSettingsModal Input {
     width: $ds-width-fill;
     min-width: $ds-size-0;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
     padding: $ds-space-0 $ds-space-1;
-    border: tall $ds-grid-line;
+    border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
@@ -2489,9 +2491,10 @@ ConsoleSettingsModal Input {
 ConsoleSettingsModal Select {
     width: $ds-width-fill;
     min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
     border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
@@ -2526,9 +2529,10 @@ ConsoleSettingsModal Select > SelectCurrent .arrow {
 }
 
 ConsoleSettingsModal Input:focus {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    border: tall $ds-input-focus-accent;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    border-left: thick $ds-input-focus-accent;
     outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
@@ -2548,7 +2552,9 @@ ConsoleSettingsModal Input > .input--selection {
 ConsoleSettingsModal Select:focus {
     border: none;
     border-bottom: none;
-    outline: solid $ds-input-focus-accent;
+    border-left: thick $ds-input-focus-accent;
+
+    outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
 }
@@ -8588,9 +8594,23 @@ ConsoleSettingsModal Collapsible {
     min-width: $ds-size-10;
     max-width: $ds-size-23;
     height: auto;
-    min-height: $ds-size-3;
+    min-height: $ds-control-height-compact;
     content-align: left middle;
     text-wrap: wrap;
+}
+
+
+ConsoleSettingsModal Button,
+ConsoleSettingsModal #console-settings-view-tabs,
+ConsoleSettingsModal #console-settings-default-recovery-actions,
+ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+ConsoleSettingsModal .console-context-action-row {
+    height: auto;
+    min-height: $ds-control-height-compact;
 }
 
 .console-settings-control {

@@ -434,6 +434,12 @@ button, the Model section's **Configure** button in the left rail, or the
   applies to this session only. Save as default also writes provider +
   streaming defaults to config."
 
+The modal is a dense form: every field, dropdown and button in it (the
+**Model and generation** / **Context and memory** tabs included) is one row
+tall, with its label on the same row. A thin bar at a field's left edge marks
+it as editable; the focused field's bar turns thick, its row fills with the
+focus colour and its value turns bold.
+
 Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named

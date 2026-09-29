@@ -168,7 +168,6 @@ if TYPE_CHECKING:
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
 MODAL_BODY_MIN_HEIGHT = 0
-MODAL_CONTROL_HEIGHT = 3
 MODAL_LABEL_WIDTH = 23
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
@@ -1048,28 +1047,6 @@ class ConsoleSettingsModal(
         height: auto;
     }}
 
-    ConsoleSettingsModal .console-settings-modal-row {{
-        height: auto;
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
-    ConsoleSettingsModal .console-settings-modal-label {{
-        height: {MODAL_CONTROL_HEIGHT};
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
-    ConsoleSettingsModal Input,
-    ConsoleSettingsModal Select,
-    ConsoleSettingsModal Button {{
-        height: {MODAL_CONTROL_HEIGHT};
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
-    ConsoleSettingsModal #console-settings-view-tabs {{
-        height: 3;
-        min-height: 3;
-    }}
-
     ConsoleSettingsModal #console-settings-fold-hint {{
         height: 1;
         min-height: 1;
@@ -1091,22 +1068,12 @@ class ConsoleSettingsModal(
         margin: 1 0 0 0;
     }}
 
-    ConsoleSettingsModal #console-settings-default-recovery-actions {{
-        height: {MODAL_CONTROL_HEIGHT};
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
     ConsoleSettingsModal #console-settings-memory-review {{
         height: auto;
         max-height: 12;
         overflow-y: auto;
         background: $surface;
         padding: 0 1;
-    }}
-
-    ConsoleSettingsModal .console-context-action-row {{
-        height: auto;
-        min-height: 3;
     }}
 
     ConsoleSettingsModal #console-settings-close-guard {{
@@ -3245,35 +3212,6 @@ class ConsoleSettingsModal(
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
         )
-        view_tabs = self.query_one("#console-settings-view-tabs", Horizontal)
-        view_height = 1 if compact else MODAL_CONTROL_HEIGHT
-        view_tabs.remove_class(*(name for name in view_tabs.classes if name.startswith("h-")))
-        view_tabs.set_styles(height=None)
-        view_tabs.add_class("h-1" if compact else "h-3")
-        view_tabs.styles.min_height = view_height
-        for button in view_tabs.query(Button):
-            button.remove_class(*(name for name in button.classes if name.startswith("h-")))
-            button.set_styles(height=None)
-            button.add_class("h-1" if compact else "h-3")
-            button.styles.min_height = view_height
-        for selector in ("#console-settings-readiness", "#console-settings-scope"):
-            summary = self.query_one(selector, Static)
-            summary.remove_class(*(name for name in summary.classes if name.startswith("h-")))
-            summary.set_styles(height=None)
-            summary.add_class("h-auto")
-            summary.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
-        recovery_actions = self.query_one(
-            "#console-settings-default-recovery-actions", Horizontal
-        )
-        recovery_actions.remove_class(*(name for name in recovery_actions.classes if name.startswith("h-")))
-        recovery_actions.set_styles(height=None)
-        recovery_actions.add_class("h-1" if compact else "h-3")
-        recovery_actions.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
-        for button in recovery_actions.query(Button):
-            button.remove_class(*(name for name in button.classes if name.startswith("h-")))
-            button.set_styles(height=None)
-            button.add_class("h-1" if compact else "h-3")
-            button.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         actions = self.query_one("#console-settings-actions", Vertical)
         actions.styles.layout = "vertical" if compact else "horizontal"
         actions.remove_class(*(name for name in actions.classes if name.startswith("h-")))
