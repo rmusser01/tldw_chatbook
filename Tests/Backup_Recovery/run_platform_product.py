@@ -375,6 +375,59 @@ _NATIVE_CREDENTIAL_ENVIRONMENT = (
     "RUNNER_OS",
 )
 _LINUX_CREDENTIAL_COLLECTION = "/org/freedesktop/secrets/collection/login"
+_NATIVE_SQLITE_OWNERS = frozenset(
+    {
+        "db.chachanotes.primary",
+        "chat.attachments",
+        "notes.sync_bindings",
+        "notes.file_notes",
+        "study.local",
+        "quiz.local",
+        "recovered.media",
+    }
+)
+_NATIVE_SQLITE_ISSUES = frozenset(
+    {
+        "cancelled",
+        "invalid_domain_reference",
+        "invalid_managed_membership",
+        "invalid_recovered_asset",
+        "invalid_recovered_reference",
+        "invalid_recovered_tombstone",
+        "invalid_sqlite_integrity",
+        "missing_required_asset",
+        "recovered_operation_pending",
+        "sqlite_resource_limit",
+        "sqlite_security_unavailable",
+        "sqlite_validation_unavailable",
+        "unsupported_domain_reference",
+        "unsupported_schema",
+        "unsupported_schema_policy",
+        "unsupported_schema_version",
+        "unsupported_sqlite_owner",
+    }
+)
+_NATIVE_INVENTORY_ISSUES = frozenset(
+    {
+        "unsupported_owner",
+        "invalid_status",
+        "unsupported",
+        "unavailable",
+        "missing_required",
+        "duplicate_logical_id",
+        "unvalidated_deletion",
+        "missing_identity",
+        "unsupported_path_kind",
+        "undeclared_alias",
+        "shared_identity_mismatch",
+        "overlapping_owner_roots",
+        "dependency_unavailable",
+        "config_parse_failure",
+        "config_discovery_failure",
+        "invalid_shared_declaration",
+        "shared_identity_unavailable",
+    }
+)
 
 
 def validate_native_credential_environment() -> str:
@@ -891,17 +944,64 @@ def _native_failure_metadata(record: Mapping[str, object]) -> dict[str, object]:
             }
             else issue_code(ValueError(issue))
         )
+    for field, allowed in (
+        ("sqlite_owner", _NATIVE_SQLITE_OWNERS),
+        ("sqlite_issue", _NATIVE_SQLITE_ISSUES),
+    ):
+        value = record.get(field)
+        if isinstance(value, str) and value in allowed:
+            result[field] = value
+    inventory = record.get("inventory")
+    if isinstance(inventory, Mapping):
+        from tldw_chatbook.Backup_Recovery.data_groups import group_for_owner
+        from tldw_chatbook.Backup_Recovery.inventory import BLOCKING
+
+        issues = inventory.get("issues", ())
+        issues = (
+            {
+                value
+                for value in issues
+                if isinstance(value, str) and value in _NATIVE_INVENTORY_ISSUES
+            }
+            if isinstance(issues, (list, tuple))
+            else set()
+        )
+        blocking = set()
+        rows = inventory.get("blocking", ())
+        for row in rows if isinstance(rows, (list, tuple)) else ():
+            if not isinstance(row, Mapping):
+                continue
+            owner, status = row.get("owner"), row.get("status")
+            if (
+                isinstance(owner, str)
+                and isinstance(status, str)
+                and (
+                    group_for_owner(owner) is not None
+                    or owner in {"unknown", "sqlite.transient"}
+                )
+                and status in BLOCKING
+            ):
+                blocking.add((owner, status))
+        result["inventory"] = {
+            "issues": sorted(issues)[:32],
+            "blocking": [
+                {"owner": owner, "status": status}
+                for owner, status in sorted(blocking)[:64]
+            ],
+        }
     return result
 
 
-def _record_native_failure(root: Path, error: BaseException) -> None:
+def _record_native_failure(
+    root: Path, error: BaseException, *, metadata: Mapping[str, object] | None = None
+) -> None:
     """Record metadata without allowing an observation error to mask the failure."""
     try:
         from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
         from tldw_chatbook.Backup_Recovery.recovery_service import issue_code
 
         record = _native_failure_metadata(
-            {**_error_metadata(error), "issue": issue_code(error)}
+            {**(metadata or {}), **_error_metadata(error), "issue": issue_code(error)}
         )
         _write_json(root / f"{os.getpid()}-{uuid4().hex}.json", record)
     except Exception:  # noqa: BLE001 - preserve the original private failure.

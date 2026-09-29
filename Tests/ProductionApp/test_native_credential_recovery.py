@@ -198,6 +198,7 @@ def _observe_workers(service):
     if not failure_root:
         return service
     from Tests.Backup_Recovery.run_platform_product import _record_native_failure
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validated_schema_version
 
     root = Path(failure_root)
     start = service._start
@@ -207,7 +208,24 @@ def _observe_workers(service):
             try:
                 return function(operation, cancel)
             except Exception as error:
-                _record_native_failure(root, error)
+                metadata = {}
+                try:
+                    trace = error.__traceback__
+                    while trace is not None:
+                        if trace.tb_frame.f_code is validated_schema_version.__code__:
+                            metadata = {
+                                "sqlite_owner": getattr(
+                                    trace.tb_frame.f_locals.get("owner"),
+                                    "owner_id",
+                                    None,
+                                ),
+                                "sqlite_issue": error.args[0] if error.args else None,
+                            }
+                            break
+                        trace = trace.tb_next
+                except Exception:  # noqa: BLE001 - preserve the original worker failure.
+                    metadata = {}
+                _record_native_failure(root, error, metadata=metadata)
                 raise
 
         return start(kind, observed)
@@ -335,6 +353,28 @@ async def _capture():
                 options=options,
                 destination=native_archive,
             )
+            if not details["inventory"].complete and (
+                root := os.environ.get("TLDW_NATIVE_FAILURE_ROOT")
+            ):
+                from Tests.Backup_Recovery.run_platform_product import (
+                    _record_native_failure,
+                )
+                from tldw_chatbook.Backup_Recovery.inventory import BLOCKING
+
+                _record_native_failure(
+                    Path(root),
+                    AssertionError("native_inventory_incomplete"),
+                    metadata={
+                        "inventory": {
+                            "issues": details["inventory"].issues,
+                            "blocking": [
+                                {"owner": item.owner, "status": item.status}
+                                for item in details["inventory"].items
+                                if item.status in BLOCKING
+                            ],
+                        }
+                    },
+                )
             assert details["inventory"].complete, "native_inventory_incomplete"
             operation = service.start_backup(
                 _selectors(),
@@ -581,6 +621,8 @@ def _transfer(source):
             _selectors(), selections=DiscoverySelections(data_groups=GROUPS)
         )
         assert target.complete
+        setup_parent = Path.cwd() / "files-needing-setup"
+        setup_parent.mkdir(mode=0o700)
         plan = service.preview_restore(
             inspection,
             mode="replace",
@@ -589,6 +631,7 @@ def _transfer(source):
             external_destinations={},
             profile_names={},
             target_configs=target_configs,
+            setup_parent=setup_parent,
             acknowledged_credential_issues=incoming_manual,
         )
         for attempt in range(2):

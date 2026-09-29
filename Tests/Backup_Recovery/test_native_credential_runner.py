@@ -137,6 +137,185 @@ def test_native_worker_failure_is_observed_before_service_maps_it(
         service.close()
 
 
+@pytest.mark.parametrize(
+    "owner_id", ("db.chachanotes.primary", "positive-native-secret/private.sqlite")
+)
+@pytest.mark.parametrize(
+    "installed_frame", (True, False), ids=("installed", "lookalike")
+)
+def test_native_worker_sqlite_refusal_keeps_only_installed_owner_and_code(
+    tmp_path, monkeypatch, owner_id, installed_frame
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        validated_schema_version as installed_validation,
+    )
+
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    monkeypatch.setenv("TLDW_NATIVE_FAILURE_ROOT", str(failure_root))
+    service = RecoveryService(tmp_path / "control")
+    owner = SimpleNamespace(owner_id=owner_id, schema_policy=lambda: None)
+
+    def validated_schema_version(owner, candidate, cancel):
+        raise ValueError("unsupported_schema_policy")
+
+    def refused(operation, cancel):
+        validate = installed_validation if installed_frame else validated_schema_version
+        return validate(owner, tmp_path / "positive-native-secret", cancel)
+
+    try:
+        product._observe_workers(service)
+        state = service.wait(service._start("backup", refused), timeout=5)
+        assert state["issues"] == ("backup_operation_failed",)
+        runner._publish_native_failures(private, artifacts)
+        path = artifacts / "native-failures.json"
+        row = json.loads(path.read_text())["failures"][0]
+        if not installed_frame:
+            assert "sqlite_owner" not in row and "sqlite_issue" not in row
+        elif owner_id == "db.chachanotes.primary":
+            assert row["sqlite_owner"] == owner_id
+            assert row["sqlite_issue"] == "unsupported_schema_policy"
+        else:
+            assert "sqlite_owner" not in row
+            assert row["sqlite_issue"] == "unsupported_sqlite_owner"
+        assert "positive-native-secret" not in path.read_text()
+    finally:
+        service.close()
+
+
+def test_native_failure_optional_diagnostics_revalidate_fixed_values(tmp_path):
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    metadata = {
+        "sqlite_owner": "db.chachanotes.primary",
+        "sqlite_issue": "unsupported_schema",
+        "inventory": {
+            "issues": ["undeclared_alias"] * 100 + ["positive-native-secret"],
+            "blocking": [{"owner": "notes.file_notes", "status": "missing_required"}]
+            * 100
+            + [
+                {"owner": "unknown", "status": "unsupported"},
+                {"owner": "sqlite.transient", "status": "unsupported"},
+                {
+                    "owner": "positive-native-secret/private.sqlite",
+                    "status": "unsupported",
+                },
+                {"owner": "notes.file_notes", "status": "positive-native-secret"},
+            ],
+            "path": "positive-native-secret",
+        },
+    }
+    runner._record_native_failure(
+        failure_root, ValueError("positive-native-secret"), metadata=metadata
+    )
+    raw = {"error_class": "ValueError", "frames": [], **metadata}
+    raw.update(
+        sqlite_owner="positive-native-secret/private.sqlite",
+        sqlite_issue="positive-native-secret",
+        message="positive-native-secret",
+    )
+    (failure_root / "untrusted.json").write_text(json.dumps(raw))
+    runner._publish_native_failures(private, artifacts)
+    path = artifacts / "native-failures.json"
+    rows = json.loads(path.read_text())["failures"]
+    assert [(row.get("sqlite_owner"), row.get("sqlite_issue")) for row in rows] == [
+        ("db.chachanotes.primary", "unsupported_schema"),
+        (None, None),
+    ]
+    assert all(
+        row["inventory"]
+        == {
+            "issues": ["undeclared_alias"],
+            "blocking": [
+                {"owner": "notes.file_notes", "status": "missing_required"},
+                {"owner": "sqlite.transient", "status": "unsupported"},
+                {"owner": "unknown", "status": "unsupported"},
+            ],
+        }
+        for row in rows
+    )
+    assert "positive-native-secret" not in path.read_text()
+
+
+@pytest.mark.parametrize(
+    "blocking", (False, True), ids=("issue-only", "blocking-owner")
+)
+def test_native_capture_observes_incomplete_inventory_before_refusal(
+    tmp_path, monkeypatch, blocking
+):
+    import tldw_chatbook
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery import recovery_service, runtime_maintenance
+
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    monkeypatch.setenv("TLDW_NATIVE_FAILURE_ROOT", str(failure_root))
+    monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", str(tmp_path))
+
+    async def idle(*args):
+        pass
+
+    service = recovery_service.RecoveryService(tmp_path / "control")
+    items = (
+        (
+            SimpleNamespace(owner="db.chachanotes.primary", status="unavailable"),
+            SimpleNamespace(owner="positive-native-secret", status="unsupported"),
+            SimpleNamespace(owner="notes.file_notes", status="included"),
+        )
+        if blocking
+        else ()
+    )
+    monkeypatch.setattr(
+        service,
+        "preview_backup_details",
+        lambda *args, **kwargs: {
+            "inventory": SimpleNamespace(
+                complete=False,
+                issues=("undeclared_alias", "positive-native-secret"),
+                items=items,
+            )
+        },
+    )
+    config = SimpleNamespace(set_encryption_password=lambda password: None)
+    monkeypatch.setattr(tldw_chatbook, "config", config, raising=False)
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.app",
+        SimpleNamespace(
+            TldwCli=lambda: SimpleNamespace(
+                _shutdown_app_owned_lifecycles=idle,
+                tts_service=SimpleNamespace(close=idle, wait_closed=idle),
+            )
+        ),
+    )
+    monkeypatch.setattr(recovery_service, "RecoveryService", lambda root: service)
+    monkeypatch.setattr(recovery_service, "default_control_root", lambda: tmp_path)
+    monkeypatch.setattr(runtime_maintenance, "monitor_app", idle)
+    with pytest.raises(AssertionError, match="native_inventory_incomplete"):
+        product.asyncio.run(product._capture())
+    runner._publish_native_failures(private, artifacts)
+    path = artifacts / "native-failures.json"
+    rows = json.loads(path.read_text())["failures"]
+    assert [row["inventory"] for row in rows] == [
+        {
+            "issues": ["undeclared_alias"],
+            "blocking": [{"owner": "db.chachanotes.primary", "status": "unavailable"}]
+            if blocking
+            else [],
+        }
+    ]
+    assert "positive-native-secret" not in path.read_text()
+
+
 def test_native_destinations_seed_retargeted_profile_before_negative_checks(
     tmp_path, monkeypatch
 ):
@@ -219,27 +398,38 @@ def test_native_fixture_installs_owners_before_destination_discovery(
         product._transfer(source)
 
 
-def test_native_isolated_preview_has_no_replacement_acknowledgments(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("stop_mode", ("isolated", "replace"))
+def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
+    tmp_path, monkeypatch, stop_mode
 ):
     import tldw_chatbook
     from Tests.ProductionApp import test_native_credential_recovery as product
     from tldw_chatbook.Backup_Recovery import (
         archive_reader,
         inventory,
+        isolated_restore,
+        profile_catalog,
         recovery_service,
     )
 
     class PreviewReached(Exception):
         pass
 
-    source = tmp_path / "source-linux.age"
+    root, incoming = tmp_path / "child", tmp_path / "incoming"
+    root.mkdir(mode=0o700)
+    incoming.mkdir(mode=0o700)
+    home = root / "home"
+    home.mkdir(mode=0o700)
+    control = home / "control"
+    control.mkdir(mode=0o700)
+    monkeypatch.chdir(root)
+    source = incoming / "source-linux.age"
     with product.zipfile.ZipFile(source, "w"):
         pass
     source.with_suffix(".json").write_text(json.dumps({"system": "Linux"}))
     stores = []
     for number in range(2):
-        path = tmp_path / f"unselected-{number}.sqlite"
+        path = home / f"unselected-{number}.sqlite"
         path.write_bytes(b"synthetic-unselected")
         stores.append(
             SimpleNamespace(path=path, owner="db.prompts.primary", status="included")
@@ -247,7 +437,7 @@ def test_native_isolated_preview_has_no_replacement_acknowledgments(
 
     class Service:
         def __init__(self, root):
-            pass
+            self.control_root = root
 
         def start_inspection(self, source, *, password):
             return "inspection"
@@ -259,9 +449,30 @@ def test_native_isolated_preview_has_no_replacement_acknowledgments(
             return SimpleNamespace(path=source)
 
         def preview_restore(self, inspection, **options):
-            assert options["mode"] == "isolated"
-            assert "acknowledged_credential_issues" not in options
+            if options["mode"] == "isolated":
+                assert "acknowledged_credential_issues" not in options
+                if stop_mode == "replace":
+                    return SimpleNamespace()
+            else:
+                assert options["mode"] == "replace"
+                setup = options["setup_parent"]
+                assert setup == root / "files-needing-setup" and setup.is_dir()
+                if hasattr(os, "getuid"):
+                    assert stat.S_IMODE(setup.stat().st_mode) == 0o700
+                    assert setup.stat().st_uid == os.getuid()
+                for protected in (home, control, incoming):
+                    assert setup != protected and protected not in setup.parents
+                    assert setup not in protected.parents
+                assert options["acknowledged_credential_issues"] == (
+                    "credential_manual_recovery_required:synthetic-manual",
+                )
             raise PreviewReached()
+
+        def start_restore(self, inspection, plan):
+            return "isolated-restore"
+
+        def profiles(self):
+            return [{"profile_id": role} for role in ("default", "retargeted")]
 
         def close(self):
             pass
@@ -270,9 +481,11 @@ def test_native_isolated_preview_has_no_replacement_acknowledgments(
     monkeypatch.setattr(tldw_chatbook, "config", config, raising=False)
     monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
     monkeypatch.setattr(recovery_service, "RecoveryService", Service)
-    monkeypatch.setattr(recovery_service, "default_control_root", lambda: tmp_path)
+    monkeypatch.setattr(recovery_service, "default_control_root", lambda: control)
     monkeypatch.setattr(
-        inventory, "discover", lambda selectors: SimpleNamespace(items=stores)
+        inventory,
+        "discover",
+        lambda selectors, **options: SimpleNamespace(items=stores, complete=True),
     )
     monkeypatch.setattr(
         archive_reader,
@@ -286,7 +499,21 @@ def test_native_isolated_preview_has_no_replacement_acknowledgments(
         "_material",
         lambda archive: [{"remappable": False, "id": "synthetic-manual"}],
     )
-    monkeypatch.setenv("HOME", str(tmp_path))
+    selector = home / "separate.toml"
+    selector.write_text('[general]\nusers_name="separate_fixture"\n')
+    monkeypatch.setattr(
+        profile_catalog,
+        "ProfileCatalog",
+        lambda root: SimpleNamespace(resolve=lambda profile_id: (selector, None)),
+    )
+    monkeypatch.setattr(isolated_restore, "_launch_environment", dict)
+    monkeypatch.setattr(
+        product.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0)
+    )
+    retained = control / "isolated-fixture"
+    retained.mkdir(mode=0o700)
+    (retained / "credentials.age").write_bytes(source.read_bytes())
+    monkeypatch.setenv("HOME", str(home))
     with pytest.raises(PreviewReached):
         product._transfer(source)
 
