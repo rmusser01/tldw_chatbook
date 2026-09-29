@@ -1420,6 +1420,52 @@ class HostedPresetFinishPolicy:
         return value
 
 
+def raise_on_error_frame(record: ProviderRecord, event: object) -> None:
+    """Fail on a gateway's mid-stream error frame (TASK-33350).
+
+    Tencent TokenHub documents that a failure after the 200 header is sent
+    arrives as a bare ``{"error": {...}}`` SSE event followed by ``[DONE]``.
+    The provider-authored error text is never copied into the message.
+
+    Args:
+        record: Preset naming the error-frame key (``error_frame_key``).
+        event: One decoded response body or stream event.
+
+    Raises:
+        ChatProviderError: When the event carries the error-frame key.
+    """
+    key = record.error_frame_key
+    if key is None or not isinstance(event, Mapping) or key not in event:
+        return
+    raise ChatProviderError(
+        provider=record.key,
+        message=f"{record.display_name} reported an error during the response.",
+        status_code=502,
+    )
+
+
+def provider_event_check(
+    record: ProviderRecord,
+) -> Callable[[Mapping[str, Any]], None] | None:
+    """Return the record's per-event provider checks, or ``None`` when it has none.
+
+    Args:
+        record: Preset whose ``error_frame_key``/``status_envelope_key`` apply.
+
+    Returns:
+        A callable run on every decoded stream event before parsing, or
+        ``None`` so records without either key keep the unchecked stream.
+    """
+    if record.error_frame_key is None and record.status_envelope_key is None:
+        return None
+
+    def check(event: Mapping[str, Any]) -> None:
+        raise_on_error_frame(record, event)
+        raise_on_status_envelope(record, event)
+
+    return check
+
+
 def raise_on_status_envelope(record: ProviderRecord, event: object) -> None:
     """Fail on a nonzero provider status envelope (TASK-33201).
 
@@ -1480,6 +1526,7 @@ def normalize_hosted_provider_response(
     validators = _validators_for(record)
     safe = deepcopy(response)
     try:
+        raise_on_error_frame(record, safe)
         raise_on_status_envelope(record, safe)
         if isinstance(safe, Mapping):
             choices = safe.get("choices")
@@ -2040,11 +2087,7 @@ def _send_hosted_chat_request(
                     allowed_message_keys=record.message_allowances,
                     tolerant_top_level_extras=record.tolerant_response_extras,
                     usage_optional=record.stream_usage_optional,
-                    event_check=(
-                        (lambda event: raise_on_status_envelope(record, event))
-                        if record.status_envelope_key is not None
-                        else None
-                    ),
+                    event_check=provider_event_check(record),
                 ),
                 record=record,
                 resolution=resolution,

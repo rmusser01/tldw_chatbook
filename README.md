@@ -520,8 +520,10 @@ provider’s supported environment variable. Common examples include
 AI Gateway — see the Settings guide for the workspace-host base URL), and
 the inference-cloud keys `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`,
 `CEREBRAS_API_KEY`, `SAMBANOVA_API_KEY`, `NVIDIA_API_KEY`,
-`DEEPINFRA_API_KEY`, `NEBIUS_API_KEY`, `NOVITA_API_KEY`, and
-`MINIMAX_API_KEY` (model lists fill via **Discover models**; MiniMax ships a
+`DEEPINFRA_API_KEY`, `NEBIUS_API_KEY`, `NOVITA_API_KEY`,
+`MINIMAX_API_KEY`, `MIMO_API_KEY` (Xiaomi MiMo), `TOKENHUB_API_KEY` (Tencent
+TokenHub), `ARK_API_KEY` (ByteDance Seed via BytePlus), and
+`STEPFUN_API_KEY` (model lists fill via **Discover models**; MiniMax, MiMo, and BytePlus ship a
 seeded list).
 
 Do not commit keys to the repository. Config encryption and keyring-backed

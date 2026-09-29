@@ -489,6 +489,51 @@ If Test Provider reports invalid settings, keep exactly one canonical
 the shipped `api_base_url` unless your account documents a different one.
 Test the draft again before saving.
 
+#### Model makers' own APIs
+
+These four presets reach a model maker directly. They cover the makers in
+OpenRouter's most-used top 15 that had no first-party provider here (Meta is
+absent because its Llama API was retired in July 2026; xAI is deliberately not
+offered). Like the inference clouds, each one is set up from the provider's
+public documentation, so an unexpected field in a real reply fails with a
+protocol error instead of being passed through.
+
+| Provider | Default base URL | Credential env var | Models |
+|---|---|---|---|
+| **Xiaomi MiMo** | `https://api.xiaomimimo.com/v1` | `MIMO_API_KEY` | seeded (`mimo-v2.6-flash`, `mimo-v2.6-pro`, …) |
+| **Tencent TokenHub** | `https://tokenhub-intl.tencentcloudmaas.com/v1` | `TOKENHUB_API_KEY` | Discover models (Hy4 is `hy4-preview`) |
+| **ByteDance Seed (BytePlus)** | `https://ark.ap-southeast.bytepluses.com/api/v3` | `ARK_API_KEY` | seeded (`seed-2-0-lite-260228`, `seed-1-8-251228`) |
+| **StepFun** | `https://api.stepfun.ai/v1` | `STEPFUN_API_KEY` | Discover models |
+
+- **Seeded lists go stale.** MiMo and BytePlus document no usable
+  models route, so their lists ship with the models the docs name and are
+  never refreshed. For a model that isn't listed, enter its exact ID as a
+  **Custom model**. On BytePlus that includes your own `ep-…` endpoint IDs,
+  and each model must first be activated in the BytePlus console.
+- **Xiaomi MiMo** sends your key in an `api-key` header rather than
+  `Authorization: Bearer`, because that is the header MiMo documents.
+- **Tencent TokenHub** is Tencent Cloud's international model gateway. It
+  serves Tencent's Hy4 preview (not available on the older, China-only
+  Hunyuan API) plus DeepSeek, GLM, and Kimi models. For the US region set
+  `api_base_url` to `https://tokenhub-us.tencentcloudmaas.com/v1`; for the
+  Chinese mainland, `https://tokenhub.tencentcloudmaas.com/v1`.
+- **ByteDance Seed** keys are tied to a region. A China (Volcengine Ark) key
+  does not work against the international host; China users set
+  `api_base_url` to `https://ark.cn-beijing.volces.com/api/v3`.
+- **StepFun** ships with function tools off: its documentation shows
+  tool calls arriving with a `stop` finish, which the strict engine rejects.
+  China users set `api_base_url` to `https://api.stepfun.com/v1`. If you keep
+  your key in `STEP_API_KEY` (the name StepFun's own samples use), set
+  `api_key_env_var = "STEP_API_KEY"` in `[api_settings.stepfun]`.
+- Reasoning from MiMo, TokenHub, and BytePlus models stays private (kept off
+  the live stream, like Z.ai) and is sent back to the provider on later
+  turns, which TokenHub and MiMo require for multi-step tool use. StepFun's
+  reasoning field is dropped. A `content_filter` finish from MiMo, TokenHub,
+  or BytePlus is reported as a provider error; a `repetition_truncation`
+  finish from MiMo or TokenHub ends the reply normally.
+- MiMo and BytePlus streams may arrive without token counts; the reply still
+  completes.
+
 #### Custom endpoints
 
 A **custom endpoint** is a named endpoint entry you can template off any

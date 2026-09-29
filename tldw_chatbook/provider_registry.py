@@ -116,6 +116,9 @@ class ProviderRecord:
         status_envelope_key: Top-level provider status object checked on
             every body and stream event; a nonzero ``status_code`` raises a
             provider error, ``None`` disables the check.
+        error_frame_key: Top-level key of a gateway's mid-stream error
+            frame; an event carrying it raises a provider error. ``None``
+            disables the check.
         tolerant_response_extras: Long-tail tolerant profile switch
             (custom family only, fixture-gated): shape-safe unknown
             top/event keys and null-valued unknown choice/message keys are
@@ -129,8 +132,8 @@ class ProviderRecord:
         auth_scheme: Credential contract of engine resolution and
             transport: ``"bearer"`` hard-requires a key;
             ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute
-            with no Authorization header; ``"api_key_header"`` is the Phase
-            3 scheme.
+            with no Authorization header; ``"api_key_header"`` (Phase 3)
+            hard-requires a key and sends it as an ``api-key`` header.
         continuation_protocol: Protocol for provider continuation
             checkpoints (``"chat_completions"``), or ``None`` when the
             preset builds no checkpoints.
@@ -191,6 +194,11 @@ class ProviderRecord:
     # A nonzero ``status_code`` is a provider error even when ``choices``
     # look valid, so the engine checks it before normalizing anything.
     status_envelope_key: str | None = None
+    # Mid-stream error frame (TASK-33350): some gateways (Tencent TokenHub)
+    # report a failure after the 200 header as a bare ``{"error": {...}}``
+    # event. With this key set, such a frame is a provider error instead of
+    # a "malformed response" protocol error.
+    error_frame_key: str | None = None
     # Long-tail tolerant profile (custom family only, ADR-179 Phase 2,
     # fixture-gated): shape-safe unknown top/event keys dropped; null-valued
     # unknown choice/message keys dropped (non-null ones still fail closed
@@ -205,7 +213,8 @@ class ProviderRecord:
     # configuration error); "bearer_optional" (Phase 2) lets keyless
     # endpoints (ADR-146 custom endpoints) execute with no Authorization
     # header while still using a resolved key when one exists;
-    # "api_key_header" is the Phase 3 scheme. See ADR-179 spec §3.
+    # "api_key_header" (Phase 3, TASK-33350) requires a key and sends it as
+    # an ``api-key`` header instead of Authorization. See ADR-179 spec §3.
     auth_scheme: str = "bearer"
     continuation_protocol: str | None = "chat_completions"
     # ``None`` = the provider documents no models route: discovery is
@@ -550,6 +559,184 @@ MINIMAX = ProviderRecord(
     auth_scheme="bearer",
 )
 
+# --- Top-15 OpenRouter model makers (TASK-33350) ---
+# OpenRouter's usage rankings (week of 2026-09-21) name the model makers
+# people use; these four had no first-party provider here. Like the
+# TASK-33201 presets they are built from public documentation (read
+# 2026-09-28) plus unauthenticated probes of each host: every allowance is a
+# documented field, everything else stays strict. Meta's Llama API was
+# retired on 2026-07-06 (llama.developer.meta.com/docs/llama-api-deprecation),
+# so StepFun takes its place; xAI stays excluded (ADR-179).
+#
+# Xiaomi MiMo -- mimo.mi.com/docs/en-US/api/chat/openai-api and
+# .../quick-start/summary/first-api-call: the quickstart authenticates with
+# an ``api-key:`` header, not Authorization (an invalid-key probe returns the
+# same 401 either way, so Bearer is unproven) -> the Phase 3 api_key_header
+# scheme. ``thinking`` defaults on and reasoning lands in
+# ``reasoning_content``; the FAQ asks for it to be resent in tool loops, so it
+# is kept private and round-tripped. Finish reasons add ``content_filter``
+# (provider error) and ``repetition_truncation`` (a normal, truncated end).
+# ``annotations`` (web-search citations, an array) is NOT allowed: it only
+# appears with MiMo's built-in web search, which is never requested. Usage
+# streaming is requested (OpenAI convention; exact key unconfirmed) and its
+# absence tolerated. No models route is confirmed and discovery only speaks
+# Bearer, so the list is seeded from the documented model IDs.
+MIMO = ProviderRecord(
+    key="mimo",
+    config_key="MiMo",
+    display_name="Xiaomi MiMo",
+    classification=_CLOUD,
+    api_key_env_var="MIMO_API_KEY",
+    api_key_env_candidates=("MIMO_API_KEY",),
+    default_base_url="https://api.xiaomimimo.com/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "MIMO_API_KEY",
+        # No "model" key (see TOGETHER): seeded [providers] list instead.
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+        # MiMo can take minutes to send its first token: oh-my-pi documents a
+        # 5-minute stream-idle floor for it (docs/provider-quirks.md, Xiaomi).
+        "timeout": 300,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_terminal=frozenset({"stop", "tool_calls", "length", "repetition_truncation"}),
+    finish_provider_errors=frozenset({"content_filter"}),
+    discovery_route=None,  # seeded-only: no confirmed models route, discovery is Bearer-only
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="api_key_header",
+)
+# ByteDance Seed via BytePlus ModelArk (international) -- ModelArk chat
+# completions docs (docs.byteplus.com/en/docs/ModelArk) and the Volcengine
+# twin (volcengine.com/docs/82379/1298454): Bearer ``ARK_API_KEY`` (probe
+# confirms the header is read), ``model`` takes a plain model ID or the
+# account's own ``ep-...`` endpoint ID. Keys are region-locked: a China
+# (Volcengine) key fails here; China users point ``api_base_url`` at
+# https://ark.cn-beijing.volces.com/api/v3. Message/delta carry
+# ``reasoning_content`` (kept private) and ``encrypted_content``;
+# ``service_tier`` is a documented request field whose response echo is
+# unconfirmed but OpenAI-standard, so it is tolerated. ``content_filter``
+# finishes are provider errors. Users report streamed usage missing even when
+# requested, so it is requested AND its absence tolerated. The models route
+# exists but its shape is undocumented: seeded from documented IDs.
+BYTEPLUS = ProviderRecord(
+    key="byteplus",
+    config_key="BytePlus",
+    display_name="ByteDance Seed (BytePlus)",
+    classification=_CLOUD,
+    api_key_env_var="ARK_API_KEY",
+    api_key_env_candidates=("ARK_API_KEY",),
+    default_base_url="https://ark.ap-southeast.bytepluses.com/api/v3",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=False,
+    settings_defaults={
+        "api_key_env_var": "ARK_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_provider_errors=frozenset({"content_filter"}),
+    response_allowances=frozenset({"service_tier"}),
+    message_allowances=frozenset({"encrypted_content"}),
+    discovery_route=None,  # seeded-only: models route shape undocumented
+    stream_include_usage=True,
+    stream_usage_optional=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+# StepFun (international) -- platform.stepfun.ai/docs/en/api-reference/chat/
+# chat-completion-create: Bearer auth, ``GET /v1/models`` is
+# OpenAI-shaped, ``stream_options.include_usage`` is supported. Reasoning
+# models return ``reasoning`` (StepFun's own name, message and delta) --
+# tolerated and dropped. Tool calling ships OFF: the tool-call reference shows
+# ``finish_reason: "stop"`` alongside ``tool_calls``, which the strict finish
+# policy rejects; enabling it needs a live check. China users point
+# ``api_base_url`` at https://api.stepfun.com/v1.
+# Env var: ``STEPFUN_API_KEY`` only. StepFun's own samples use
+# ``STEP_API_KEY``; users who keep that name set ``api_key_env_var =
+# "STEP_API_KEY"`` in the table. A second candidate here would be walked by
+# the engine but not by Console readiness or discovery (Qodo, PR #2889).
+STEPFUN = ProviderRecord(
+    key="stepfun",
+    config_key="StepFun",
+    display_name="StepFun",
+    classification=_CLOUD,
+    api_key_env_var="STEPFUN_API_KEY",
+    api_key_env_candidates=("STEPFUN_API_KEY",),
+    default_base_url="https://api.stepfun.ai/v1",
+    native_tools=False,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "STEPFUN_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    message_allowances=frozenset({"reasoning"}),
+    stream_include_usage=True,
+    reasoning_disposition="ignored",
+    auth_scheme="bearer",
+)
+
+# Tencent Cloud TokenHub (international) -- Tencent's gateway serving its
+# Hy4 preview (the model that puts Tencent in OpenRouter's top 15; the
+# direct Hunyuan API is China-only and stops at hunyuan-a13b) plus DeepSeek,
+# GLM and Kimi models. tencentcloud.com/document/product/1300/78940 (API
+# integration guide) and 78932 (model list): Bearer auth (probe confirms),
+# ``$TOKENHUB_API_KEY`` in the models example, OpenAI-shaped ``GET /v1/models``,
+# ``stream_options.include_usage`` default false (usage only on request).
+# Documented extras: top-level ``search_info`` (null unless web search ran),
+# choice ``logprobs``, message ``refusal``; ``reasoning_content`` is kept
+# private and round-tripped (Preserved Thinking requires it back). NOT
+# allowed: ``reasoning_details`` and delta ``search_results`` (arrays; the
+# value rule rejects them -- they fail closed if a model sends them).
+# Finish reasons add ``content_filter`` (provider error) and
+# ``repetition_truncation`` (normal, truncated end). A failure after the 200
+# header arrives as a bare ``{"error": {...}}`` frame -> provider error.
+# Other hosts: https://tokenhub-us.tencentcloudmaas.com/v1 (US) and
+# https://tokenhub.tencentcloudmaas.com/v1 (Chinese mainland).
+TOKENHUB = ProviderRecord(
+    key="tokenhub",
+    config_key="TokenHub",
+    display_name="Tencent TokenHub",
+    classification=_CLOUD,
+    api_key_env_var="TOKENHUB_API_KEY",
+    api_key_env_candidates=("TOKENHUB_API_KEY",),
+    default_base_url="https://tokenhub-intl.tencentcloudmaas.com/v1",
+    native_tools=True,
+    reasoning_effort=False,
+    auto_refresh=True,
+    settings_defaults={
+        "api_key_env_var": "TOKENHUB_API_KEY",
+        "streaming": True,
+        **_HOSTED_TRANSPORT_DEFAULTS,
+    },
+    pricing_seeds={},
+    engine_driven=True,
+    base_url_suffix=None,
+    finish_terminal=frozenset({"stop", "tool_calls", "length", "repetition_truncation"}),
+    finish_provider_errors=frozenset({"content_filter"}),
+    response_allowances=frozenset({"search_info"}),
+    choice_allowances=frozenset({"logprobs"}),
+    message_allowances=frozenset({"refusal"}),
+    error_frame_key="error",
+    stream_include_usage=True,
+    reasoning_disposition="proprietary",
+    auth_scheme="bearer",
+)
+
 # --- Custom hosted family (ADR-179 Phase 2 Task 6) ---
 # The engine-driven execution surface for the ADR-146 custom-endpoint
 # ``openai_compatible`` family, swapped in at the Console gateway identity
@@ -778,6 +965,7 @@ ALL_RECORDS: tuple[ProviderRecord, ...] = (
     HUGGINGFACE, MOONSHOT, ZAI, QWENCLOUD, DATABRICKS,
     TOGETHER, FIREWORKS, CEREBRAS, CUSTOM_HOSTED,
     SAMBANOVA, NVIDIA, DEEPINFRA, NEBIUS, NOVITA, MINIMAX,
+    MIMO, TOKENHUB, BYTEPLUS, STEPFUN,
     LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )

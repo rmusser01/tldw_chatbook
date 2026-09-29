@@ -32,6 +32,10 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "DeepInfra",
     "Nebius",
     "Novita",
+    # TASK-33350: presets with a documented OpenAI-shaped /models route
+    # (MiMo and BytePlus are seeded-only).
+    "TokenHub",
+    "StepFun",
 )
 
 SELECTOR_MERGE_CAP = 50

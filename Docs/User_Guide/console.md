@@ -614,6 +614,10 @@ transcript, which is provider behavior, not dropped output. Streamed NVIDIA
 NIM replies carry no token counts (NVIDIA does not report streamed usage).
 Setup details, env vars, and per-provider notes live in
 [Settings — Inference clouds](settings.md#inference-clouds).
+**Xiaomi MiMo**, **Tencent TokenHub** (Hy4), **ByteDance Seed (BytePlus)**, and
+**StepFun** work the same way; see
+[Settings — Model makers' own APIs](settings.md#model-makers-own-apis) for
+their env vars and region notes. StepFun runs without function tools.
 
 ### Leaving Console during a run
 
