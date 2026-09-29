@@ -566,6 +566,34 @@ class DreamsDB(BaseDB):
             ).fetchall()
         return [self._story_dict(row) for row in rows]
 
+    def get_story(self, story_id: int) -> dict | None:
+        """Return one story row by id, or ``None``.
+
+        task-33164 (Phase 2 Track story): the Artifacts screen's Tracked
+        rows resolve their ``origin_story_id`` through this targeted read
+        because the ``list_recent_stories`` window may no longer contain
+        the origin -- a long-lived watch outlives the bounded recent-stories
+        slice. Same row shape as :meth:`list_recent_stories` (all story
+        columns, ``matched_topics`` parsed, the owning collection's
+        ``local_date`` joined in) so the story modal can open it unchanged.
+
+        Args:
+            story_id: The ``dream_stories`` row to read.
+
+        Returns:
+            The story dict with ``local_date`` added, or ``None`` when no
+            row carries that id.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT s.*, c.local_date AS local_date"
+                " FROM dream_stories AS s"
+                " JOIN dreams_collections AS c ON c.id = s.collection_id"
+                " WHERE s.id = ?",
+                (story_id,),
+            ).fetchone()
+        return self._story_dict(row) if row is not None else None
+
     def set_story_kept(self, story_id: int, kept: bool) -> None:
         """Mark a story kept (or clear the mark), stamping kept_at."""
         with self.transaction() as conn:

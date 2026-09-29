@@ -72,6 +72,9 @@ From an open story you can:
   purely from LLM knowledge have nothing to ingest.
 - **Track this (t) / Untrack (u)** — watch (or stop watching) the story's
   page for changes; see [Tracking](#tracking) below.
+- **Watch question (w)** — watch the discovery query itself instead of the
+  page: Dreams re-runs it as a search on the check cadence and notifies you
+  when a judged change lands (see [Tracking](#tracking)).
 - **More like this (m) / Less like this (l)** — record feedback that the
   next cycle's interest profile picks up (plus dive/keep/export/ingest
   themselves count as positive signals).
@@ -83,11 +86,14 @@ creates (or adopts) a watchlists subscription for the URL, joins it to a
 shared "Dreams Tracked" watchlist, and pins a change alert — every new
 item the page produces lands in the Watchlists **Notifications** pane.
 Tracking an event-dated story also schedules one reminder a week before
-the event. Tracking a *question* is planned as well — the service that
-watches one already ships in this release (the scheduled loop would ask
-it as a search and have a judge call decide whether the results
-materially changed; an unchanged digest never spends the judge), and a
-one-keystroke entry for it is a filed follow-up.
+the event. **Watch question (w)** instead tracks the question that found
+the story: the story's discovery query is re-run as a search on the check
+cadence, and one judge call decides whether the results materially
+changed — an unchanged digest never spends the judge. A changed verdict
+surfaces as a row in the **Tracked** group above the Dreams rows;
+selecting a Tracked row opens the story it came from (or a summary
+notice, when its origin story is gone). Both kinds of watch retire the
+same way (see below).
 
 Tracked watches retire on their own: an event-dated watch retires one
 day after its event has passed, and any watch that comes back unchanged
@@ -109,4 +115,4 @@ watch is checked more often than once per
 - Everything is stored locally in the Dreams SQLite database.
 
 —
-*Verified against feat/dreams-phase-2 @ 732d0b1113 — 2026-09-28*
+*Verified against feat/dreams-phase-3 @ a5f7daa078 — 2026-09-28*
