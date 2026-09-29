@@ -53,3 +53,14 @@ the production result toast still failed the original missing-toast assertion.
 Ruff diagnostics match the unchanged baseline (five existing findings, zero new).
 Raw stress and negative-control logs remain local. No production code or timeout
 was changed, and no full local suite ran. ADR required: no; test-only helper reuse.
+
+The following rebase onto the FTS query change in dev
+`6423c4fbd1460952dd8cb5df04e51c4e0e7e0d0b` preserved all four PR patches exactly.
+At source `52bb6f10d2f7d0b5e7a834286a7cd42f6f55eb59`, a separate Buddy run
+passed **16 tests in 93.94s**, and the three incoming FTS query-plan/result cases
+passed in 6.37s. Fresh and schema69 upgrade profiles still reach schema73 and
+retain the same ownership, workspace-default and Static/Dynamic assertions.
+The [FTS rebase receipt](artifacts/buddy-v1-32108/fts-dev-20260929/verification.json)
+records the tested source, sanitized profile outcomes and local-log hashes.
+Earlier receipts retain their original source attribution. Native and physical
+voice acceptance remains open; no full local suite ran.
