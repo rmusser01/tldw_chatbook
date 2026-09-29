@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@Robert'
 created_date: '2026-09-29 19:24'
-updated_date: '2026-09-29 20:02'
+updated_date: '2026-09-29 20:27'
 labels:
   - providers
   - engine
@@ -40,4 +40,6 @@ Qwen3.5 models on NVIDIA NIM think on every turn by default; the only documented
 
 <!-- SECTION:NOTES:BEGIN -->
 NVIDIA NIM's Qwen3.5 schema (build.nvidia.com/qwen/qwen3.5-397b-a17b, read 2026-09-29) has no reasoning_effort; thinking is on by default and switched only by chat_template_kwargs.enable_thinking. New ProviderRecord field thinking_toggle_models (model glob -> kwarg) plus a stdlib helper thinking_toggle_key (provider_registry.py), set only on NVIDIA for qwen/qwen3.5-*. The engine sends {key: effort != "none"} for a matching model (NIM has on/off, no levels, so any non-none level means on), keeps the local refusal for other models, and sends nothing when no effort is chosen. Console: the shared helper answers "supported" for matching models, and _capability_generation_fields adds reasoning_effort for them so the draft rebase carries the choice. Because every level maps to a sent value, no per-provider option filtering was needed in the modal. Settings/Console guides updated. Mutations (engine branch, rebase field) turn tests red. Not done: qwen3-235b-a22b's different kwarg ("thinking") -- its page 404s; add a glob if it is live.
+
+Qodo round: an unknown effort level for a toggle model now fails locally (validated against sampling_params.REASONING_EFFORT_VALUES) instead of turning thinking on; a chat_api_call-level test proves the Console dispatch path carries the switch into the NIM payload.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@Robert'
 created_date: '2026-09-29 19:28'
-updated_date: '2026-09-29 20:02'
+updated_date: '2026-09-29 20:27'
 labels:
   - providers
   - engine
@@ -36,4 +36,6 @@ Fireworks' reasoning guide says a request carrying both `thinking` and `reasonin
 
 <!-- SECTION:NOTES:BEGIN -->
 The conflict cannot occur today: FIREWORKS has reasoning_effort=False and no extra body, and the engine never invents a thinking field. Pinned registry-wide: for every engine-driven record, extra_body_fields never holds thinking alongside reasoning_effort=True, and a built payload never carries both (test_no_engine_preset_can_send_thinking_with_reasoning_effort). The registry comment (and the Settings/Console guides and a test docstring) wrongly said Fireworks "hides reasoning behind its own API surface"; corrected per docs.fireworks.ai/guides/reasoning: reasoning_content, required back on interleaved tool turns (proprietary disposition). Not done: enabling Fireworks reasoning_effort (would need a per-record value allowlist; its guide and API reference disagree on the thinking/effort conflict).
+
+Qodo round: Qodo reported Fireworks reasoning is never replayed (no continuation protocol). Not so -- FIREWORKS has continuation_protocol "chat_completions" and is in provider_continuation._PAIRINGS; test_fireworks_tool_turn_reasoning_is_kept_and_replayed proves the tool-call response keeps reasoning_content in its continuation and the next request restores it on the assistant message.
 <!-- SECTION:NOTES:END -->

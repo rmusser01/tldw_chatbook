@@ -132,6 +132,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.provider_readiness import configured_workspace_base_url
+from tldw_chatbook.Chat.sampling_params import REASONING_EFFORT_VALUES
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,
@@ -1040,8 +1041,11 @@ def build_hosted_chat_payload(
                 _bounded_identifier(record, "reasoning effort", reasoning_effort)
             )
         elif toggle_key is not None:
-            effort = _bounded_identifier(record, "reasoning effort", reasoning_effort)
-            payload["chat_template_kwargs"] = {toggle_key: effort != "none"}
+            # A boolean switch cannot pass an unknown level through for the
+            # provider to reject, so validate against the shared set (Qodo).
+            if reasoning_effort not in REASONING_EFFORT_VALUES:
+                raise bad_request(f"{record.display_name} reasoning effort is invalid.")
+            payload["chat_template_kwargs"] = {toggle_key: reasoning_effort != "none"}
         else:
             raise bad_request(
                 f"{record.display_name} reasoning effort is unsupported."

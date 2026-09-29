@@ -25,6 +25,7 @@ from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
 from tldw_chatbook.provider_registry import (
     ALL_RECORDS,
     CEREBRAS,
+    FIREWORKS,
     NVIDIA,
     ProviderRecord,
     thinking_toggle_key,
@@ -79,6 +80,41 @@ def test_nvidia_qwen_without_effort_sends_no_thinking_switch() -> None:
     assert "chat_template_kwargs" not in _payload(NVIDIA, _QWEN)
 
 
+def test_nvidia_qwen_refuses_an_unknown_effort_level() -> None:
+    """A boolean switch cannot let the provider reject a bad level, so the
+    engine does (Qodo #2915)."""
+    with pytest.raises(ChatBadRequestError):
+        _payload(NVIDIA, _QWEN, reasoning_effort="garbage")
+
+
+def test_nvidia_qwen_thinking_switch_survives_chat_api_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Console's generic dispatch (param map -> engine handler) carries
+    reasoning effort all the way to the NIM payload."""
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine
+
+    resolution = HostedProviderResolution(
+        provider="nvidia", model=_QWEN, api_key="secret",
+        base_url=NVIDIA.default_base_url, timeout=10.0, retries=0,
+        retry_delay=0.0, streaming=False,
+    )
+    monkeypatch.setattr(hosted_provider_engine, "resolve_hosted_request", lambda _r, **_k: resolution)
+    captured: dict[str, Any] = {}
+
+    def fake_post(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return {"id": "c", "object": "chat.completion", "created": 1, "model": _QWEN,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}]}
+
+    monkeypatch.setattr(hosted_provider_engine, "owned_json_post", fake_post)
+    chat_api_call(
+        "nvidia", messages_payload=[{"role": "user", "content": "hi"}], api_key="secret",
+        model=_QWEN, streaming=False, reasoning_effort="none",
+    )
+    assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
 def test_other_nvidia_models_still_refuse_reasoning_effort() -> None:
     with pytest.raises(ChatBadRequestError):
         _payload(NVIDIA, "meta/llama-3.3-70b-instruct", reasoning_effort="none")
@@ -108,6 +144,51 @@ def test_no_engine_preset_can_send_thinking_with_reasoning_effort(record: Provid
     except ChatBadRequestError:
         return  # the record refuses reasoning effort outright
     assert not {"thinking", "reasoning_effort"} <= payload.keys()
+
+
+def test_fireworks_tool_turn_reasoning_is_kept_and_replayed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fireworks requires reasoning_content back on interleaved tool turns: the
+    tool-call response keeps it in the continuation, and the next request
+    restores it on the assistant message (Qodo #2915)."""
+    from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine
+
+    resolution = HostedProviderResolution(
+        provider="fireworks", model="accounts/fireworks/models/qwen3p8", api_key="secret",
+        base_url=FIREWORKS.default_base_url, timeout=10.0, retries=0,
+        retry_delay=0.0, streaming=False,
+    )
+    monkeypatch.setattr(hosted_provider_engine, "resolve_hosted_request", lambda _r, **_k: resolution)
+    call = {"id": "call_1", "type": "function", "function": {"name": "add", "arguments": "{}"}}
+    monkeypatch.setattr(hosted_provider_engine, "owned_json_post", lambda **_k: {
+        "id": "c", "object": "chat.completion", "created": 1, "model": resolution.model,
+        "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+            "role": "assistant", "content": "", "reasoning_content": "PRIVATE", "tool_calls": [call]}}],
+    })
+    result = hosted_provider_engine.build_hosted_chat_handler(FIREWORKS)(
+        input_data=[{"role": "user", "content": "add"}], api_key="secret", streaming=False, tools=[_TOOL],
+    )
+    assert "reasoning_content" not in result["choices"][0]["message"]  # private
+    checkpoint = result.provider_continuation
+    assert checkpoint is not None and list(checkpoint.rounds[0].reasoning_blocks) == ["PRIVATE"]
+
+    completed = parse_provider_continuation_json({
+        "schema_version": 1, "checkpoint_revision": 1, "provider": "fireworks",
+        "protocol": "chat_completions", "model": resolution.model,
+        "api_base_url": resolution.base_url, "state": "complete",
+        "rounds": [{"assistant_content": "", "reasoning_blocks": ["PRIVATE"], "calls": [
+            {"call_id": "call_1", "name": "add", "arguments": "{}", "state": "completed", "result": "3"}]}],
+    })
+    history = [
+        {"role": "user", "content": "add"},
+        {"role": "assistant", "content": "", "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "3"},
+    ]
+    payload = build_hosted_chat_payload(
+        FIREWORKS, resolution=resolution, messages_payload=history,
+        tools=[_TOOL], provider_continuations=[completed],
+    )
+    assert payload["messages"][1]["reasoning_content"] == "PRIVATE"
 
 
 # --- TASK-33500: Cerebras tools go out without strict ---
