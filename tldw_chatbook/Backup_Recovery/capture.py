@@ -545,6 +545,19 @@ def _capture_under_maintenance(
                     complete=False,
                     issues=tuple(sorted(set(final_inventory.issues) | set(issues))),
                 )
+            # Captured values needing manual application limit recovery readiness,
+            # without making the coordinated stored-data snapshot inconsistent.
+            manual_issues = tuple(
+                issue
+                for issue in issues
+                if issue.startswith("credential_manual_recovery_required:")
+            )
+            consistency_issues = tuple(
+                issue
+                for issue in issues
+                if not issue.startswith("credential_manual_recovery_required:")
+            )
+            if consistency_issues:
                 representation = replace(
                     representation, complete=False, issues=final_inventory.issues
                 )
@@ -562,10 +575,10 @@ def _capture_under_maintenance(
                     "encrypted": encrypted,
                     "versions": versions,
                     "limits": limits,
-                    "report_lines": representation_report,
+                    "report_lines": (*representation_report, *manual_issues),
                     "data_groups": selections.data_groups,
                 },
-                tuple(sorted(set(issues) | set(current.issues))),
+                tuple(sorted(set(consistency_issues) | set(current.issues))),
             )
             reader._check(cancel)
         completed = True

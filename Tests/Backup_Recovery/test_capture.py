@@ -356,6 +356,68 @@ def test_native_encrypted_capture_material_remains_available(
     ).read_bytes()
 
 
+@pytest.mark.parametrize(
+    "readable, omitted, consistency",
+    [(True, False, "coherent"), (False, False, "partial"), (True, True, "partial")],
+)
+def test_manual_credential_readiness_is_separate_from_snapshot_consistency(
+    tmp_path, native_config_capture, monkeypatch, readable, omitted, consistency
+):
+    from types import SimpleNamespace
+
+    from Tests.RuntimePolicy.test_server_credentials import FakeKeyring
+    from tldw_chatbook.Backup_Recovery import credentials
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+    from tldw_chatbook.Backup_Recovery.inventory import classify_entries
+
+    backend = FakeKeyring()
+    if readable:
+        backend.set_password("tldw_chatbook_videogen", "minimax", "synthetic-manual")
+    monkeypatch.setattr(
+        credentials, "_credential_store", lambda: SimpleNamespace(_keyring=backend)
+    )
+    module, authority, state, config = native_config_capture
+    config.write_text(
+        '[general]\nusers_name="fixture"\n[video_generation]\nminimax="configured"\n'
+    )
+    if omitted:
+        state[0] = classify_entries(
+            (
+                *state[0].items,
+                StorageItem("unknown", "unknown", None, "unsupported", ()),
+            )
+        )
+    options = {
+        "staging_parent": tmp_path,
+        "credential_mode": "include",
+        "encrypted": True,
+        "allow_partial": omitted,
+    }
+    with authority.maintenance(("core", "bootstrap.unbound"), 1) as session:
+        with pytest.raises(CaptureReviewRequired) as review:
+            module._capture_under_maintenance(
+                session,
+                (config,),
+                state[0].scope_digest,
+                tmp_path / "new.tldw-backup",
+                options=options,
+                cancel=Event(),
+            )
+        options["acknowledged_credential_issues"] = review.value.issues
+        result = module._capture_under_maintenance(
+            session,
+            (config,),
+            state[0].scope_digest,
+            tmp_path / "new.tldw-backup",
+            options=options,
+            cancel=Event(),
+        )
+    document = json.loads(result.manifest_bytes)
+    assert not result.inventory.complete
+    assert set(review.value.issues) <= set(document["report"]["lines"])
+    assert document["consistency"] == consistency
+
+
 def test_capture_options_reject_unknown_before_source_work():
     from tldw_chatbook.Backup_Recovery.capture import _capture_options
 
