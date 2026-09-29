@@ -910,3 +910,143 @@ app/capture and standalone-root inventory coverage remain separate qualification
 requirements. The prior uncommitted proposal and tests were preserved before
 replacement; this decision adds no execution/restore feature or global attestation
 framework.
+
+
+### PERF-07/PERF-08 amendment — reusable admission evidence (TASK-33266, TASK-33267)
+
+Status: **Proposed — awaiting owner approval.** The owner approved the direction
+as decisions D1 and D2 of the
+[2026-09-27 structural perf audit](../../qa/perf-structural-audit-2026-09-27/report.md)
+(§4 PERF-07, PERF-08) on 2026-09-29. This text is the amendment that approval
+asked to see. Nothing below is implemented until it is approved.
+
+**Deviation from the approved wording.** D1/D2 said ancestors would be re-checked
+"via held handles". Research showed that cannot work. `fstat` on a held
+descriptor describes the inode that was opened, so it cannot see a directory
+renamed away and replaced at the same path. Holding one directory descriptor per
+registered root (about 100) also risks macOS's 256-descriptor soft limit.
+Ancestors are therefore re-checked with a per-call `lstat` of every path
+component. The guarantee is the one D1/D2 asked for; only the mechanism differs.
+Held descriptors stay where I/O already goes through them (raw pins, `openat`).
+
+**Context.** Every outermost guarded call re-derives admission from disk:
+- about 245 `open()` calls per DB transaction;
+- `registry.json` read 7 times;
+- a directory walk from `/` for every chain;
+- all of it serialized per bootstrap root inside `_Acquisition.initializing`,
+  which caps unrelated DBs at about 200 transactions/s together.
+
+This re-derivation is not what detects a cooperating backup or restore. The
+live hold's shared lease lock already blocks them, and the 10 Hz monitor and
+`pause_requested` observe pauses. What the re-read does detect is changes to:
+- control records;
+- the registry;
+- the config selector;
+- directory posture.
+
+The amendment keeps detecting exactly those.
+
+**Decision.** Ordinary storage admission (`acquire_storage`) may reuse the
+*allowed* result of an unmodified full derivation only while all of these hold:
+
+1. **Same hold and namespaces.** The same live `_Hold` for `(pid, bootstrap
+   root)` is still ready, not stopped, and has no error. Its namespaces are
+   identical.
+2. **Same epoch.** The in-process admission epoch is unchanged. In-process
+   writers of records, the registry and the selector advance it. This is
+   hardening; the stamps below are the correctness mechanism.
+3. **Same stamps, re-observed on every call.**
+   - *Posture:* `lstat` values `(dev, ino, type, permission bits, owner)` for
+     every component from `/`, for every chain the derivation walked. That
+     includes every verified ancestor and the admitted path's own chain and leaf
+     state.
+   - *Content:* `(dev, ino, size, mtime_ns, ctime_ns)` for:
+     - the bootstrap and admission directories;
+     - `registry.json`, `registry.lock` and the enrollment marker;
+     - every control record file (a directory stamp misses an in-place edit);
+     - the config selector file.
+4. **Per-call gates unchanged.** Every in-memory gate is still evaluated on
+   every call, with the same reason codes:
+   - local pause and participant closure;
+   - fork;
+   - pid/thread/task provenance;
+   - execution selection and maintenance thread;
+   - hold readiness.
+
+The lease is counted before a final content-stamp check, which keeps today's
+"counted before the final permission read" ordering. The reuse path never enters
+`initializing`.
+
+**Recording rule.** Evidence is recorded only when all of these hold:
+- the unmodified derivation *allowed* the call;
+- the complete stamp set was identical just before and just after that
+  derivation;
+- every content change time is at least a settle margin (1 s) older than the
+  first stamp. This is git's "racily clean" rule for coarse filesystem clocks.
+
+Evidence is never recorded with:
+- pending records;
+- absence-proved roots;
+- a symlink anywhere in a chain;
+- unqualified native storage;
+- startup reacquisition;
+- a maintenance or capture session.
+
+**Refusal.** Any mismatch runs the unmodified derivation. It remains the only
+source of refusals and reason codes. Evidence is process-local and never
+persisted. It is discarded with its hold, on fork, and when the epoch advances.
+
+**Preserved invariant.** Each of these is still refused before dependent I/O:
+- a moved, replaced or re-permissioned admitted directory or verified ancestor;
+- a storage pause or participant closure;
+- a registry, binding or selection change.
+
+**D2 corollary (PERF-07).** `get_user_data_dir` may memoize its verified
+directory *inside* the guarded body, after the handshake. The memo is keyed on:
+- the config cache object and its generation;
+- source and selector;
+- HOME / default data base;
+- `data_dir` and `users_name`;
+- bound/unbound.
+
+It is re-checked every call against:
+- posture stamps from `/` to the directory, which must still be 0700 and owned
+  by the effective user;
+- the default-root ambiguity inputs;
+- the lock file's stamp.
+
+Any mismatch runs today's create/harden/refuse path. The "no process-scope
+caching" note in `resolve_sensitive_context` is amended to this key.
+
+**Unchanged.** All of these stay as they are:
+- the native gate, lease and incompatible-lock protocol;
+- maintenance;
+- pending and activation semantics;
+- the module attributes that tests and thread diagnostics wrap by name.
+
+Out-of-protocol modification stays outside the guarantee, and detection is never
+weaker than today.
+
+**Required evidence before merge.**
+- A differential oracle test: reuse verdict equals full-derivation verdict after
+  each mutation in a catalog. The catalog includes:
+  - ancestor chmod;
+  - ancestor rename+recreate;
+  - symlink swap;
+  - leaf replace;
+  - a pending record or registry replace from a subprocess;
+  - the registry intent file;
+  - an in-place record edit;
+  - marker replace;
+  - selector edit;
+  - bootstrap-root deletion;
+  - fallback-root creation.
+- A dependency-completeness trace test.
+- A full `Tests/Backup_Recovery` run with the settle margin at 0.
+- Benchmarks for PERF-08 AC#3/#4.
+
+**Open until measured.**
+- Windows keeps the full derivation until its `stat` cost and NTFS directory
+  change-time behaviour are verified.
+- The visual native scope's `_check_path` interaction is unverified. Reuse is
+  disabled inside that scope unless it is shown harmless.
