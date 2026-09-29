@@ -4,7 +4,7 @@ title: No new SSH ControlMaster is started after app exit
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:48'
 labels:
   - console
@@ -25,6 +25,12 @@ After app exit has closed every session and master, a straggler tool thread's on
 - [x] #2 A straggler call after app exit still gets a typed result (it connects directly)
 - [x] #3 Tests that exercise app exit do not leave a closed manager for later tests in the same process
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 4.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

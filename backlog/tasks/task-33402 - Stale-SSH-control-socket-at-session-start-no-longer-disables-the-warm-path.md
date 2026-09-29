@@ -4,7 +4,7 @@ title: Stale SSH control socket at session start no longer disables the warm pat
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:40'
 labels:
   - console
@@ -25,6 +25,12 @@ A stale ControlMaster socket (for example after laptop sleep) makes the session 
 - [x] #2 The next call in the same run gets a session again; only a repeated mux start failure in the run switches the binding to one-shot for that run
 - [x] #3 The binding's status is unchanged by a mux start failure
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 2.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

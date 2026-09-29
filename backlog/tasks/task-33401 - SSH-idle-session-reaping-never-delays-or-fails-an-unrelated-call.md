@@ -4,7 +4,7 @@ title: SSH idle-session reaping never delays or fails an unrelated call
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:35'
 labels:
   - console
@@ -24,6 +24,12 @@ Idle-session reaping closes other runs' and bindings' sessions synchronously on 
 - [x] #1 Reaping idle sessions never blocks the calling tool call on closing them
 - [x] #2 A call whose session is closed by the laptop (idle reap, run end, app exit) before its request is sent is not failed: it gets a fresh session, or the one-shot path when the run or app has ended
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 3.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

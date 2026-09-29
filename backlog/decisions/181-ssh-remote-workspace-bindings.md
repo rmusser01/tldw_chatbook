@@ -233,8 +233,9 @@ target is a warm call of about one round trip.
     get that failure; nobody starts again against the same dead host. A
     later call still tries a fresh session.
   - A session handshake is part of its call: it gives up at the call's
-    budget + grace (capped at 30 s) and is classified exactly like a
-    one-shot handshake.
+    budget + grace (capped at 30 s) and is classified like a one-shot
+    handshake -- except when the budget runs out mid bundle upload on a
+    cache miss, which is protocol-class (see Known limits).
   - A mux failure (`MUX_ERROR`) at session start runs that call one-shot
     over the restarted master and fails nothing; the next call tries a
     session again. A second one in the same run switches the binding to
@@ -252,3 +253,9 @@ target is a warm call of about one round trip.
   - A fast operation's admitted marker, result and STATUS leave the host
     in one write; the parent holds a running child's output at most 10 ms
     before writing it. Measured: live host over Wi-Fi, 2026-09-28: warm median 11.5-13.8 ms coalesced vs 16.6-17.2 ms without (3.3, 4.7, 5.1 ms lower in three interleaved pairs).
+  - Known limits (follow-ups TASK-33420, TASK-33421): (a) a budget that
+    expires during a cache-miss bundle upload fails the session start
+    protocol-class, so the binding goes one-shot for the run although the
+    host is reachable (TASK-33420); (b) a call whose session the laptop
+    closes after the call registered but before its REQUEST bytes were
+    written gets `REMOTE_OP_FAILED` instead of re-acquiring (TASK-33421).

@@ -4,7 +4,7 @@ title: Record the inode-reuse limit of the SSH root identity pin in ADR-181
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:52'
 labels:
   - console
@@ -23,6 +23,12 @@ The root pin identifies a root by (st_dev, st_ino). The live UAT for PR #2879 sh
 <!-- AC:BEGIN -->
 - [x] #1 ADR-181 states the inode-reuse limit, what the pin still guarantees, and why it is accepted
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 7.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

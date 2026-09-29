@@ -4,7 +4,7 @@ title: SSH session start against a dead host fails fast for every queued call
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:30'
 labels:
   - console
@@ -26,6 +26,12 @@ When a host dies or blackholes, concurrent tool calls queued behind one failing 
 - [x] #3 A session handshake never outlives the call's budget plus grace, and a stalled handshake is classified exactly like the one-shot path
 - [x] #4 Any session start failure leaves no ssh process running and no open pipe on the laptop
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 1.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

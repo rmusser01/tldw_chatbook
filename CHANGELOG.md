@@ -21,13 +21,13 @@ and this project adheres to Some kind of Versioning
   `sha256:` and `size:` lines for the file content -- for local workspace
   folders too, not only SSH ones. They carry the read-before-write stamps;
   anything that parses these results should ignore the two trailing lines.
-- SSH workspaces: fast remote tool calls return about one network round trip sooner.
+- SSH workspaces: fast remote tool calls return a few milliseconds sooner (3–5 ms measured on a LAN host).
 
 ### Fixed
 - `fs_list` of a workspace folder containing a symlink loop failed outright;
   the looping entry is now skipped.
 - SSH workspaces: several tool calls against a host that just went down now fail together within one connect timeout instead of one after another, and a session start never outlives the call's time budget.
-- SSH workspaces: the first call after the laptop wakes from sleep (stale ControlMaster socket) no longer errors or loses the fast session path for the rest of the run.
+- SSH workspaces: the first call after the laptop wakes from sleep (stale ControlMaster socket) no longer turns the fast session path off for the rest of the run; only that one call runs the slower way.
 - SSH workspaces: a host at its process limit fails only the one request it could not start; the binding is not marked unreachable.
 - SSH workspaces: quitting with several remote bindings closes their sessions in parallel within 5 s, and no ControlMaster is left running after exit.
 

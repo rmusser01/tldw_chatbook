@@ -4,7 +4,7 @@ title: App exit closes SSH sessions in parallel within a bounded time
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:46'
 labels:
   - console
@@ -24,6 +24,12 @@ App exit closes every live SSH session one after another, and each close can tak
 - [x] #1 Closing all sessions at app exit takes about as long as the slowest single close, not their sum
 - [x] #2 App exit waits a bounded time for session closes and never hangs on a wedged host
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 3.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

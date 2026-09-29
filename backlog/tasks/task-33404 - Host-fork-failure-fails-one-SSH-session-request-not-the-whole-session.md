@@ -4,7 +4,7 @@ title: Host fork failure fails one SSH session request, not the whole session
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:44'
 labels:
   - console
@@ -25,6 +25,12 @@ When the host cannot fork (process limit, EAGAIN) or open a pipe for a request, 
 - [x] #2 The session keeps serving new requests after such a failure
 - [x] #3 The regenerated worker bundle matches a fresh build
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 5.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

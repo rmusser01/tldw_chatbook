@@ -4,7 +4,7 @@ title: Measure and, if it pays, coalesce the SSH session's admitted marker and r
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-09-28 20:30'
+created_date: '2026-09-28 14:13'
 updated_date: '2026-09-28 16:50'
 labels:
   - console
@@ -26,11 +26,21 @@ The live UAT for PR #2879 saw a fast operation's result arrive ~8 ms after its a
 - [ ] #3 If it does not improve, no coalescing code ships and the measurement is recorded
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+See Docs/superpowers/plans/2026-09-28-ssh-session-followups.md, Task 6.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
-Coalescing ships: warm median improved by 3.3-5.1 ms across three pairs (decision rule: all pairs must show ≥2 ms improvement). First measurement (pre-registered, 6 runs A B A B A B) hit a confound (ping variance 1.6-3x larger in A runs); confirmation run (A B A B A B, simpler rule) proved the effect. Discarded one A-run Wi-Fi spike (44.97 ms warm → 16.60 ms after retry), which widened that pair further. New constant `_COALESCE_S = 0.010` in `remote_session_serve.py` holds output when lines arrive (not urgent), flushes on timeout, STATUS (urgent), or hold-window end. All 78 tests passing.
+Coalescing ships: in the confirmation run the raw warm median was 3.30, 4.73 and 5.11 ms lower in all three interleaved pairs (B = `_COALESCE_S` 0.010, A = 0). New constant `_COALESCE_S = 0.010` in `remote_session_serve.py` holds a running child's LINE frames up to 10 ms; STATUS, BUSY and refusals are written at once and flush anything held. All 78 tests passing.
 
-**First measurement (6 runs B A B A B A):**
+The first measurement used the pre-registered rule (warm median minus same-window ping median must fall by >= 2 ms in every pair, order B A B A B A). That rule FAILED in all three pairs: B came out worse on warm-ping each time, although the raw warm median favoured B by 3.47, 5.39 and 5.03 ms. The rule's premise did not hold: same-window ping was 1.6-3x higher in every A run, so ping was not an independent drift normalizer. The controller ruled to report that result as-is and to decide by a confirmation run on fresh data, with its rule fixed before the run: order A B A B A B, raw warm median, ship iff B beats its paired A by >= 2 ms in all three pairs.
+
+AC #3 (N/A — coalescing shipped).
+
+**First measurement (6 runs B A B A B A, pre-registered warm-ping rule; FAILED):**
 | run | variant | warm median ms | warm p90 ms | ping median ms | warm-ping |
 |---|---|---|---|---|---|
 | 1 | B | 11.53 | 81.85 | 25.65 | -14.12 |
@@ -50,4 +60,6 @@ Coalescing ships: warm median improved by 3.3-5.1 ms across three pairs (decisio
 | 5 | A | 16.60 | 147.09 | 67.52 |
 | 6 | B | 11.49 | 44.60 | 13.81 |
 
-**Pair deltas (raw warm median, B minus A):** −3.30, −4.73, −5.11 ms. Disclosure: run 5 A hit Wi-Fi spike (44.97 ms warm, 767.61 ms p90, 895.54 ms ping) and was discarded; retry 16.60 ms (delta widened to −5.11). All three pairs exceeded 2 ms threshold.
+**Pair deltas (raw warm median, B minus A):** −3.30, −4.73, −5.11 ms; all three pairs beat the 2 ms threshold.
+
+**Discarded run (disclosure):** slot 5 first ran as variant A and hit a Wi-Fi spike: warm median 44.97 ms, warm p90 767.61 ms, ping median 895.54 ms, n=50. It was discarded and re-run (the 16.60 ms row above). Keeping it would have WIDENED that pair's gap (to 33.48 ms); discarding it narrowed the gap to 5.11 ms, so the decision does not depend on it.
