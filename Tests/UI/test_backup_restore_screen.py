@@ -670,6 +670,136 @@ async def test_replacement_omissions_require_explicit_review_after_untouched_abo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ("restore", "later"))
+async def test_retention_review_survives_target_omissions_only_for_same_selection(
+    tmp_path, monkeypatch, mode
+):
+    import asyncio
+
+    from textual.widgets import Checkbox, Input, Select, Static
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
+
+    service = RecoveryService(tmp_path / "control")
+
+    class Harness(App):
+        def on_mount(self):
+            self.push_screen(BackupRestoreScreen(service))
+
+    app = Harness()
+    try:
+        async with app.run_test(size=(110, 40)) as pilot:
+            screen = app.screen
+            if mode == "restore":
+                screen._show_mode("inspect")
+                screen._inspection_id = "fixture-inspection"
+                screen._inspection_summary = {
+                    "destination_slots": (),
+                    "profile_ids": (),
+                }
+                screen.query_one("#backup-restore-mode", Select).value = "replace"
+                target_id = "#backup-target-config"
+                area_id = "#backup-restore-credential-review"
+                screen.query_one("#backup-restore-form").display = True
+            else:
+                screen._show_mode("copies")
+                screen.query_one("#backup-later-form").display = True
+                screen._rollback_copy_id = "fixture-copy"
+                target_id = "#backup-later-target"
+                area_id = "#backup-later-credential-review"
+            screen.query_one(target_id, Input).value = str(tmp_path / "config.toml")
+            await pilot.pause()
+            retention = "credential_isolated_retention_required"
+
+            def refused(operation, cancel):
+                raise CaptureReviewRequired((retention,))
+
+            operation = service._start(
+                "restore" if mode == "restore" else "later_rollback", refused
+            )
+            if mode == "restore":
+                screen._requested_restore_operation = operation
+            else:
+                screen._requested_rollback_operation = operation
+                screen._rollback_selection = screen._later_selection()
+            assert (await asyncio.to_thread(service.wait, operation, timeout=10))[
+                "state"
+            ] == "failed"
+            screen._refresh_status()
+            await pilot.pause()
+            area = screen.query_one(area_id)
+            assert "encrypted" in str(area.query_one(Static).content)
+            assert "Abort" not in str(area.query_one(Static).content)
+            box = area.query_one(Checkbox)
+            assert "retention" in str(box.label) and not box.value
+            box.value = True
+            await pilot.pause()
+            acknowledged = []
+            if mode == "restore":
+                monkeypatch.setattr(
+                    screen,
+                    "_preview_restore",
+                    lambda *args: acknowledged.append(args[7]),
+                )
+                review = screen._review_restore
+            else:
+                monkeypatch.setattr(
+                    screen,
+                    "_preview_rollback",
+                    lambda *args: acknowledged.append(args[-1]),
+                )
+
+                def review():
+                    screen.query_one("#backup-copy-password", Input).value = "old"
+                    screen._review_rollback()
+
+            review()
+            assert acknowledged[-1] == (retention,)
+            manual = ("credential_manual_recovery_required:actual-target",)
+
+            async def show_manual():
+                def refused_manual(operation, cancel):
+                    raise CaptureReviewRequired(manual)
+
+                manual_operation = service._start(
+                    "restore" if mode == "restore" else "later_rollback", refused_manual
+                )
+                await asyncio.to_thread(service.wait, manual_operation, timeout=10)
+                if mode == "restore":
+                    screen._requested_restore_operation = manual_operation
+                    screen._restore_review_codes_seen = manual
+                    await screen._show_restore_credential_review(
+                        manual_operation, manual
+                    )
+                else:
+                    screen._later_review_codes_seen = manual
+                    await screen._show_later_credential_review(
+                        screen._revision,
+                        screen._later_selection(),
+                        manual,
+                        pending=True,
+                    )
+
+            await show_manual()
+            area.query_one(Checkbox).value = True
+            await pilot.pause()
+            review()
+            assert set(acknowledged[-1]) == {retention, *manual}
+            screen.query_one(target_id, Input).value = str(tmp_path / "other.toml")
+            await pilot.pause()
+            await show_manual()
+            area.query_one(Checkbox).value = True
+            await pilot.pause()
+            review()
+            assert acknowledged[-1] == manual
+    finally:
+        await asyncio.to_thread(service.close)
+
+
+@pytest.mark.asyncio
 async def test_later_credential_omissions_remain_visible_during_keyboard_review(tmp_path):
     import asyncio
 

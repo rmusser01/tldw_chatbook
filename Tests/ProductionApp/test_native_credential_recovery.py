@@ -195,6 +195,33 @@ def _manual(issues):
     return tuple(issues)
 
 
+def _run_reviewed_replacement(service, preview, start):
+    """Review retained input, then abort and review exact target-copy notices."""
+    retention = ("credential_isolated_retention_required",)
+    acknowledged = ()
+    for attempt in range(3):
+        plan = preview(acknowledged)
+        operation = start(plan)
+        state = service.wait(operation, timeout=300)
+        if state["state"] == "succeeded":
+            return state
+        assert attempt < 2 and state["review_issues"], "native_replacement_failed"
+        if state["review_issues"] == retention:
+            assert not acknowledged and state["state"] == "failed"
+            assert not state["result"].get("journal_operation_id")
+            acknowledged = retention
+        else:
+            assert acknowledged == retention and state["state"] == "recovery_required"
+            manual = _manual(state["review_issues"])
+            pending = state["result"]["journal_operation_id"]
+            assert service.status(pending)["actions"] == ("abort",)
+            abort = service.start_recovery(pending, action="abort")
+            aborted = service.wait(abort, timeout=120)
+            assert aborted["state"] == "succeeded" and aborted["result"]["aborted"]
+            acknowledged = (*retention, *manual)
+    raise AssertionError("native_replacement_failed")
+
+
 def _observe_workers(service):
     failure_root = os.environ.get("TLDW_NATIVE_FAILURE_ROOT")
     if not failure_root:
@@ -564,11 +591,8 @@ def _fresh_readback(source_system, *, rollback=False):
 
 
 def _transfer(source):
-    from dataclasses import replace
-
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import archive_reader
-    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
     from tldw_chatbook.Backup_Recovery.inventory import discover
     from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
     from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
@@ -666,38 +690,37 @@ def _transfer(source):
             assert opened.returncode == 0, "native_isolated_open_failed"
         retained = list(service.control_root.glob("isolated-*/credentials.age"))
         assert len(retained) == 1 and _digest(retained[0]) == _digest(source)
-        target = discover(_selectors())
-        assert target.complete
         setup_parent = Path.cwd() / "files-needing-setup"
         setup_parent.mkdir(mode=0o700)
-        choices = {
-            "mode": "replace",
-            "target": target,
-            "profile_bases": {},
-            "external_destinations": {},
-            "profile_names": {},
-            "target_configs": target_configs,
-            "setup_parent": setup_parent,
-            "acknowledged_credential_issues": incoming_manual,
-        }
-        plan = service.preview_restore(inspection, **choices)
-        safety_scope = required_rollback_dependencies(plan)
-        if safety_scope:
-            plan = service.preview_restore(
-                inspection, **choices, safety_scope=safety_scope
-            )
-        for attempt in range(2):
-            operation = service.start_restore(
+
+        def preview_replace(acknowledged):
+            target = discover(_selectors())
+            assert target.complete
+            choices = {
+                "mode": "replace",
+                "target": target,
+                "profile_bases": {},
+                "external_destinations": {},
+                "profile_names": {},
+                "target_configs": target_configs,
+                "setup_parent": setup_parent,
+                "acknowledged_credential_issues": acknowledged,
+            }
+            plan = service.preview_restore(inspection, **choices)
+            safety_scope = required_rollback_dependencies(plan)
+            if safety_scope:
+                plan = service.preview_restore(
+                    inspection, **choices, safety_scope=safety_scope
+                )
+            return plan
+
+        state = _run_reviewed_replacement(
+            service,
+            preview_replace,
+            lambda plan: service.start_restore(
                 inspection, plan, rollback_password=PASSWORD
-            )
-            state = service.wait(operation, timeout=300)
-            if state["state"] == "succeeded":
-                break
-            assert attempt == 0 and state["review_issues"], "native_replacement_failed"
-            plan = replace(
-                plan, acknowledged_credential_issues=_manual(state["review_issues"])
-            )
-        assert state["state"] == "succeeded"
+            ),
+        )
         original = state["result"]["journal_operation_id"]
         assert all(_digest(path) == digest for path, digest in unselected.items())
         copy = next(
@@ -709,23 +732,23 @@ def _transfer(source):
         assert _material(service.inspection(inspect_copy))
         installed = Path(os.environ["TLDW_TEST_INSTALLED_PACKAGE"])
         _child(Path.cwd(), installed, "read", source=source)
-        target = discover(_selectors())
-        try:
-            reverse = service.preview_rollback(
-                original, old_password=PASSWORD, target=target
-            )
-        except CaptureReviewRequired as error:
-            reverse = service.preview_rollback(
+
+        def preview_reverse(acknowledged):
+            target = discover(_selectors())
+            assert target.complete
+            return service.preview_rollback(
                 original,
                 old_password=PASSWORD,
                 target=target,
-                acknowledged_credential_issues=_manual(error.issues),
+                acknowledged_credential_issues=acknowledged,
             )
-        operation = service.start_rollback(
-            original, reverse, old_password=PASSWORD, new_password=PASSWORD
-        )
-        assert service.wait(operation, timeout=300)["state"] == "succeeded", (
-            "native_rollback_failed"
+
+        _run_reviewed_replacement(
+            service,
+            preview_reverse,
+            lambda plan: service.start_rollback(
+                original, plan, old_password=PASSWORD, new_password=PASSWORD
+            ),
         )
         _child(Path.cwd(), installed, "read-rollback", source=source)
         assert all(_digest(path) == digest for path, digest in unselected.items())

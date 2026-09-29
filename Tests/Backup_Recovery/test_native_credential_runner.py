@@ -22,6 +22,66 @@ def test_native_worker_observer_is_optional(monkeypatch):
     assert product._observe_workers(service) is service
 
 
+@pytest.mark.parametrize(
+    "failure",
+    (None, "repeat-retention", "unrelated", "missing-journal", "unsafe-abort"),
+)
+def test_native_review_repreviews_exact_notices_and_aborts_only_linked_copy(failure):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    retention = ("credential_isolated_retention_required",)
+    manual = ("credential_manual_recovery_required:target-material",)
+    notices = [
+        {"state": "failed", "review_issues": retention, "result": {}},
+        {
+            "state": "recovery_required",
+            "review_issues": retention if failure == "repeat-retention" else manual,
+            "result": {}
+            if failure == "missing-journal"
+            else {"journal_operation_id": "linked"},
+        },
+        {"state": "succeeded", "review_issues": (), "result": {}},
+    ]
+    if failure == "unrelated":
+        notices[1]["review_issues"] = ("credential_missing:unavailable",)
+    previews, aborts = [], []
+
+    class Service:
+        def wait(self, operation, *, timeout):
+            if operation == "abort":
+                return {"state": "succeeded", "result": {"aborted": True}}
+            return notices.pop(0)
+
+        def status(self, operation):
+            assert operation == "linked"
+            return {"actions": ("finish",) if failure == "unsafe-abort" else ("abort",)}
+
+        def start_recovery(self, operation, *, action):
+            assert operation == "linked" and action == "abort"
+            aborts.append(operation)
+            return "abort"
+
+    def preview(acknowledged):
+        previews.append(acknowledged)
+        if len(previews) == 3:
+            assert aborts == ["linked"]
+        return acknowledged
+
+    def run():
+        return product._run_reviewed_replacement(
+            Service(), preview, lambda plan: "restore"
+        )
+
+    if failure is not None:
+        with pytest.raises((AssertionError, KeyError)):
+            run()
+        assert len(previews) == 2
+    else:
+        assert run()["state"] == "succeeded"
+        assert previews == [(), retention, (*retention, *manual)]
+        assert aborts == ["linked"]
+
+
 @pytest.mark.parametrize("failed", (False, True), ids=("success", "failure"))
 def test_native_transfer_keeps_app_monitor_running_and_closes_lifecycles(
     tmp_path, monkeypatch, failed
@@ -595,9 +655,7 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
                 for protected in (home, control, incoming):
                     assert setup != protected and protected not in setup.parents
                     assert setup not in protected.parents
-                assert options["acknowledged_credential_issues"] == (
-                    "credential_manual_recovery_required:synthetic-manual",
-                )
+                assert options["acknowledged_credential_issues"] == ()
                 if stop_mode == "dependency-reviewed":
                     assert options["target"] is initial_plan.target
                     if not previews:

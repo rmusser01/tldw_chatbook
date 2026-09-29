@@ -823,6 +823,7 @@ def test_unsupported_secret_is_explicitly_retained_encrypted_and_inactive(
     import zipfile
 
     from tldw_chatbook.Backup_Recovery import archive_reader
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
     from tldw_chatbook.Backup_Recovery.journal import Journal
     from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 
@@ -838,9 +839,7 @@ def test_unsupported_secret_is_explicitly_retained_encrypted_and_inactive(
         ]
         before = case[5].read_bytes()
         control_before = tuple(sorted((tmp_path / "control").iterdir()))
-        with pytest.raises(
-            ValueError, match="credential_omission_acknowledgement_required"
-        ):
+        with pytest.raises(CaptureReviewRequired) as review:
             replacement.replace(
                 plan,
                 candidate,
@@ -848,6 +847,7 @@ def test_unsupported_secret_is_explicitly_retained_encrypted_and_inactive(
                 rollback_password=b"rollback",
                 cancel=Event(),
             )
+        assert review.value.issues == ("credential_isolated_retention_required",)
         assert case[5].read_bytes() == before
         assert tuple(sorted((tmp_path / "control").iterdir())) == control_before
         plan = replace(
@@ -899,6 +899,89 @@ def test_unsupported_secret_is_explicitly_retained_encrypted_and_inactive(
             assert b"retained-config-secret" in packed.read(
                 "payload/credential-recovery.json"
             )
+
+
+def test_service_reviews_incoming_encrypted_retention_before_journal_or_writes(
+    tmp_path, monkeypatch, helper_resource_root
+):
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    with replacement_case(tmp_path, monkeypatch, prepared=False) as case:
+        _, original, _, backend, current = _credential_candidate(
+            case, tmp_path, monkeypatch, retain=True
+        )
+        before = {path: path.read_bytes() for path in (case[4], case[5], current)}
+        credentials_before = dict(backend.values)
+        service = RecoveryService(tmp_path / "control")
+        try:
+            inspection = service.start_inspection(
+                tmp_path / "incoming-credentials.age", password=b"incoming"
+            )
+            assert service.wait(inspection, timeout=15)["state"] == "succeeded"
+            plan = service.preview_restore(
+                inspection,
+                mode="replace",
+                destinations=dict((*original.destinations, *original.selectors)),
+                target=original.target,
+                profile_names=dict(original.profile_names),
+            )
+            operation = service.start_restore(
+                inspection, plan, rollback_password=b"rollback"
+            )
+            state = service.wait(operation, timeout=30)
+            assert state["review_issues"] == ("credential_isolated_retention_required",)
+            assert state["state"] == "failed" and state["issues"] == (
+                "review_required",
+            )
+            assert not state["result"].get("journal_operation_id")
+            assert not service.pending_operations()
+            assert not service.recovery_copies()
+            assert all(path.read_bytes() == data for path, data in before.items())
+            assert backend.values == credentials_before
+            assert "retained-config-secret" not in repr(state)
+        finally:
+            service.close()
+
+
+@pytest.mark.parametrize(
+    "issues",
+    (
+        ["credential_isolated_retention_required", "raw-secret/path"],
+        ["raw-secret/path"],
+        "credential_isolated_retention_required",
+    ),
+)
+def test_incoming_retention_review_never_publishes_other_descriptor_codes(
+    tmp_path, monkeypatch, helper_resource_root, issues
+):
+    import json
+
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    with replacement_case(tmp_path, monkeypatch, prepared=False) as case:
+        candidate, plan, _, _, _ = _credential_candidate(
+            case, tmp_path, monkeypatch, retain=True
+        )
+        descriptor_path = candidate / "candidate.json"
+        descriptor = json.loads(descriptor_path.read_text())
+        descriptor["credential_issues"] = issues
+        descriptor_path.write_text(json.dumps(descriptor))
+        before = case[5].read_bytes()
+        control_before = tuple(sorted((tmp_path / "control").iterdir()))
+        with pytest.raises(ValueError) as refused:
+            replacement.replace(
+                plan,
+                candidate,
+                control_root=tmp_path / "control",
+                rollback_password=b"rollback",
+                cancel=Event(),
+            )
+        assert not isinstance(refused.value, CaptureReviewRequired)
+        assert str(refused.value) == "credential_omission_acknowledgement_required"
+        assert case[5].read_bytes() == before
+        assert tuple(sorted((tmp_path / "control").iterdir())) == control_before
 
 
 def test_existing_finalized_isolated_primitive_keeps_legacy_identity(

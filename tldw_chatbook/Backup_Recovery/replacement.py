@@ -1423,6 +1423,10 @@ def replace(
     if not set(descriptor.get("credential_issues", ())) <= set(
         plan.acknowledged_credential_issues
     ):
+        if descriptor["credential_issues"] == [
+            "credential_isolated_retention_required"
+        ]:
+            raise CaptureReviewRequired(("credential_isolated_retention_required",))
         raise ValueError("credential_omission_acknowledgement_required")
     recheck_targets(plan)
     control_root = lexical_path(control_root)
