@@ -128,3 +128,29 @@ def test_the_miss_paths_stay_guarded():
         "@_config_participants.guarded\ndef _get_runtime_config_snapshot_guarded(",
     ):
         assert guarded_body in module_src, f"missing guard: {guarded_body!r}"
+
+
+
+def test_a_warm_load_settings_does_not_stall_behind_an_in_flight_write():
+    """A warm read stays lock-free while a config write holds its locks.
+
+    TASK-21124's contract, extended to ``load_settings``: a write holds the
+    settings rebuild and config-file locks through fsyncs and TOML parses,
+    and the 4 Hz Console poll and composer keystrokes read settings on the
+    event loop. A read overlapping a write may return the pre-write
+    settings; the writer invalidates the cache before it returns.
+    """
+    import threading
+
+    _warm_settings()
+    finished = threading.Event()
+
+    def read() -> None:
+        config_module.load_settings()
+        finished.set()
+
+    with config_module._settings_rebuild_lock(), config_module._config_file_lock():
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        assert finished.wait(5.0), "the warm read stalled behind the write locks"
+    reader.join(5.0)

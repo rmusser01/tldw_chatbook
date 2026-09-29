@@ -1942,6 +1942,12 @@ def load_settings(
         The merged settings mapping.
     """
     if not force_reload:
+        # Lock-free by design, like TASK-21124's get_cli_setting fast path: a
+        # write holds the config locks through fsyncs and TOML parses, and a
+        # loop-side read must not stall behind it. A read overlapping a write
+        # may return the pre-write settings; the writer invalidates the cache
+        # before it returns, so a read after a completed write sees the new
+        # value.
         cached = _settings_cache_hit(_get_effective_config_path())
         if cached is not None:
             return cached
@@ -7574,6 +7580,13 @@ def get_runtime_config_snapshot(
     admission handshake (a deep copy of the installed settings under the
     same two in-process locks). A miss or forced reload runs the guarded
     :func:`_get_runtime_config_snapshot_guarded`, exactly as before.
+
+    Args:
+        force_reload: Rebuild the settings from disk even when they are cached.
+
+    Returns:
+        A snapshot of the current config generation and a deep copy of the
+        merged settings, safe for the caller to mutate.
     """
 
     if not force_reload:
