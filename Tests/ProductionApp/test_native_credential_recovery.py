@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import platform
+import stat
 import subprocess  # nosec B404 - fixed installed-product test children
 import sys
 import tomllib
@@ -67,6 +68,20 @@ def _value(system, role, purpose):
 
 def _environment(root, installed, *, role):
     environment = os.environ.copy()
+    chain = None
+    if platform.system() == "Darwin" and environment.get("TLDW_NATIVE_MAC_KEYCHAIN"):
+        if not (
+            environment.get("GITHUB_ACTIONS") == "true"
+            and environment.get("RUNNER_ENVIRONMENT") == "github-hosted"
+            and environment.get("RUNNER_OS") == "macOS"
+        ):
+            raise RuntimeError("native_credential_disposable_runner_required")
+        chain = Path(environment["TLDW_NATIVE_MAC_KEYCHAIN"])
+        if not chain.is_absolute() or chain.resolve() != chain:
+            raise RuntimeError("native_credential_private_keychain_required")
+        info = chain.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise RuntimeError("native_credential_private_keychain_required")
     home = root / "home"
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     environment.update(
@@ -85,6 +100,29 @@ def _environment(root, installed, *, role):
     environment.pop("TLDW_CONFIG_PATH", None)
     if role == "retargeted":
         environment["TLDW_CONFIG_PATH"] = str(home / "retargeted/config.toml")
+    if chain is not None:
+        for directory in (home, home / "Library", home / "Library/Preferences"):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            info = directory.lstat()
+            if (
+                directory.resolve() != directory
+                or not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                raise RuntimeError("native_credential_keychain_preferences_not_private")
+        log = root / "mac-keychain-preferences.log"
+        with log.open("a") as output:
+            log.chmod(0o600)
+            for command in ("list-keychains", "default-keychain"):
+                subprocess.run(  # nosec B603 - fixed native tool and validated disposable chain
+                    ["/usr/bin/security", command, "-d", "user", "-s", str(chain)],
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    timeout=30,
+                    check=True,
+                )
     return environment
 
 
@@ -615,6 +653,24 @@ def _transfer(source):
         service.close()
 
 
+async def _transfer_with_app(source):
+    from tldw_chatbook import config
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Backup_Recovery.runtime_maintenance import monitor_app
+
+    config.set_encryption_password(CONFIG_PASSWORD)
+    app = TldwCli()
+    monitoring = asyncio.create_task(monitor_app(app))
+    try:
+        await asyncio.to_thread(_transfer, source)
+    finally:
+        monitoring.cancel()
+        await asyncio.gather(monitoring, return_exceptions=True)
+        await app._shutdown_app_owned_lifecycles()
+        await app.tts_service.close()
+        await app.tts_service.wait_closed()
+
+
 def _negative_checks(source):
     """Use native reads and refuse collisions/drift before credential writes."""
     import keyring
@@ -748,16 +804,18 @@ def _negative_checks(source):
         issues,
     )
     assert material[0]["status"] == "locked" and len(issues) == 1
+    wrong_password_root = Path.cwd() / "wrong-password"
     try:
         archive_reader.acquire(
             source,
-            Path.cwd() / "wrong-password",
+            wrong_password_root,
             ArchiveLimits(),
             b"wrong-disposable-password",
             Event(),
         )
     except CryptoError as error:
-        assert str(error) == "invalid_password"
+        assert error.args == ("transform_failed",)
+        assert wrong_password_root.is_dir() and not any(wrong_password_root.iterdir())
     else:
         raise AssertionError("native_wrong_archive_password_accepted")
     _write(Path.cwd() / "negative-results.json", {"negative_checks": 7})
@@ -873,7 +931,7 @@ def _main():
         elif route == "capture":
             asyncio.run(_capture())
         elif route == "transfer":
-            _transfer(Path(sys.argv[3]))
+            asyncio.run(_transfer_with_app(Path(sys.argv[3])))
         elif route == "negative":
             _negative_checks(Path(sys.argv[3]))
         else:

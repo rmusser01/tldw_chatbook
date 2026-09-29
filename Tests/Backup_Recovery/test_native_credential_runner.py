@@ -6,7 +6,7 @@ import os
 import stat
 import sys
 from pathlib import Path
-from threading import Event
+from threading import Event, get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +20,85 @@ def test_native_worker_observer_is_optional(monkeypatch):
     monkeypatch.delenv("TLDW_NATIVE_FAILURE_ROOT", raising=False)
     service = SimpleNamespace()
     assert product._observe_workers(service) is service
+
+
+@pytest.mark.parametrize("failed", (False, True), ids=("success", "failure"))
+def test_native_transfer_keeps_app_monitor_running_and_closes_lifecycles(
+    tmp_path, monkeypatch, failed
+):
+    import tldw_chatbook
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance
+
+    entered, monitored = Event(), Event()
+    cleanup = []
+    thread = get_ident()
+    source = tmp_path / "source.age"
+
+    async def closed(name):
+        cleanup.append(name)
+
+    app = SimpleNamespace(
+        _shutdown_app_owned_lifecycles=lambda: closed("shutdown"),
+        tts_service=SimpleNamespace(
+            close=lambda: closed("tts-close"),
+            wait_closed=lambda: closed("tts-wait"),
+        ),
+    )
+
+    async def monitor(current):
+        assert current is app
+        try:
+            while not entered.is_set():
+                await product.asyncio.sleep(0)
+            monitored.set()
+            await product.asyncio.Event().wait()
+        finally:
+            cleanup.append("monitor-stopped")
+
+    def transfer(current):
+        assert current == source and get_ident() != thread
+        entered.set()
+        assert monitored.wait(5), "native_transfer_monitor_not_serviced"
+        if failed:
+            raise ValueError("scope_changed")
+
+    config = SimpleNamespace(set_encryption_password=lambda password: None)
+    monkeypatch.setattr(tldw_chatbook, "config", config, raising=False)
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
+    monkeypatch.setitem(
+        sys.modules, "tldw_chatbook.app", SimpleNamespace(TldwCli=lambda: app)
+    )
+    monkeypatch.setattr(runtime_maintenance, "monitor_app", monitor)
+    monkeypatch.setattr(product, "_transfer", transfer)
+    if failed:
+        with pytest.raises(ValueError, match="scope_changed"):
+            product.asyncio.run(product._transfer_with_app(source))
+    else:
+        product.asyncio.run(product._transfer_with_app(source))
+    assert cleanup == ["monitor-stopped", "shutdown", "tts-close", "tts-wait"]
+
+
+def test_wrong_password_helper_refusal_discards_incomplete_readback(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery import archive_reader, crypto
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+
+    source = tmp_path / "source.age"
+    source.write_bytes(b"age-encryption.org/v1\nsynthetic-encrypted-placeholder")
+    work = tmp_path / "wrong-password"
+
+    def reject(source, destination, **options):
+        destination.write_bytes(b"synthetic-incomplete-output")
+        raise crypto.CryptoError("transform_failed")
+
+    monkeypatch.setattr(crypto, "transform", reject)
+    with pytest.raises(crypto.CryptoError, match="transform_failed"):
+        archive_reader.acquire(
+            source, work, ArchiveLimits(), b"wrong-synthetic-key", Event()
+        )
+    assert work.is_dir() and not tuple(work.iterdir())
 
 
 def test_native_worker_failure_is_observed_before_service_maps_it(
@@ -476,6 +555,7 @@ def test_native_child_environment_preserves_backend_and_bus(tmp_path, monkeypatc
         "DBUS_SESSION_BUS_ADDRESS": f"unix:path={tmp_path}/credential-session/bus",
         "KEYRING_PROPERTY_PREFERRED_COLLECTION": "/org/freedesktop/secrets/collection/session",
         "TLDW_CREDENTIAL_TRANSFER_ROOT": str(tmp_path / "transfer"),
+        "TLDW_NATIVE_MAC_KEYCHAIN": str(tmp_path / "native.keychain-db"),
     }
     for name, value in inherited.items():
         monkeypatch.setenv(name, value)
@@ -494,6 +574,152 @@ def test_native_child_environment_preserves_backend_and_bus(tmp_path, monkeypatc
         ]
         == "keyring.backends.null.Keyring"
     )
+
+
+def test_native_mac_child_selects_private_keychain_with_exact_home(
+    tmp_path, monkeypatch
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    chain = tmp_path / "native.keychain-db"
+    chain.write_bytes(b"synthetic-keychain-placeholder")
+    if os.name == "nt":
+        lstat = Path.lstat
+
+        def mac_lstat(path):
+            info = lstat(path)
+            mode = stat.S_IFMT(info.st_mode) | (
+                0o700 if stat.S_ISDIR(info.st_mode) else 0o600
+            )
+            return os.stat_result((mode, *info[1:]))
+
+        monkeypatch.setattr(Path, "lstat", mac_lstat)
+    root = tmp_path / "child"
+    root.mkdir(mode=0o700)
+    monkeypatch.setattr(product.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        product.os, "getuid", lambda: chain.stat().st_uid, raising=False
+    )
+    for name, value in {
+        "GITHUB_ACTIONS": "true",
+        "RUNNER_ENVIRONMENT": "github-hosted",
+        "RUNNER_OS": "macOS",
+        "TLDW_NATIVE_MAC_KEYCHAIN": str(chain),
+    }.items():
+        monkeypatch.setenv(name, value)
+    calls = []
+
+    def run(arguments, **options):
+        calls.append((arguments, options))
+        preferences = Path(options["env"]["HOME"]) / "Library/Preferences"
+        assert stat.S_IMODE(preferences.lstat().st_mode) == 0o700
+        assert options["stdout"].name == str(root / "mac-keychain-preferences.log")
+        assert options["stderr"] == product.subprocess.STDOUT
+        assert options["timeout"] == 30 and options["check"] is True
+        options["stdout"].write("positive-native-secret")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(product.subprocess, "run", run)
+    environment = product._environment(root, tmp_path / "installed", role="retargeted")
+    assert [arguments for arguments, _ in calls] == [
+        ["/usr/bin/security", command, "-d", "user", "-s", str(chain)]
+        for command in ("list-keychains", "default-keychain")
+    ]
+    assert all(options["env"] == environment for _, options in calls)
+    assert environment["HOME"] == str(root / "home")
+    assert environment["TLDW_CONFIG_PATH"] == str(root / "home/retargeted/config.toml")
+    assert (
+        stat.S_IMODE((root / "mac-keychain-preferences.log").lstat().st_mode) == 0o600
+    )
+
+
+@pytest.mark.parametrize(
+    "host",
+    (
+        {},
+        {
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_ENVIRONMENT": "self-hosted",
+            "RUNNER_OS": "macOS",
+        },
+        {
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_ENVIRONMENT": "github-hosted",
+            "RUNNER_OS": "Windows",
+        },
+    ),
+    ids=("personal", "self-hosted", "wrong-os"),
+)
+def test_native_mac_child_refuses_unsafe_host_before_mutation(
+    tmp_path, monkeypatch, host
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    chain = tmp_path / "native.keychain-db"
+    chain.write_bytes(b"synthetic-keychain-placeholder")
+    monkeypatch.setattr(product.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(os, "environ", {**host, "TLDW_NATIVE_MAC_KEYCHAIN": str(chain)})
+    monkeypatch.setattr(
+        product.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("unsafe host invoked security"),
+    )
+    root = tmp_path / "child"
+    with pytest.raises(RuntimeError, match="disposable_runner"):
+        product._environment(root, tmp_path / "installed", role="default")
+    assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    "invalid", ("relative", "missing", "directory", "alias", "foreign-owner")
+)
+def test_native_mac_child_refuses_unowned_or_indirect_keychain(
+    tmp_path, monkeypatch, invalid
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    chain = tmp_path / "native.keychain-db"
+    if invalid == "relative":
+        chain = Path("native.keychain-db")
+    elif invalid == "directory":
+        chain.mkdir(mode=0o700)
+    elif invalid != "missing":
+        chain.write_bytes(b"synthetic-keychain-placeholder")
+    if invalid == "alias":
+        resolve = Path.resolve
+        monkeypatch.setattr(
+            Path,
+            "resolve",
+            lambda path, *args, **kwargs: (
+                tmp_path / "actual.keychain-db"
+                if path == chain
+                else resolve(path, *args, **kwargs)
+            ),
+        )
+    monkeypatch.setattr(product.platform, "system", lambda: "Darwin")
+    current_uid = getattr(os, "getuid", lambda: 0)()
+    monkeypatch.setattr(
+        product.os,
+        "getuid",
+        lambda: current_uid + (invalid == "foreign-owner"),
+        raising=False,
+    )
+    for name, value in {
+        "GITHUB_ACTIONS": "true",
+        "RUNNER_ENVIRONMENT": "github-hosted",
+        "RUNNER_OS": "macOS",
+        "TLDW_NATIVE_MAC_KEYCHAIN": str(chain),
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(
+        product.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("invalid keychain invoked security"),
+    )
+    root = tmp_path / "child"
+    with pytest.raises((RuntimeError, OSError)):
+        product._environment(root, tmp_path / "installed", role="default")
+    assert not root.exists()
 
 
 def _source_archive(root):
