@@ -24,6 +24,7 @@
 #   on the shipped, built-in and user-theme load paths, and
 #   ThemeVariableDefaultsMixin supplies them for any theme that skipped it.
 import copy
+import dataclasses
 import re
 from pathlib import Path
 
@@ -198,16 +199,34 @@ def _blend_to_floor(color: Color, pole: Color, surfaces: list[Color], ratio: flo
     return (found or pole).hex
 
 
+def _parse(value: object) -> Color:
+    """``Color.parse``, plus '<colour> NN%' (Textual's own themes use it), as its CSS paints it."""
+    suffixed = _ALPHA_SUFFIX.fullmatch(str(value))
+    if suffixed is None:
+        return Color.parse(value)
+    return Color.parse(suffixed[1]).multiply_alpha(int(suffixed[2]) / 100)
+
+
+def _measured(key: str, generated: dict, defaults: dict) -> Color:
+    """``generated[key]``, or Textual's own value when the theme's entry has no colour ('auto NN%')."""
+    try:
+        return _parse(generated[key])
+    except Exception:  # noqa: BLE001 - an unmeasurable entry counts as absent
+        return _parse(defaults[key])
+
+
 def _ink(value: object, background: Color) -> Color:
     """Text colour ``value`` painted on ``background``; 'auto NN%' is Textual's contrast pole."""
     words = str(value).split()
     if words and words[0] == "auto":
         alpha = float(words[1].rstrip("%")) / 100 if len(words) > 1 else 1.0
         return background + background.get_contrast_text(alpha)
-    return background + Color.parse(value)
+    return background + _parse(value)
 
 
-def _focus_fill(variables: dict, generated: dict, surface: Color, panel: Color) -> str | None:
+def _focus_fill(
+    variables: dict, generated: dict, defaults: dict, surface: Color, panel: Color
+) -> str | None:
     """A focused default button's fill, or None when the theme's own entry holds.
 
     It must sit at least as far from a $panel card as the resting $surface
@@ -216,12 +235,16 @@ def _focus_fill(variables: dict, generated: dict, surface: Color, panel: Color) 
     The house tint is kept where it holds; otherwise the tint composited on
     panel moves toward white or black, whichever clears first.
     """
-    text = variables.get("text", generated["text"])
+    text = generated["text"]  # the theme's entry, else Textual's
+    try:
+        _ink(text, panel)
+    except Exception:  # noqa: BLE001 - a text style has no colour: counts as absent
+        text = defaults["text"]
     rest = _contrast_ratio(surface, panel)
 
     def holds(fill: object) -> bool:
         try:
-            painted = Color.parse(fill)
+            painted = _parse(fill)
         except Exception:  # noqa: BLE001 - absent or unmeasurable entry
             return False
         on_panel, on_surface = panel + painted, surface + painted
@@ -236,8 +259,7 @@ def _focus_fill(variables: dict, generated: dict, surface: Color, panel: Color) 
 
     if holds(variables.get(FOCUS_FILL_VARIABLE)):
         return None
-    house_key = "block-cursor-blurred-background"
-    house = Color.parse(variables.get(house_key, generated[house_key]))
+    house = _measured("block-cursor-blurred-background", generated, defaults)
     if holds(house):
         return house.hex
     start = panel + house
@@ -274,6 +296,10 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     from its card as at rest (``_focus_fill``). Themes whose colours cannot
     be resolved (ANSI palettes) still get both, at their old values
     (``surface-lighten-2``, the focus tint), because the tcss references them.
+    The entries the guard reads (``text``, the focus tint,
+    ``surface-lighten-2``) are measured as Textual paints them, the
+    '<colour> NN%' form included; one with no colour to measure ('auto NN%'
+    on a background, a text style) counts as absent (Task 6 review round 2).
 
     Args:
         theme: The theme to adjust; mutated and returned for chaining.
@@ -285,9 +311,11 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     pinned = set(getattr(theme, _PINNED_ATTR, ()))
     try:
         generated = theme.to_color_system().generate()
+        # Textual's values, for a name the theme set to something unmeasurable.
+        defaults = dataclasses.replace(theme, variables={}).to_color_system().generate()
         surfaces = [Color.parse(generated[key]) for key in ("surface", "panel")]
     except Exception:  # noqa: BLE001 - ANSI/transparent palettes have no hex to measure
-        generated, surfaces = {}, []
+        generated, defaults, surfaces = {}, {}, []
     if not surfaces or any(surface.a < 1 for surface in surfaces):
         sources = ("surface-lighten-2", "block-cursor-blurred-background")
         for name, source in zip(GUARD_VARIABLES, sources):
@@ -309,10 +337,10 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
         variables[token] = _blend_to_floor(color, pole, surfaces, _AA_RATIO)
     edge = _opaque(variables.get(BOUNDARY_VARIABLE))
     if edge is None or not _clears(edge, surfaces, _NON_TEXT_RATIO):
-        start = edge or Color.parse(generated["surface-lighten-2"])
+        start = edge or surfaces[0] + _measured("surface-lighten-2", generated, defaults)
         pinned.add(BOUNDARY_VARIABLE)
         variables[BOUNDARY_VARIABLE] = _blend_to_floor(start, pole, surfaces, _NON_TEXT_RATIO)
-    fill = _focus_fill(variables, generated, *surfaces)
+    fill = _focus_fill(variables, generated, defaults, *surfaces)
     if fill is not None:
         pinned.add(FOCUS_FILL_VARIABLE)
         variables[FOCUS_FILL_VARIABLE] = fill

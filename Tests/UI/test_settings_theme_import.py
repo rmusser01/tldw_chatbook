@@ -119,6 +119,33 @@ async def test_import_sanitises_variables(request, tmp_path, src):
         assert written["variables"] == {"text-muted": "#AABBCC"}
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_keeps_textual_alpha_suffixed_variables(request, tmp_path, src):
+    """Task 6 review round 2: the sanitiser keeps '<colour> NN%' (Textual's own
+    form), but the readability guard parsed the house focus tint with a bare
+    Color.parse; its ColorParseError escaped _parse_import's except, which
+    Settings ▸ Theme ▸ Import runs from an Input.Submitted handler."""
+    source = src / "alpha.toml"
+    source.write_text(
+        '[theme]\nname = "alpha"\n[colors]\nprimary = "#112233"\n'
+        '[variables]\nblock-cursor-blurred-background = "#81a1c1 30%"\n'
+        'text = "#ffffff 87%"\n',
+        encoding="utf-8",
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert await editor.import_theme(str(source)) == "alpha"
+        written = toml.loads((tmp_path / "alpha.toml").read_text(encoding="utf-8"))
+        assert written["variables"] == {
+            "block-cursor-blurred-background": "#81a1c1 30%",
+            "text": "#ffffff 87%",
+        }
+        assert "alpha" in app.available_themes
+
+
 HOSTILE = [
     ("notes.txt", GOOD, "Import needs a .toml file"),
     ("big.toml", GOOD + "# " + "x" * (64 * 1024) + "\n", "Theme file is larger than 64 KB"),

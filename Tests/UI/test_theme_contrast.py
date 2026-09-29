@@ -71,11 +71,15 @@ def _over(base: Color, color: Color) -> Color:
 
 
 def _resolve_color(value: str, base: Color) -> Color:
-    """Parse a variable value ('#hex', '#hexAA', or 'auto NN%') over a base."""
+    """Parse a variable value ('#hex', '#hexAA', '#hex NN%' or 'auto NN%') over a base."""
     if value.startswith("auto"):
         percent = float(value.split()[1].rstrip("%")) / 100
         pole = Color(0, 0, 0) if base.brightness > 0.5 else Color(255, 255, 255)
         return base.blend(pole, percent)
+    suffixed = re.fullmatch(r"(.+) (\d{1,3})%", value)
+    if suffixed:
+        color = Color.parse(suffixed[1]).multiply_alpha(int(suffixed[2]) / 100)
+        return _over(base, color)
     return _over(base, Color.parse(value))
 
 
@@ -259,6 +263,43 @@ def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
     themes = load_user_themes(tmp_path)
     assert [t.name for t in themes] == ["pastel_probe", "hand_set_probe"]
     for theme in themes:
+        _assert_boundaries_visible(theme)
+        _assert_button_focus_keeps_contrast(theme)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        # Textual's own form (nord: input-selection-background '#81a1c1 35%').
+        ("block-cursor-blurred-background", "#81a1c1 30%"),
+        ("text", "#ffffff 87%"),
+        ("surface-lighten-2", "#2a2a2a 50%"),
+        # Kept by sanitize_theme_variables, but no colour to measure.
+        ("block-cursor-blurred-background", "auto 30%"),
+        ("surface-lighten-2", "auto 50%"),
+        ("text", "bold"),
+    ],
+)
+def test_user_theme_with_any_kept_variable_form_still_loads(tmp_path, name, value) -> None:
+    """Task 6 review round 2: the guard read `text`, the house focus tint and
+    `surface-lighten-2` with a bare Color.parse, which raises ColorParseError
+    (not a ValueError) on the '<colour> NN%' and 'auto NN%' forms
+    sanitize_theme_variables keeps. load_user_themes then skipped a theme that
+    loaded before, and Settings ▸ Theme ▸ Import raised from an
+    Input.Submitted handler. A '<colour> NN%' entry is measured as Textual's
+    CSS paints it; an unmeasurable one counts as absent."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    (tmp_path / "kept.toml").write_text(
+        '[theme]\nname = "kept_probe"\ndark = true\n'
+        '[colors]\nprimary = "#3366CC"\nbackground = "#101010"\n'
+        'surface = "#181818"\npanel = "#202020"\nforeground = "#E0E0E0"\n'
+        f'[variables]\n{name} = "{value}"\n',
+        encoding="utf-8",
+    )
+    (theme,) = load_user_themes(tmp_path)
+    assert theme.variables[name] == value
+    if not value.startswith(("auto", "bold")):
         _assert_boundaries_visible(theme)
         _assert_button_focus_keeps_contrast(theme)
 
