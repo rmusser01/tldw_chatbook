@@ -139,9 +139,11 @@ def test_display_name_and_endpoint_doc_entries():
         _BUILTIN_PROVIDER_ENDPOINTS,
         builtin_provider_endpoint,
     )
-    from tldw_chatbook.Chat.console_provider_support import _PROVIDER_DISPLAY_NAMES
+    from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
-    assert _PROVIDER_DISPLAY_NAMES.get("databricks") == "Databricks"
+    # TASK-33002.5 rewrote this pin on purpose: the private Console map is
+    # gone, and every surface reads the shared catalog.
+    assert provider_display_name("databricks") == "Databricks"
     # The documented per-account shape: the engine appends the /openai/v1
     # suffix (provider_registry.DATABRICKS.base_url_suffix).
     assert _BUILTIN_PROVIDER_ENDPOINTS.get(

@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
@@ -3547,7 +3548,11 @@ def test_console_control_state_tolerates_missing_launch_source():
     assert state.rag_label == "Library · Auto off · Agent blocked"
 
 
-def test_console_control_and_inspector_share_effective_provider_model_sources():
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_control_and_inspector_share_effective_provider_model_sources(
+    request,
+):
     app = _build_test_app()
     _configure_native_ready_console(app, model="reactive-model")
     screen = ChatScreen(app)
@@ -3556,7 +3561,9 @@ def test_console_control_and_inspector_share_effective_provider_model_sources():
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert control_state.provider_label == "Provider: llama_cpp"
+    # TASK-33002.5: the chip names the provider; the key stays the identity.
+    assert control_state.provider_label == "Provider: llama.cpp"
+    assert screen._active_console_provider_model_display()[0] == "llama_cpp"
     assert control_state.model_label == "Model: reactive-model"
     assert rows_by_label["Provider"].text == "Provider: ready"
 

@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│                                                                                                                                                                                 │────────────────
+                │   Model and generation  Context and memory · Selected                                                                                                                           │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Use: this conversation only. Defaults: F4 Settings > Console Behavior.                                                                                                         │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Workspaces     │                                                                                                                                                                                 │     │
+ ───────────────│  Visual transcript and Hybrid require a vision-capable model.                                                                                                                   │     │
+ Conversations  │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │     │
+        Archive │  Compact at (%)         ▊ 80                                                                                                                            ▎                       │     │
+          Archiv│                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │     │
+        Search a│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │     │
+   Chat 1       │  Reduce context to (%)  ▊ 55                                                                                                                            ▎                       │     │
+                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │     │
+  ▊  Filter visi│  Summary response max   ▊ 1024                                                                                                                          ▎                       │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │     │
+                │  Summary response max applies only to Text summary and Hybrid.                                                                                                               ▇  │     │◂ Inspect
+   New conversat│                          Stop and ask                                                                                                                  ▼                        │     │
+  Chats         │  If compaction fails                                                                                                                                                            │     │
+   Chat 1       │                                                                                                                                                                                 │     │
+                │                          Memory with recent turns                                                                                                      ▼                        │     │
+ ───────────────│  Keep after compaction                                                                                                                                                          │     │
+ Character · No │                                                                                                                                                                                 │     │
+ ───────────────│  Inherited from Console Behavior defaults.                                                                                                                                      │     │
+ Model          │                                                                                                                                                                                 │     │
+ ───────────────│  Thinking history replay                                                                                                                                                        │     │
+ Agent          │                          Auto                                                                                                                          ▼                        │     │
+ ───────────────│  History policy                                                                                                                                                                 │     │
+ Details        │                                                                                                                                                                                 │     │
+                │  Effective: Auto                                                                                                                                                                │     │
+                │                                                                                                                                                                                 │     │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                                                                                           Cancel    Use for this conversation   │urrent $0.00 ·
+                │                                                                                                                                                                                 │
+█  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Speech & TTS
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 2 unsaved | Leaving Speech & TTS resolves this draft: save or discard first.                 │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │                                         │
+│  category search             │  │  │                                                                                                                            │  │  │ Selected category: Speech & TTS         │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Unsaved changes                         │
+│  Core                        │  │  │ │                                                                                                                       │  │  │  │  Guided edits: Save or Revert changes.  │
+│     Overview (view)          │  │  │ │  Provider setup                                                                                                       │  │  │  │     Save (s)                            │
+│     Providers & Models       │  │  │ │  Current status: not_tested.                                                                                          │  │  │  │    Revert (r)                           │
+│     Web Search               │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ Local-only: saves write your config     │
+│   > Speech & TTS *           │  │  │ │ Configure provider      │ OpenAI                                                                                  ▼ │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │▃ │  │  │ Impact and boundaries                   │
+│     Appearance               │  │  │ │                                                                                                                       │  │  │  │ Application-wide speech, TTS, voice,    │
+│     Theme                    │  │  │ │  OpenAI                                                                                                               │  │  │  │ audio.cpp, OpenAI, ElevenLabs, Kokoro,  │
+│     Splash Screen            │  │  │ │  A local credential is available.                                                                                     │  │  │  │ Chatterbox, Higgs, AllTalk, and         │
+│     Console Behavior         │  │  │ │  Use an external credential when possible; locally saved credentials remain on this device.                           │  │  │  │ OmniVoice defaults and setup.           │
+│  Data & Privacy              │  │  │ │  Replace credential                                                                                                   │  │  │  │  Runtime owner: Settings persisted      │
+│     Storage                  │  │  │ │  Clear saved credential                                                                                               │  │  │  │  global defaults; Speech Lab runtime    │
+│     Workspaces               │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  operations                             │
+│     Tool Profiles            │  │  │ │ Authentication          │ API key                                                                                 ▼ │ │▁ │  │  │                                         │
+│     Privacy & Security       │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Writes allowed: Yes                    │
+│     Network                  │  │  │ │ Endpoint preset          Use Official OpenAI                                                                          │  │  │  │                                         │
+│     My Profile               │  │  │ │ Base URL                │ https://api.openai.com/v1/audio/speech                                                      │  │  │  │  Owns: app_tts global defaults          │
+│  Troubleshooting             │  │  │ │ Organization ID         █ org-t4                                                                                      │  │  │  │  app_tts provider connection and        │
+│     Diagnostics (view)       │  │  │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  initialization                         │
+│     About (view)             │  │  │                                                                                                                            │  │  │  API OpenAI and ElevenLabs              │
+│     Agents                   │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  credentials                            │
+│  Expert                      │  │  │ │                                                                                                                       │  │  │  │  HiggsSettings initialization           │
+│     Internal Prompts         │  │  │ │  Pipeline conversation                                                                                                │  │  │  │  OmniVoiceSettings initialization     ▇ │
+│     Advanced Config          │  │  │ │  Transcription mode: Native live is preferred when the selected speech-to-text backend supports it; otherwise the     │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │  pipeline uses the rolling-window fallback.                                                                           │  │  │  │  Affected config: application-wide      │
+│                              │  │  │ │  Cost: a remote rolling-window backend may process overlapping audio more than once. Starting replies sooner can      │  │  │  │  Speech & TTS defaults and selected     │
+│                              │  │  │ │  also create billable discarded STT, model, or speech attempts when you continue talking.                             │  │  │  │  provider setup                         │
+│                              │  │  │ │ Response eagerness (ms) │ 700                                                                                         │  │  │  │                                         │
+│                              │  │  │ │ Response preset          Fast · 700 ms    Balanced · 1200 ms   Deliberate · 2000 ms                                   │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Organization ID
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

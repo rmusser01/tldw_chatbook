@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.RAG_Search.local_citation_capture import (
     LocalEvidenceContext,
@@ -707,11 +708,14 @@ class ConsoleControlState:
         mcp_tool_count: int | None = None,
         approval_count: int = 0,
         system_prompt_set: bool = False,
+        app_config: Mapping[str, object] | None = None,
     ) -> "ConsoleControlState":
         """Build the Console control-bar chip state from raw run values.
 
         Args:
-            provider: Active provider name, or falsy for "not selected".
+            provider: Active provider config key or ``custom-ep`` id, or falsy
+                for "not selected". The chip shows its catalog display name
+                (TASK-33002.5); the key itself is never rendered.
             model: Active model name, or falsy for "not selected".
             character: Existing character presentation value; when present,
                 renders as ``Character: <name>``.
@@ -727,6 +731,8 @@ class ConsoleControlState:
             approval_count: Pending MCP approvals.
             system_prompt_set: Whether the active session has a system prompt;
                 the chip then reads ``System Prompt: set``.
+            app_config: Config holding the ADR-146 endpoint registry, so a
+                ``custom-ep`` provider shows its entry's name.
 
         Returns:
             A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
@@ -772,8 +778,9 @@ class ConsoleControlState:
                 source="new_session",
             )
         library_display = ConsoleLibraryPolicyDisplayState.from_snapshot(library_policy)
+        provider_name = provider_display_name(_clean(provider, ""), app_config)
         return cls(
-            provider_label=f"Provider: {_clean(provider, 'not selected')}",
+            provider_label=f"Provider: {_clean(provider_name, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
             assistant_label=assistant_label,
             rag_label=library_display.chip_label,

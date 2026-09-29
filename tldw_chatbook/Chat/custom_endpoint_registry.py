@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, field_validator
 
+from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
 from tldw_chatbook.Chat.sampling_params import (
     params_to_dict,
@@ -44,7 +45,7 @@ _DISPLAY_NAME_REQUIRED_COPY = "Display name is required."
 _DISPLAY_NAME_TOO_LONG_COPY = (
     f"Display name must be {_MAX_DISPLAY_NAME_LENGTH} characters or fewer."
 )
-_INVALID_BASE_URL_COPY = "Base URL must be a valid http(s) URL."
+_INVALID_BASE_URL_COPY = f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL."
 _SLUG_COLLISION_COPY = "That name is already in use; choose another."
 
 

@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │  Test Provider                                                                                                        │  │  │  │                                         │
+│  category search             │  │  │ │  Runs a local readiness check; URL-based local providers also get a short live endpoint probe.                        │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │ Config      llama.cpp is configured                                                                                   │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ Key         not required                                                                                              │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ Endpoint    http://127.0.0.1:9198 · model listing reached                                                             │  │  │  │  Save (s) — no changes                  │
+│   > Providers & Models       │  │  │ │ Model       qwen3-8b · listed by the server                                                                           │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ Generation  not tested                                                                                                │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │  Provider settings reverted to last loaded values.                                                                    │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │                                                                                                                       │  │  │  │  Focused setting: None — Tab to a       │
+│     Appearance               │  │  │ │  Provider readiness                                                                                                   │  │  │  │  setting                                │
+│     Theme                    │  │  │ │  Readiness: llama.cpp / qwen3-8b                                                                                      │  │  │  │                                       ▅ │
+│     Splash Screen            │  │  │ │  Provider source: Saved chat defaults                                                                                 │  │  │  │  Purpose: Configure the default         │
+│     Console Behavior         │  │  │ │  Model source: Saved chat defaults                                                                                    │  │  │  │  provider, model, endpoint, and         │
+│  Data & Privacy              │  │  │ │  Endpoint: http://127.0.0.1:9198                                                                                      │  │  │  │  credential source.                     │
+│     Storage                  │  │  │ │ API key: not required for this provider                                                                               │▁ │  │  │                                         │
+│     Workspaces               │  │  │ │                                                                                                                       │  │  │  │  Saved as: chat_defaults plus           │
+│     Tool Profiles            │  │  │ │  Context capacity                                                                                                     │  │  │  │  provider-specific api_settings         │
+│     Privacy & Security       │  │  │ │  Context window unknown. Enter the provider's documented token limit so Automatic conversation budgets can be         │  │  │  │                                         │
+│     Network                  │  │  │ │  verified.                                                                                                            │  │  │  │  Save: staged - press s to save, r to   │
+│     My Profile               │  │  │ │ Context window          │ tokens (required when unknown)                                                              │  │  │  │  revert                               ▂ │
+│  Troubleshooting             │  │  │ │                          Reset to detected                                                                            │  │  │  │                                         │
+│     Diagnostics (view)       │  │  │ │  This is the model's total token capacity, not a conversation length preference. Repairs update the existing          │  │  │  │  Validation: test provider readiness    │
+│     About (view)             │  │  │ │  model-capability registry used by request safety checks.                                                             │  │  │  │  before saving these defaults           │
+│     Agents                   │  │  │ │                                                                                                                       │  │  │  │                                         │
+│  Expert                      │  │  │ │  Model discovery                                                                                                      │  │  │  │  Runtime owner: Settings persisted      │
+│     Internal Prompts         │  │  │ │  Discover models from configured endpoint                                                                             │  │  │  │  defaults; Console runtime selection    │
+│     Advanced Config          │  │  │ │  No discovered models yet. Use Discover models after endpoint is configured.                                          │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │  Capabilities unknown until saved or verified; text chat is assumed.                                                  │  │  │  │  Writes allowed: Yes                    │
+│                              │  │  │ │  Discover models  Save selected       Clear                                                                           │  │  │  │                                         │
+│                              │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  chat_defaults.model                    │
+│                              │  │  │ │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Open dashboard, notifications, and active work.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -13,6 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
+    MODEL_FIELD_LABELS,
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
     supported_console_provider_catalog,
@@ -1451,7 +1452,7 @@ def _console_session_settings_structural_errors(
     if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(
         settings.max_tokens, 1
     ):
-        errors.append("Response max tokens must be 1 or greater.")
+        errors.append(f"{MODEL_FIELD_LABELS['max_tokens']} must be 1 or greater.")
     if not _is_blank_value(settings.seed) and not _optional_int_at_least(
         settings.seed, 0
     ):
@@ -1488,12 +1489,15 @@ def _console_session_settings_structural_errors(
         and settings.thinking_effort not in _THINKING_EFFORT_VALUES
     ):
         errors.append(
-            "Thinking effort must be one of off, low, medium, high, xhigh, or max."
+            f"{MODEL_FIELD_LABELS['thinking_effort']} must be one of off, low, "
+            "medium, high, xhigh, or max."
         )
     if not _is_blank_value(
         settings.thinking_budget_tokens
     ) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
-        errors.append("Thinking budget tokens must be at least 1024.")
+        errors.append(
+            f"{MODEL_FIELD_LABELS['thinking_budget_tokens']} must be at least 1024."
+        )
 
     return errors
 
@@ -1519,7 +1523,7 @@ def validate_console_session_settings(
         and _is_url_based_provider(provider_key, provider_settings)
         and not _valid_base_url(provider_key, base_url)
     ):
-        errors.append("Base URL must be a valid http(s) URL.")
+        errors.append(f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL.")
 
     return errors
 

@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │                                         │
+│  category search             │  │  │ │ │                                                                                                                   │ │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │ │  Automatic refresh                                                                                                │ │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ │  applies immediately - no Save needed                                                                             │ │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ │ ▐X▌ Refresh on startup                                                                                            │ │  │  │  │  Save (s) — no changes                  │
+│   > Providers & Models       │  │  │ │ │ Refresh after (hours)   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ │                         ▊  24                                                                                   ▎ │ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ │  Saved. Applies at next startup.                                                                                  │ │  │  │  │  Focused setting: Temperature           │
+│     Appearance               │  │  │ │ │ ▐X▌ OpenAI: refresh ▐X▌ save to config                                                                            │ │  │  │  │                                         │
+│     Theme                    │  │  │ │ │ ▐X▌ Anthropic: refresh ▐X▌ save to config                                                                         │ │  │  │  │  Purpose: How varied replies are:     ▅ │
+│     Splash Screen            │  │  │ │ │ ▐X▌ Mistral AI: refresh ▐X▌ save to config                                                                        │ │  │  │  │  lower is focused, higher is more       │
+│     Console Behavior         │  │  │ │ │ ▐X▌ Moonshot AI: refresh ▐X▌ save to config                                                                       │ │  │  │  │  varied.                                │
+│  Data & Privacy              │  │  │ │ │ ▐X▌ OpenRouter: refresh ▐X▌ save to config                                                                        │ │  │  │  │                                         │
+│     Storage                  │  │  │ │ │ ▐X▌ QwenCloud: refresh ▐X▌ save to config                                                                         │ │▆ │  │  │  Saved as: api_settings.llama_cpp.      │
+│     Workspaces               │  │  │ │ │ ▐X▌ Z.ai: refresh ▐X▌ save to config                                                                              │ │  │  │  │    model_defaults.qwen3-8b.             │
+│     Tool Profiles            │  │  │ │ │ ▐X▌ Databricks: refresh ▐X▌ save to config                                                                        │ │  │  │  │    temperature                          │
+│     Privacy & Security       │  │  │ │ │ ▐X▌ Together: refresh ▐X▌ save to config                                                                          │ │  │  │  │                                         │
+│     Network                  │  │  │ │ │ ▐X▌ Fireworks: refresh ▐X▌ save to config                                                                         │ │  │  │  │  Save: staged - press s to save, r to   │
+│     My Profile               │  │  │ │ │ ▐X▌ Cerebras: refresh ▐X▌ save to config                                                                          │ │  │  │  │  revert                               ▂ │
+│  Troubleshooting             │  │  │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │                                         │
+│     Diagnostics (view)       │  │  │ │                                                                                                                       │  │  │  │  Validation: 0.0 to 2.0; blank          │
+│     About (view)             │  │  │ │  Custom endpoints                                                                                                     │▆ │  │  │  inherits the default                   │
+│     Agents                   │  │  │ │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │                                         │
+│  Expert                      │  │  │ │ │  No named endpoints yet. Create one from a template in Console conversation settings (New endpoint…), or convert  │ │  │  │  │  Runtime owner: Settings persisted      │
+│     Internal Prompts         │  │  │ │ │  a built-in custom slot below.                                                                            ╭──────────────────────────────────────────────────────────╮ │
+│     Advanced Config          │  │  │ │ │  Custom OpenAI-compatible: http://localhost:1234/v1/chat/completions (built-in slot)                      │                                                          │ │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  Convert to named endpoint                                                                                │ Provider and model settings saved: new chats and open    │ │
+│                              │  │  │ │ │  Custom OpenAI-compatible #2: http://localhost:5678/v1/chat/completions (built-in slot)                   │ chats nobody has used yet take them; chats with work     │ │
+│                              │  │  │ │ │  Convert to named endpoint                                                                                │ keep their own settings (change them in Console with     │ │
+│                              │  │  │ │ │                                                                                                           │ Alt+M).                                                  │ │
+│                              │  │  │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │ │
+│                              │  │  │                                                                                                               ╰──────────────────────────────────────────────────────────╯ │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

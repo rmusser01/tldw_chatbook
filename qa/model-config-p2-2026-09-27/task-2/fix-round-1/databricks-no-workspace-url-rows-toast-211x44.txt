@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Shared with Console                                                                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │                                         │
+│  category search             │  │  │ │ Cloud                                                                                                                 │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │ Anthropic                                                                                                             │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ Cerebras                                                                                                              │▅ │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ Cohere                                                                                                                │  │  │  │  Save (s) — no changes                  │
+│   > Providers & Models       │  │  │ │ Databricks                                                                                                            │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ DeepSeek                                                                                                              │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ Choose a provider or enter a provider ID.                                                                             │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ Model                   │ databricks-meta-llama                                                                       │  │  │  │ Affects Console and provider-backed     │
+│     Appearance               │  │  │ │ Endpoint                │ Optional provider endpoint override                                                         │  │  │  │ generation.                             │
+│     Theme                    │  │  │ │                                                                                                                       │  │  │  │  Provider readiness: Databricks /       │
+│     Splash Screen            │  │  │ │  Credentials                                                                                                          │  │  │  │  databricks-meta-llama                  │
+│     Console Behavior         │  │  │ │  API key source: missing; set DATABRICKS_TOKEN or paste a local key                                                   │▃ │  │  │                                         │
+│  Data & Privacy              │  │  │ │ API key                 │ Paste API key to save locally in config                                                     │  │  │  │ Focused field guide                     │
+│     Storage                  │  │  │ │                          Clear saved key                                                                              │  │  │  │  Focused setting: None — Tab to a       │
+│     Workspaces               │  │  │ │ Env var                 │ DATABRICKS_TOKEN                                                                            │  │  │  │  setting                                │
+│     Tool Profiles            │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.         │  │  │  │                                         │
+│     Privacy & Security       │  │  │ │  Test Provider                                                                                                        │  │  │  │  Purpose: Configure the default       ▅ │
+│     Network                  │  │  │ │  Runs a local readiness check; URL-based local providers also get a short live endpoint probe.                        │  │  │  │  provider, model, endpoint, and         │
+│     My Profile               │  │  │ │ Endpoint    not set — enter the workspace URL in the Endpoint field                                                   │  │  │  │  credential source.                     │
+│  Troubleshooting             │  │  │ │ Config      Databricks is not ready                                                                                   │  │  │  │                                         │
+│     Diagnostics (view)       │  │  │ │ Key         not checked until the provider is ready                                                                   │  │  │  │  Saved as: chat_defaults plus           │
+│     About (view)             │  │  │ │ Model       databricks-meta-llama                                                                                     │  │  │  │  provider-specific api_settings         │
+│     Agents                   │  │  │ │ Generation  not tested                                                                                                │  │  │  │                                         │
+│  Expert                      │  │  │ │  Provider settings have not been saved this session.                                                                  │  │  │  │  Save: staged - press s to save, r to   │
+│     Internal Prompts         │  │  │ │                                                                                                                       │  │  │  │  revert                                 │
+│     Advanced Config          │  │  │ │  Provider readiness                                                                                                   │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │  Readiness: Databricks / databricks-meta-llama                                                              ╭──────────────────────────────────────────────────────────╮ │
+│                              │  │  │ │  Provider source: Saved chat defaults                                                                       │                                                          │ │
+│                              │  │  │ │  Model source: Saved chat defaults                                                                          │ Configuration check blocked: Databricks is not ready:    │ │
+│                              │  │  │ │  Endpoint: provider default                                                                                 │ Missing workspace URL.                                   │ │
+│                              │  │  │ │ DATABRICKS_TOKEN=missing                                                                                    │                                                          │ │
+│                              │  │  │                                                                                                               ╰──────────────────────────────────────────────────────────╯ │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

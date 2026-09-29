@@ -282,6 +282,7 @@ def build_field_search_index() -> None:
     Clears first (review cleanup): plain ``update()`` could never remove a
     stale category's rows on a rebuild.
     """
+    from ...Chat.provider_catalog import provider_display_name
     from ...LLM_Provider_Catalog.model_catalog_settings import (
         AUTO_REFRESH_PROVIDER_LIST_KEYS,
     )
@@ -346,6 +347,8 @@ def build_field_search_index() -> None:
                     "settings-console-sidechat-prompt-template",
                     "More Details prompt",
                 ),
+                # TASK-33002.1: the field table's label, then older names.
+                ("settings-console-context-budget-mode", "Budget strategy"),
                 (
                     "settings-console-context-budget-mode",
                     "Conversation budget strategy",
@@ -369,6 +372,7 @@ def build_field_search_index() -> None:
                     "settings-console-context-target-percent",
                     "Reduce conversation to (%)",
                 ),
+                ("settings-console-context-target-percent", "Reduce context to (%)"),
                 (
                     "settings-console-context-summary-max-tokens",
                     "Summary response max tokens",
@@ -416,6 +420,7 @@ def build_field_search_index() -> None:
                 ("settings-console-default-top-p", "Top P"),
                 ("settings-console-default-min-p", "Min P"),
                 ("settings-console-default-top-k", "Top K"),
+                ("settings-console-default-max-tokens", "Max tokens"),
                 ("settings-console-default-max-tokens", "Response max tokens"),
                 ("settings-console-default-seed", "Seed"),
                 ("settings-console-default-presence-penalty", "Presence penalty"),
@@ -423,7 +428,9 @@ def build_field_search_index() -> None:
                 ("settings-console-default-reasoning-effort", "Reasoning effort"),
                 ("settings-console-default-reasoning-summary", "Reasoning summary"),
                 ("settings-console-default-verbosity", "Verbosity"),
+                ("settings-console-default-thinking-effort", "Thinking"),
                 ("settings-console-default-thinking-effort", "Thinking effort"),
+                ("settings-console-default-thinking-budget-tokens", "Thinking budget"),
                 (
                     "settings-console-default-thinking-budget-tokens",
                     "Thinking budget tokens",
@@ -527,11 +534,11 @@ def build_field_search_index() -> None:
                     for entry in (
                         (
                             f"settings-mc-auto-{provider.lower()}",
-                            f"{provider} auto-refresh model list",
+                            f"{provider_display_name(provider)} auto-refresh model list",
                         ),
                         (
                             f"settings-mc-write-{provider.lower()}",
-                            f"{provider} save fetched models to config",
+                            f"{provider_display_name(provider)} save fetched models to config",
                         ),
                     )
                 ),
@@ -540,6 +547,7 @@ def build_field_search_index() -> None:
                 ("settings-model-profile-top-p", "Top P"),
                 ("settings-model-profile-min-p", "Min P"),
                 ("settings-model-profile-top-k", "Top K"),
+                ("settings-model-profile-max-tokens", "Max tokens"),
                 ("settings-model-profile-max-tokens", "Response max tokens"),
                 ("settings-model-profile-seed", "Seed"),
                 ("settings-model-profile-presence-penalty", "Presence penalty"),
@@ -547,7 +555,9 @@ def build_field_search_index() -> None:
                 ("settings-model-profile-reasoning-effort", "Reasoning effort"),
                 ("settings-model-profile-reasoning-summary", "Reasoning summary"),
                 ("settings-model-profile-verbosity", "Verbosity"),
+                ("settings-model-profile-thinking-effort", "Thinking"),
                 ("settings-model-profile-thinking-effort", "Thinking effort"),
+                ("settings-model-profile-thinking-budget-tokens", "Thinking budget"),
                 (
                     "settings-model-profile-thinking-budget-tokens",
                     "Thinking budget tokens",

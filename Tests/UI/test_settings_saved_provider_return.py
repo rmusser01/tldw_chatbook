@@ -44,7 +44,10 @@ def _assert_projection(screen, provider, model, endpoint):
     assert model in readiness
     detail, _, _ = screen._provider_readiness_test_report()
     assert screen._provider_display_name(provider).casefold() in detail.casefold()
-    assert f"model={model}" in detail
+    # TASK-33002.2: the Test result is labelled rows, not "model=<id>".
+    assert any(
+        line.startswith(f"Model       {model}") for line in detail.splitlines()
+    ), detail
 
 
 @pytest.mark.asyncio

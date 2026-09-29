@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Storage
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 1 unsaved | Needs correction: Prompts DB must end with .db, .sqlite, or .sqlite3.            │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Storage                                                                                                                   │  │  │ Selected category: Storage              │
+│                              │  │  │  Backup & Restore                                                                                                          │  │  │ Unsaved changes                         │
+│  Core                        │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Guided edits: Prompts DB must end      │
+│     Overview (view)          │  │  │ │                                                                                                                       │  │  │  │  with .db, .sqlite, or .sqlite3.        │
+│     Providers & Models       │  │  │ │  Storage defaults                                                                                                     │  │  │  │        Save (s)                         │
+│     Web Search               │  │  │ │  Scope: persisted local database path defaults                                                                        │  │  │  │        Revert (r)                       │
+│     Speech & TTS             │  │  │ │  Activation: Changes apply on next launch; active database handles keep current paths                                 │  │  │  │ Local-only: saves write your config     │
+│  Interface                   │  │  │ │  Safety: Save writes config only; no files are moved or reconnected                                                   │  │  │  │ file.                                   │
+│     Appearance               │  │  │ │  Config path:                                                                                                         │  │  │  │  Focused setting: Prompts DB            │
+│     Theme                    │  │  │ │  /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/73fb7a69-fb3c-49ea-81ff-f711a75d6336/scra  │  │  │  │                                         │
+│     Splash Screen            │  │  │ │  tchpad/ffw/live/config/config.toml                                                                                   │  │  │  │  Purpose: Path to the local Prompts     │
+│     Console Behavior         │  │  │ │                                                                                                                       │  │  │  │  DB file used after restart.          ▂ │
+│  Data & Privacy              │  │  │ │  Draft path check                                                                                                     │  │  │  │                                         │
+│   > Storage *                │  │  │ │  Check mode: non-mutating; reports parent readiness for the current config runtime                                    │▇ │  │  │  Saved as: database.prompts_db_path     │
+│     Workspaces               │  │  │ │  Check Storage                                                                                                        │  │  │  │                                         │
+│     Tool Profiles            │  │  │ │  Storage check: not run                                                                                               │  │  │  │  Save: staged - press s to save, r to   │
+│     Privacy & Security       │  │  │ │  Run Check Storage or press t to verify local path access.                                                            │  │  │  │  revert                                 │
+│     Network                  │  │  │ │                                                                                                                       │  │  │  │                                         │
+│     My Profile               │  │  │ │                                                                                                                       │  │  │  │  Validation: must be a safe path;       │
+│  Troubleshooting             │  │  │ │                                                                                                                       │  │  │  │  database paths must end in .db,        │
+│     Diagnostics (view)       │  │  │ │                                                                                                                       │  │  │  │  .sqlite, or .sqlite3                   │
+│     About (view)             │  │  │ │                                                                                                                       │  │  │  │                                         │
+│     Agents                   │  │  │ │  Prompts DB must end with .db, .sqlite, or .sqlite3.                                                                  │  │  │  │ Boundary                                │
+│  Expert                      │  │  │ │                                                                                                                       │  │  │  │  Restart required: saved paths are    ▃ │
+│     Internal Prompts         │  │  │ │  Database paths (configured)                                                                                          │  │  │  │  picked up on next launch; active       │
+│     Advanced Config          │  │  │ │  These are the configured config.toml values. The files actually in use this session are listed under Active files    │  │  │  │  handles stay unchanged                 │
+│   Domain Defaults ▸ (11)     │  │  │ │  below and can differ when a user profile is set.                                                                     │  │  │  │                                         │
+│                              │  │  │ │ Base data directory     │ ~/.local/share/tldw_cli/                                                                    │  │  │  │  No migration: Settings does not move   │
+│                              │  │  │ │ ChaChaNotes DB          │ ~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db                                        │  │  │  │  files, create directories, or          │
+│                              │  │  │ │ Prompts DB              │ ~/.local/share/tldw_cli/tldw_cli_prompts.db.txt                                             │  │  │  │  reconnect databases                    │
+│                              │  │  │ │ Media DB                │ ~/.local/share/tldw_cli/tldw_cli_media_v2.db                                                │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t check storage | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

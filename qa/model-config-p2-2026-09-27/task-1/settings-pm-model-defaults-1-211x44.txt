@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Shared with Console                                                                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │                                         │
+│  category search             │  │  │ │ ▊   Selected model defaults                                                                                         ▎ │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │ ▊   Global fallbacks live under Console Defaults; these values apply only to the provider+model above.              ▎ │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ▊  Temperature             │ 0.0 - 2.0                                                                              ▎ │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ ▊  Top P                   │ 0.0 - 1.0                                                                              ▎ │  │  │  │  Save (s) — no changes                  │
+│   > Providers & Models       │  │  │ │ ▊  Min P                   │ optional 0.0 - 1.0                                                                     ▎ │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ ▊  Top K                   │ optional whole number                                                                  ▎ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ ▊  Max tokens              │ optional whole number                                                                  ▎ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ ▊  Seed                    │ optional whole number                                                                  ▎ │  │  │  │  Focused setting: Thinking budget       │
+│     Appearance               │  │  │ │ ▊  Presence penalty        │ -2.0 - 2.0                                                                             ▎ │  │  │  │                                         │
+│     Theme                    │  │  │ │ ▊  Frequency penalty       │ -2.0 - 2.0                                                                             ▎ │  │  │  │  Purpose: Tokens reserved for         ▅ │
+│     Splash Screen            │  │  │ │ ▊   Hidden for llama.cpp: Reasoning summary, Verbosity, Thinking.                                                   ▎ │  │  │  │  thinking when Thinking is on.          │
+│     Console Behavior         │  │  │ │ ▊                          ┌──────────────────────────────────────────────────────────────────────────────────────┐ ▎ │  │  │  │                                         │
+│  Data & Privacy              │  │  │ │ ▊  Reasoning effort        │ Inherit default                                                                    ▼ │ ▎ │  │  │  │  Saved as: api_settings.llama_cpp.      │
+│     Storage                  │  │  │ │ ▊                          └──────────────────────────────────────────────────────────────────────────────────────┘ ▎ │  │  │  │    model_defaults.<model>.              │
+│     Workspaces               │  │  │ │ ▊  Thinking budget         █ optional >= 1024                                                                       ▎ │  │  │  │    thinking_budget_tokens               │
+│     Tool Profiles            │  │  │ │ ▊                          ┌──────────────────────────────────────────────────────────────────────────────────────┐ ▎ │  │  │  │                                         │
+│     Privacy & Security       │  │  │ │ ▊  Streaming               │ Inherit default                                                                    ▼ │ ▎ │  │  │  │  Save: staged - press s to save, r to   │
+│     Network                  │  │  │ │ ▊                          └──────────────────────────────────────────────────────────────────────────────────────┘ ▎ │  │  │  │  revert                                 │
+│     My Profile               │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │                                       ▁ │
+│  Troubleshooting             │  │  │ │ ▊                                                                                                                   ▎ │  │  │  │  Validation: whole number, 1,024 or     │
+│     Diagnostics (view)       │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  more; blank inherits the default       │
+│     About (view)             │  │  │ │                                                                                                                       │  │  │  │                                         │
+│     Agents                   │  │  │ │  Provider catalog | Cloud: Anthropic, Cerebras, Cohere, Databricks, DeepSeek, Fireworks, Google Gemini, Groq,         │▆ │  │  │  Runtime owner: Settings persisted      │
+│  Expert                      │  │  │ │  Hugging Face, Mistral AI, Moonshot AI, OpenAI, OpenRouter, QwenCloud, Together, Z.ai | Local: Aphrodite Engine,      │  │  │  │  defaults; Console runtime selection    │
+│     Internal Prompts         │  │  │ │  KoboldCpp, llama.cpp, Llamafile, MLX-LM (Apple silicon), Ollama, TabbyAPI, Text Generation WebUI (Oobabooga), vLLM   │  │  │  │                                         │
+│     Advanced Config          │  │  │ │  | Custom & legacy aliases: Custom OpenAI-compatible, Custom OpenAI-compatible #2, llama.cpp (legacy alias), Local    │  │  │  │  Writes allowed: Yes                    │
+│   Domain Defaults ▸ (11)     │  │  │ │  LLM (legacy generic), Mistral AI (legacy alias), Ollama (legacy alias), vLLM (legacy alias)                          │  │  │  │                                         │
+│                              │  │  │ │  Credential policy: 17 require keys; 15 local/keyless providers                                                       │  │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │ │  Choose a catalog provider (type in the open list to jump to one), or use Manual / custom provider for other keys.    │  │  │  │  chat_defaults.model                    │
+│                              │  │  │ │  Sampling and transport defaults are routed to Console Defaults.                                                      │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │  Endpoint key: api_settings.llama_cpp.                                                                                │▆ │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | Esc, t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

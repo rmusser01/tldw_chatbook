@@ -275,7 +275,10 @@ fields (task-1586):
   "Per-item Save/Reset" / "Validate, then Save" / "Read-only here") —
   five save models coexist on the Settings screen, and the badge is what
   keeps their differing footer keys from reading as inconsistency
-  (task-1717).
+  (task-1717). Unsaved edits keep the badge and add the unsaved count
+  ("Draft — save with s · 2 unsaved"): the count of fields that differ from
+  their saved values, never a bare dirty flag in the badge's place
+  (TASK-33002.4).
 - **Fold indicator:** scrollable inspector columns reserve a bottom row
   ("▼ more — scroll…") shown only while content overflows, so a
   mid-sentence clip is never the only signal that more exists

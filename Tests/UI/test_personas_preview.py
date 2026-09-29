@@ -812,3 +812,35 @@ def test_build_preview_system_prompt_persona_profile_record_is_unaffected():
     profile_record = {"id": "p-1", "name": "Ada", "system_prompt": "Be helpful."}
 
     assert build_preview_system_prompt(profile_record) == "Be helpful."
+
+
+def test_provider_readout_names_custom_endpoints_for_primary_and_fallback():
+    """Qodo #2878 finding 3: a ``custom-ep:`` provider shows its registry
+    entry's name, not the raw id, in both the primary and Console-fallback
+    labels of the pre-send readout."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    app_config = {
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "base_url": "http://127.0.0.1:9999/v1",
+                "family": "openai_compatible",
+            },
+            "lab-rig": {
+                "display_name": "Lab rig",
+                "base_url": "http://127.0.0.1:9998/v1",
+                "family": "openai_compatible",
+            },
+        },
+        "character_defaults": {"provider": "custom-ep:gpu-box", "model": "m1"},
+        "chat_defaults": {"provider": "custom-ep:lab-rig", "model": "m2"},
+    }
+    screen = SimpleNamespace(app_instance=SimpleNamespace(app_config=app_config))
+
+    text, nav_provider = PersonasPreviewController(screen).provider_readout()
+
+    assert text == "Provider: GPU box / m1 - Console default if unavailable: Lab rig"
+    assert nav_provider == "custom-ep:gpu-box"
