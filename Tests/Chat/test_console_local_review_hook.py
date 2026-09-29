@@ -16,16 +16,25 @@ import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    AgentConfig,
+    ModelTurn,
     normalize_tool_review,
     ToolCall,
+    ToolLoadSelection,
     ToolResult,
 )
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LocalApprovalEffect,
     LocalToolProvider,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL,
+    MCPPendingCall,
+)
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -309,6 +318,121 @@ def test_local_same_name_broad_approval_scope_survives_later_narrow_scope(
         "call-narrow": "proceed",
     }
     assert p.stamped(RUN, "watchlists_create_collection") == broad
+
+
+# Both TASK-33082 tests read the [tools] config through LocalToolProvider,
+# which the per-test sandbox's config admission refuses (ADR-126); they need
+# only a tmp_path workspace, so they keep the collection-time test profile.
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("sibling_answer", "refusal"),
+    [
+        ("timeout", TIMEOUT_REFUSAL),
+        ("surprise", UNRESOLVED_REFUSAL),
+        (None, UNRESOLVED_REFUSAL),
+    ],
+)
+def test_sibling_without_its_own_approval_never_dispatches(
+    tmp_path, sibling_answer, refusal
+):
+    """TASK-33082: a reviewed call runs only on its own row's approval.
+
+    One `fs_list` call is approved; its same-name sibling timed out, got an
+    unknown answer, or got no answer. The name-keyed stamp keeps the
+    approval, so before the fix the hook returned "proceed" for the sibling
+    and it ran on its neighbour's stamp. Drives the real hook and the real
+    provider through `run_agent_loop`.
+    """
+    (tmp_path / "sub").mkdir()
+    p = provider(ASK, tmp_path)
+    answers = {"call-ok": "approve_once"}
+    if sibling_answer is not None:
+        answers["call-late"] = sibling_answer
+    hook = build_local_review_hook(p, lambda _pending: answers)
+    calls = [
+        ToolCall(name="fs_list", args={"path": "."}, call_id="call-ok"),
+        ToolCall(name="fs_list", args={"path": "sub"}, call_id="call-late"),
+    ]
+    raw_calls = [
+        {
+            "id": call.call_id,
+            "type": "function",
+            "function": {"name": call.name, "arguments": json.dumps(call.args)},
+        }
+        for call in calls
+    ]
+    turns = iter(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=tuple(calls),
+                assistant_message={
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": raw_calls,
+                },
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+    seen_messages: list[list[dict]] = []
+    dispatched: list[str] = []
+
+    def call_model(messages, _schemas):
+        seen_messages.append([dict(message) for message in messages])
+        return next(turns)
+
+    def invoke(call):
+        dispatched.append(call.call_id)
+        with use_run_id(RUN):
+            return p.invoke(call.name, call.args)
+
+    deps = LoopDeps(
+        call_model=call_model,
+        invoke_tool=invoke,
+        spawn=lambda _task: ToolResult(ok=True, content=""),
+        find_tools=lambda _query: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
+        should_cancel=lambda: False,
+        clock=lambda: 0.0,
+        review_tool_calls=lambda batch: hook(batch, RUN),
+    )
+    config = AgentConfig(model="m", system_prompt="s", allowed_tools=("fs_list",))
+
+    out = run_agent_loop(config, [{"role": "user", "content": "list"}], [], deps)
+
+    assert out.status == RUN_DONE
+    assert dispatched == ["call-ok"], (
+        f"a call with no approval of its own was dispatched: {dispatched}"
+    )
+    results = {
+        message["tool_call_id"]: message["content"]
+        for message in seen_messages[1]
+        if message.get("role") == "tool"
+    }
+    assert results["call-late"] == refusal
+    assert p.stamped(RUN, "fs_list") == "approve_once"
+
+
+@pytest.mark.bootstrap_profile
+def test_lone_timed_out_row_still_reaches_the_provider_refusal(tmp_path):
+    """TASK-33082 leaves a fully timed-out batch on its existing path.
+
+    With no approved sibling the name's stamp is "timeout", so the hook
+    still returns "proceed" and the provider refuses the call at dispatch,
+    recording its audit row, as before.
+    """
+    p = provider(ASK, tmp_path)
+    hook = build_local_review_hook(p, lambda _pending: {"call-late": "timeout"})
+
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="call-late")], RUN
+    )
+
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"fs_list": "proceed", "call-late": "proceed"}
+    assert p.stamped(RUN, "fs_list") == "timeout"
 
 
 def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):

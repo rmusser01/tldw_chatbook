@@ -17,7 +17,11 @@ from tldw_chatbook.Agents.agent_models import (
     RunOutcome,
     ToolCall,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL,
+    MCPPendingCall,
+)
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat import console_chat_controller as controller_module
@@ -3610,6 +3614,49 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     assert {
         key: normalize_tool_review(value).verdict for key, value in verdicts.items()
     } == {"write_thing": "proceed"}
+
+
+@pytest.mark.parametrize(
+    ("sibling_answer", "refusal"),
+    [
+        ("timeout", TIMEOUT_REFUSAL),
+        ("surprise", UNRESOLVED_REFUSAL),
+        (None, UNRESOLVED_REFUSAL),
+    ],
+)
+def test_review_hook_refuses_a_sibling_without_its_own_approval(
+    sibling_answer, refusal
+):
+    """TASK-33082: a row that lacks its own approval is refused by the hook.
+
+    The gate's stamp is name-keyed and keeps the sibling's approval, so the
+    unanswered row would otherwise pass `BuiltinToolGate.check` and run on
+    it. The approved row still proceeds.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    gate = _FakeBuiltinGate()
+    answers = {"1": "approve_once"}
+    if sibling_answer is not None:
+        answers["2"] = sibling_answer
+    hook = build_tool_review_hook(
+        gate,
+        _FakeBuiltinProvider(_FakeMutatingTool()),
+        None,
+        lambda _pending: answers,
+    )
+
+    verdicts = hook(
+        [
+            ToolCall(name="write_thing", args={"n": 1}, call_id="1"),
+            ToolCall(name="write_thing", args={"n": 2}, call_id="2"),
+        ],
+        RUN,
+    )
+
+    assert normalize_tool_review(verdicts["1"]).verdict == "proceed"
+    assert normalize_tool_review(verdicts["2"]).verdict == refusal
+    assert gate.stamped == [("write_thing", "approve_once")]
 
 
 def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
