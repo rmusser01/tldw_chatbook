@@ -1,5 +1,12 @@
 # Tests/Dreams/test_dreams_db_track.py
-"""DreamsDB schema v2 behavior: tracked items, track runs, v1->v2 upgrade."""
+"""DreamsDB schema v2 behavior: tracked items, track runs, v1->v2 upgrade.
+
+Also pins the query plans of the three track-loop indexes (the
+``scripts/check_index_plan_pins.py`` census rows point here): every plan
+assertion first proves ``sqlite_stat1`` is absent, because Dreams_DB.py
+runs no ANALYZE and a plan captured with stats is not the plan a user's
+database produces.
+"""
 import sqlite3
 
 import pytest
@@ -414,3 +421,198 @@ def test_set_tracked_plan_rewrites_cadence_and_event_date(db):
     assert row["cadence_seconds"] == 86400
     assert row["event_date"] is None
     assert row["status"] == "active"
+
+
+# --- Query-plan pins (scripts/check_index_plan_pins.py census rows) -------------
+#
+# TASK-21126's rule: with no sqlite_stat1 the planner may ignore a perfect
+# index, so "the index exists" proves nothing. Each pin below captures
+# EXPLAIN QUERY PLAN for the ACTUAL production SQL (kept as literals on
+# purpose -- importing the reader's string would hide a reader/index
+# mismatch) on a seeded database with sqlite_stat1 ABSENT, and asserts the
+# census-recorded index is the one the planner seeks.
+#
+# Honest scope, measured rather than assumed: unlike the media v9 set, these
+# indexes buy the equality SEEK, not the sort. ``created_at DESC, id DESC``
+# still goes through a temp B-tree (the indexes do not carry the ordering
+# columns), and the ``id DESC`` tiebreak term keeps one even where the
+# leading ordering column is indexed. The pins below assert the SEEK and the
+# flip from SCAN (see the negative control); they deliberately claim
+# nothing about sort elimination.
+
+#: The three census rows in scripts/index_plan_pin_census.tsv.
+RUNS_ITEM = "idx_dream_track_runs_item"
+TRACKED_STATUS = "idx_dream_tracked_status"
+TRACKED_ORIGIN_STORY = "idx_dream_tracked_origin_story"
+
+#: Production SQL exactly as the readers spell it, with the binds each
+#: caller actually passes.
+RUNS_LIST_SQL = (
+    "SELECT * FROM dream_track_runs WHERE tracked_item_id = ?"
+    " ORDER BY created_at DESC, id DESC LIMIT ?"
+)
+TRACKED_LIST_SQL = (
+    "SELECT * FROM dream_tracked_items WHERE status = ?"
+    " ORDER BY created_at DESC, id DESC LIMIT ?"
+)
+ACTIVE_COUNT_SQL = (
+    "SELECT COUNT(*) FROM dream_tracked_items WHERE status = 'active'"
+)
+STORY_LOOKUP_SQL = (
+    "SELECT * FROM dream_tracked_items WHERE origin_story_id = ?"
+    " AND status = ?"
+    " ORDER BY created_at DESC, id DESC LIMIT 1"
+)
+
+PLAN_PINNED_QUERIES = {
+    "list_recent_track_runs": (RUNS_LIST_SQL, (5, 5), RUNS_ITEM),
+    "list_tracked_items": (TRACKED_LIST_SQL, ("active", 500), TRACKED_STATUS),
+    "count_active_tracked": (ACTIVE_COUNT_SQL, (), TRACKED_STATUS),
+    "find_tracked_by_story": (STORY_LOOKUP_SQL, (7, "active"), TRACKED_ORIGIN_STORY),
+}
+
+CONSECUTIVE_DISPOSITIONS_SQL = (
+    "SELECT COUNT(*) FROM dream_track_runs AS r"
+    " WHERE r.tracked_item_id = ? AND r.status = ?"
+    " AND r.id > COALESCE(("
+    "     SELECT b.id FROM dream_track_runs AS b"
+    "     WHERE b.tracked_item_id = ? AND b.status <> ?"
+    "     ORDER BY b.created_at DESC, b.id DESC LIMIT 1"
+    " ), 0)"
+)
+
+
+def _assert_no_stats(conn) -> None:
+    """Prove the fixture reproduces the no-stats production state.
+
+    Dreams_DB.py runs no ANALYZE, so no user's database carries
+    ``sqlite_stat1`` and a plan captured with one present is not the plan
+    they run.
+    """
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+    ).fetchone() is None
+
+
+def _plan(conn, sql: str, params: tuple = ()) -> str:
+    """Capture EXPLAIN QUERY PLAN, stats-absent, as one detail string."""
+    _assert_no_stats(conn)
+    detail = " | ".join(
+        row["detail"] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params)
+    )
+    assert detail, "an empty plan satisfies every negative assertion"
+    return detail
+
+
+def _seed_plan_corpus(db) -> None:
+    """Insert tracked items and runs directly (fast, shape-exact).
+
+    Goes around the writers deliberately: this section cares about the
+    physical row shape the planner sees, and needs all three lifecycle
+    statuses and NULL/duplicate origin stories in one table.
+    300 items (100 per status, half with an origin story in 1..50) and
+    600 runs over 12 items -- enough rows that the stats-free planner's
+    choices are the ones it makes on a real database, not a toy.
+    """
+    items = []
+    for i in range(1, 301):
+        status = "active" if i % 3 == 0 else ("paused" if i % 3 == 1 else "retired")
+        items.append(
+            (
+                i,
+                (i % 50) + 1 if i % 2 else None,
+                "question",
+                "event",
+                3600,
+                status,
+                f"2026-08-{1 + i % 28:02d}T00:00:00Z",
+                "2026-08-01T00:00:00Z",
+            )
+        )
+    runs = [
+        (
+            item,
+            "unchanged" if j % 5 else "changed",
+            f"h{j}",
+            f"2026-09-{1 + j % 28:02d}T00:00:{j % 60:02d}Z",
+        )
+        for item in range(1, 13)
+        for j in range(50)
+    ]
+    with db.transaction() as conn:
+        conn.executemany(
+            "INSERT INTO dream_tracked_items (id, origin_story_id, mechanism,"
+            " intent, cadence_seconds, status, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            items,
+        )
+        conn.executemany(
+            "INSERT INTO dream_track_runs (tracked_item_id, status, digest_hash,"
+            " created_at) VALUES (?,?,?,?)",
+            runs,
+        )
+
+
+@pytest.mark.parametrize("label", sorted(PLAN_PINNED_QUERIES))
+def test_production_query_plan_seeks_its_census_index(db, label):
+    sql, params, expected = PLAN_PINNED_QUERIES[label]
+    _seed_plan_corpus(db)
+    with db.connection() as conn:
+        plan = _plan(conn, sql, params)
+    assert expected in plan, f"{label}: {plan}"
+    # count_active_tracked additionally reads the index alone (COVERING):
+    # no table row is touched for the cap guard's COUNT.
+    if label == "count_active_tracked":
+        assert f"COVERING INDEX {TRACKED_STATUS}" in plan, plan
+
+
+def test_consecutive_track_dispositions_plan_seeks_the_runs_index_both_halves(db):
+    """The quiet-retire gate's COUNT and its scalar subquery both seek.
+
+    The outer ``r`` scan and the inner ``b`` lookup each filter on
+    ``tracked_item_id`` alone, so both must land on
+    ``idx_dream_track_runs_item`` -- the subquery is the one that runs per
+    retirement decision, and a SCAN there is the slow path this index
+    exists to remove.
+    """
+    _seed_plan_corpus(db)
+    with db.connection() as conn:
+        plan = _plan(
+            conn,
+            CONSECUTIVE_DISPOSITIONS_SQL,
+            (5, "unchanged", 5, "unchanged"),
+        )
+    assert f"SEARCH r USING INDEX {RUNS_ITEM}" in plan, plan
+    assert f"SEARCH b USING INDEX {RUNS_ITEM}" in plan, plan
+
+
+def test_dropping_the_indexes_flips_every_pinned_query_to_a_scan(db):
+    """The negative control: each pin means the planner COULD have refused.
+
+    Without the three indexes every pinned read loses its seek (captured
+    with sqlite_stat1 absent, like the pins): the four single-table reads
+    become full SCANs of their table, and the quiet-retire query's
+    per-retirement subquery walks every run while the outer COUNT falls
+    back to the rowid PK (``r.id > ?`` stays a rowid range). That is the
+    plan family the indexes remove, and what makes "the index name is in
+    the plan" a load-bearing assertion rather than a formality.
+    """
+    _seed_plan_corpus(db)
+    with db.connection() as conn:
+        for name in (RUNS_ITEM, TRACKED_STATUS, TRACKED_ORIGIN_STORY):
+            conn.execute(f"DROP INDEX {name}")
+        conn.commit()
+        for label, (sql, params, _expected) in PLAN_PINNED_QUERIES.items():
+            table = (
+                "dream_track_runs"
+                if "dream_track_runs" in sql
+                else "dream_tracked_items"
+            )
+            assert f"SCAN {table}" in _plan(conn, sql, params), (
+                f"{label}: expected a full scan without the indexes"
+            )
+        consecutive = _plan(
+            conn, CONSECUTIVE_DISPOSITIONS_SQL, (5, "unchanged", 5, "unchanged")
+        )
+        assert "SCAN b" in consecutive, consecutive
+        assert RUNS_ITEM not in consecutive, consecutive
