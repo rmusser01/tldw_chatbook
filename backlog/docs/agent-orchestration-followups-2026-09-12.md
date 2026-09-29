@@ -23,7 +23,8 @@ The [implementation plan](../../Docs/superpowers/plans/2026-09-29-agent-orchestr
 tracks this scope. All 13 tasks are Done with checked acceptance criteria and implementation
 notes. The [final review and qualification record](../../Docs/superpowers/reviews/2026-09-29-agent-orchestration-burndown.md)
 records the corrections, independent approvals, passing targeted selections and disclosed limits.
-Latest-dev integration and draft PR publication follow local completion; no merge is claimed.
+The branch is rebased onto dev `6423c4fbd1`; all 217 post-rebase integration checks pass.
+Delivery is through a draft PR against dev; no merge is claimed.
 
 ## September 12 completion status (historical)
 
