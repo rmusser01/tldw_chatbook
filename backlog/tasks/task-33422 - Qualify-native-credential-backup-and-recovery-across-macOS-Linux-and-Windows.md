@@ -9,7 +9,7 @@ dependencies: []
 priority: high
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-29 19:25
+updated_date: 2026-09-29 19:32
 ---
 
 ## Description
@@ -46,4 +46,5 @@ Human explicitly approved six-file SSH source transfer; exact patch68444bytes/SH
 ['Native execution started: GitHub run36616958970 on e1b8152; Linux source collected1/failed1/skipped0 with installed wheel receipt1. Linux SSH source setup passed, capture refused unsupported /tmp tmpfs (release_capability_unavailable); verified /var/tmp ext4 supports admission/publication and rerunning there. Adding strictly projected exception-type/frame-only evidence so hosted native failures can be diagnosed without exporting raw credential logs.']
 Linux ext4 capture diagnosis proved all missing4records belonged to an auto-added legacy:tldw_api target matching installed placeholder URL in retargeted profile; eight seeded server references,16 generation slots,10 citation records captured. Fixture now explicitly leaves legacy endpoint blank; cold-process config/model probe confirms no legacy target. Existing native source test rerunning after one-line fixture correction. Safe hosted diagnostics added, tested against child+outer failures and frozen import frames;17 runner tests, Ruff and Bandit passed. Product credential behavior unchanged in this correction.
 Automatic approval review refused the revised direct SSH fixture upload as a new payload, before any bytes transferred. Using the already-authorized public branch publishing workflow instead: commit reviewed fixture+safe diagnostics, then have disposable Linux checkout fetch exact public commit. Existing private ext4 store remains isolated; no native qualification claimed.
+Exact a63f6ef native SSH source cleared the missingcredential failure. First capture requested26 manualcredential acknowledgments; second capture refused scope_changed because native test mutated acknowledged options but reused old approved_scope digest. Verified capture_service._review_digest includes acknowledgments. Test now refreshes actual preview on each attempt, preserving production scope checks. No encrypted archive published on failed runs. Independent correction review17tests and child propagation probe clean; next exactpubliccommit rerun pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

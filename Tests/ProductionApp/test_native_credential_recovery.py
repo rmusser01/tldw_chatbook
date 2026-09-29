@@ -267,14 +267,14 @@ async def _capture():
     native_archive = Path.home() / "source.tldw-backup.zip.age"
     options = {"credential_mode": "include", "encrypted": True, "data_groups": GROUPS}
     try:
-        details = await asyncio.to_thread(
-            service.preview_backup_details,
-            _selectors(),
-            options=options,
-            destination=native_archive,
-        )
-        assert details["inventory"].complete, "native_inventory_incomplete"
         for attempt in range(2):
+            details = await asyncio.to_thread(
+                service.preview_backup_details,
+                _selectors(),
+                options=options,
+                destination=native_archive,
+            )
+            assert details["inventory"].complete, "native_inventory_incomplete"
             operation = service.start_backup(
                 _selectors(),
                 details["inventory"].scope_digest,
