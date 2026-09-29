@@ -84,3 +84,25 @@ def test_snapshot_decays_stale_topics_keeps_fresh_and_reads_region(
     assert set(goals) == {"visit japan"}
     assert goals["visit japan"]["searchable"] == 1
     assert goals["visit japan"]["weight"] == 1.0
+
+
+def test_snapshot_goals_carry_query_angle(tmp_path, monkeypatch):
+    """task-33165: the angle column rides the untouched goal rows through."""
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default: default,
+    )
+    db = DreamsDB(tmp_path / "dreams.sqlite", "test-client")
+    try:
+        db.upsert_profile_entry(
+            "goal", "visit japan", weight=1.0, searchable=1, source="user"
+        )
+        db.set_goal_query_angle("goal", "visit japan", angle="avoid: event")
+        snap = snapshot(db, now_epoch=time.time())
+    finally:
+        db.close()
+    goals = {g["text"]: g for g in snap["goals"]}
+    assert goals["visit japan"]["query_angle"] == "avoid: event"
+    assert goals["visit japan"]["weight"] == 1.0, (
+        "carrying the angle changes nothing about goal immunity"
+    )

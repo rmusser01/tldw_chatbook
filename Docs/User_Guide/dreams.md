@@ -96,7 +96,9 @@ From an open story you can:
   when a judged change lands (see [Tracking](#tracking)).
 - **More like this (m) / Less like this (l)** — record feedback that the
   next cycle's interest profile picks up (plus dive/keep/export/ingest
-  themselves count as positive signals).
+  themselves count as positive signals). When the story matched one of your
+  goals, that feedback instead steers the goal's query angle — how Dreams
+  phrases its searches for the goal — never the goal itself.
 
 ## Tracking
 

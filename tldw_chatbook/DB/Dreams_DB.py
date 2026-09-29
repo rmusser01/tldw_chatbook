@@ -728,6 +728,41 @@ class DreamsDB(BaseDB):
                 "DELETE FROM dream_interest_profile WHERE id = ?", (entry_id,)
             )
 
+    def set_goal_query_angle(
+        self, facet: str, text: str, *, angle: str | None
+    ) -> None:
+        """Write (or clear) a GOAL row's query angle (task-33165).
+
+        The other feedback half: feedback on a goal-derived story steers that
+        goal's ``query_angle`` — a short note like ``"prefer: deal"`` /
+        ``"avoid: event"`` consulted by query synthesis — INSTEAD of any
+        weight math, so the UPDATE never touches ``weight``. The write is a
+        direct one (no COALESCE): ``angle=None`` is a real CLEAR, not a
+        skipped update. Reuses the profile-row ``(facet, text)`` key shape
+        but is pinned to goal rows — only goals own a query angle.
+
+        Args:
+            facet: Must be ``"goal"``; anything else is a caller bug.
+            text: The goal's stored text (exact, parameterized match).
+            angle: The steering note to record, or ``None`` to clear it.
+
+        Returns:
+            None; a missing row matches zero rows and is a benign no-op.
+
+        Raises:
+            ValueError: If ``facet`` is not ``"goal"``.
+        """
+        if facet != "goal":
+            raise ValueError(
+                f"query angles are goal-only; got facet {facet!r}")
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE dream_interest_profile"
+                " SET query_angle = ?, updated_at = ?"
+                " WHERE facet = 'goal' AND text = ?",
+                (angle, _utc_now_iso(), text),
+            )
+
     # ------------------------------------------------------------------
     # Daily usage budgets
     # ------------------------------------------------------------------

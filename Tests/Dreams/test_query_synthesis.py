@@ -5,6 +5,8 @@ Ruling R1: ``synthesize_queries`` is ``async``; the sync fake chat callables
 are offloaded to a thread by the module (the ``briefing_service._invoke_chat``
 discipline).
 """
+import json
+
 import pytest
 
 from tldw_chatbook.Dreams.query_synthesis import (
@@ -168,3 +170,75 @@ def test_fallback_without_goals_matches_the_old_order():
         "surprising adjacent to rust tui",
     ]
     assert not any(r["goal_derived"] for r in rows)
+
+
+# --- Goal query angles steer synthesis (task-33165) ---------------------------
+#
+# A goal with feedback history carries a query_angle ("prefer: deal" /
+# "avoid: event"); synthesis consults it for SEARCHABLE goals only -- the
+# privacy gate stays the single egress point.
+
+SNAP_WITH_ANGLES = {
+    "topics": [{"facet": "topic", "text": "rust tui", "weight": 0.9}],
+    "goals": [
+        {"facet": "goal", "text": "see Wednesday 13 live", "searchable": 1,
+         "query_angle": "prefer: deal"},
+        {"facet": "goal", "text": "private wish", "searchable": 0,
+         "query_angle": "avoid: event"},
+        {"facet": "goal", "text": "unangled goal", "searchable": 1},
+    ],
+    "region": "Seattle",
+}
+
+
+@pytest.mark.asyncio
+async def test_synthesis_payload_carries_goal_angles_for_searchable_goals_only():
+    chat, calls = _capture_chat("rust tui news\nconcerts Seattle")
+    await synthesize_queries(
+        chat, snapshot=SNAP_WITH_ANGLES, count=3, exploration_slots=1
+    )
+    payload = json.loads(calls[0]["messages_payload"][0]["content"])
+    assert payload["goal_angles"] == {"see Wednesday 13 live": "prefer: deal"}
+    # An unsearchable goal's ANGLE never leaves the machine either -- the
+    # same single filter point that keeps its text out.
+    assert "private wish" not in json.dumps(payload)
+    assert "avoid: event" not in json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_synthesis_system_prompt_tells_the_model_angles_steer():
+    chat, calls = _capture_chat("a\nb\nc")
+    await synthesize_queries(
+        chat, snapshot=SNAP_WITH_ANGLES, count=3, exploration_slots=1
+    )
+    system = calls[0]["system_message"]
+    assert "goal_angles" in system
+    assert "prefer" in system and "avoid" in system
+
+
+@pytest.mark.asyncio
+async def test_synthesis_fallback_labels_angled_goal_lines():
+    """Degraded cycles keep the preview truthful: angles label the lines."""
+    def boom(**kwargs):
+        raise RuntimeError("provider down")
+
+    out = await synthesize_queries(
+        boom, snapshot=SNAP_WITH_ANGLES, count=3, exploration_slots=1
+    )
+    assert "see Wednesday 13 live events and tickets (angled: prefer: deal)" \
+        in out
+    assert not any("private wish" in q or "avoid: event" in q for q in out), (
+        "an unsearchable goal's text AND angle stay machine-local"
+    )
+
+
+def test_preview_queries_labels_angled_goal_lines_and_hides_private_angles():
+    rows = preview_queries(["rust tui"], SNAP_WITH_ANGLES["goals"], count=4)
+    queries = [r["query"] for r in rows]
+    assert "see Wednesday 13 live events and tickets (angled: prefer: deal)" \
+        in queries
+    assert "unangled goal events and tickets" in queries, (
+        "a goal without an angle keeps its plain line"
+    )
+    assert not any("(angled" in q and "unangled goal" in q for q in queries)
+    assert not any("private wish" in q or "avoid: event" in q for q in queries)
