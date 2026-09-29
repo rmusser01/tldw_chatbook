@@ -1007,10 +1007,19 @@ Evidence is never recorded with:
 source of refusals and reason codes. Evidence is process-local and never
 persisted. It is discarded with its hold, on fork, and when the epoch advances.
 
-**Preserved invariant.** Each of these is still refused before dependent I/O:
+**Preserved invariant.** Reuse never admits what the unmodified derivation
+would refuse at that moment. Each of these changes a stamp or trips a per-call
+gate, and so goes back through the full derivation before dependent I/O:
 - a moved, replaced or re-permissioned admitted directory or verified ancestor;
 - a storage pause or participant closure;
 - a registry, binding or selection change.
+
+The derivation then decides exactly as it does today. It refuses some of these,
+such as a group-writable ancestor, a pending record or a registry intent. It
+admits others, such as an admitted data directory renamed away and recreated
+at the same path, which the private-path checks at open time then govern. The
+implementation's oracle test pins that reuse and derivation agree on every
+mutation in its catalog.
 
 **D2 corollary (PERF-07).** `get_user_data_dir` may memoize its verified
 directory *inside* the guarded body, after the handshake. The memo is keyed on:
