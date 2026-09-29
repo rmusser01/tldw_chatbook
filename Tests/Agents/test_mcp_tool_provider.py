@@ -582,6 +582,91 @@ def test_builtin_writer_effect_never_changes_the_permission_layer():
     assert tool.tags == ()
 
 
+def _character_tools_provider(running_loop, runtime_source_provider):
+    """A composed provider over ADR-183's built-in create/list character tools."""
+    allow = EffectiveToolState(state="allow", origin="tool_override")
+    service = FakeMCPService(
+        inventory={
+            "tools": [_tool_dict("create_character"), _tool_dict("list_characters")]
+        },
+        states={
+            ("builtin:tldw_chatbook", "create_character"): allow,
+            ("builtin:tldw_chatbook", "list_characters"): allow,
+        },
+        execute_result={"content": [{"type": "text", "text": "ok"}]},
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        runtime_source_provider=runtime_source_provider,
+    )
+    _compose(provider)
+    ids = [entry.id for entry in provider.list_catalog()]
+    write_id = next(tool_id for tool_id in ids if tool_id.endswith("create_character"))
+    read_id = next(tool_id for tool_id in ids if tool_id.endswith("list_characters"))
+    return service, provider, write_id, read_id
+
+
+def test_server_session_refuses_builtin_character_write(running_loop):
+    """TASK-33106: a server-backed session cannot write local cards via MCP.
+
+    The refusal matches the Console's own character tools, the write never
+    reaches the in-process runtime, and the audit row keeps the decision it
+    was authorized under with the refusal as its error. Reads still run.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+
+    service, provider, write_id, read_id = _character_tools_provider(
+        running_loop, lambda: "server"
+    )
+
+    write = provider.invoke(write_id, {"name": "Ada"})
+    read = provider.invoke(read_id, {})
+
+    assert write.ok is False
+    assert write.error == SERVER_REFUSAL
+    assert read.ok is True
+    assert [call[1] for call in service.execute_calls] == ["list_characters"]
+    assert service.record_tool_decision_calls == [
+        ("builtin:tldw_chatbook", "create_character", "allowed", "agent", SERVER_REFUSAL)
+    ]
+
+
+@pytest.mark.parametrize("source", [None, "local"])
+def test_local_or_unbound_session_keeps_builtin_character_write(running_loop, source):
+    """TASK-33106: a local session, or a provider built without a session, writes.
+
+    Args:
+        running_loop: The provider's main loop.
+        source: The session's runtime source; ``None`` wires no provider.
+    """
+    service, provider, write_id, _read_id = _character_tools_provider(
+        running_loop, None if source is None else (lambda: source)
+    )
+
+    assert provider.invoke(write_id, {"name": "Ada"}).ok is True
+    assert [call[1] for call in service.execute_calls] == ["create_character"]
+
+
+def test_unreadable_session_source_refuses_builtin_character_write(running_loop):
+    """TASK-33106: a session lookup that raises fails closed, never raises.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+
+    def _raise() -> str:
+        raise RuntimeError("session store unavailable")
+
+    service, provider, write_id, _read_id = _character_tools_provider(running_loop, _raise)
+
+    assert provider.invoke(write_id, {"name": "Ada"}).ok is False
+    assert service.execute_calls == []
+
+
 def test_pending_gate_for_unknown_name_returns_none():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()

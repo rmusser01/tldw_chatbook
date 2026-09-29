@@ -55,6 +55,10 @@ from tldw_chatbook.Agents.approval_provenance import (
 )
 from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+from tldw_chatbook.MCP.builtin_tool_policy import (
+    BUILTIN_MCP_SERVER_KEY,
+    CHARACTER_WRITE_TOOLS,
+)
 from tldw_chatbook.MCP.execution_log import (
     APPROVED_SESSION_DECISION,
     KILL_SWITCH_DENIED_DECISION,
@@ -312,6 +316,7 @@ class MCPToolProvider:
         builtin_raw_name_exclusions: Any = None,
         profile_id_provider: Callable[[], str] | None = None,
         persona_policy_provider: Callable[[], "PersonaToolPolicy | None"] | None = None,
+        runtime_source_provider: Callable[[], str] | None = None,
         maximum_tool_ids: frozenset[str] | None = None,
         maximum_definition_hashes: Mapping[str, str] | None = None,
     ) -> None:
@@ -353,6 +358,12 @@ class MCPToolProvider:
                 `require_confirmation` rule floors the tool to "ask"
                 even under a profile/persisted allow grant. `None`
                 (default) is byte-identical to the pre-feature behavior.
+            runtime_source_provider: TASK-33106: callable returning THIS
+                run's session runtime source (``"server"`` or
+                ``"local"``), read at execution time. When it reports
+                ``"server"``, ADR-183's built-in character writes are
+                refused like the Console's own character tools. `None`
+                (default) applies no check.
         """
         self._service = service
         self._main_loop = main_loop
@@ -365,6 +376,7 @@ class MCPToolProvider:
         # Persona require_confirmation floor (final review): read fresh per
         # gate resolution; None keeps every pre-feature call identical.
         self._persona_policy_provider = persona_policy_provider
+        self._runtime_source_provider = runtime_source_provider
         self._maximum_tool_ids = (
             frozenset(str(value) for value in maximum_tool_ids)
             if maximum_tool_ids is not None
@@ -1328,6 +1340,10 @@ class MCPToolProvider:
             success; `ok=False` with a non-empty, length-capped `error`
             on any failure. Never raises.
         """
+        refusal = self._server_session_character_write_refusal(tool)
+        if refusal is not None:
+            self._record_decision_safe(tool, decision=decision, error=refusal)
+            return ToolResult.blocked(refusal)
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         try:
@@ -1420,6 +1436,38 @@ class MCPToolProvider:
                 )
             return ToolResult(ok=False, error=error)
         return self._format_result(raw_result)
+
+    def _server_session_character_write_refusal(self, tool: HubTool) -> str | None:
+        """Refuse ADR-183's character writes from a server-backed session.
+
+        TASK-33106: the standalone MCP server refuses these writes in server
+        mode (TASK-32955), but the in-process runtime a Console agent reaches
+        cannot know the calling session. This provider is composed per run,
+        so it checks that run's own session, and refuses with the Console
+        character tools' own message.
+
+        Args:
+            tool: The tool about to execute.
+
+        Returns:
+            The refusal message, or ``None`` when the call may run.
+        """
+        if (
+            self._runtime_source_provider is None
+            or tool.server_key != BUILTIN_MCP_SERVER_KEY
+            or tool.name not in CHARACTER_WRITE_TOOLS
+        ):
+            return None
+        try:
+            source = self._runtime_source_provider()
+        except Exception:  # noqa: BLE001 -- _execute never raises; fail closed
+            source = "server"
+        if source != "server":
+            return None
+        # Lazy: the character tool module is not otherwise loaded at boot.
+        from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+
+        return SERVER_REFUSAL
 
     def _format_result(self, raw_result: Any) -> ToolResult:
         try:
