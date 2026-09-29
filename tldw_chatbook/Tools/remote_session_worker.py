@@ -133,8 +133,10 @@ class _NotSent(Exception):
 
 
 class _StdinClosed(BrokenPipeError):
-    """Internal: stdin was already closed (by ``close()``) before any byte
-    of this write went out -- distinct from a mid-write EPIPE."""
+    """Internal: none of this write's bytes went out -- stdin was already
+    closed (by ``close()``), or the pipe broke (``close()`` killed the host
+    while another writer held the lock) before any byte was accepted.
+    Distinct from an EPIPE after part of the frame went out."""
 
 
 def _checked_status(body: bytes) -> tuple[int | None, int | None]:
@@ -514,8 +516,10 @@ class RemoteSessionWorker:
                 a write still draining slowly ends here too, not only a pipe
                 that stopped draining. A partial frame corrupts the stream,
                 so the session must die.
-            _StdinClosed: stdin was closed before anything was written.
-            OSError: The pipe broke (the process is gone).
+            _StdinClosed: stdin was closed, or the pipe broke, before any
+                byte of ``data`` was accepted: nothing of it was sent.
+            OSError: The pipe broke after part of ``data`` went out, or
+                another write error (the process is gone).
         """
         if not self._write_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
             raise _NotSent()
@@ -540,6 +544,10 @@ class RemoteSessionWorker:
                     view = view[os.write(fd, view) :]
                 except BlockingIOError:
                     continue
+                except BrokenPipeError:
+                    if len(view) < len(data):
+                        raise  # part of the frame may have reached the host
+                    raise _StdinClosed("session pipe broke before any byte was written") from None
         finally:
             self._write_lock.release()
 
@@ -663,8 +671,10 @@ class RemoteSessionWorker:
             except _StdinClosed:
                 if self._retired:
                     # close() retired this healthy session after the request
-                    # registered but before any REQUEST byte was written:
-                    # nothing ran, so the caller may ask again (TASK-33421).
+                    # registered but before any REQUEST byte was written
+                    # (stdin already closed, or the pipe broke by close()'s
+                    # kill before a byte was accepted): nothing ran, so the
+                    # caller may ask again (TASK-33421, PR #2907 review).
                     raise SessionClosed() from None
                 raise
             while not pending.done.is_set():

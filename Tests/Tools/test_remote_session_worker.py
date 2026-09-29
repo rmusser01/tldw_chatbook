@@ -819,3 +819,57 @@ def test_cancel_write_on_closed_stdin_is_not_session_closed(worker_factory, work
     result = worker.call(grep_request(workspace, "(a+)+$", budget=30), budget=0.2)
     assert calls["n"] == 2, "the CANCEL write was never reached"
     assert result.failure is not None  # a classified failure, never SessionClosed
+
+
+def test_epipe_before_any_byte_after_close_kill_raises_session_closed(worker_factory, workspace):
+    """PR #2907 review: close() found the write lock busy and killed the host
+    BEFORE closing stdin; a registered call that then wins the lock meets
+    EPIPE with none of its REQUEST written. Nothing was sent: it re-acquires."""
+    worker, spawns = worker_factory()
+    worker.start()
+    with ThreadPoolExecutor(1) as pool:
+        assert worker._write_lock.acquire(timeout=5)  # a stalled upload holds the lock
+        try:
+            future = pool.submit(worker.call, read_request(workspace, "a.txt"), budget=10)
+            deadline = time.monotonic() + 5
+            while not worker._pending:
+                assert time.monotonic() < deadline, "the call never registered"
+                time.sleep(0.01)
+            # close()'s first half, deterministically: retire, then kill with
+            # the lock still busy -- stdin stays open, so no pre-send check.
+            with worker._lock:
+                if worker._death_natural is None:
+                    worker._death_natural = False
+                worker._alive = False
+                worker._retired = True
+            worker._kill()
+            spawns[0].wait(timeout=5)
+        finally:
+            worker._write_lock.release()
+        with pytest.raises(worker_module.SessionClosed):
+            future.result(timeout=10)
+    assert worker._pending == {}
+
+
+def test_epipe_after_a_partial_write_is_never_session_closed(worker_factory, workspace, monkeypatch):
+    """A REQUEST any byte of which reached the pipe is never retried, even on a retired session."""
+    worker, _ = worker_factory()
+    worker.start()
+    stdin_fd = worker._proc.stdin.fileno()
+    real_write = os.write
+    calls = {"n": 0}
+
+    def partial_then_epipe(fd, data):
+        if fd != stdin_fd:
+            return real_write(fd, data)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_write(fd, bytes(data[:1]))  # one REQUEST byte reaches the host
+        worker._retired = True  # close() lands between the two writes
+        raise BrokenPipeError(32, "Broken pipe")
+
+    with monkeypatch.context() as patch:  # os.write is global: patch it for the call only
+        patch.setattr(worker_module.os, "write", partial_then_epipe)
+        result = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert calls["n"] == 2, "the second (EPIPE) write was never reached"
+    assert result.failure is not None  # a classified failure, never SessionClosed
