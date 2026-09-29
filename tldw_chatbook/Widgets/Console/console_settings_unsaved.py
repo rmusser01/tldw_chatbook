@@ -8,10 +8,12 @@ and Keep editing (Esc). An unedited draft still closes at once.
 
 A field counts as edited when its effective value differs from its baseline:
 the committed value for a field that arrived already changed (quick-surface
-transfer, suspended draft), otherwise the value the controls showed once the
-modal finished its initial sync. The second half keeps values the controls
-merely normalize at mount (a blank committed endpoint shown as its configured
-default) from reading as edits.
+transfer), otherwise the value the controls showed once the modal finished its
+initial sync. The second half keeps values the controls merely normalize at
+mount (a blank committed endpoint shown as its configured default) from
+reading as edits. A suspended draft (credential round-trip) carries its edits
+only as raw control values, so its unedited values are the ones the controls
+showed before those raw values were restored.
 
 The logic lives here, not in ``console_settings_modal.py``, because that
 module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
@@ -165,6 +167,7 @@ class ConsoleSettingsUnsavedGuardMixin:
 
     _unsaved_committed: tuple[Any, Any, object]
     _unsaved_baseline: dict[str, object] | None = None
+    _unsaved_suspended_opened: dict[str, object] | None = None
     _unsaved_labels: tuple[str, ...] = ()
     _unsaved_retry: Callable[[], object] | None = None
     _unsaved_discard_approved = False
@@ -181,6 +184,19 @@ class ConsoleSettingsUnsavedGuardMixin:
             pass
         return chat_settings_values(self._build_draft(), overrides, name)
 
+    def _record_suspended_opened_values(self) -> None:
+        """Record the controls' values before a suspended draft is restored.
+
+        A credential round-trip's snapshot keeps the settings the first modal
+        opened with and carries the edits only as raw control values, so the
+        controls composed from those settings stand in for the first modal's
+        unedited values.
+        """
+        try:
+            self._unsaved_suspended_opened = self._current_chat_settings_values()
+        except (NoMatches, QueryError):
+            pass
+
     def _capture_unsaved_baseline(self) -> None:
         """Record the unedited values once the initial control sync is done."""
         settings, context_state, name = self._unsaved_committed
@@ -194,7 +210,9 @@ class ConsoleSettingsUnsavedGuardMixin:
             self._settings, opened_overrides, self._user_display_name_override
         )
         try:
-            mounted = self._current_chat_settings_values()
+            mounted = (
+                self._unsaved_suspended_opened or self._current_chat_settings_values()
+            )
         except (NoMatches, QueryError):
             return
         self._unsaved_baseline = unsaved_baseline(mounted, opened, committed)

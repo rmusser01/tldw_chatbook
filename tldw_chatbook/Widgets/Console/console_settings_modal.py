@@ -2612,6 +2612,7 @@ class ConsoleSettingsModal(
         self.call_after_refresh(self._reveal_default_feedback)
         self.call_after_refresh(self._finish_initial_control_sync)
         if self._suspended_draft is not None:
+            self._record_suspended_opened_values()
             self._restore_suspended_draft(self._suspended_draft)
         elif self._default_recovery_layout_phase is None:
             if self._focus_model:

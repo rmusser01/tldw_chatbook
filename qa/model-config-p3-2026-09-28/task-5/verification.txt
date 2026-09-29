@@ -108,3 +108,55 @@ FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_memory_reset_guard_
 FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_memory_reset_guard_comes_first_then_asks_about_edits[#console-settings-close-keep]
 FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_compaction_close_anyway_then_asks_about_edits
 3 failed, 17 deselected in 4.90s
+
+## fix round 1 (2026-09-29)
+
+### suspended-draft RED -> GREEN
+RED (before the fix, new test): test_suspended_draft_round_trip_keeps_its_edits_unsaved[True]
+  AssertionError: assert 'Esc close' == 'Esc close (asks: 1 unsaved)'   ([False] passed)
+negative control (fix line removed from on_mount, -p bootstrap_all_plugin -n 2):
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_suspended_draft_round_trip_keeps_its_edits_unsaved[True]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved
+2 failed, 1 passed in 23.87s
+probe (not committed): an unedited round-trip rebuilds the first modal's baseline exactly (DIFFS {}) for openai/gpt-5, anthropic, llama_cpp model=None, openai unlisted model; 4 passed
+
+### Tests/UI/test_console_modal_dismissal.py (-n 4), red nodes per tree
+  t5r1-dev: 6 red; names == t5r1-dev: True; messages == t5r1-dev: True
+  t5r1-mb: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+  base-d6c: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+  t5-base-tree: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+  head-r1: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+    test_settings_redirected_select_click_uses_real_mro_dispatch :: AssertionError: (Region(x=20, y=3, width=100, height=54), Region(x=0, y=0, width=0, height=0))
+    test_console_modal_launch_declarations_match_runtime_construction :: AssertionError: Console modal launch mismatch; unexpected=['ChangeRevertConfirmModal', 'ConsoleAgentHistoryModal', 'ConsoleAgentProgressModal', 'Conso
+    test_settings_clean_close_sources_restore_opener_focus[escape] :: assert [] == [None]
+    test_console_modal_inventory_matches_runtime_ast_and_transitive_launches :: AssertionError: assert {<class 'tldw...pModal'>, ...} == {<class 'tldw...xportDialog'>}
+    test_task2_modal_contract_table_is_complete_and_adopted :: AssertionError: assert 16 == 15
+    test_task2_contract_selector_exists_and_escape_returns_cancel_result[ConsoleModelPopover] :: TypeError: ConsoleModelPopover.__init__() missing 8 required keyword-only arguments: 'origin', 'app_config', 'initial_draft', 'scope_copy', 'durabilit
+  (t5r1-dev = origin/dev ecd99e68b6, t5r1-mb = merge-base 48019b1914, base-d6c = phase base, t5-base-tree = 735295adbb, head-r1 = fix round 1 working tree; the only message differences are in the two inventory tests, where the first member of a truncated set repr changes with set order; their mismatch lines are identical)
+  [escape] probe at head: focus at open = ConsoleProviderPickerInput#console-settings-provider-picker-input; after Esc 1: results [] (picker took it); after Esc 2: results [None]
+
+### live typing race (tmux driver, Temperature row in live-*-edited-235x52.txt)
+  round 0 head (committed live-edited-235x52.txt): '0'
+  fix round 1 head, burst typing: r1 '0.', repeat a '0', repeat b '0.'
+  base 735295adbb, burst typing: r1-before '0.9', repeat a '', repeat b ''
+  keys paced 100 ms: head '.9', '.9'; base '.9', '0.9'
+  211x44 fix round 1 head: '0.9'. Pilot typing (0 . 9 after end+8 backspace) at 211x44 and 235x52: '0.9' at each step, focus stays on Temperature.
+  repeat captures kept in scratchpad t5r1/typing-race/ (not committed)
+
+### regression, 9 files (every test file that names a suspended draft or the credential round-trip, plus the unsaved-guard, context-window and endpoint-discovery files)
+  files: Tests/UI/test_console_settings_unsaved_guard.py Tests/UI/test_console_session_settings.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_settings_geometry.py Tests/UI/test_settings_configuration_hub.py Tests/State/test_screen_state_store.py Tests/UI/test_console_subscription_readiness.py Tests/UI/test_console_context_window_modal.py Tests/UI/test_console_endpoint_discovery.py 
+  -p bootstrap_all_plugin, fresh TLDW_TEST_CONFIG_ROOT per tree, -n 6, -p no:randomly
+  base (480e948594, code identical to b4d447dc8b): 96 failed, 1295 passed in 767.23s
+  head (fix round 1):                              95 failed, 1299 passed in 799.14s
+  3 head-only nodes = the new tests, all pass; unsaved-guard file 23/23; AC#4 pins pass
+  red only at base: context_window_modal [dismiss] (rewritten in b4d447dc8b, expected) + 2 native_chat_flow nodes
+  red only at head: 2 native_chat_flow nodes
+  each of those 4 native_chat_flow nodes alone, 3x per tree:
+    base test_console_browser_selecting_default_native_session_uses_private_scratch: 1 passed 1 passed 1 passed
+    base test_console_edit_resend_clears_replaced_descendant_original_attempt: 1 passed 1 passed 1 passed
+    base test_console_regenerate_action_streams_selected_variant: 1 passed 1 passed 1 passed
+    base test_conversation_settings_return_atomic_failure_retains_retry_without_modal_owner[raise_once]: 1 passed 1 passed 1 passed
+    head test_console_browser_selecting_default_native_session_uses_private_scratch: 1 passed 1 passed 1 passed
+    head test_console_edit_resend_clears_replaced_descendant_original_attempt: 1 passed 1 passed 1 passed
+    head test_console_regenerate_action_streams_selected_variant: 1 passed 1 passed 1 passed
+    head test_conversation_settings_return_atomic_failure_retains_retry_without_modal_owner[raise_once]: 1 passed 1 passed 1 passed

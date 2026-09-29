@@ -114,3 +114,23 @@ write outside it, and have the fence arm first and then drain the admitted
 writers on a condition. Before deleting or narrowing a lock, find every caller
 that treats *acquiring* it as proof of quiescence; a barrier inherited from
 mutual exclusion has no other name in the code to grep for.
+
+## A suspended Chat settings draft carries its edits only in `raw_values`
+
+**TASK-33003.5 fix round 1, 2026-09-29.** The unsaved-edits guard decided which
+fields "opened already changed" by comparing the modal's opening `settings`
+with the chat's committed settings. The review read modal `__init__`, saw
+`settings = suspended_draft.settings`, and concluded that a credential
+round-trip's edits would count. They did not. `capture_suspended_draft` stores
+`settings=self._settings`, the settings the first modal *opened* with (equal
+to the committed settings for a plain open). The edits travel only as raw
+control text in `raw_values`, and `_restore_suspended_draft` writes them into
+the controls after compose. The reopened modal's `settings` therefore matched
+the committed settings. The restored Temperature 0.9 became the baseline, and
+Esc dropped it silently. Only a test that captured a real snapshot and reopened
+it found this. **What to do:** to learn what a suspended draft changed, read the
+controls on either side of `_restore_suspended_draft` (the fix records them just
+before it); `snapshot.settings` is not the draft. Coverage:
+`test_suspended_draft_round_trip_keeps_its_edits_unsaved` and the production-router
+`test_credential_round_trip_keeps_the_restored_edit_unsaved` in
+`Tests/UI/test_console_settings_unsaved_guard.py`.

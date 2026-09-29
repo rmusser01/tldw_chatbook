@@ -16,12 +16,14 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Select, Static
 
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
 from Tests.Chat.test_console_session_settings import (
     _settings_close_modal,
     _SettingsCloseHarness,
 )
 from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import _build_test_app as _build_production_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_provider_apply_defaults_flow import (
     _ConsoleFlowHarness,
@@ -40,6 +42,9 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
 )
+from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
     chat_settings_values,
@@ -239,6 +244,49 @@ async def test_unedited_draft_closes_immediately(source: str) -> None:
 
         assert app.results == [None]
         assert app.screen is not modal
+
+
+@pytest.mark.parametrize("edited", [True, False])
+@pytest.mark.asyncio
+async def test_suspended_draft_round_trip_keeps_its_edits_unsaved(
+    edited: bool,
+) -> None:
+    """A credential round-trip reopens the draft; its edits still ask.
+
+    The snapshot's ``settings`` are the ones the first modal opened with; the
+    edits travel only as raw control values. The committed ``base_url`` is
+    blank and shown as the configured default, which is not an edit either.
+    """
+    app = _GuardHarness()
+    first = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, first)
+        if edited:
+            await _edit(pilot, first, "#console-settings-temperature", "0.9")
+        snapshot = first.capture_suspended_draft()
+        app.pop_screen()
+        await pilot.pause()
+
+        modal = _modal(suspended_draft=snapshot)
+        await _open(app, pilot, modal)
+        assert modal._unsaved_baseline == first._unsaved_baseline
+        assert modal.query_one("#console-settings-temperature", Input).value == (
+            "0.9" if edited else "0.7"
+        )
+        assert _text(modal, "#console-settings-esc-hint") == (
+            "Esc close (asks: 1 unsaved)" if edited else "Esc close"
+        )
+        await _gesture(pilot, "cancel")
+
+        if not edited:
+            assert app.results == [None]
+            assert app.screen is not modal
+            return
+        assert app.results == []
+        assert app.screen is modal
+        assert _text(modal, "#console-settings-close-message").startswith(
+            "1 unsaved edit to this chat: Temperature."
+        )
 
 
 @pytest.mark.parametrize("how", ["escape", "button"])
@@ -538,3 +586,94 @@ async def test_quick_surface_edit_carried_in_asks_then_applies_to_this_chat(
         await _drain_settings_tasks(harness.app_instance)
         assert store.session_settings(session_id).temperature == pytest.approx(0.23)
         assert config_path.read_bytes() == config_before
+
+
+@pytest.mark.asyncio
+async def test_credential_round_trip_keeps_the_restored_edit_unsaved(monkeypatch):
+    """Real router: Configure credential -> Settings -> Return keeps the ask.
+
+    The returned modal is rebuilt from the suspended draft; the Temperature
+    edit made before the handoff must still count, and nothing else may.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "persist_provider_settings_atomic",
+        lambda *_args, **_kwargs: ConfigMutationResult(True, True, None),
+    )
+    app = _build_production_app(configured_default="chat")
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-5"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    app.providers_models = {"openai": ["gpt-5"]}
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console = None
+        for _ in range(200):
+            console = app._navigation_outgoing_screen()
+            if isinstance(console, ChatScreen):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(
+            console, pilot, "#console-native-composer", timeout=10.0
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="openai", model="gpt-5", temperature=0.7),
+        )
+        assert await console._open_console_settings() is True
+        for _ in range(80):
+            if isinstance(app.screen, ConsoleSettingsModal):
+                break
+            await pilot.pause(0.05)
+        first = app.screen
+        assert isinstance(first, ConsoleSettingsModal)
+        await _settle(pilot, first)
+        await _edit(pilot, first, "#console-settings-temperature", "0.9")
+        await pilot.click("#console-settings-configure-credential")
+
+        settings = None
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                settings = app.screen
+                break
+            await pilot.pause(0.05)
+        assert settings is not None
+        await _wait_for_selector(
+            settings, pilot, "#settings-provider-api-key", timeout=10.0
+        )
+        key = settings.query_one("#settings-provider-api-key", Input)
+        key.value = "DUMMY-ROUND-TRIP-KEY"
+        await pilot.pause()
+        settings.action_settings_save_category(allow_text_entry_focus=True)
+        for _ in range(80):
+            if settings.query_one("#settings-provider-return", Button).has_focus:
+                break
+            await pilot.pause(0.05)
+        settings.query_one("#settings-provider-return", Button).press()
+
+        returned = None
+        for _ in range(240):
+            top = app.screen_stack[-1]
+            if isinstance(top, ConsoleSettingsModal) and top is not first:
+                returned = top
+                break
+            await pilot.pause(0.05)
+        assert returned is not None
+        await _settle(pilot, returned)
+        assert returned.query_one("#console-settings-temperature", Input).value == "0.9"
+        assert (
+            _text(returned, "#console-settings-esc-hint")
+            == "Esc close (asks: 1 unsaved)"
+        )
+        await _gesture(pilot, "cancel")
+
+        assert app.screen is returned
+        assert _text(returned, "#console-settings-close-message").startswith(
+            "1 unsaved edit to this chat: Temperature."
+        )
+        assert store.session_settings(session.id).temperature == pytest.approx(0.7)
