@@ -2630,15 +2630,11 @@ class ConsoleLeftRail(Vertical):
             self._progress_timer.stop()
 
     def _sync_progress_count(self) -> None:
-        try:
-            progress = self.query_one("#console-agent-progress", Button)
-        except NoMatches:
-            # A queued tick can outlive the descendants during recomposition.
-            return
         count, counts = (
             self._agent_progress_state() if self._agent_progress_state else (0, {})
         )
-        progress.label = f"Progress: {count} queued"
+        for progress in self.query("#console-agent-progress").results(Button):
+            progress.label = f"Progress: {count} queued"
         if counts != self._progress_counts:
             if self._refresh_progress_navigation is not None:
                 self._refresh_progress_navigation()

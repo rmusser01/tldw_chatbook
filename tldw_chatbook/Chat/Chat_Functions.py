@@ -44,6 +44,8 @@ from .Chat_Deps import (  # noqa: E402
     ChatProviderError,
     ChatRateLimitError,
     ChatAuthenticationError,
+    ChatModelUnavailableError,
+    model_unavailable_error,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDB,
@@ -1346,6 +1348,14 @@ def chat_api_call(
     # --- Exception Mapping (copied from your original, ensure it's still relevant) ---
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
+        if status_code in {400, 404}:
+            try:
+                payload = e.response.json()
+            except (ValueError, AttributeError):
+                payload = None
+            unavailable = model_unavailable_error(endpoint_lower, status_code, payload)
+            if unavailable is not None:
+                raise unavailable from None
         raw_error_text = getattr(e.response, "text", None)
         if raw_error_text is None:
             raw_error_text = safe_llm_exception_message(e)
@@ -1452,6 +1462,8 @@ def chat_api_call(
                     status_code=status_code,
                     field=getattr(e_chat_direct, "field", None),
                 ) from None
+            if isinstance(e_chat_direct, ChatModelUnavailableError):
+                raise ChatModelUnavailableError(provider=endpoint_lower, status_code=status_code) from None
             if isinstance(e_chat_direct, ChatProviderError):
                 raise ChatProviderError(
                     provider=endpoint_lower,

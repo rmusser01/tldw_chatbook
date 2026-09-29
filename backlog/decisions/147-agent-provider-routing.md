@@ -37,3 +37,7 @@ A Console agent run resolves one provider+model at send time and everything it s
 - Tool shaping, capability filtering, and pricing attribution need no new code: `provider_supports_native_tools` runs per run, the gateway consults `model_capabilities` per send, and `_budget_weighted_tokens` keys on each run's own provider/model (local children account as unpriced-local).
 - Routing failures name the failing level (override / preset / default). Per-child rail target display remains a separate follow-up (TASK-32497).
 - Stale allowlist slugs (deleted registry entries) are flagged in Settings UI, never silently dropped; a "Test routing" dry-run action reports each preset/default target's resolved provider/model/params and readiness.
+
+## Primary selection identity clarification — 2026-09-29 (TASK-32929)
+
+The primary config carries the captured raw selected provider for model-call routing, while service capability/protocol preparation keeps the execution key. A selectable execution spelling such as `llama_cpp`, `ollama` or `custom-openai-api` never replaces the primary's `custom-ep:<slug>` identity. Each explicitly routed child and fallback candidate supplies its own provider identity; a built-in child remains a distinct destination even when its spelling matches the parent's execution family. No alias inference from thread kind or message bodies is introduced.

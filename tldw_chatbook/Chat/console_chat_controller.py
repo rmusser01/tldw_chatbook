@@ -6785,6 +6785,7 @@ class ConsoleChatController:
                     conversation_id = (
                         session.persisted_conversation_id or session.id
                     )
+                    self._lifecycle_session_by_conversation[session.id] = session.id
                     self._lifecycle_session_by_conversation[
                         str(conversation_id)
                     ] = session.id
@@ -6820,10 +6821,13 @@ class ConsoleChatController:
             return 0
         from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 
-        handles = snapshot(self._agent_conversation_id(session_id))
+        conversation_ids = dict.fromkeys(
+            (session_id, self._agent_conversation_id(session_id))
+        )
         return sum(
             getattr(handle, "status", "") not in TERMINAL_RUN_STATUSES
-            for handle in handles
+            for conversation_id in conversation_ids
+            for handle in snapshot(conversation_id)
         )
 
     def _register_fleet_lifecycle(self, bridge: Any) -> None:
@@ -11666,6 +11670,11 @@ class ConsoleChatController:
                     if origin is ConsoleSubmissionOrigin.AGENT_WAKE
                     else None
                 ),
+                wake_authorization=(
+                    wake_authorization
+                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    else None
+                ),
                 provider_messages=provider_messages,
                 assistant_message_id=assistant.id,
                 prefill=prefill,
@@ -14545,19 +14554,23 @@ class ConsoleChatController:
         self._session_close_generation += 1
         generation = self._session_close_generation
         fleet_conversation_id = self._agent_conversation_id(session_id)
+        # Save keeps already-started work on its original native causal ID.
+        fleet_conversation_ids = tuple(
+            dict.fromkeys((session_id, fleet_conversation_id))
+        )
         fence_fleet = (
             getattr(self._agent_bridge, "fence_fleet", None)
             if self._agent_bridge is not None
             else None
         )
-        fleet_fence_acquired = False
+        fleet_fences_acquired = []
         if callable(fence_fleet):
-            fleet_fence_acquired = bool(
-                fence_fleet(fleet_conversation_id, generation=generation)
-            )
+            for conversation_id in fleet_conversation_ids:
+                if fence_fleet(conversation_id, generation=generation):
+                    fleet_fences_acquired.append(conversation_id)
 
         def abort_provisional_fleet_fence() -> None:
-            if not fleet_fence_acquired:
+            if not fleet_fences_acquired:
                 return
             abort_fleet_fence = getattr(
                 self._agent_bridge,
@@ -14566,13 +14579,13 @@ class ConsoleChatController:
             )
             if not callable(abort_fleet_fence):
                 return
-            try:
-                abort_fleet_fence(
-                    fleet_conversation_id,
-                    generation=generation,
-                )
-            except Exception:  # noqa: BLE001 -- failed rollback stays fenced
-                logger.warning("close_session provisional fleet fence stayed latched")
+            for conversation_id in reversed(fleet_fences_acquired):
+                try:
+                    abort_fleet_fence(conversation_id, generation=generation)
+                except Exception:  # noqa: BLE001 -- failed rollback stays fenced
+                    logger.warning(
+                        "close_session provisional fleet fence stayed latched"
+                    )
 
         # A reservation publishes its lifecycle revision before the fleet
         # fence can acquire the coordinator lock. Recheck only after that
@@ -14617,7 +14630,8 @@ class ConsoleChatController:
         # parent cannot reserve a child in the cancellation-to-drain window.
         fence_wake = getattr(self._fleet_wake, "fence_conversation", None)
         if callable(fence_wake):
-            fence_wake(fleet_conversation_id, generation=generation)
+            for conversation_id in fleet_conversation_ids:
+                fence_wake(conversation_id, generation=generation)
         self._discard_approval_rows_for_closing_session(session_id)
         # Revoke file authority before any close action can wake a worker or
         # remove the owning session from the store.
@@ -14658,7 +14672,9 @@ class ConsoleChatController:
         # along. getattr-guarded and wrapped: a bare bridge double, no
         # bridge, or a raising cancel must never break a close.
         fleet_conversation_id = self._agent_conversation_id(session_id)
-        close_progress = getattr(self._agent_bridge, "close_progress", None)
+        close_progress = getattr(self._agent_bridge, "begin_close_progress", None)
+        if not callable(close_progress):
+            close_progress = getattr(self._agent_bridge, "close_progress", None)
         if callable(close_progress):
             close_progress(session_id, conversation_id=fleet_conversation_id)
         cancel_all = (
@@ -14668,7 +14684,10 @@ class ConsoleChatController:
         )
         if callable(cancel_all):
             try:
-                cancelled_children = int(cancel_all(fleet_conversation_id))
+                cancelled_children = sum(
+                    int(cancel_all(conversation_id))
+                    for conversation_id in fleet_conversation_ids
+                )
                 if cancelled_children:
                     logger.info(
                         "close_session cancelled {} sub-agent(s) of the closed conversation",
@@ -14806,6 +14825,8 @@ class ConsoleChatController:
         release_wake = getattr(self._fleet_wake, "release_conversation_fence", None)
         if not callable(release_wake):
             return False
+        # A promoted session's native causal ID is permanently retired.
+        # Release only the saved ID that a fresh authorized reopen can reuse.
         try:
             if not release_wake(
                 ticket.conversation_id,
@@ -26873,6 +26894,7 @@ class ConsoleChatController:
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 
@@ -26887,6 +26909,7 @@ class ConsoleChatController:
                     resolution=resolution,
                     work_origin=work_origin,
                     work_chain_id=work_chain_id,
+                    wake_authorization=wake_authorization,
                     provider_messages=provider_messages,
                     assistant_message_id=assistant_message_id,
                     route=route,
@@ -26949,6 +26972,7 @@ class ConsoleChatController:
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -27234,6 +27258,17 @@ class ConsoleChatController:
                 "trajectory_step_start_failed"
             )
         try:
+            work_conversation_id = self._agent_conversation_id(owner_id)
+            if work_origin is WorkOrigin.AUTOMATIC:
+                if (
+                    not self._fleet_wake.authorizes(wake_authorization, owner_id)
+                    or not wake_authorization.accepted
+                    or wake_authorization.work_chain_id != work_chain_id
+                ):
+                    raise PermissionError(
+                        "Automatic source requires live wake authority."
+                    )
+                work_conversation_id = wake_authorization.conversation_id
             runs_db = getattr(self._agent_bridge, "runs_db", None)
             ledger = getattr(runs_db, "automatic_work", None)
             try:
@@ -27242,17 +27277,15 @@ class ConsoleChatController:
                         work_chain_id = await self._run_maintenance_agent_call(
                             functools.partial(
                                 ledger.create_chain,
-                                self._agent_conversation_id(owner_id),
-                            ),
-                            root_submission_id=uuid4().hex,
+                                work_conversation_id,
+                                root_submission_id=uuid4().hex,
+                            )
                         )
                     elif work_chain_id is not None:
                         snapshot = await self._run_maintenance_agent_call(
                             functools.partial(ledger.snapshot, work_chain_id)
                         )
-                        if snapshot.conversation_id != self._agent_conversation_id(
-                            owner_id
-                        ):
+                        if snapshot.conversation_id != work_conversation_id:
                             raise ValueError(
                                 "Automatic work chain does not own this conversation."
                             )
@@ -27280,6 +27313,7 @@ class ConsoleChatController:
                     resolution=resolution,
                     work_origin=work_origin,
                     work_chain_id=work_chain_id,
+                    wake_authorization=wake_authorization,
                     provider_messages=provider_messages,
                     assistant_message_id=assistant_message_id,
                     prepare_retry=prepare_retry,
@@ -27564,13 +27598,23 @@ class ConsoleChatController:
         self._fleet_wake.capture_loop_if_running()
         if bridge is None:
             return
+        progress_register = getattr(bridge, "on_progress_enqueued", None)
+        if callable(progress_register):
+            progress_register(
+                ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_progress_enqueued
+            )
+            self._fleet_wake.seed_progress_hints()
         register = getattr(bridge, "on_fleet_child_settled", None)
         if callable(register):
-            register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled)
+            register(
+                ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled
+            )
         else:
             register = getattr(bridge, "on_fleet_drained", None)
             if callable(register):
-                register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained)
+                register(
+                    ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained
+                )
 
     def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
         """``FleetDrained`` consumer: hop off the child's thread and fold.
@@ -28876,6 +28920,7 @@ class ConsoleChatController:
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -29208,6 +29253,15 @@ class ConsoleChatController:
             agent_messages = agent_messages[1:]
 
         conversation_id = self._agent_conversation_id(session_id)
+        work_conversation_id = conversation_id
+        if work_origin is WorkOrigin.AUTOMATIC:
+            if (
+                not self._fleet_wake.authorizes(wake_authorization, session_id)
+                or not wake_authorization.accepted
+                or wake_authorization.work_chain_id != work_chain_id
+            ):
+                raise PermissionError("Automatic source requires live wake authority.")
+            work_conversation_id = wake_authorization.conversation_id
         # noqa: E731 — tiny closure. Fix round 1 (Critical 1): reads ONLY
         # `cancel_event` -- captured by value, not via `self.
         # _active_cancel_events[session_id]` -- never the shared
@@ -29238,7 +29292,7 @@ class ConsoleChatController:
         # above all, plus the profile and canvas providers built from it. The
         # row says so for the WHOLE window: entering only after composition
         # left a slow discovery rendering a blank row (Qodo #6 on PR #2586).
-        async with self._pre_provider_setup_phase(conversation_id):
+        async with self._pre_provider_setup_phase(work_conversation_id):
             # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
             # on the running main loop, BEFORE the bridge is dispatched onto
             # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
@@ -29567,7 +29621,7 @@ class ConsoleChatController:
                 self._agent_bridge.run_reply,
                 work_origin=work_origin,
                 work_chain_id=work_chain_id,
-                conversation_id=conversation_id,
+                conversation_id=work_conversation_id,
                 session_id=session_id,
                 expected_progress_owner_id=progress_owner_id,
                 resolution=resolution,
@@ -29774,7 +29828,7 @@ class ConsoleChatController:
                 # path. A never-persisted stop (or an anchored/missing row)
                 # no-ops and leaves the row NULL -> ordinal fallback.
                 self._record_run_assistant_message(
-                    self._latest_unanchored_primary_run_id(conversation_id),
+                    self._latest_unanchored_primary_run_id(work_conversation_id),
                     stopped,
                 )
                 return ConsoleSubmitResult(True, True, stopped.content)

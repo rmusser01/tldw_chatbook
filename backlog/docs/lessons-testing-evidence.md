@@ -17738,3 +17738,76 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+## First-step publication can be too late for a live child target
+
+**TASK-32497, 2026-09-29.** Reading an inline child's persisted target from its
+first step hook passed the finished-summary check, but a snapshot observed
+inside the child's first provider call still had `(None, None)`. Moving the
+read and primary-summary publication into the existing run-model scope made
+that same observation pass. For state promised during a provider call, pin
+the observation at the provider boundary; an eventual step publication is
+not evidence that the state was available before the call.
+
+
+## Same wire bytes can hide a different execution family
+
+**TASK-32508, 2026-09-29.** A real fallback adapter test changed a saved custom
+endpoint from OpenAI-compatible to Ollama between attempts. Both adapters accepted
+the local server's OpenAI stream, so URL/model/parameter assertions passed even
+though the gateway changed execution families. Observing the actual resolved key
+made the test fail (`custom-hosted` → `ollama`). Freezing the execution key through
+the existing routed selection seam made the same test pass. When a run promises a
+frozen target, verify execution identity as well as successful request bytes.
+
+Independent review then exposed three gaps in the same task: a deleted frozen
+registry target still sent a `/health` probe through a family credential; a
+built-in `custom` alternate followed a later `api_url` edit; and a resumed
+handle displayed the original target while its model call used the alternate.
+The regressions now observe the actual gateway transport, both real HTTP
+adapter dispatches (fallback and persisted continuation), and each retained
+child's coordinator finish metadata. Registry-only URL fixtures and final
+output success did not prove these boundaries.
+
+## Checked SQLite columns need exact migration validation
+
+**TASK-33432, 2026-09-29.** AgentRuns v23's checked wake-cause column passed
+ordinary SQLite migration while restricted backup import returned
+`sqlite_validation_unavailable`. Tracing the private v21 fixture found SQLite's
+implicit `PRAGMA quick_check(automatic_wake_attempts)` during `ADD COLUMN ...
+CHECK`; only that named table under the installed AgentRuns migration needed
+a new authorizer allowance. The next import failed `unsupported_schema` even
+with a zero set difference: the complete frozen catalog also had to retain
+SQLite's type/name ordering. Real frozen v18, v21 and v22 migrations and fresh
+v23 parity now exercise both contracts in `Tests/DB/test_progress_wake_schema.py`.
+Compare ordered catalogs and run the actual restricted importer when adding
+checked columns; fresh construction and object-set equality miss these gates.
+
+
+## Wake fairness is observed at admission
+
+**TASK-33432, 2026-09-29.** A mixed wake regression expected the waiting
+conversation's provider payload before a busy producer's next payload. Under
+load, asynchronous provider preparation reversed that arrival even though
+persisted `accepted_at` recorded the waiter before the producer. The corrected
+regression compares each exact child's durable acceptance and still requires
+both provider notices exactly once. Provider arrival order does not measure
+scheduler reservation fairness. The same run exposed healthy provider
+preparation exceeding fixture polling deadlines; extend only those harness
+waits with observed unfinished work, leaving production budgets unchanged.
+
+
+## Save changes native identity without rewriting causal work
+
+**TASK-33432, 2026-09-29.** Independent review found that progress intake reused
+the first inbox owner's temporary conversation bucket after Save. A new saved
+manual chain's report stayed readable but never woke because its source metadata
+was queried under the old conversation. Resolving the existing immutable source
+run/chain conversation repaired admission. The stronger surviving-child test then
+exposed a second boundary: carrying the old causal ID into the controller's
+generic conversation variable also broke the real native Canvas authority. The
+regression now binds Canvas to the saved chat, exercises plain and agent provider
+paths, and checks old late progress plus terminal survival, new saved progress,
+and one automatic delivery per native session. Keep causal run identity separate
+from current chat-data identity, and test both identities through actual native
+authorities after Save.

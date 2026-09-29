@@ -24497,6 +24497,21 @@ class ChatScreen(BaseAppScreen):
                 character_id=character_id,
                 character_name=character_name,
                 activate=False,
+                prepare_progress=False,
+            )
+
+            async def prepare_created_progress() -> None:
+                from ...Agents.fleet_messages import MessageError
+
+                try:
+                    await store.prepare_progress_inbox_owned(session.id)
+                except MessageError:
+                    pass  # Durable chat remains available for a later explicit read.
+
+            self.run_worker(
+                prepare_created_progress(),
+                exclusive=True,
+                group=f"console-progress-restore-{session.id}",
             )
             # Single write path: the restore rehydrates the draft from
             # the persisted console_agent_handoff key; this fill only
