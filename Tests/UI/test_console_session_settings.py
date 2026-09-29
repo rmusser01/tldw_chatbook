@@ -4802,6 +4802,115 @@ async def test_console_settings_focused_one_row_field_paints_value_and_focus_edg
         ).bgcolor
 
 
+#: TASK-33003.3 AC#1: the numeric fields, by the ids that size them.
+_NUMERIC_FIELD_IDS = (
+    "console-settings-temperature",
+    "console-settings-top-p",
+    "console-settings-min-p",
+    "console-settings-top-k",
+    "console-settings-max-tokens",
+    "console-settings-seed",
+    "console-settings-presence-penalty",
+    "console-settings-frequency-penalty",
+    "console-settings-thinking-budget-tokens",
+    "console-context-custom-budget",
+    "console-context-trigger-percent",
+    "console-context-target-percent",
+    "console-context-summary-max",
+)
+#: AC#3: the free-text fields (search pickers type an id; the rest are text).
+_FREE_TEXT_FIELD_IDS = (
+    "console-settings-provider-picker",
+    "console-settings-base-url",
+    "console-settings-model-picker",
+    "console-settings-user-display-name",
+)
+#: A dense-form Select paints its left edge, one padding cell on each side,
+#: and the arrow with its one-cell gap around the option text.
+_SELECT_CHROME = 5
+
+
+def _shown_field_widths(screen) -> dict[str, int]:
+    from rich.cells import cell_len
+
+    for field_id in _NUMERIC_FIELD_IDS:
+        field = screen.query_one(f"#{field_id}", Input)
+        if field.region.area and field.placeholder:
+            # A cropped hint misleads ("Required" shown in Automatic mode).
+            assert cell_len(field.placeholder) <= field.content_region.width, (
+                field_id,
+                field.placeholder,
+                field.content_region,
+            )
+    return {
+        widget.id: widget.region.width
+        for widget in screen.query(
+            "Input, Select, ConsoleProviderPicker, ModelSearchPicker"
+        )
+        if widget.id and widget.region.area
+    }
+
+
+def _assert_enum_selects_fit_their_options(screen, view: str) -> int:
+    """Each shown Select is its longest option plus the arrow: no wider, no crop."""
+    from rich.cells import cell_len
+
+    checked = 0
+    for select in screen.query(Select):
+        if not select.region.area:
+            continue
+        texts = [str(prompt) for prompt, _value in select._options if prompt != ""]
+        if select._allow_blank:
+            texts.append(select.prompt)
+        longest = max(cell_len(text) for text in texts)
+        assert select.region.width <= longest + _SELECT_CHROME, (
+            view,
+            select.id,
+            select.region.width,
+            longest,
+        )
+        label = select.query_one("SelectCurrent #label")
+        assert label.region.width >= longest, (view, select.id, label.region, longest)
+        checked += 1
+    return checked
+
+
+@pytest.mark.asyncio
+async def test_console_settings_fields_are_sized_by_value_type() -> None:
+    """TASK-33003.3: a field is as wide as its value type, not the viewport.
+
+    Under the production stylesheets, with every section expanded: numeric
+    fields are at most 12 columns (edge included), each enum Select is its
+    longest option plus the arrow, free-text fields stay within 64 columns,
+    and no width changes between 211x44 and 235x52.
+    """
+    widths_by_size: dict[tuple[int, int], dict[str, int]] = {}
+    for size in ((211, 44), (235, 52)):
+        app = StyledModalHarness()
+        async with app.run_test(size=size) as pilot:
+            await app.push_screen(_one_row_settings_modal(app.app_config))
+            await pilot.pause()
+            screen = app.screen
+            for section in screen.query(Collapsible):
+                section.collapsed = False
+            await pilot.pause()
+            await pilot.pause()
+            widths = _shown_field_widths(screen)
+            selects = _assert_enum_selects_fit_their_options(screen, "model")
+            screen.query_one("#console-settings-view-context", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+            widths |= _shown_field_widths(screen)
+            selects += _assert_enum_selects_fit_their_options(screen, "context")
+        assert selects >= 7, (size, selects)
+        for field_id in _NUMERIC_FIELD_IDS:
+            assert 0 < widths.get(field_id, 0) <= 12, (size, field_id, widths.get(field_id))
+        for field_id in _FREE_TEXT_FIELD_IDS:
+            assert 0 < widths.get(field_id, 0) <= 64, (size, field_id, widths.get(field_id))
+        widths_by_size[size] = widths
+    assert widths_by_size[(211, 44)] == widths_by_size[(235, 52)]
+
+
 @pytest.mark.asyncio
 async def test_endpoint_template_modal_keeps_its_three_row_controls() -> None:
     """TASK-33003.2 AC#7: the one-row rules stay scoped to Chat settings."""

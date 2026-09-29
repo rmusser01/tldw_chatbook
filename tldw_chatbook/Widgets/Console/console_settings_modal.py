@@ -2225,7 +2225,7 @@ class ConsoleSettingsModal(
                                 value=self._format_value(
                                     self._context_state.resolved_policy.policy.custom_budget_tokens
                                 ),
-                                placeholder="Required in Custom mode",
+                                placeholder="if Custom",
                                 id="console-context-custom-budget",
                                 classes="console-settings-control",
                             )

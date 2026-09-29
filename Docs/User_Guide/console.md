@@ -438,7 +438,11 @@ The modal is a dense form: every field, dropdown and button in it (the
 **Model and generation** / **Context and memory** tabs included) is one row
 tall, with its label on the same row. A thin bar at a field's left edge marks
 it as editable; the focused field's bar turns thick, its row fills with the
-focus colour and its value turns bold.
+focus colour and its value turns bold. Each field is as wide as the value it
+holds, not as wide as the window: a number gets 12 columns, a dropdown is as
+wide as its longest choice, and text is capped by what it holds (your name in
+this chat 32, the provider and model 48, an endpoint URL 64). The fields keep
+their width on a wider terminal.
 
 Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:

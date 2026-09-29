@@ -7235,13 +7235,6 @@ Button.console-rail-focus-carrier:focus {
     color: $ds-text-primary;
 }
 
-#console-chat-tabs,
-#console-chat-tabs #chat-sessions-container,
-#console-chat-tabs .chat-session {
-    height: $ds-height-full;
-    min-height: $ds-size-0;
-}
-
 
 #console-task-surface {
     height: auto;
@@ -8179,18 +8172,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     margin: $ds-space-0;
 }
 
-#console-workspace-tree-selection-context {
-    width: $ds-percent-99;
-    max-width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    color: $ds-text-muted;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-}
-
 .console-workspace-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -8205,14 +8186,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     min-width: $ds-size-0;
     height: $ds-size-3;
     min-height: $ds-size-3;
-}
-
-#console-workspace-tree-star {
-    width: $ds-width-full;
-    min-width: $ds-size-6;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-0;
 }
 
 #console-workspace-search-status {
@@ -8404,10 +8377,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     outline-left: heavy $ds-focus-accent;
     outline-right: heavy $ds-focus-accent;
     text-style: bold;
-}
-
-#console-chat-tabs {
-    display: none;
 }
 
 #console-session-surface .chat-empty-state {
@@ -8617,6 +8586,53 @@ ConsoleSettingsModal .console-context-action-row {
     width: $ds-width-fill;
     min-width: $ds-size-0;
     max-width: $ds-percent-75;
+}
+
+
+#console-settings-generation-advanced Input,
+#console-settings-context-view Input {
+    width: $ds-size-12;
+}
+
+#console-settings-verbosity,
+#console-settings-thinking-effort {
+    width: $ds-size-11;
+}
+
+#console-settings-reasoning-effort,
+#console-context-thinking-history-policy {
+    width: $ds-size-12;
+}
+
+#console-settings-reasoning-summary {
+    width: $ds-size-13;
+}
+
+#console-context-budget-mode,
+#console-context-compaction-mode {
+    width: $ds-size-14;
+}
+
+#console-context-compaction-representation {
+    width: $ds-size-22;
+}
+
+#console-context-failure-behavior {
+    width: $ds-size-23;
+}
+
+#console-context-carry-forward,
+#console-settings-user-display-name {
+    max-width: $ds-size-32;
+}
+
+#console-settings-provider-picker,
+#console-settings-model-picker {
+    max-width: $ds-size-48;
+}
+
+#console-settings-base-url {
+    max-width: $ds-size-64;
 }
 
 .console-settings-modal-actions {
@@ -9263,13 +9279,6 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     width: $ds-width-fill;
     min-width: $ds-size-10;
     color: $ds-value-fg;
-}
-
-#console-model-section-provider .console-model-section-value,
-#console-model-section-model .console-model-section-value {
-    text-wrap: wrap;
-    max-height: $ds-size-3;
-    overflow: hidden;
 }
 
 #console-model-section-temperature .console-model-section-value,
