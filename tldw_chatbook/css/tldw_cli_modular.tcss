@@ -3906,14 +3906,9 @@ LibraryIngestCanvas Collapsible Contents {
 
 
 LibraryIngestCanvas Collapsible > CollapsibleTitle:focus {
-    border-bottom: none;
     text-style: bold reverse;
     outline-left: heavy $ds-focus-accent;
     outline-right: heavy $ds-focus-accent;
-}
-
-LibraryIngestCanvas Collapsible.-collapsed > CollapsibleTitle:focus {
-    border-bottom: none;
 }
 
 
@@ -4850,12 +4845,7 @@ Collapsible > CollapsibleTitle:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-bottom: solid $ds-focus-accent;
     outline: none;
-}
-
-Collapsible.-collapsed > CollapsibleTitle:focus {
-    border-bottom: solid $ds-focus-accent;
 }
 
 

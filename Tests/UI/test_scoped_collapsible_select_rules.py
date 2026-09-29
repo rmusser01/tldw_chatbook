@@ -92,6 +92,13 @@ async def test_chat_settings_collapsed_section_costs_two_rows_under_production_c
             cost = section.region.height + margin.top + margin.bottom
             assert cost <= 2, f"{section.id} costs {cost} rows ({section.region})"
 
+        # Focus must not add a row either: the retired `height: 3` used to
+        # absorb the app-wide focus rule's border-bottom (review round 1).
+        for section in sections:
+            section.query_one(CollapsibleTitle).focus()
+            await pilot.pause()
+            assert section.region.height == 1, f"focused {section.id}: {section.region}"
+
         screen.query_one("#console-settings-view-context").press()
         await pilot.pause()
         shown = [s for s in screen.query(Select) if s.region.area]

@@ -95,6 +95,28 @@ collects) made it run and pass locally. Pick the cheapest fix that matches
 where the config read happens: collection-time import for import-time reads,
 `@private_profile_test` for tests that build or reload app config.
 
+## A local red wall of `RecoveryRequired` hides the guard you meant to run
+
+**TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard
+(`test_console_mcp_approval.py::test_batch_row_widgets_...`) was reported as
+"red at base and head, CI will confirm". Neither half held. CI does not run
+that file on PRs at all: the UI Fast Lane runs only `scripts/ui_pr_gate_census.txt`,
+and the full UI shards (`test.yml`) run only on pushes to `main` and on manual
+dispatch; the whole-tree `nightly-deep.yml` runs only from `main`. Locally, whole-file runs fail
+mostly at fixture setup: `Tests/UI/conftest.py` imports `tldw_chatbook.app`
+for the first time inside the per-test redirect. `test_mcp_schema_form.py` +
+`test_mcp_tools_mode.py` gave 58 passed, 38 errors. A scratch `-p` plugin whose
+`pytest_collection_modifyitems` imports `tldw_chatbook.app` (after
+`Tests/conftest.py` has set its sandbox env) gave 96 passed. It changes when the
+import happens and edits no test. For a mounted-app test that also builds app config in
+its body, add the repo's own `bootstrap_profile` marker to that node from the same
+kind of plugin. Give it a scratch `TLDW_TEST_CONFIG_ROOT` whose config disables the
+splash, because the 7 s splash outlasts the Console-ready wait. That made the
+approval guard reach every assertion: green at base and head. A negative
+control (`.approval-row-decision` widened to full width) failed it. Before you
+call a guard "environmental", check whether any runner runs it, and make it
+reach its assertions once.
+
 ## Executable QA documentation can retain removed production imports
 
 **TASK-32882, 2026-09-21.** A native MCP launch stopped before app startup because

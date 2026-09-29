@@ -1209,12 +1209,16 @@ def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contrac
 
 
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
+    # TASK-33003.1 review: the shared rule no longer adds a focus
+    # border-bottom (it cost a row once titles became 1 row tall), so the
+    # `.-collapsed` twin that re-added it is gone too.
     text = WIDGETS.read_text(encoding="utf-8")
     block = css_block(text, "Collapsible > CollapsibleTitle:focus")
-    collapsed_focus = css_block(text, "Collapsible.-collapsed > CollapsibleTitle:focus")
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
-    assert "border-bottom: solid $ds-focus-accent;" in collapsed_focus
+    assert "background: $ds-focus-bg;" in block
+    assert "border" not in block
+    assert css_blocks(text, "Collapsible.-collapsed > CollapsibleTitle:focus") == []
 
 
 def test_conversations_collapsible_active_header_uses_selected_contract():

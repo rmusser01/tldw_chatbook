@@ -35,17 +35,17 @@ Collapsible {
  * (Docs/superpowers/qa/rag-settings-sp3-2026-07/). So only the genuinely
  * app-wide bug -- an invisible focused title -- stays global here; the
  * decorative restyle is scoped to the Library/RAG card further down, so
- * every other screen's Collapsibles keep their pre-fix appearance. */
+ * every other screen's Collapsibles keep their pre-fix appearance.
+ *
+ * TASK-33003.1: no border here. The retired `Collapsible > CollapsibleTitle
+ * { height: 3 }` leak used to absorb a focus border-bottom; with 1-row
+ * titles it added a row, so everything below jumped on focus/blur. The
+ * fill plus bold underline carry focus without changing geometry. */
 Collapsible > CollapsibleTitle:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-bottom: solid $ds-focus-accent;
     outline: none;
-}
-
-Collapsible.-collapsed > CollapsibleTitle:focus {
-    border-bottom: solid $ds-focus-accent;
 }
 
 /* Settings-scoped decorative restyle: only the Library/RAG card's
@@ -78,7 +78,8 @@ Collapsible.-collapsed > CollapsibleTitle:focus {
  * inside this card AND focused, reintroducing the invisible-focused-title
  * bug scoped to just Library/RAG. Restate the focus treatment at matching
  * (ID-qualified) specificity so it still wins here, exactly as it did
- * before this rule was scoped. */
+ * before this rule was scoped. The accent border-bottom stays only here:
+ * this card pins its titles to 2 rows, so the border costs no row. */
 #settings-library-rag-card Collapsible > CollapsibleTitle:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
