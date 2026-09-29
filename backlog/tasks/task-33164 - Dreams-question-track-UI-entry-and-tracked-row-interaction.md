@@ -40,3 +40,5 @@ Phase 2 shipped the question-tracking service (track_question/run_track_check, j
 <!-- SECTION:NOTES:BEGIN -->
 Shipped: w/watch question-track entry on the story modal (query verbatim, kind-derived intent, tracked feedback); Tracked rows open their origin story modal or a summary notice; guide present tense. Gate 238 passed x2.
 <!-- SECTION:NOTES:END -->
+
+ADR check: no new ADR required — targeted read + UI wiring inside the Phase 2 Track design (ADR-196 already governs); reviewer concurred in task-33164-report.md.
