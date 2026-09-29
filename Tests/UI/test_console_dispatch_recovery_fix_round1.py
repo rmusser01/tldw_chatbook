@@ -13,7 +13,6 @@ from Tests.Chat.test_console_dispatch_queue_recovery import (
     _destination,
     _truth,
 )
-from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -33,10 +32,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
 @pytest.mark.asyncio
-@private_profile_test
-async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_queue(
-    request,
-):
+async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_queue():
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -76,7 +72,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("must remain blocked")
 
-        # A healthy checkpoint does not expose recovery or engage its send fence.
+        # A healthy accepted turn permits queue admission and has no recovery UI.
         store.begin_ephemeral_dispatch(
             session.id,
             assistant_message_id=assistant.id,
@@ -89,7 +85,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
         )
         send = composer.query_one("#console-send-message", Button)
         assert region.display is False
-        assert store.dispatch_recovery_blocks_submission(session.id) is False
+        assert send.disabled is False
 
         # A delivery-unknown owner is visible even though the queue is empty.
         store.mark_dispatch_recovery_needed(session.id, assistant.id)
@@ -128,10 +124,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
 
 
 @pytest.mark.asyncio
-@private_profile_test
-async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_owner(
-    request,
-):
+async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_owner():
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -270,8 +263,7 @@ async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_o
 
 
 @pytest.mark.asyncio
-@private_profile_test
-async def test_mounted_recovery_action_is_pinned_to_the_displayed_session(request):
+async def test_mounted_recovery_action_is_pinned_to_the_displayed_session():
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)

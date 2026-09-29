@@ -63,7 +63,17 @@ _TOKEN_FIELDS = frozenset(
         # Hyphenated, like every other id in this app's CSS -- a token, not an
         # identifier.
         "widget_id",
-    }
+    
+        # tasks-32951/32953: trace-surface refusal fields (tokens).
+        "surface_refusal_kind",
+        "surface_prefix",
+        "surface_suffix",
+        "surface_incoming_changed",
+        "surface_active_changed",
+        "surface_replacement_span",
+        "surface_start_sequence",
+        "surface_end_sequence",
+        "surface_domains",}
 )
 # TASK-32533: the raising frame of an `unhandled_exception` record -- module
 # and function name of the frame that raised (`raise_*`) and of the deepest
