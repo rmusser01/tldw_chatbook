@@ -41,19 +41,18 @@ from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
 )
-from tldw_chatbook.Constants import TAB_ARTIFACTS
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-from tldw_chatbook.Utils.app_shutdown import arm_exit_watchdog, unregister_running_app
-from tldw_chatbook.Utils.persistent_diagnostics import persist_event
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-
-from .config import (
+from tldw_chatbook.config import (
     get_cli_config_path,
     get_cli_setting,
     persist_cli_config_for_shutdown,
 )
-from .UI.Navigation.main_navigation import NavigateToScreen
-from .UI.Navigation.shell_destinations import get_shell_destination
+from tldw_chatbook.Constants import TAB_ARTIFACTS
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
+from tldw_chatbook.Utils.app_shutdown import arm_exit_watchdog, unregister_running_app
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
