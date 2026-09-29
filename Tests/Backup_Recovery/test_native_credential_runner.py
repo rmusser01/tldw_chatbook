@@ -187,6 +187,66 @@ def test_native_worker_sqlite_refusal_keeps_only_installed_owner_and_code(
         service.close()
 
 
+@pytest.mark.parametrize(
+    "existing_trace", (False, True), ids=("observe", "leave-tracer")
+)
+def test_native_worker_observes_swallowed_sqlite_failure_and_restores_trace(
+    tmp_path, monkeypatch, existing_trace
+):
+    import sqlite3
+
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validated_schema_version
+
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    monkeypatch.setenv("TLDW_NATIVE_FAILURE_ROOT", str(failure_root))
+    candidate = tmp_path / "positive-native-secret.sqlite"
+    connection = sqlite3.connect(":memory:")
+    connection.close()
+
+    def failed_policy():
+        connection.execute("SELECT 1")
+
+    owner = SimpleNamespace(
+        owner_id="db.chachanotes.primary", schema_policy=failed_policy
+    )
+    service = RecoveryService(tmp_path / "control")
+
+    def prior_trace(frame, event, argument):
+        return prior_trace
+
+    previous = prior_trace if existing_trace else None
+
+    def refused(operation, cancel):
+        return validated_schema_version(owner, candidate, cancel)
+
+    try:
+        service._executor.submit(sys.settrace, previous).result(timeout=5)
+        product._observe_workers(service)
+        state = service.wait(service._start("backup", refused), timeout=5)
+        assert state["issues"] == ("backup_operation_failed",)
+        assert service._executor.submit(sys.gettrace).result(timeout=5) is previous
+        runner._publish_native_failures(private, artifacts)
+        path = artifacts / "native-failures.json"
+        rows = json.loads(path.read_text())["failures"]
+        swallowed = [row for row in rows if row["error_class"] == "ProgrammingError"]
+        assert bool(swallowed) is not existing_trace
+        assert all(row["sqlite_owner"] == "db.chachanotes.primary" for row in swallowed)
+        assert all("sqlite_issue" not in row for row in swallowed)
+        assert all(
+            any(frame["function"] == "failed_policy" for frame in row["frames"])
+            for row in swallowed
+        )
+        assert "positive-native-secret" not in path.read_text()
+        assert "Cannot operate on a closed database" not in path.read_text()
+    finally:
+        service.close()
+
+
 def test_native_failure_optional_diagnostics_revalidate_fixed_values(tmp_path):
     private, artifacts = tmp_path / "private", tmp_path / "artifacts"
     failure_root = private / "native-failures"
@@ -246,9 +306,14 @@ def test_native_failure_optional_diagnostics_revalidate_fixed_values(tmp_path):
 @pytest.mark.parametrize(
     "blocking", (False, True), ids=("issue-only", "blocking-owner")
 )
+@pytest.mark.parametrize(
+    "sqlite_refusal", (False, True), ids=("sqlite-ready", "sqlite-refusal")
+)
 def test_native_capture_observes_incomplete_inventory_before_refusal(
-    tmp_path, monkeypatch, blocking
+    tmp_path, monkeypatch, blocking, sqlite_refusal
 ):
+    import sqlite3
+
     import tldw_chatbook
     from Tests.ProductionApp import test_native_credential_recovery as product
     from tldw_chatbook.Backup_Recovery import recovery_service, runtime_maintenance
@@ -300,12 +365,25 @@ def test_native_capture_observes_incomplete_inventory_before_refusal(
     monkeypatch.setattr(recovery_service, "RecoveryService", lambda root: service)
     monkeypatch.setattr(recovery_service, "default_control_root", lambda: tmp_path)
     monkeypatch.setattr(runtime_maintenance, "monitor_app", idle)
+    connections = []
+    connect = sqlite3.connect
+
+    def memory_connection(location):
+        assert location == ":memory:"
+        connection = connect(location)
+        connections.append(connection)
+        return SimpleNamespace(close=connection.close) if sqlite_refusal else connection
+
+    monkeypatch.setattr(sqlite3, "connect", memory_connection)
     with pytest.raises(AssertionError, match="native_inventory_incomplete"):
         product.asyncio.run(product._capture())
+    assert len(connections) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        connections[0].execute("SELECT 1")
     runner._publish_native_failures(private, artifacts)
     path = artifacts / "native-failures.json"
     rows = json.loads(path.read_text())["failures"]
-    assert [row["inventory"] for row in rows] == [
+    assert [row["inventory"] for row in rows if "inventory" in row] == [
         {
             "issues": ["undeclared_alias"],
             "blocking": [{"owner": "db.chachanotes.primary", "status": "unavailable"}]
@@ -313,6 +391,20 @@ def test_native_capture_observes_incomplete_inventory_before_refusal(
             else [],
         }
     ]
+    assert [row["sqlite_issue"] for row in rows if "sqlite_issue" in row] == (
+        ["sqlite_security_unavailable"] if sqlite_refusal else []
+    )
+    causes = [row for row in rows if row["error_class"] == "AttributeError"]
+    assert len(causes) == int(sqlite_refusal)
+    assert all(
+        any(
+            frame["file"] == "sqlite_validation.py"
+            and frame["function"] == "_restrict_connection"
+            for frame in row["frames"]
+        )
+        for row in causes
+    )
+    assert "enable_load_extension" not in path.read_text()
     assert "positive-native-secret" not in path.read_text()
 
 

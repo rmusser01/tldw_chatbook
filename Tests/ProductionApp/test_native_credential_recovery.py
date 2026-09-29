@@ -11,11 +11,13 @@ import hashlib
 import json
 import os
 import platform
+import sqlite3
 import stat
 import subprocess  # nosec B404 - fixed installed-product test children
 import sys
 import tomllib
 import zipfile
+from contextlib import closing
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -198,13 +200,39 @@ def _observe_workers(service):
     if not failure_root:
         return service
     from Tests.Backup_Recovery.run_platform_product import _record_native_failure
-    from tldw_chatbook.Backup_Recovery.sqlite_validation import validated_schema_version
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        _validate_candidate,
+        validated_schema_version,
+    )
 
     root = Path(failure_root)
     start = service._start
 
+    def observe_sqlite(frame, event, argument):
+        if frame.f_code is not _validate_candidate.__code__:
+            return None
+        if event == "exception":
+            error = argument[1]
+            try:
+                _record_native_failure(
+                    root,
+                    error,
+                    metadata={
+                        "sqlite_owner": getattr(
+                            frame.f_locals.get("owner"), "owner_id", None
+                        ),
+                        "sqlite_issue": error.args[0] if error.args else None,
+                    },
+                )
+            except Exception:  # noqa: BLE001 - tracing must preserve validation flow.
+                return observe_sqlite
+        return observe_sqlite
+
     def start_observed(kind, function):
         def observed(operation, cancel):
+            previous_trace = sys.gettrace()
+            if previous_trace is None:
+                sys.settrace(observe_sqlite)
             try:
                 return function(operation, cancel)
             except Exception as error:
@@ -227,6 +255,9 @@ def _observe_workers(service):
                     metadata = {}
                 _record_native_failure(root, error, metadata=metadata)
                 raise
+            finally:
+                if previous_trace is None:
+                    sys.settrace(previous_trace)
 
         return start(kind, observed)
 
@@ -360,6 +391,9 @@ async def _capture():
                     _record_native_failure,
                 )
                 from tldw_chatbook.Backup_Recovery.inventory import BLOCKING
+                from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+                    _restrict_connection,
+                )
 
                 _record_native_failure(
                     Path(root),
@@ -375,6 +409,19 @@ async def _capture():
                         }
                     },
                 )
+                try:
+                    with closing(sqlite3.connect(":memory:")) as connection:
+                        _restrict_connection(connection)
+                except Exception as error:  # noqa: BLE001 - preserve the inventory refusal.
+                    _record_native_failure(
+                        Path(root),
+                        error,
+                        metadata={
+                            "sqlite_issue": error.args[0] if error.args else None
+                        },
+                    )
+                    if error.__cause__ is not None:
+                        _record_native_failure(Path(root), error.__cause__)
             assert details["inventory"].complete, "native_inventory_incomplete"
             operation = service.start_backup(
                 _selectors(),
