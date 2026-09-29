@@ -11,6 +11,7 @@ labels:
 - backup-recovery
 - tech-debt
 priority: high
+updated_date: 2026-09-29 02:31
 ---
 
 ## Description
@@ -36,9 +37,8 @@ These tests are blind: they report the recovery bootstrap, not the behaviour the
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Scope addition (2026-09-28, found while verifying PERF-06): Tests/test_config_*.py fails 186 tests identically at base c174e30f6b and on the PERF-06 branch. The TASK-32804.1 warm-read tests skip with 'raw_source_selection_changed' for the same reason. Under @pytest.mark.bootstrap_profile the same config reads work, so the marker, or the shared conftest seam it uses, is the likely fix for this set too.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
