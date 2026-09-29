@@ -15,8 +15,8 @@ OUT = os.path.dirname(os.path.abspath(__file__))
 if len(sys.argv) != 2:
     sys.exit("usage: python3 extract_journal.py <journal.jsonl>")
 journal = Path(sys.argv[1]).expanduser().resolve()
-if not journal.is_file():
-    sys.exit(f"journal not found: {journal}")
+if not journal.is_file() or journal.suffix != '.jsonl':
+    sys.exit(f"not a .jsonl journal file: {journal}")
 label = {}; results = {}
 with journal.open(encoding='utf-8') as fh:
     for line in fh:
@@ -27,20 +27,57 @@ with journal.open(encoding='utf-8') as fh:
         if o.get('type') == 'started': label[o['key']] = o.get('label', '')
         elif o.get('type') == 'result' and 'result' in o: results[o['key']] = o['result']
 by_label = {label.get(k, k): r for k, r in results.items()}
-def item_of_find(l):
+
+
+def item_of_find(l: str) -> str:
+    """Return the audit item a ``find:`` agent label belongs to.
+
+    Args:
+        l: Agent label, ``find:<item>`` or ``find:sliceN:<name>``.
+
+    Returns:
+        The item name, or ``slice-N`` for a slice finder.
+    """
     m = re.match(r'find:slice(\d+):', l)
     return f'slice-{m.group(1)}' if m else l.split(':', 1)[1]
-finders = {item_of_find(l): r for l, r in by_label.items() if l.startswith('find:')}
+
+
+def entries(payload: object, key: str) -> list[dict]:
+    """Return the well-formed records under ``payload[key]``; skip the rest.
+
+    A record is well formed when it is a dict with a string ``id``.
+
+    Args:
+        payload: One agent result, as parsed from the journal.
+        key: List field holding the records (``findings``, ``verdicts``, ...).
+
+    Returns:
+        The records that can be keyed by ``id``.
+    """
+    records = payload.get(key) if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return []
+    return [e for e in records if isinstance(e, dict) and isinstance(e.get('id'), str)]
+
+
+#: Fields every finder finding must carry to become a row.
+FINDING_FIELDS = ('severity', 'category', 'title', 'locations', 'trigger', 'cost',
+                  'cost_basis', 'fix', 'fix_risk', 'evidence')
+finders = {item_of_find(l): r for l, r in by_label.items() if l.startswith('find:') and isinstance(r, dict)}
 verd, meas = {}, {}
 for l, r in by_label.items():
     if l.startswith('verify:'):
-        for v in (r or {}).get('verdicts', []): verd[v['id']] = v
+        for v in entries(r, 'verdicts'): verd[v['id']] = v
     elif l.startswith('measure:'):
-        for m in (r or {}).get('results', []): meas[m['id']] = m
+        for m in entries(r, 'results'): meas[m['id']] = m
 rows, items = [], []
 for item, fd in sorted(finders.items()):
     items.append({'item': item, 'summary': fd.get('summary', ''), 'clean': fd.get('clean_areas', []), 'census': fd.get('census', '')})
-    for f in fd.get('findings', []):
+    for f in entries(fd, 'findings'):
+        if not all(k in f for k in FINDING_FIELDS) or not all(
+            isinstance(x, dict) and 'path' in x and 'line' in x for x in f['locations']
+        ):
+            continue
         fid = f"{item}:{f['id']}"; v = verd.get(fid); m = meas.get(fid)
         if m: status = 'refuted' if m['verdict'] == 'refute' else 'confirmed'; sev = m['final_severity']
         elif v: status = v['verdict']; sev = v['final_severity']

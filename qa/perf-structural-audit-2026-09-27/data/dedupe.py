@@ -17,16 +17,58 @@ SAME_FILE_JACCARD = 0.35
 ANY_FILE_JACCARD = 0.55
 SEV = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3}
 STOP = set('the a an of on in to and or per every each is are for with by at from its it that this as be not only still'.split())
-def toks(t): return {w for w in re.findall(r'[a-z_][a-z0-9_]+', t.lower()) if w not in STOP and len(w) > 2}
-def loc(r):
+def toks(t: str) -> set[str]:
+    """Return a title's significant lowercase word tokens.
+
+    Args:
+        t: Finding title.
+
+    Returns:
+        Tokens of three or more characters, minus stop words.
+    """
+    return {w for w in re.findall(r'[a-z_][a-z0-9_]+', t.lower()) if w not in STOP and len(w) > 2}
+
+
+def loc(r: dict) -> tuple[str, int]:
+    """Return a finding's first location as ``(path, line)``.
+
+    Args:
+        r: Finding record with a ``locs`` list of ``"path:line"`` strings.
+
+    Returns:
+        The path and line number; ``("", 0)`` when the finding has no location.
+    """
     l = r['locs'][0] if r['locs'] else ':0'
     p, _, n = l.rpartition(':')
     return p, int(n) if n.isdigit() else 0
+
+
 parent = list(range(len(rows)))
-def find(i):
+
+
+def find(i: int) -> int:
+    """Return the union-find root of row ``i``, compressing the path.
+
+    Args:
+        i: Row index.
+
+    Returns:
+        Index of the representative row of ``i``'s cluster.
+    """
     while parent[i] != i: parent[i] = parent[parent[i]]; i = parent[i]
     return i
-def union(a, b): parent[find(a)] = find(b)
+
+
+def union(a: int, b: int) -> None:
+    """Merge the clusters that contain rows ``a`` and ``b``.
+
+    Args:
+        a: Row index.
+        b: Row index.
+    """
+    parent[find(a)] = find(b)
+
+
 T = [toks(r['title']) for r in rows]
 for i in range(len(rows)):
     for j in range(i + 1, len(rows)):
