@@ -40,3 +40,16 @@ in 191.58s**, and all 11 derived-artifact preflight guards passed. The
 and separate fresh/upgrade receipts retain their tested source and capture hashes.
 Earlier evidence keeps its original source attribution; native and physical
 voice acceptance remain open. No full suite ran.
+
+
+CI follow-up: PR Fast Lane hit the pre-existing TASK-33211 missed-click flake
+(1 failed, 1170 passed); the admission-sensitive run passed 123 tests with one
+expected failure. Reused the one-line repair from [PR #2883](https://github.com/rmusser01/tldw_chatbook/pull/2883),
+original commit `d48f92be5a3f974536b5f143a118e10c985827e2`, with attribution retained.
+The existing helper waits for the inspector scroll to settle and asserts that the
+mouse click reaches Run. At source `1eab2bc8e9519bc9ca73042cc3eda0c94e9c75ee`,
+the exact test passed **50/50 across four workers in 32.37s**; suppressing only
+the production result toast still failed the original missing-toast assertion.
+Ruff diagnostics match the unchanged baseline (five existing findings, zero new).
+Raw stress and negative-control logs remain local. No production code or timeout
+was changed, and no full local suite ran. ADR required: no; test-only helper reuse.

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-28 08:20'
-updated_date: '2026-09-28 17:44'
+updated_date: '2026-09-29 20:42'
 labels:
   - ci-throughput-3-candidate
 dependencies: []
@@ -31,6 +31,10 @@ dependencies: []
 2. Instrument the click to find where the chain breaks
 3. Fix at the cause; verify with stress rounds + negative control
 4. Sweep sibling raw clicks on the same button
+
+ADR required: no
+ADR path: N/A
+Reason: test-only reuse of the existing mouse-dispatch helper; production behavior and boundaries are unchanged.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -43,4 +47,6 @@ Fix: one line -- use `_click_test_run(pilot)`. AC #1 restated from the pre-inves
 Evidence: reproduced locally 4/80 failures under xdist -n 20 (CI: 3/84 runs, all this test); after the fix 240/240 passes (3 rounds of 80). Negative control: disabling the product toast fails the fixed test with the original assertion. Whole module 350/350. Sibling raw clicks in Tests/UI/test_mcp_inspector.py (6) mount the inspector standalone with no scroll container: 240/240 under the same load, left unchanged.
 
 Modified: Tests/UI/test_mcp_workbench.py.
+
+2026-09-29 Buddy PR #2910 integration: reused original commit d48f92be5a3f974536b5f143a118e10c985827e2 from PR #2883 with cherry-pick attribution retained after the same known flake blocked the Buddy PR Fast Lane (1 failed, 1170 passed). At source 1eab2bc8e9519bc9ca73042cc3eda0c94e9c75ee, the exact test passed 50/50 across four xdist workers in 32.37 seconds. Suppressing only the production result toast made the repaired test fail with the original missing-toast assertion. Ruff findings match the unchanged baseline exactly (five existing findings, zero new); diff checks pass. Original stress and whole-module evidence above retains its upstream attribution. No production changes, timeout increase, or full local suite. ADR check: no new ADR required for this test-only repair.
 <!-- SECTION:NOTES:END -->
