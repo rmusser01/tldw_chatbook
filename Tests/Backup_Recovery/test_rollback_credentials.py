@@ -3,6 +3,7 @@
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -98,7 +99,12 @@ def test_authenticated_old_secret_restores_to_new_owner_reference(
         assert profile_provider(store)._get_credential_secret("peer", "api_key") == (
             "other-profile-new-value" if changed == "changed" else None
         )
-        assert backend.deleted == deleted
+        assert backend.deleted[: len(deleted)] == deleted
+        assert all(
+            service == store.service_name
+            and re.fullmatch(r"__credential_refs__:[0-9a-f]{32}:[0-9]+", username)
+            for service, username in backend.deleted[len(deleted) :]
+        )
         previous = json.loads(originals[targets])
         previous["targets"][0]["auth_reference"] = "keyring:" + purpose
         assert json.loads(targets.read_text()) == previous

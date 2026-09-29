@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tldw_chatbook.runtime_policy import (
@@ -36,6 +38,186 @@ class FakeKeyring:
     def delete_password(self, service_name: str, username: str) -> None:
         self.deleted.append((service_name, username))
         self.values.pop((service_name, username), None)
+
+
+class BlobLimitedKeyring(FakeKeyring):
+    """Bound only the native effect, matching Windows' UTF-16 credential blob."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_root = False
+        self.fail_part_after: int | None = None
+        self.part_writes = 0
+        self.fail_cleanup = False
+        self.commit_root_then_raise = False
+
+    def set_password(self, service_name: str, username: str, password: str) -> None:
+        if len(password.encode("utf-16-le")) > 2560:
+            raise RuntimeError("credential_blob_limit")
+        if username == "__credential_refs__" and self.fail_root:
+            raise RuntimeError("index_write_failed")
+        if username == "__credential_refs__" and self.commit_root_then_raise:
+            super().set_password(service_name, username, password)
+            raise RuntimeError("index_write_uncertain")
+        if username.startswith("__credential_refs__:"):
+            if self.part_writes == self.fail_part_after:
+                raise RuntimeError("index_write_failed")
+            self.part_writes += 1
+        super().set_password(service_name, username, password)
+
+    def delete_password(self, service_name: str, username: str) -> None:
+        if self.fail_cleanup and username.startswith("__credential_refs__:"):
+            raise RuntimeError("cleanup_failed")
+        super().delete_password(service_name, username)
+
+
+def _native_index_scopes(count: int = 24) -> list[ServerCredentialScope]:
+    return [
+        ServerCredentialScope(
+            server_profile_id=f"C:/Users/runneradmin/AppData/Local/Temp/qualification/profile-{number % 2}/config.toml",
+            normalized_origin=f"https://native-purpose-{number}.invalid",
+            credential_type=SERVER_CREDENTIAL_API_KEY,
+            principal_id="disposable-principal-\N{KEY}",
+        )
+        for number in range(count)
+    ]
+
+
+def test_native_index_survives_growth_fresh_store_and_scoped_clear():
+    fake = BlobLimitedKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scopes = _native_index_scopes()
+    for number, scope in enumerate(scopes):
+        store.set_scoped_secret(scope, f"disposable-{number}")
+
+    fresh = KeyringServerCredentialStore(keyring_backend=fake)
+    assert [fresh.get_scoped_secret(scope) for scope in scopes] == [
+        f"disposable-{number}" for number in range(len(scopes))
+    ]
+    assert all(len(value.encode("utf-16-le")) <= 2560 for value in fake.values.values())
+    fresh.clear_server(scopes[0].server_profile_id)
+    assert [fresh.get_scoped_secret(scope) for scope in scopes] == [
+        None if number % 2 == 0 else f"disposable-{number}"
+        for number in range(len(scopes))
+    ]
+    KeyringServerCredentialStore(keyring_backend=fake).clear_all()
+    assert fake.values == {}
+
+
+@pytest.mark.parametrize("failure", ["part", "root"])
+def test_failed_native_index_write_preserves_previous_index(failure):
+    fake = BlobLimitedKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scopes = _native_index_scopes(8)
+    for number, scope in enumerate(scopes):
+        store.set_scoped_secret(scope, f"disposable-{number}")
+    index_key = (DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")
+    previous = fake.values[index_key]
+    if failure == "part":
+        fake.fail_part_after = fake.part_writes + 1
+    else:
+        fake.fail_root = True
+
+    with pytest.raises(RuntimeError, match="index_write_failed"):
+        store.set_scoped_secret(_native_index_scopes(9)[-1], "new-disposable")
+
+    assert fake.values[index_key] == previous
+    fake.fail_root = False
+    fake.fail_part_after = None
+    fresh = KeyringServerCredentialStore(keyring_backend=fake)
+    fresh.clear_all()
+    assert all(fresh.get_scoped_secret(scope) is None for scope in scopes)
+    if failure == "part":
+        assert not any(
+            username.startswith("__credential_refs__") for _, username in fake.values
+        )
+
+
+def test_native_index_root_commit_then_error_keeps_published_index_readable():
+    fake = BlobLimitedKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scopes = _native_index_scopes(9)
+    for number, scope in enumerate(scopes[:-1]):
+        store.set_scoped_secret(scope, f"disposable-{number}")
+    fake.commit_root_then_raise = True
+
+    with pytest.raises(RuntimeError, match="index_write_uncertain"):
+        store.set_scoped_secret(scopes[-1], "new-disposable")
+
+    fake.commit_root_then_raise = False
+    fresh = KeyringServerCredentialStore(keyring_backend=fake)
+    assert [fresh.get_scoped_secret(scope) for scope in scopes[:-1]] == [
+        f"disposable-{number}" for number in range(len(scopes) - 1)
+    ]
+    fresh.clear_all()
+    assert all(fresh.get_scoped_secret(scope) is None for scope in scopes)
+
+
+def test_native_index_growth_keeps_legacy_list_entries_clearable():
+    fake = BlobLimitedKeyring()
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")] = json.dumps(
+        [["legacy-server", SERVER_CREDENTIAL_ACCESS_TOKEN]]
+    )
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "legacy-server:access_token")] = (
+        "legacy-disposable"
+    )
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    for scope in _native_index_scopes(8):
+        store.set_scoped_secret(scope, "scoped-disposable")
+
+    fresh = KeyringServerCredentialStore(keyring_backend=fake)
+    assert (
+        fresh.get_secret("legacy-server", SERVER_CREDENTIAL_ACCESS_TOKEN)
+        == "legacy-disposable"
+    )
+    fresh.clear_all()
+    assert fake.values == {}
+
+
+@pytest.mark.parametrize("damage", ["missing", "malformed", "unsupported_header"])
+def test_damaged_native_index_part_refuses_clear_before_any_credential_delete(damage):
+    fake = BlobLimitedKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    for scope in _native_index_scopes(8):
+        store.set_scoped_secret(scope, "scoped-disposable")
+    missing = next(
+        key for key in fake.values if key[1].startswith("__credential_refs__:")
+    )
+    if damage == "unsupported_header":
+        index_key = (DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")
+        header = json.loads(fake.values[index_key])
+        header["version"] = 3
+        fake.values[index_key] = json.dumps(header)
+    elif damage == "missing":
+        fake.values.pop(missing)
+    else:
+        fake.values[missing] = "invalid-json"
+    previous = fake.values.copy()
+
+    with pytest.raises(CredentialStoreUnavailable):
+        KeyringServerCredentialStore(keyring_backend=fake).clear_all()
+
+    assert fake.values == previous
+
+
+def test_native_index_cleanup_failure_keeps_committed_credentials_readable():
+    fake = BlobLimitedKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scopes = _native_index_scopes(8)
+    for number, scope in enumerate(scopes[:-1]):
+        store.set_scoped_secret(scope, f"disposable-{number}")
+    fake.fail_cleanup = True
+
+    store.set_scoped_secret(scopes[-1], "new-disposable")
+
+    fresh = KeyringServerCredentialStore(keyring_backend=fake)
+    assert [fresh.get_scoped_secret(scope) for scope in scopes] == [
+        *(f"disposable-{number}" for number in range(len(scopes) - 1)),
+        "new-disposable",
+    ]
+    fake.fail_cleanup = False
+    fresh.clear_all()
+    assert all(fresh.get_scoped_secret(scope) is None for scope in scopes)
 
 
 class RaisingDeleteKeyring(FakeKeyring):

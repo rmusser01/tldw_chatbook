@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Protocol
 from urllib.parse import quote
-from threading import RLock
+from uuid import uuid4
 
+from loguru import logger
 
 SERVER_CREDENTIAL_ACCESS_TOKEN = "access_token"
 SERVER_CREDENTIAL_REFRESH_TOKEN = "refresh_token"
@@ -15,6 +18,10 @@ SERVER_CREDENTIAL_BEARER_TOKEN = "bearer_token"
 DEFAULT_KEYRING_SERVICE_NAME = "tldw_chatbook.server_credentials"
 RECOVERY_SETUP_REQUIRED = "recovery:setup_required"
 _KEYRING_INDEX_USERNAME = "__credential_refs__"
+# Windows generic credential blobs are limited to 2,560 bytes. JSON is ASCII,
+# so 1,280 characters fit its UTF-16 encoding; parts leave additional margin.
+_KEYRING_INDEX_MAX_CHARACTERS = 1280
+_KEYRING_INDEX_PART_CHARACTERS = 1024
 _RECOVERY_SCOPE_LOCK = RLock()
 
 _KNOWN_SERVER_CREDENTIAL_PURPOSES = (
@@ -60,7 +67,7 @@ class ServerCredentialStore(Protocol):
 
     def clear_all(self) -> None: ...
 
-    def set_scoped_secret(self, scope: "ServerCredentialScope", secret: str) -> None:
+    def set_scoped_secret(self, scope: ServerCredentialScope, secret: str) -> None:
         """Persist `secret` under the exact scope key.
 
         Args:
@@ -70,7 +77,7 @@ class ServerCredentialStore(Protocol):
         """
         ...
 
-    def get_scoped_secret(self, scope: "ServerCredentialScope") -> str | None:
+    def get_scoped_secret(self, scope: ServerCredentialScope) -> str | None:
         """Return the secret stored under `scope`, or None if absent.
 
         Args:
@@ -83,7 +90,7 @@ class ServerCredentialStore(Protocol):
         """
         ...
 
-    def delete_scoped_secret(self, scope: "ServerCredentialScope") -> None:
+    def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
         """Delete the secret stored under `scope`, if any.
 
         Args:
@@ -114,7 +121,7 @@ class ServerCredentialScope:
     principal_id: str | None = None
 
     @classmethod
-    def legacy(cls, server_id: str, purpose: str) -> "ServerCredentialScope":
+    def legacy(cls, server_id: str, purpose: str) -> ServerCredentialScope:
         normalized = _normalize_non_empty(server_id, "server_id")
         return cls(
             server_profile_id=normalized,
@@ -242,6 +249,21 @@ def _index_entry_for_scope(scope: ServerCredentialScope) -> dict[str, Any]:
     }
 
 
+def _index_part_usernames(header: Any) -> list[str]:
+    if not isinstance(header, dict):
+        return []
+    generation, parts = header.get("generation"), header.get("parts")
+    if (
+        header.get("version") != 2
+        or not isinstance(generation, str)
+        or not re.fullmatch(r"[0-9a-f]{32}", generation)
+        or type(parts) is not int
+        or not 1 <= parts <= 1_000_000
+    ):
+        raise CredentialStoreUnavailable("Credential index is incomplete.")
+    return [f"{_KEYRING_INDEX_USERNAME}:{generation}:{part}" for part in range(parts)]
+
+
 class InMemoryServerCredentialStore:
     """In-memory credential store, scoped identically to the keyring store.
 
@@ -297,7 +319,10 @@ class InMemoryServerCredentialStore:
         for key in list(self._secrets):
             if key[0] != normalized_server_id:
                 continue
-            if normalized_origin_value is not None and key[1] != normalized_origin_value:
+            if (
+                normalized_origin_value is not None
+                and key[1] != normalized_origin_value
+            ):
                 continue
             self._secrets.pop(key, None)
 
@@ -454,16 +479,48 @@ class KeyringServerCredentialStore:
         except (TypeError, ValueError):
             return []
 
+        part_usernames = _index_part_usernames(entries)
+        if part_usernames:
+            chunks = [
+                self._keyring.get_password(self.service_name, username)
+                for username in part_usernames
+            ]
+            if any(
+                not isinstance(chunk, str)
+                or not 1 <= len(chunk) <= _KEYRING_INDEX_PART_CHARACTERS
+                for chunk in chunks
+            ):
+                raise CredentialStoreUnavailable("Credential index is incomplete.")
+            try:
+                entries = json.loads("".join(chunks))
+            except (TypeError, ValueError):
+                raise CredentialStoreUnavailable(
+                    "Credential index is incomplete."
+                ) from None
+            if not isinstance(entries, list):
+                raise CredentialStoreUnavailable("Credential index is incomplete.")
+
         scopes: list[ServerCredentialScope] = []
         for entry in entries:
             scope = _scope_from_index_entry(entry)
             if scope is not None:
                 scopes.append(scope)
+            elif part_usernames:
+                raise CredentialStoreUnavailable("Credential index is incomplete.")
         return scopes
 
     def _save_index(self, scopes: list[ServerCredentialScope]) -> None:
+        previous = self._keyring.get_password(
+            self.service_name, _KEYRING_INDEX_USERNAME
+        )
+        try:
+            previous_header = json.loads(previous) if previous else None
+        except (TypeError, ValueError):
+            previous_header = None
+        previous_parts = _index_part_usernames(previous_header)
         if not scopes:
             self._delete_index_record()
+            self._delete_index_parts(previous_parts)
             return
 
         unique_scopes = sorted(
@@ -494,9 +551,53 @@ class KeyringServerCredentialStore:
                     )
                 )
                 for server_profile_id, normalized_origin, principal_id, credential_type in unique_scopes
-            ]
+            ],
+            ensure_ascii=True,
         )
-        self._keyring.set_password(self.service_name, _KEYRING_INDEX_USERNAME, payload)
+        if len(payload) <= _KEYRING_INDEX_MAX_CHARACTERS:
+            self._keyring.set_password(
+                self.service_name, _KEYRING_INDEX_USERNAME, payload
+            )
+        else:
+            header = {
+                "version": 2,
+                "generation": uuid4().hex,
+                "parts": (len(payload) + _KEYRING_INDEX_PART_CHARACTERS - 1)
+                // _KEYRING_INDEX_PART_CHARACTERS,
+            }
+            written = []
+            try:
+                for part, username in enumerate(_index_part_usernames(header)):
+                    start = part * _KEYRING_INDEX_PART_CHARACTERS
+                    self._keyring.set_password(
+                        self.service_name,
+                        username,
+                        payload[start : start + _KEYRING_INDEX_PART_CHARACTERS],
+                    )
+                    written.append(username)
+            except Exception:
+                self._delete_index_parts(written)
+                raise
+            # Publish only after every part is durable. A root write can commit
+            # then raise, so retain the new parts when its outcome is uncertain.
+            self._keyring.set_password(
+                self.service_name,
+                _KEYRING_INDEX_USERNAME,
+                json.dumps(header, separators=(",", ":")),
+            )
+        self._delete_index_parts(previous_parts)
+
+    def _delete_index_parts(self, usernames: list[str]) -> None:
+        """Clean unreferenced metadata without invalidating the committed index."""
+        for username in usernames:
+            try:
+                if self._keyring.get_password(self.service_name, username) is not None:
+                    self._keyring.delete_password(self.service_name, username)
+            except Exception as error:  # noqa: BLE001 - cleanup must preserve the committed index.
+                logger.warning(
+                    "Credential index cleanup failed (exception_category={}).",
+                    type(error).__name__,
+                )
 
     def _add_scope_to_index(self, scope: ServerCredentialScope) -> None:
         scopes = self._load_index()
@@ -556,7 +657,9 @@ class KeyringServerCredentialStore:
             finally:
                 self._drop_cached_reads()
 
-    def set_recovery_secret_if_absent(self, scope: ServerCredentialScope, secret: str) -> None:
+    def set_recovery_secret_if_absent(
+        self, scope: ServerCredentialScope, secret: str
+    ) -> None:
         """Create an operation-unique scope; never replace an existing value."""
         with _RECOVERY_SCOPE_LOCK:
             if self.get_scoped_secret(scope) is not None:
@@ -623,7 +726,10 @@ class KeyringServerCredentialStore:
         # Pre-task-31416 un-migrated entries were keyed directly on
         # server_id (profile == origin); only relevant when this clear
         # isn't narrowed to a different origin within a scoped profile.
-        if normalized_origin_value is None or normalized_origin_value == normalized_server_id:
+        if (
+            normalized_origin_value is None
+            or normalized_origin_value == normalized_server_id
+        ):
             for purpose in _KNOWN_SERVER_CREDENTIAL_PURPOSES:
                 self.delete_scoped_secret(
                     ServerCredentialScope.legacy(normalized_server_id, purpose)
@@ -636,12 +742,12 @@ class KeyringServerCredentialStore:
 
 
 __all__ = [
-    "CredentialStoreUnavailable",
     "DEFAULT_KEYRING_SERVICE_NAME",
     "SERVER_CREDENTIAL_ACCESS_TOKEN",
     "SERVER_CREDENTIAL_API_KEY",
     "SERVER_CREDENTIAL_BEARER_TOKEN",
     "SERVER_CREDENTIAL_REFRESH_TOKEN",
+    "CredentialStoreUnavailable",
     "InMemoryServerCredentialStore",
     "KeyringServerCredentialStore",
     "ServerCredentialRef",
