@@ -328,3 +328,6 @@ idx_note_links_target	plan-pinned	Tests/Notes/test_note_backlink_query.py::test_
 idx_collkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
 idx_convkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
 idx_notekw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
+idx_dream_track_runs_item	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_recent_track_runs + consecutive_track_dispositions ordering; tldw_chatbook/DB/Dreams_DB.py)
+idx_dream_tracked_status	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_tracked_items status filter + count_active_tracked; tldw_chatbook/DB/Dreams_DB.py)
+idx_dream_tracked_origin_story	plan-pinned	Tests/Dreams/test_dreams_db_track.py (find_tracked_by_story active-only lookup; per-story badge read; tldw_chatbook/DB/Dreams_DB.py)
