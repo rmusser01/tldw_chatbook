@@ -253,6 +253,97 @@ def test_research_older_migration_preserves_committed_rows(tmp_path):
         ).fetchall() == [("nebula", 0)]
 
 
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+def test_prompt_v4_staged_migration_preserves_source_and_prompt_data(
+    core_store,  # noqa: F811
+    tmp_path,
+):
+    from shutil import copyfile
+
+    name, source, store, db = core_store
+    seed_domain(name, store)
+    db.execute("DROP TABLE LocalPromptDrafts")
+    db.execute("UPDATE schema_version SET version=4")
+    db.commit()
+    store.close()
+    before = source.read_bytes()
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    with open_recovery_validation(owner.owner_id, source, writable=False) as db:
+        expected = db.execute("SELECT * FROM Prompts ORDER BY id").fetchall()
+    candidate = tmp_path / "candidate.db"
+    copyfile(source, candidate)
+    assert validate_candidate(owner, candidate, Event(), migrate=True) == ()
+    assert validation.validated_schema_version(owner, candidate, Event()) == 5
+    assert source.read_bytes() == before
+    with closing(sqlite3.connect(candidate)) as db:
+        assert db.execute("SELECT * FROM Prompts ORDER BY id").fetchall() == expected
+        assert db.execute(
+            "SELECT count(*) FROM prompts_fts WHERE prompts_fts MATCH 'nebula'"
+        ).fetchone() == (1,)
+        assert db.execute("SELECT count(*) FROM LocalPromptDrafts").fetchone() == (0,)
+        db.execute(
+            "INSERT INTO LocalPromptDrafts (content,created_at,updated_at) "
+            "VALUES ('Retained draft','2026-09-29','2026-09-29')"
+        )
+        db.commit()
+    assert validate_candidate(owner, candidate, Event(), migrate=False) == ()
+
+
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("version", [4, 5])
+def test_prompt_migration_rejects_extra_trigger_before_writing(core_store, version):  # noqa: F811
+    _, path, store, db = core_store
+    if version == 4:
+        db.execute("DROP TABLE LocalPromptDrafts")
+        db.execute("UPDATE schema_version SET version=4")
+    db.execute(
+        "CREATE TRIGGER surprise AFTER UPDATE ON schema_version "
+        "BEGIN SELECT load_extension('hostile'); END"
+    )
+    db.commit()
+    store.close()
+    before = path.read_bytes()
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "unsupported_schema",
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_prompt_failed_migration_rolls_back_created_table(
+    core_store,  # noqa: F811
+    cancelled,
+    monkeypatch,
+):
+    _, path, store, db = core_store
+    db.execute("DROP TABLE LocalPromptDrafts")
+    db.execute("UPDATE schema_version SET version=4")
+    db.commit()
+    store.close()
+    cancel = Event()
+    authorize = validation._Restrictions.authorize
+
+    def refuse_index(self, action, first, second, database, source):
+        if (
+            action == sqlite3.SQLITE_CREATE_INDEX
+            and first == "idx_local_prompt_drafts_updated"
+        ):
+            if cancelled:
+                cancel.set()
+            return sqlite3.SQLITE_DENY
+        return authorize(self, action, first, second, database, source)
+
+    monkeypatch.setattr(validation._Restrictions, "authorize", refuse_index)
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    assert validate_candidate(owner, path, cancel, migrate=True) == (
+        "cancelled" if cancelled else "sqlite_validation_unavailable",
+    )
+    assert validation.validated_schema_version(owner, path, Event()) == 4
+    assert owner.validate(path) == ()
+
+
 @pytest.mark.parametrize(
     "sql",
     [

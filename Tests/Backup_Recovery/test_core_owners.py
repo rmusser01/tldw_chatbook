@@ -124,10 +124,13 @@ def test_schema_policy_matches_installed_store(core_store):
     )
     policy = adapter.schema_policy()
     assert policy is not None
-    assert policy.versions == (owner._CURRENT_SCHEMA_VERSION,)
+    assert policy.versions == (
+        (5, 4) if name == "prompts" else (owner._CURRENT_SCHEMA_VERSION,)
+    )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
-    assert len(policy.schema_sql) == (2 if name == "chachanotes" else 1)
-    assert policy.migration_steps == ()
+    assert len(policy.schema_sql) == (2 if name in {"chachanotes", "prompts"} else 1)
+    if name != "prompts":
+        assert policy.migration_steps == ()
 
 
 def test_native_maintenance_mints_scoped_capture_authority(tmp_path):
@@ -151,6 +154,61 @@ def adapter_for(name):
         == "db."
         + name
         + (".primary" if name in ("chachanotes", "media", "prompts") else "")
+    )
+
+
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("version", [4, 5])
+def test_prompt_reader_accepts_current_and_retained_schema(core_store, version):
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        validate_candidate,
+        validated_schema_version,
+    )
+
+    _, source, owner, connection = core_store
+    if version == 4:
+        connection.execute("DROP TABLE LocalPromptDrafts")
+        connection.execute("UPDATE schema_version SET version=4")
+    else:
+        connection.execute(
+            "INSERT INTO LocalPromptDrafts (content,created_at,updated_at) "
+            "VALUES (?,?,?)",
+            ("Retained draft", "2026-09-29", "2026-09-29"),
+        )
+    connection.commit()
+    owner.close()
+    before = source.read_bytes()
+    adapter = adapter_for("prompts")
+    assert adapter.validate(source) == ()
+    assert validate_candidate(adapter, source, Event(), migrate=False) == ()
+    assert validated_schema_version(adapter, source, Event()) == version
+    assert source.read_bytes() == before
+
+
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("version,stamp", [(4, 5), (5, 4)])
+def test_prompt_schema_rejects_other_supported_version_stamp(
+    core_store, version, stamp
+):
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+
+    _, source, owner, connection = core_store
+    if version == 4:
+        connection.execute("DROP TABLE LocalPromptDrafts")
+    connection.execute("UPDATE schema_version SET version=?", (stamp,))
+    connection.commit()
+    owner.close()
+    adapter = adapter_for("prompts")
+    assert adapter.validate(source) == ("unsupported_schema_version",)
+    assert validate_candidate(adapter, source, Event(), migrate=False) == (
+        "unsupported_schema_version",
+    )
+    assert validate_candidate(adapter, source, Event(), migrate=True) == (
+        "unsupported_schema_version",
     )
 
 

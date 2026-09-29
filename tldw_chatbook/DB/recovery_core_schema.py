@@ -1,10 +1,20 @@
 """Exact current core sqlite_schema SQL, captured from installed domain constructors.
 
 Provenance: TASK-32562, dev a3142cb35 merge qualification.
+Prompts v5: TASK-33422, installed native v4-to-v5 migration qualification.
 Captured from fresh actual constructors in private test directories and checked
 by test_schema_policy_matches_installed_store. Requalification must compare actual schemas,
-not change version labels or silently normalize SQL. Historical schemas unsupported.
+not change version labels or silently normalize SQL. Only declared historical variants
+are supported; Prompts v4 is retained alongside its installed v5 catalog.
 """
+
+PROMPTS_DRAFTS_TABLE_SQL = "CREATE TABLE LocalPromptDrafts (\n                        draft_id INTEGER PRIMARY KEY AUTOINCREMENT,\n                        content TEXT NOT NULL CHECK(length(trim(content)) > 0),\n                        created_at TEXT NOT NULL,\n                        updated_at TEXT NOT NULL,\n                        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1)\n                    )"
+PROMPTS_DRAFTS_INDEX_SQL = "CREATE INDEX idx_local_prompt_drafts_updated\n                    ON LocalPromptDrafts(updated_at DESC, draft_id DESC)\n                    "
+PROMPTS_V4_TO_V5_SQL = (
+    PROMPTS_DRAFTS_TABLE_SQL,
+    PROMPTS_DRAFTS_INDEX_SQL,
+    "UPDATE schema_version SET version = 5 WHERE version = 4",
+)
 
 CORE_SCHEMAS = (
     (
@@ -640,8 +650,9 @@ CORE_SCHEMAS = (
     ),
     (
         'db.prompts.primary',
-        4,
+        5,
         (
+            PROMPTS_DRAFTS_INDEX_SQL,
             "CREATE INDEX idx_promptkeywordlinks_keyword_id ON PromptKeywordLinks(keyword_id)",
             "CREATE INDEX idx_promptkeywordlinks_prompt_id ON PromptKeywordLinks(prompt_id)",
             "CREATE INDEX idx_promptkeywordstable_deleted ON PromptKeywordsTable(deleted)",
@@ -657,6 +668,7 @@ CORE_SCHEMAS = (
             "CREATE INDEX idx_sync_log_entity_uuid ON sync_log(entity_uuid)",
             "CREATE INDEX idx_sync_log_prompt_history\n        ON sync_log (\n            entity,\n            entity_uuid,\n            change_id DESC,\n            operation\n        )\n        WHERE entity = 'Prompts'\n          AND operation IN ('create', 'update')\n    ",
             "CREATE INDEX idx_sync_log_ts ON sync_log(timestamp)",
+            PROMPTS_DRAFTS_TABLE_SQL,
             "CREATE TABLE PromptKeywordLinks ( -- Renamed from PromptKeywords for clarity\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        prompt_id INTEGER NOT NULL,\n        keyword_id INTEGER NOT NULL,\n        UNIQUE (prompt_id, keyword_id),\n        FOREIGN KEY (prompt_id) REFERENCES Prompts(id) ON DELETE CASCADE,\n        FOREIGN KEY (keyword_id) REFERENCES PromptKeywordsTable(id) ON DELETE CASCADE\n    )",
             "CREATE TABLE PromptKeywordsTable ( -- Renamed from Keywords to avoid clash if in same scope\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        keyword TEXT NOT NULL UNIQUE COLLATE NOCASE,\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT\n    )",
             "CREATE TABLE Prompts (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        name TEXT NOT NULL UNIQUE,\n        author TEXT,\n        details TEXT,\n        system_prompt TEXT, -- Renamed from 'system'\n        user_prompt TEXT,   -- Renamed from 'user'\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT\n    , prompt_format TEXT NOT NULL DEFAULT 'legacy', prompt_schema_version INTEGER, prompt_definition TEXT, artifact_type TEXT NOT NULL DEFAULT 'prompt'\n                    CHECK(artifact_type IN ('prompt', 'recipe')))",
@@ -731,6 +743,13 @@ CORE_SCHEMAS = (
     ),
 )
 
+
+# TASK-33422: retain the previously accepted exact v4 catalog for old archives.
+PROMPTS_V4_SCHEMA = tuple(
+    sql
+    for sql in next(row[2] for row in CORE_SCHEMAS if row[0] == "db.prompts.primary")
+    if sql not in (PROMPTS_DRAFTS_TABLE_SQL, PROMPTS_DRAFTS_INDEX_SQL)
+)
 
 # TASK-31989: the shipped native dictionary updater recreates this one trigger
 # with fixed indentation. Retain both exact full schemas; never normalize SQL

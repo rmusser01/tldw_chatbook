@@ -142,6 +142,8 @@ class _Restrictions:
                 allowed.add("canvas_revision_payload_valid")
             if self.migrating:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
+                if self.migration_owner == "db.prompts.primary":
+                    allowed.add("trim")
             return sqlite3.SQLITE_OK if second in allowed else sqlite3.SQLITE_DENY
         if action == sqlite3.SQLITE_PRAGMA:
             reads = {
@@ -190,6 +192,23 @@ class _Restrictions:
                     and second in {"agent_definitions", "agent_runs"}
                     or action == sqlite3.SQLITE_INSERT
                     and first in {"sqlite_master", "schema_version"}
+                )
+                if allowed:
+                    return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.prompts.primary":
+                allowed = (
+                    action == sqlite3.SQLITE_CREATE_TABLE
+                    and first == "LocalPromptDrafts"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and first == "idx_local_prompt_drafts_updated"
+                    and second == "LocalPromptDrafts"
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first == "idx_local_prompt_drafts_updated"
+                    or action == sqlite3.SQLITE_INSERT
+                    and first == "sqlite_master"
+                    or action == sqlite3.SQLITE_UPDATE
+                    and first == "schema_version"
+                    and second == "version"
                 )
                 if allowed:
                     return sqlite3.SQLITE_OK
