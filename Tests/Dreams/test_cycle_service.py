@@ -442,7 +442,8 @@ def _profile_row(db, text, facet="topic"):
     return dict(row) if row is not None else None
 
 
-def _seed_story_with_feedback(db, *, matched, kind, created_at=None):
+def _seed_story_with_feedback(db, *, matched, kind, created_at=None,
+                              story_kind="content"):
     """One story plus one feedback row with a CONTROLLED created_at."""
     collection = db.get_collection_by_date("2026-09-20")
     if collection is None:
@@ -459,7 +460,7 @@ def _seed_story_with_feedback(db, *, matched, kind, created_at=None):
         body="b",
         status="complete",
         source="web",
-        kind="content",
+        kind=story_kind,
         event_date=None,
         location=None,
         matched_topics=matched,
@@ -702,6 +703,168 @@ async def test_cycle_feeds_feedback_into_the_snapshot(dreams_db, settings,
     result = await run_cycle(_deps(dreams_db), trigger="manual")
     assert result["status"] == "complete"
     assert seen == [{"rust tui": 1}]
+
+
+# --- Goal query-angle feedback (task-33165) -----------------------------------
+#
+# The OTHER feedback half: goals never change weight; feedback on a story
+# whose matched_topics include a GOAL steers that goal's QUERY ANGLE
+# ("avoid: {story kind}" on less, "prefer: {story kind}" on any positive
+# kind; the newest non-neutral reaction replaces whatever came before).
+
+
+def _angles(db):
+    from tldw_chatbook.Dreams.cycle_service import _apply_goal_angles
+
+    _apply_goal_angles(db, now=NOW)
+
+
+def _goal_angle(db, text):
+    row = _profile_row(db, text, facet="goal")
+    return None if row is None else row["query_angle"]
+
+
+def test_goal_less_on_event_story_writes_avoid_angle_weight_immune(
+        dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: event"
+    # The goal's weight is untouched: angles steer, weights stay immune.
+    assert _profile_row(dreams_db, "visit japan",
+                        facet="goal")["weight"] == pytest.approx(0.9)
+
+
+def test_goal_positive_kinds_write_prefer_angle(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="more",
+                              story_kind="deal")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "prefer: deal"
+
+
+def test_goal_angle_positive_replaces_negative_and_back(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="kept",
+                              story_kind="deal")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "prefer: deal"
+    # And a negative after a positive replaces it right back.
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="social_opportunity")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: social_opportunity"
+
+
+def test_goal_angle_second_less_with_different_kind_replaces(
+        dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="deal")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: deal"
+
+
+def test_goal_angle_unknown_story_kind_maps_to_content(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="unknown")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: content"
+
+
+def test_goal_angle_exported_reaction_is_neutral(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"],
+                              kind="exported", story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") is None
+
+
+def test_topic_only_stories_never_touch_goal_angles(dreams_db, settings):
+    """A story matching only TOPIC rows steers no goal, ever."""
+    _fresh_topic(dreams_db, "rust tui", 0.5, source="user")
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="less",
+                              story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") is None
+    assert _profile_row(dreams_db, "visit japan",
+                        facet="goal")["weight"] == pytest.approx(0.9)
+
+
+def test_goal_angle_matched_text_is_normalized_against_profile_casing(
+        dreams_db, settings):
+    """Stories store lowercased matches; the goal row keeps its casing."""
+    _fresh_topic(dreams_db, "Visit Japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="more",
+                              story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "Visit Japan") == "prefer: event"
+
+
+def test_goal_angle_ignores_feedback_outside_the_window(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(
+        dreams_db, matched=["visit japan"], kind="less", story_kind="event",
+        created_at=(NOW - timedelta(days=15)).isoformat())
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") is None
+
+
+@pytest.mark.asyncio
+async def test_cycle_writes_goal_angle_and_goal_weight_stays_immune(
+        dreams_db, settings):
+    """End to end: the cycle's feedback stage steers the goal's angle."""
+    _seed_topics(dreams_db)
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+    assert result["status"] == "complete"
+    goal = _profile_row(dreams_db, "visit japan", facet="goal")
+    assert goal["query_angle"] == "avoid: event"
+    assert goal["weight"] == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_goal_angle_failure_degrades_without_killing_the_cycle(
+        dreams_db, settings, monkeypatch):
+    """A dead angle write is a note; the topic offset and cycle survive."""
+    from tldw_chatbook.Dreams import interest_profile
+
+    _seed_topics(dreams_db)
+    _fresh_topic(dreams_db, "rust tui", 0.5, source="user")
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("angle write refused")
+
+    monkeypatch.setattr(DreamsDB, "set_goal_query_angle", boom)
+    seen = []
+    real = interest_profile.snapshot
+
+    def spy(db, *, now_epoch, feedback=None):
+        seen.append(feedback)
+        return real(db, now_epoch=now_epoch, feedback=feedback)
+
+    monkeypatch.setattr(interest_profile, "snapshot", spy)
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+    assert result["status"] == "complete"
+    row = dreams_db.get_collection_by_date(_today())
+    assert "goal angle feedback failed" in row["degradation_notes"]
+    # The net (both matched texts, goal-derived included -- the SNAPSHOT is
+    # what applies it to topic rows only) still reached the snapshot: the
+    # angle failure took nothing else down with it.
+    assert seen == [{"rust tui": 1, "visit japan": -1}]
 
 
 # --- Budget / pool / ledger regressions (Qodo review) -------------------------

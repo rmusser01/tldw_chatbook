@@ -89,7 +89,7 @@ def test_fail_stale_generating_marks_only_old_generating_rows(db):
     cutoff = _iso_now()  # reclaim horizon, taken before the fresh row exists
     db.create_collection("2026-09-23", "scheduled", "d2")  # stays untouched
     # Backdate the first row via direct SQL so only it predates the horizon
-    # (the 15-minute stale-generating reclaim semantics the cycle relies on).
+    # (the 15-minute stale-reclaim semantics the cycle relies on).
     with db.transaction() as conn:
         conn.execute(
             "UPDATE dreams_collections SET created_at = '2020-01-01T00:00:00+00:00'"
@@ -98,3 +98,64 @@ def test_fail_stale_generating_marks_only_old_generating_rows(db):
     assert db.fail_stale_generating(cutoff) == 1
     assert db.get_collection_by_date("2026-09-22")["status"] == "failed"
     assert db.get_collection_by_date("2026-09-23")["status"] == "generating"
+
+
+# --- Goal query angle (task-33165: feedback steers angles, never weights) -----
+
+
+def _profile_row(db, facet, text):
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM dream_interest_profile WHERE facet = ? AND text = ?",
+            (facet, text),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def test_set_goal_query_angle_writes_goal_rows_only_and_never_weight(db):
+    db.upsert_profile_entry("goal", "visit japan", weight=1.0, searchable=1,
+                            source="user")
+    db.upsert_profile_entry("goal", "private wish", weight=0.9, searchable=0,
+                            source="user")
+    db.upsert_profile_entry("topic", "visit japan", weight=0.5, searchable=1,
+                            source="user")
+
+    db.set_goal_query_angle("goal", "visit japan", angle="avoid: event")
+    assert _profile_row(db, "goal", "visit japan")["query_angle"] == \
+        "avoid: event"
+    # The same text as a TOPIC stays untouched: the write is pinned to goal
+    # rows, and so is every other goal.
+    assert _profile_row(db, "topic", "visit japan")["query_angle"] is None
+    assert _profile_row(db, "goal", "private wish")["query_angle"] is None
+    # The angle write never carries weight math with it (goals stay immune).
+    assert _profile_row(db, "goal", "visit japan")["weight"] == 1.0
+
+
+def test_set_goal_query_angle_replaces_and_stamps_updated_at(db):
+    db.upsert_profile_entry("goal", "see a show", weight=1.0, searchable=1,
+                            source="user")
+    before = _profile_row(db, "goal", "see a show")["updated_at"]
+    db.set_goal_query_angle("goal", "see a show", angle="avoid: event")
+    db.set_goal_query_angle("goal", "see a show", angle="prefer: deal")
+    row = _profile_row(db, "goal", "see a show")
+    assert row["query_angle"] == "prefer: deal", "one note REPLACES, not adds"
+    assert row["updated_at"] >= before
+
+
+def test_set_goal_query_angle_none_clears_the_note(db):
+    """``angle=None`` is a real CLEAR, not a skipped update."""
+    db.upsert_profile_entry("goal", "visit japan", weight=1.0, searchable=1,
+                            source="user")
+    db.set_goal_query_angle("goal", "visit japan", angle="prefer: deal")
+    db.set_goal_query_angle("goal", "visit japan", angle=None)
+    assert _profile_row(db, "goal", "visit japan")["query_angle"] is None
+
+
+def test_set_goal_query_angle_rejects_non_goal_facet(db):
+    with pytest.raises(ValueError):
+        db.set_goal_query_angle("topic", "rust tui", angle="prefer: deal")
+
+
+def test_set_goal_query_angle_missing_row_is_benign_noop(db):
+    db.set_goal_query_angle("goal", "no such goal", angle="prefer: deal")
+    assert _profile_row(db, "goal", "no such goal") is None

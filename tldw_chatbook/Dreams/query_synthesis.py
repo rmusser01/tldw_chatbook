@@ -7,9 +7,15 @@ least one adjacent/serendipity angle so the cycle cannot collapse into
 fallback built straight from the top topics and searchable goals — a dead
 LLM still yields a cycle, just a less interesting one.
 
-Privacy gate (spec §Privacy, binding): a goal's text enters the payload or
-a fallback line ONLY when its ``searchable`` flag is 1; the filter runs
-before any payload or query string is built.
+Goal query angles (task-33165): a goal with feedback history carries a
+``query_angle`` steering note ("prefer: deal" / "avoid: event"); the
+payload's ``goal_angles`` map tells the model how to steer that goal's
+phrasing, and the deterministic fallback labels the goal's line with its
+angle so the preview keeps showing exactly what a degraded cycle searches.
+
+Privacy gate (spec §Privacy, binding): a goal's text — and, with it, its
+angle — enters the payload or a fallback line ONLY when its ``searchable``
+flag is 1; the filter runs before any payload or query string is built.
 """
 from __future__ import annotations
 
@@ -35,7 +41,10 @@ SYSTEM_PROMPT = (
     "something ADJACENT to their interests rather than the interests themselves "
     "(serendipity, not more of the same). When goals are given, goal texts drive "
     "event, deal, and social-opportunity query angles (tickets, dates, local "
-    "openings) while topics drive content angles. Queries must be "
+    "openings) while topics drive content angles. When goal_angles are given, each "
+    "entry steers that goal's query phrasing: \"prefer: deal\" leans that goal's "
+    "queries toward deals and similar opportunities, \"avoid: event\" steers away "
+    "from event angles. Queries must be "
     "self-contained for a "
     "search engine, may include the user's region verbatim when locality helps, "
     "and must never include anything except topics, goals, region, and search "
@@ -79,6 +88,20 @@ async def _invoke(chat: Callable[..., Any], *, system: str, user: str) -> Any:
     return result
 
 
+def _angle_of(goal: dict) -> str | None:
+    """A goal row's non-blank ``query_angle``, or ``None`` when unset."""
+    angle = str(goal.get("query_angle") or "").strip()
+    return angle or None
+
+
+def _goal_line(text: str, angle: str | None) -> str:
+    """A goal's fallback line, labeled with its steering angle when set."""
+    query = f"{text} events and tickets"
+    if angle:
+        query += f" (angled: {angle})"
+    return query
+
+
 async def synthesize_queries(
     chat: Callable[..., Any],
     *,
@@ -89,11 +112,13 @@ async def synthesize_queries(
     """Turn one interest snapshot into ``count`` search queries.
 
     Exactly one chat call is made. The user payload embeds the topic
-    texts, the SEARCHABLE goal texts, and the region verbatim; the system
-    prompt demands at least ``exploration_slots`` adjacent/serendipity
-    lines. Any chat failure — exception, empty or unusably short response
-    — falls back to a deterministic list built directly from the top
-    topics and searchable goals, so the cycle degrades instead of dying.
+    texts, the SEARCHABLE goal texts, the searchable goals' query angles
+    (``goal_angles``, task-33165 -- feedback steering, never weight), and
+    the region verbatim; the system prompt demands at least
+    ``exploration_slots`` adjacent/serendipity lines. Any chat failure —
+    exception, empty or unusably short response — falls back to a
+    deterministic list built directly from the top topics and searchable
+    goals, so the cycle degrades instead of dying.
 
     Args:
         chat: ``chat_api_call``-shaped callable (injected; Task 4 binds
@@ -109,15 +134,19 @@ async def synthesize_queries(
         Up to ``count`` query strings.
     """
     topics = [t["text"] for t in snapshot.get("topics", [])]
-    # PRIVACY GATE (spec §Privacy, binding): a goal's text may leave the
+    # PRIVACY GATE (spec §Privacy, binding): a goal's text -- and its
+    # angle, which names the user's reaction to that text -- may leave the
     # machine only when its ``searchable`` flag is 1. The filter runs HERE,
-    # before the payload exists, so an unsearchable goal's text appears
-    # nowhere in anything sent to the model.
-    goals = [str(g["text"]) for g in snapshot.get("goals", [])
-             if int(g.get("searchable", 1) or 0)]
+    # before the payload exists, so an unsearchable goal's text and angle
+    # appear nowhere in anything sent to the model.
+    searchable = [g for g in snapshot.get("goals", [])
+                  if int(g.get("searchable", 1) or 0)]
+    goal_pairs = [(str(g["text"]), _angle_of(g)) for g in searchable]
+    goal_angles = {text: angle for text, angle in goal_pairs if angle}
     region = (snapshot.get("region") or "").strip()
     user = json.dumps(
-        {"topics": topics, "goals": goals, "region": region, "count": count},
+        {"topics": topics, "goals": [text for text, _ in goal_pairs],
+         "goal_angles": goal_angles, "region": region, "count": count},
         ensure_ascii=False,
     )
     try:
@@ -132,7 +161,7 @@ async def synthesize_queries(
     except Exception as exc:  # noqa: BLE001 - degradation, not a crash path
         logger.warning("Dreams query synthesis chat call failed; using fallback: {}",
                        type(exc).__name__)
-    return [row["query"] for row in _fallback_queries(topics, goals, count)]
+    return [row["query"] for row in _fallback_queries(topics, goal_pairs, count)]
 
 
 def preview_queries(
@@ -148,26 +177,29 @@ def preview_queries(
     synthesis call. The fallback is exposed publicly so neither consumer
     imports the private helper (controller-authorized wrapper, Task 7).
     Rows carry ``goal_derived`` so the preview can label which lines came
-    from goals; the same privacy gate as synthesis applies — unsearchable
-    goals are filtered here and never contribute a line.
+    from goals, and a goal with a query angle gets its line labeled
+    ``(angled: ...)`` (task-33165); the same privacy gate as synthesis
+    applies — unsearchable goals are filtered here and never contribute a
+    line or an angle.
 
     Args:
         topics: Current snapshot topic texts, heaviest first.
-        goals: The snapshot's goal rows (dicts carrying ``text`` and
-            ``searchable``); searchable filtering happens inside.
+        goals: The snapshot's goal rows (dicts carrying ``text``,
+            ``searchable``, and optionally ``query_angle``); searchable
+            filtering happens inside.
         count: The cycle's query budget (``queries_per_cycle``).
 
     Returns:
         ``{"query": str, "goal_derived": bool}`` rows, the same list
         ``_fallback_queries`` builds.
     """
-    searchable = [str(g["text"]) for g in goals
+    searchable = [(str(g["text"]), _angle_of(g)) for g in goals
                   if int(g.get("searchable", 1) or 0)]
     return _fallback_queries(topics, searchable, count)
 
 
 def _fallback_queries(
-    topics: list[str], goals: list[str], count: int
+    topics: list[str], goals: list[tuple[str, str | None]], count: int
 ) -> list[dict]:
     """Deterministic degraded-cycle queries from the top topics and goals.
 
@@ -177,28 +209,33 @@ def _fallback_queries(
     topics-first order starved goals out of the fallback entirely -- an
     LLM failure then produced no goal-derived search or preview at all
     despite searchable goals being present. Round-robin puts the first
-    searchable goal in slot 2 whenever one exists, at every count.
+    searchable goal in slot 2 whenever one exists, at every count. A goal
+    carrying a query angle gets its line labeled with it (task-33165), so
+    the fallback the cycle would actually search stays identical to what
+    the preview shows.
 
     Args:
         topics: Snapshot topic texts, heaviest first.
-        goals: SEARCHABLE goal texts only (callers filter; this helper is
-            the privacy gate's innermost trust boundary).
+        goals: ``(text, angle_or_None)`` pairs, SEARCHABLE goals only
+            (callers filter; this helper is the privacy gate's innermost
+            trust boundary).
         count: Number of queries to return.
 
     Returns:
         ``{"query": str, "goal_derived": bool}`` rows -- alternating
         ``"<topic> recent developments"`` / ``"<goal> events and
-        tickets"`` lines (whichever pool runs out first drains the other
-        into the remaining slots), plus one ``"surprising adjacent to
-        <top topic>"`` line, capped at ``count`` with one slot always
+        tickets"`` lines (an angled goal's line suffixed
+        ``(angled: <note>)``; whichever pool runs out first drains the
+        other into the remaining slots), plus one ``"surprising adjacent
+        to <top topic>"`` line, capped at ``count`` with one slot always
         reserved for the exploration line.
     """
     interleaved: list[dict] = []
     for topic, goal in zip_longest(
         ({"query": f"{t} recent developments", "goal_derived": False}
          for t in topics),
-        ({"query": f"{g} events and tickets", "goal_derived": True}
-         for g in goals),
+        ({"query": _goal_line(text, angle), "goal_derived": True}
+         for text, angle in goals),
     ):
         if topic is not None:
             interleaved.append(topic)
