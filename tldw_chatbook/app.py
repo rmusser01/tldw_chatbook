@@ -379,6 +379,23 @@ from tldw_chatbook.app_service_wiring import (
 # ``app_lifecycle.py`` (``LifecycleMixin``), a base class of ``TldwCli``.
 from tldw_chatbook.app_lifecycle import LifecycleMixin, _DIAGNOSTICS_COMPONENT_APP
 from tldw_chatbook.app_navigation import NavigationMixin
+# TASK-33011: the command-palette providers (and their key-display helpers) live in
+# ``app_command_providers.py``. ``TldwCli.COMMANDS`` names the classes, so they are
+# imported eagerly and re-exported here for callers that import them from app.py.
+from tldw_chatbook.app_command_providers import (
+    FOCUS_TOGGLE_PALETTE_ENTRY,
+    CharacterProvider,
+    DeveloperProvider,
+    LibraryIngestProvider,
+    MediaProvider,
+    PatternGalleryProvider,
+    QuickActionsProvider,
+    SettingsProvider,
+    SetupWizardProvider,
+    TabNavigationProvider,
+    ThemeProvider,
+    _bindings_to_shortcuts,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Terminal.backend import TerminalBackend
@@ -664,23 +681,6 @@ APP_CONFIG = load_settings()
 # Early logging configuration removed - handled by configure_application_logging() during app initialization
 
 
-# TASK-33011: the command-palette providers (and their key-display helpers) live in
-# ``app_command_providers.py``. ``TldwCli.COMMANDS`` names the classes, so they are
-# imported eagerly and re-exported here for callers that import them from app.py.
-from tldw_chatbook.app_command_providers import (
-    FOCUS_TOGGLE_PALETTE_ENTRY,
-    CharacterProvider,
-    DeveloperProvider,
-    LibraryIngestProvider,
-    MediaProvider,
-    PatternGalleryProvider,
-    QuickActionsProvider,
-    SettingsProvider,
-    SetupWizardProvider,
-    TabNavigationProvider,
-    ThemeProvider,
-    _bindings_to_shortcuts,
-)
 
 
 # --- Main App ---

@@ -11,7 +11,6 @@
 import time
 from types import SimpleNamespace
 
-from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 
 import pytest
@@ -21,6 +20,8 @@ from typing import List
 # 3rd-party Libraries
 from textual.app import App
 from textual.command import Hit
+
+from Tests.app_module_patches import patch_app_global
 
 # Local Imports
 import sys
