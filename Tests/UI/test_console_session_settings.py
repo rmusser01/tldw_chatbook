@@ -4561,16 +4561,21 @@ async def test_console_settings_body_uses_exact_twenty_line_content_ceiling() ->
         assert body.hint.region.height == 1
 
 
-def _one_row_settings_modal(app_config) -> ConsoleSettingsModal:
+def _one_row_settings_modal(
+    app_config, settings: ConsoleSessionSettings | None = None
+) -> ConsoleSettingsModal:
+    settings = settings or ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+        temperature=0.7,
+    )
+    providers_models = {"llama_cpp": ["model-a", "model-b"]}
+    providers_models.setdefault(settings.provider, [settings.model])
     return ConsoleSettingsModal(
-        settings=ConsoleSessionSettings(
-            provider="llama_cpp",
-            model="model-a",
-            base_url="http://127.0.0.1:9099",
-            temperature=0.7,
-        ),
+        settings=settings,
         app_config=app_config,
-        providers_models={"llama_cpp": ["model-a", "model-b"]},
+        providers_models=providers_models,
         context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
         can_save=True,
     )
@@ -4875,20 +4880,47 @@ def _assert_enum_selects_fit_their_options(screen, view: str) -> int:
     return checked
 
 
+#: Each chat shows different provider-choice Selects: llama.cpp (the default
+#: modal, which also shows every numeric and free-text field) shows Reasoning
+#: effort, OpenAI gpt-5 adds Reasoning summary and Verbosity, and Anthropic
+#: shows Thinking effort.
+_VALUE_TYPE_CHATS = {
+    "llama_cpp": (None, ("console-settings-reasoning-effort",)),
+    "openai": (
+        ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        (
+            "console-settings-reasoning-effort",
+            "console-settings-reasoning-summary",
+            "console-settings-verbosity",
+        ),
+    ),
+    "anthropic": (
+        ConsoleSessionSettings(provider="anthropic", model="claude-opus-4-8"),
+        ("console-settings-thinking-effort",),
+    ),
+}
+
+
+@pytest.mark.parametrize("chat", sorted(_VALUE_TYPE_CHATS))
 @pytest.mark.asyncio
-async def test_console_settings_fields_are_sized_by_value_type() -> None:
+async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
     """TASK-33003.3: a field is as wide as its value type, not the viewport.
 
     Under the production stylesheets, with every section expanded: numeric
     fields are at most 12 columns (edge included), each enum Select is its
     longest option plus the arrow, free-text fields stay within 64 columns,
-    and no width changes between 211x44 and 235x52.
+    and no width changes between 211x44 and 235x52. Parametrized over three
+    chats so every provider-choice Select renders in at least one.
     """
+    settings, choice_ids = _VALUE_TYPE_CHATS[chat]
+    shown_ids = choice_ids
+    if settings is None:
+        shown_ids += _NUMERIC_FIELD_IDS + _FREE_TEXT_FIELD_IDS
     widths_by_size: dict[tuple[int, int], dict[str, int]] = {}
     for size in ((211, 44), (235, 52)):
         app = StyledModalHarness()
         async with app.run_test(size=size) as pilot:
-            await app.push_screen(_one_row_settings_modal(app.app_config))
+            await app.push_screen(_one_row_settings_modal(app.app_config, settings))
             await pilot.pause()
             screen = app.screen
             for section in screen.query(Collapsible):
@@ -4903,10 +4935,12 @@ async def test_console_settings_fields_are_sized_by_value_type() -> None:
             widths |= _shown_field_widths(screen)
             selects += _assert_enum_selects_fit_their_options(screen, "context")
         assert selects >= 7, (size, selects)
+        for field_id in shown_ids:
+            assert widths.get(field_id, 0) > 0, (size, field_id)
         for field_id in _NUMERIC_FIELD_IDS:
-            assert 0 < widths.get(field_id, 0) <= 12, (size, field_id, widths.get(field_id))
+            assert widths.get(field_id, 0) <= 12, (size, field_id, widths.get(field_id))
         for field_id in _FREE_TEXT_FIELD_IDS:
-            assert 0 < widths.get(field_id, 0) <= 64, (size, field_id, widths.get(field_id))
+            assert widths.get(field_id, 0) <= 64, (size, field_id, widths.get(field_id))
         widths_by_size[size] = widths
     assert widths_by_size[(211, 44)] == widths_by_size[(235, 52)]
 

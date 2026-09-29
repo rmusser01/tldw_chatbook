@@ -4,7 +4,8 @@ Copy to Tests/UI/test_zz_task3_probe_tmp.py and run from the tree root with
 PROBE_OUT=<dir> PROBE_TAG=<before|after> python -m pytest <that file> -n0.
 Writes painted-text captures and every shown field's width (Model view with
 all sections expanded, and the Context view) at 211x44 and 235x52, for a
-llama.cpp chat and an OpenAI gpt-5 chat (which shows more choice rows).
+llama.cpp chat, an OpenAI gpt-5 chat (Reasoning effort, Reasoning summary
+and Verbosity) and an Anthropic chat (Thinking effort; fix round 1).
 """
 import io
 import os
@@ -25,6 +26,7 @@ TAG = os.environ.get("PROBE_TAG", "x")
 CHATS = {
     "llamacpp": dict(provider="llama_cpp", model="model-a", base_url="http://127.0.0.1:9099", temperature=0.7, max_tokens=4096),
     "openai": dict(provider="openai", model="gpt-5", temperature=1.0, max_tokens=8192),
+    "anthropic": dict(provider="anthropic", model="claude-opus-4-8", max_tokens=8192),
 }
 
 
@@ -51,7 +53,7 @@ async def test_probe(size, chat):
         await app.push_screen(ConsoleSettingsModal(
             settings=ConsoleSessionSettings(**CHATS[chat]),
             app_config=app.app_config,
-            providers_models={"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-5", "gpt-4.1"]},
+            providers_models={"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-5", "gpt-4.1"], "anthropic": ["claude-opus-4-8"]},
             context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
             can_save=True,
         ))
@@ -67,7 +69,7 @@ async def test_probe(size, chat):
         await pilot.pause(); await pilot.pause()
         _dump(screen, lines, "model-expanded")
         body = screen.query_one("#console-settings-body")
-        body.scroll_to(y=body.max_scroll_y // 2 if chat == "openai" else 14, animate=False)
+        body.scroll_to(y=body.max_scroll_y // 2 if chat != "llamacpp" else 14, animate=False)
         await pilot.pause(); await pilot.pause()
         with open(os.path.join(OUT, f"modal-model-expanded-{tag}.txt"), "w") as fh:
             fh.write(_text(app))
