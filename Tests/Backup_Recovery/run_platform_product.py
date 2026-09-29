@@ -917,9 +917,45 @@ def _publish_native_failures(private_root: Path, artifacts: Path) -> None:
         failures.append(
             _native_failure_metadata(json.loads(path.read_text(encoding="utf-8")))
         )
-    if failures:
+    children = []
+    for path in sorted(
+        (private_root / "native-failures" / "child-stacks").glob("*.json")
+    ):
+        label = re.fullmatch(
+            r"(setup|capture|transfer|negative|read|read-rollback)--(default|retargeted)--[1-9][0-9]{0,9}",
+            path.stem,
+        )
+        if path.is_symlink() or label is None:
+            raise RuntimeError("unsafe_native_child_diagnostic")
+        snapshots = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(snapshots, list):
+            raise TypeError("unsafe_native_child_samples")
+        samples = []
+        for snapshot in snapshots[-4:]:
+            if not isinstance(snapshot, list) or len(snapshot) > 32:
+                raise RuntimeError("unsafe_native_child_threads")
+            samples.append(
+                [
+                    {
+                        "frames": _native_failure_metadata(
+                            {
+                                "error_class": "ThreadSnapshot",
+                                "frames": thread["frames"],
+                            }
+                        )["frames"]
+                    }
+                    for thread in snapshot
+                ]
+            )
+        children.append({"route": label[1], "role": label[2], "samples": samples})
+    if failures or children:
         _write_json(
-            artifacts / "native-failures.json", {"schema": 1, "failures": failures}
+            artifacts / "native-failures.json",
+            {
+                "schema": 1,
+                "failures": failures,
+                **({"children": children} if children else {}),
+            },
         )
 
 

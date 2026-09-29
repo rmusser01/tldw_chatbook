@@ -6,11 +6,146 @@ import os
 import stat
 import sys
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
 
 from Tests.Backup_Recovery import run_platform_product as runner
+
+
+def test_native_fixture_installs_owners_before_destination_discovery(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery import (
+        inventory,
+        owner_registry,
+        recovery_service,
+    )
+
+    class DiscoveryReached(Exception):
+        pass
+
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    config = SimpleNamespace(set_encryption_password=lambda password: None)
+    monkeypatch.setattr(tldw_chatbook, "config", config, raising=False)
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
+    monkeypatch.setattr(
+        recovery_service, "RecoveryService", lambda root: SimpleNamespace()
+    )
+    monkeypatch.setattr(recovery_service, "default_control_root", lambda: tmp_path)
+
+    def discover(*args, **kwargs):
+        assert "db.prompts.primary" in {
+            row.owner_id for row in owner_registry.registered()
+        }
+        raise DiscoveryReached()
+
+    source = tmp_path / "source-linux.age"
+    source.with_suffix(".json").write_text(json.dumps({"system": "Linux"}))
+    monkeypatch.setattr(inventory, "discover", discover)
+    with pytest.raises(DiscoveryReached):
+        product._transfer(source)
+
+
+def test_native_child_thread_samples_publish_only_safe_late_frames(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook
+    from Tests.Backup_Recovery import thread_diagnostics
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    monkeypatch.setenv("TLDW_NATIVE_FAILURE_ROOT", str(failure_root))
+    monkeypatch.setenv(
+        "TLDW_TEST_INSTALLED_PACKAGE",
+        str(Path(tldw_chatbook.__file__).resolve().parents[1]),
+    )
+    monkeypatch.setattr(sys, "argv", ["native.py", "setup", "default"])
+    monkeypatch.setattr(runner, "validate_native_credential_environment", lambda: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "Tests.network_guard",
+        SimpleNamespace(install=lambda: None, blocked_attempts=list),
+    )
+    for name in ("sounddevice", "pyaudio"):
+        monkeypatch.setitem(sys.modules, name, None)
+    observe = thread_diagnostics.observe_threads
+    monkeypatch.setattr(
+        thread_diagnostics,
+        "observe_threads",
+        lambda path, *, interval: observe(path, interval=0.01),
+    )
+    sampled = Event()
+    snapshot = thread_diagnostics._snapshot
+
+    def acknowledged_snapshot():
+        rows = snapshot()
+        if any(
+            frame["function"] == "blocked_setup"
+            for row in rows
+            for frame in row["frames"]
+        ):
+            sampled.set()
+        return rows
+
+    monkeypatch.setattr(thread_diagnostics, "_snapshot", acknowledged_snapshot)
+
+    async def blocked_setup(role):
+        sensitive_fixture = "positive-native-secret"
+        assert sampled.wait(timeout=5)
+        assert sensitive_fixture
+
+    monkeypatch.setattr(product, "_setup", blocked_setup)
+    product._main()
+    stacks = next((failure_root / "child-stacks").glob("*.json"))
+    samples = json.loads(stacks.read_text())
+    for snapshot in samples:
+        for thread in snapshot:
+            thread["locals"] = "positive-native-secret"
+    stacks.write_text(json.dumps(samples))
+    (stacks.parent / "raw-fatal.log").write_text("positive-native-secret")
+    runner._publish_native_failures(private, artifacts)
+    path = artifacts / "native-failures.json"
+    projected = path.read_text()
+    child = json.loads(projected)["children"][0]
+    assert {"route": child["route"], "role": child["role"]} == {
+        "route": "setup",
+        "role": "default",
+    }
+    assert 1 <= len(child["samples"]) <= 4
+    assert any(
+        frame["function"] == "blocked_setup"
+        for snapshot in child["samples"]
+        for thread in snapshot
+        for frame in thread["frames"]
+    )
+    assert (
+        "positive-native-secret" not in projected
+        and '"thread"' not in projected
+        and '"locals"' not in projected
+    )
+    assert {item.name for item in artifacts.iterdir()} == {"native-failures.json"}
+
+    samples[-1][0]["frames"][0]["file"] = "../positive-native-secret.log"
+    stacks.write_text(json.dumps(samples))
+    with pytest.raises(RuntimeError):
+        runner._publish_native_failures(private, artifacts)
+    assert path.read_text() == projected
+
+    stacks.rename(stacks.with_name("setup--positive-native-secret--123.json"))
+    with pytest.raises(RuntimeError):
+        runner._publish_native_failures(private, artifacts)
+    assert path.read_text() == projected
+
+    monkeypatch.delenv("TLDW_NATIVE_FAILURE_ROOT")
+    product._main()
+    assert len(list(stacks.parent.glob("*.json"))) == 1
 
 
 @pytest.mark.parametrize(

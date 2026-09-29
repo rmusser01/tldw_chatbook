@@ -412,12 +412,14 @@ def _transfer(source):
     from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
     from tldw_chatbook.Backup_Recovery.inventory import discover
     from tldw_chatbook.Backup_Recovery.models import DiscoverySelections
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
     from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
     from tldw_chatbook.Backup_Recovery.recovery_service import (
         RecoveryService,
         default_control_root,
     )
 
+    install_adapters()
     config.set_encryption_password(CONFIG_PASSWORD)
     source_system = json.loads(source.with_suffix(".json").read_text())["system"]
     service = RecoveryService(default_control_root())
@@ -791,37 +793,64 @@ def test_native_credential_destinations(tmp_path, native_package):
     )
 
 
-if __name__ == "__main__":
+def _main():
+    """Run one installed native child with bounded private thread observations."""
     from Tests.Backup_Recovery.run_platform_product import (
         validate_native_credential_environment,
     )
+    from Tests.Backup_Recovery.thread_diagnostics import (
+        observe_threads,
+        snapshot_threads,
+        stop_observer,
+    )
     from Tests.network_guard import blocked_attempts, install
 
-    validate_native_credential_environment()
-    install()
-    for name in ("sounddevice", "pyaudio"):
-        sys.modules[name] = None
-    import tldw_chatbook
-
-    installed = Path(os.environ["TLDW_TEST_INSTALLED_PACKAGE"])
-    assert (
-        Path(tldw_chatbook.__file__).resolve()
-        == installed / "tldw_chatbook/__init__.py"
-    )
     route, role = sys.argv[1:3]
-    if route == "setup":
-        asyncio.run(_setup(role))
-    elif route == "capture":
-        asyncio.run(_capture())
-    elif route == "transfer":
-        _transfer(Path(sys.argv[3]))
-    elif route == "negative":
-        _negative_checks(Path(sys.argv[3]))
-    elif route in {"read", "read-rollback"}:
-        source_system = json.loads(Path(sys.argv[3]).with_suffix(".json").read_text())[
-            "system"
-        ]
-        _fresh_readback(source_system, rollback=route == "read-rollback")
-    else:
+    if route not in {
+        "setup",
+        "capture",
+        "transfer",
+        "negative",
+        "read",
+        "read-rollback",
+    } or role not in {"default", "retargeted"}:
         raise ValueError("unknown_native_qualification_route")
-    assert not blocked_attempts(), "native_fixture_network_attempt"
+    stop = lambda: None
+    if failure_root := os.environ.get("TLDW_NATIVE_FAILURE_ROOT"):
+        stacks = Path(failure_root) / "child-stacks"
+        stacks.mkdir(mode=0o700, exist_ok=True)
+        path = stacks / f"{route}--{role}--{os.getpid()}.json"
+        snapshot_threads(path)
+        stop = observe_threads(path, interval=10)
+    try:
+        validate_native_credential_environment()
+        install()
+        for name in ("sounddevice", "pyaudio"):
+            sys.modules[name] = None
+        import tldw_chatbook
+
+        installed = Path(os.environ["TLDW_TEST_INSTALLED_PACKAGE"])
+        assert (
+            Path(tldw_chatbook.__file__).resolve()
+            == installed / "tldw_chatbook/__init__.py"
+        )
+        if route == "setup":
+            asyncio.run(_setup(role))
+        elif route == "capture":
+            asyncio.run(_capture())
+        elif route == "transfer":
+            _transfer(Path(sys.argv[3]))
+        elif route == "negative":
+            _negative_checks(Path(sys.argv[3]))
+        else:
+            source_system = json.loads(
+                Path(sys.argv[3]).with_suffix(".json").read_text()
+            )["system"]
+            _fresh_readback(source_system, rollback=route == "read-rollback")
+        assert not blocked_attempts(), "native_fixture_network_attempt"
+    finally:
+        stop_observer(stop)
+
+
+if __name__ == "__main__":
+    _main()
