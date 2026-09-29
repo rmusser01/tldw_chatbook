@@ -31,7 +31,7 @@ from Tests.Backup_Recovery.native_package import (
 PASSWORD = b"task33422-disposable-synthetic-transfer"
 CONFIG_PASSWORD = "task33422-disposable-config-unlock"  # nosec B105 - synthetic fixtures only
 PURPOSES = ("api_key", "bearer_token", "access_token", "refresh_token")
-GROUPS = ("settings", "tools", "conversations")
+GROUPS = ("settings", "tools", "conversations", "evaluations")
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TLDW_CREDENTIAL_TRANSFER_ROOT"),
     reason="explicit_native_credential_lane_required",

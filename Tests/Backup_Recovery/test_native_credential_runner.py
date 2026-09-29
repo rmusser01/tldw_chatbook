@@ -490,6 +490,43 @@ def test_native_fixture_installs_owners_before_destination_discovery(
         product._transfer(source)
 
 
+@pytest.mark.parametrize("profile", ("default", "retargeted"))
+def test_native_source_groups_cover_active_evals_and_keep_prompts_unselected(
+    tmp_path, profile
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery.data_groups import resolve_inventory_groups
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+        Inventory,
+        StorageItem,
+        storage_logical_id,
+    )
+    from tldw_chatbook.Backup_Recovery.restore_groups import required_target_groups
+    from tldw_chatbook.Evals.recovery import recovery_adapters
+
+    path = tmp_path / "evals.db"
+    path.touch(mode=0o600)
+    context = DiscoveryContext(tmp_path / "config.toml", profile)
+    config = {
+        DISCOVERY_CONTEXT_KEY: context,
+        "database": {"evals_db_path": str(path)},
+    }
+    evals = next(row for row in recovery_adapters() if row.owner_id == "db.evals")
+    item = evals.discover(config)[0]
+    assert item.status == "included"
+    items = tuple(
+        StorageItem(owner, storage_logical_id(context, owner), None, "included", ())
+        for owner in ("config", "db.chachanotes.primary", "db.prompts.primary")
+    )
+    target = Inventory((*items, item), True, "fixture", ())
+    assert required_target_groups(target, product.GROUPS) == frozenset()
+    scope = resolve_inventory_groups(target.items, product.GROUPS)
+    assert item.logical_id in scope.member_ids
+    assert items[-1].logical_id not in scope.member_ids
+
+
 @pytest.mark.parametrize("stop_mode", ("isolated", "replace", "dependency-reviewed"))
 def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
     tmp_path, monkeypatch, stop_mode
