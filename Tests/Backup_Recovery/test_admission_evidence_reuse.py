@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -215,3 +216,213 @@ def test_reused_evidence_matches_the_full_derivation(
     assert reused == derived, f"{mutation}: reuse gave {reused}, derivation {derived}"
     if mutation in REFUSED_BY_THE_DERIVATION:
         assert derived[0] == "refused", f"{mutation} was expected to refuse: {derived}"
+
+
+def _count_derivations(monkeypatch) -> dict[str, int]:
+    """Count entries into the derivation's two expensive phases."""
+    calls = {"permission": 0, "scope": 0}
+    permission, scope = bootstrap.startup_permission, storage._scope
+
+    def counted_permission(*args, **kwargs):
+        calls["permission"] += 1
+        return permission(*args, **kwargs)
+
+    def counted_scope(*args, **kwargs):
+        calls["scope"] += 1
+        return scope(*args, **kwargs)
+
+    monkeypatch.setattr(bootstrap, "startup_permission", counted_permission)
+    monkeypatch.setattr(storage, "_scope", counted_scope)
+    return calls
+
+
+@pytest.mark.parametrize("bound", [True, False], ids=["bound", "unbound"])
+def test_a_warm_acquisition_reuses_evidence_without_rederiving(
+    local_scope, reuse_switch, monkeypatch, bound  # noqa: F811
+):
+    """Two bracketing derivations confirm the evidence; the next call skips both."""
+    root, config, data, _ = local_scope
+    if bound:
+        bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        calls = _count_derivations(monkeypatch)
+        warm = _verdict(target)
+    finally:
+        startup.close()
+
+    assert warm[0] == "allowed"
+    assert calls == {"permission": 0, "scope": 0}, calls
+
+
+def test_evidence_newer_than_the_settle_margin_is_not_reused(
+    local_scope, monkeypatch  # noqa: F811
+):
+    """Coarse clocks: stamps over a just-written file are never trusted yet."""
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 3_600 * 10**9)
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        calls = _count_derivations(monkeypatch)
+        assert _verdict(target)[0] == "allowed"
+    finally:
+        startup.close()
+
+    assert calls["permission"] >= 1, "evidence inside the settle margin was reused"
+
+
+class _Tracer:
+    """Record every absolute path the admission derivation touches (macOS only).
+
+    ``os`` functions are wrapped, and the wrappers are added to
+    ``os.supports_dir_fd``/``supports_follow_symlinks`` so the private-path
+    walk's capability check still passes. Descriptor-relative names are made
+    absolute with ``F_GETPATH``; ``open()`` of plain paths comes from the
+    ``open`` audit event.
+    """
+
+    def __init__(self, monkeypatch) -> None:
+        import fcntl
+
+        self.active = False
+        self.paths: set[str] = set()
+        self._fcntl = fcntl
+
+        def absolute(target, dir_fd=None) -> None:
+            if not self.active:
+                return
+            if isinstance(target, int):
+                self.paths.add(self._fd_path(target))
+            elif isinstance(target, (str, bytes, os.PathLike)):
+                name = os.fsdecode(target)
+                if dir_fd is not None and not os.path.isabs(name):
+                    name = os.path.join(self._fd_path(dir_fd), name)
+                self.paths.add(os.path.normpath(name))
+
+        def wrap(original):
+            def traced(target=".", *args, **kwargs):
+                absolute(target, kwargs.get("dir_fd"))
+                return original(target, *args, **kwargs)
+
+            return traced
+
+        wrapped = {name: wrap(getattr(os, name)) for name in
+                   ("open", "stat", "lstat", "listdir", "readlink")}
+        dir_fd = set(os.supports_dir_fd)
+        follow = set(os.supports_follow_symlinks)
+        fd_ok = set(os.supports_fd)
+        for name, fn in wrapped.items():
+            original = getattr(os, name)
+            if original in dir_fd:
+                dir_fd.add(fn)
+            if original in follow:
+                follow.add(fn)
+            if original in fd_ok:
+                fd_ok.add(fn)
+            monkeypatch.setattr(os, name, fn)
+        monkeypatch.setattr(os, "supports_dir_fd", dir_fd)
+        monkeypatch.setattr(os, "supports_follow_symlinks", follow)
+        monkeypatch.setattr(os, "supports_fd", fd_ok)
+
+        def audit(event, args):
+            # The open event omits dir_fd, so only absolute paths come from here;
+            # descriptor-relative opens are recorded by the os.open wrapper.
+            if (
+                event == "open"
+                and self.active
+                and isinstance(args[0], (str, os.PathLike))
+                and os.path.isabs(os.fsdecode(args[0]))
+            ):
+                absolute(args[0])
+
+        sys.addaudithook(audit)  # inert whenever self.active is False
+
+    def _fd_path(self, fd: int) -> str:
+        raw = self._fcntl.fcntl(fd, self._fcntl.F_GETPATH, bytes(1024))
+        return os.fsdecode(raw.split(b"\0", 1)[0])
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="maps descriptors with F_GETPATH")
+@pytest.mark.parametrize("bound", [True, False], ids=["bound", "unbound"])
+def test_the_evidence_stamps_every_path_the_derivation_reads(
+    local_scope, reuse_switch, monkeypatch, bound  # noqa: F811
+):
+    """Dependency completeness: nothing the full derivation reads is unstamped."""
+    root, config, data, _ = local_scope
+    if bound:
+        bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    reuse_switch(True)
+    tracer = _Tracer(monkeypatch)
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        hold = storage._holds[(os.getpid(), str(root))]
+        stamped = {
+            str(p)
+            for evidence in (
+                hold.evidence[str(config)],
+                *(hold.path_evidence.values() if bound else ()),
+            )
+            for group in (evidence.posture, evidence.content)
+            for p, _ in group
+        }
+        reuse_switch(False)
+        tracer.active = True
+        try:
+            assert _verdict(target)[0] == "allowed"
+        finally:
+            tracer.active = False
+    finally:
+        startup.close()
+
+    content_dirs = {
+        str(p)
+        for p, stamp in hold.evidence[str(config)].content
+        if stamp is not None and stat.S_ISDIR(os.stat(p).st_mode)
+    }
+    # _execution_selection_for resolves the selector and the target on every
+    # call, the reuse path included, so their chains need no evidence.
+    per_call = {str(p) for target_path in (config, target) for p in (
+        *target_path.parents, target_path)}
+
+    def covered(path: str) -> bool:
+        if path in stamped or path in per_call:
+            return True
+        # An absent entry of a content-stamped directory: creating it changes
+        # the directory's stamp.
+        return os.path.dirname(path) in content_dirs and not os.path.lexists(path)
+
+    assert str(root / "admission" / "registry.json") in tracer.paths, "trace saw nothing"
+    unstamped = sorted(p for p in tracer.paths if not covered(p))
+    assert not unstamped, "\n".join(unstamped)
+
+
+def test_an_in_process_admission_write_drops_reused_evidence(
+    local_scope, reuse_switch, monkeypatch  # noqa: F811
+):
+    """In-process writers advance the admission epoch; stamps then need not fire."""
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        bootstrap.advance_admission_epoch()
+        calls = _count_derivations(monkeypatch)
+        assert _verdict(target)[0] == "allowed"
+    finally:
+        startup.close()
+
+    assert calls["permission"] >= 1, "evidence survived an epoch advance"
