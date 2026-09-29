@@ -92,6 +92,7 @@ class _Restrictions:
         self.migration_owner = None
         self.canvas_schema = False
         self.changing_schema_trust = False
+        self.reading_fts_metadata = False
         connection.set_authorizer(self.authorize)
         connection.set_progress_handler(self.progress, _PROGRESS_INTERVAL)
 
@@ -163,6 +164,17 @@ class _Restrictions:
             )
             permitted |= self.migrating and first == "user_version"
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
+        if (
+            self.reading_fts_metadata
+            and action == sqlite3.SQLITE_UPDATE
+            and first == "sqlite_master"
+            and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+            and database == "main"
+            and source is None
+        ):
+            # SQLite 3.37 compiles, then discards, this declaration UPDATE
+            # while connecting an existing FTS5 table for table_xinfo.
+            return sqlite3.SQLITE_OK
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
@@ -266,14 +278,27 @@ def _catalog(connection):
     return tuple(rows)
 
 
-def _metadata(connection, catalog):
+def _metadata(connection, catalog, restrictions=None):
     def quote(name):
         return '"' + name.replace('"', '""') + '"'
 
     result = []
-    for kind, name, _, _ in catalog:
+    for kind, name, _, sql in catalog:
         if kind in ("table", "view"):
-            columns = tuple(connection.execute(f"PRAGMA table_xinfo({quote(name)})"))
+            if restrictions is not None:
+                restrictions.reading_fts_metadata = (
+                    kind == "table"
+                    and sql is not None
+                    and sql.startswith("CREATE VIRTUAL TABLE")
+                    and "USING fts5(" in sql
+                )
+            try:
+                columns = tuple(
+                    connection.execute(f"PRAGMA table_xinfo({quote(name)})")
+                )
+            finally:
+                if restrictions is not None:
+                    restrictions.reading_fts_metadata = False
             # Sequence reflects creation order, not index semantics.
             indexes = tuple(
                 sorted(
@@ -456,7 +481,10 @@ def _check(connection, owner, policy, restrictions):
         return ("unsupported_schema_version",), None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
         reference_catalog, metadata = _reference(matched[0][1])
-        if actual != reference_catalog or _metadata(connection, actual) != metadata:
+        if (
+            actual != reference_catalog
+            or _metadata(connection, actual, restrictions) != metadata
+        ):
             return ("unsupported_schema",), None
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             return ("invalid_domain_reference",), None

@@ -2,7 +2,7 @@
 
 import importlib
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from threading import Event
 
@@ -74,6 +74,196 @@ def test_real_installed_core_and_fts_survive(core_store):  # noqa: F811
             assert db.execute(
                 f"SELECT count(*) FROM {fts} WHERE {fts} MATCH 'nebula'"
             ).fetchone() == (1,)
+
+
+@pytest.fixture
+def legacy_fts_metadata(monkeypatch):
+    """Replay SQLite 3.37's declaration callbacks on a real frozen candidate."""
+    from tldw_chatbook.DB import private_sqlite
+
+    original = private_sqlite.open_recovery_validation
+
+    def install(
+        *,
+        query='PRAGMA table_xinfo("character_cards_fts")',
+        extra=None,
+        failure=None,
+    ):
+        observed = []
+
+        @contextmanager
+        def open_candidate(*args, **kwargs):
+            with original(*args, **kwargs) as (connection, restrictions):
+                observed.append(restrictions)
+
+                class Candidate:
+                    def __getattr__(self, name):
+                        return getattr(connection, name)
+
+                    def execute(self, sql):
+                        if sql == query:
+                            callbacks = [
+                                (
+                                    sqlite3.SQLITE_UPDATE,
+                                    "sqlite_master",
+                                    column,
+                                    "main",
+                                    None,
+                                )
+                                for column in (
+                                    "type",
+                                    "name",
+                                    "tbl_name",
+                                    "rootpage",
+                                    "sql",
+                                )
+                            ]
+                            if extra is not None:
+                                callbacks.append(extra)
+                            for callback in callbacks:
+                                if (
+                                    restrictions.authorize(*callback)
+                                    != sqlite3.SQLITE_OK
+                                ):
+                                    raise sqlite3.OperationalError(
+                                        "declaration refused"
+                                    )
+                            if failure == "prepare":
+                                raise sqlite3.OperationalError(
+                                    "metadata preparation failed"
+                                )
+                            if failure == "iterate":
+
+                                class FailedCursor:
+                                    def __iter__(self):
+                                        raise sqlite3.OperationalError(
+                                            "metadata iteration failed"
+                                        )
+
+                                return FailedCursor()
+                        return connection.execute(sql)
+
+                yield Candidate(), restrictions
+
+        monkeypatch.setattr(private_sqlite, "open_recovery_validation", open_candidate)
+        return observed
+
+    return install
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize("migrate", [False, True])
+def test_legacy_fts_metadata_accepts_frozen_candidate_without_changes(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    migrate,
+):
+    _, path, store, _ = core_store
+    store.close()
+    before = path.read_bytes()
+    observed = legacy_fts_metadata()
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+    assert path.read_bytes() == before
+    for column in ("type", "name", "tbl_name", "rootpage", "sql"):
+        assert (
+            observed[0].authorize(
+                sqlite3.SQLITE_UPDATE, "sqlite_master", column, "main", None
+            )
+            == sqlite3.SQLITE_DENY
+        )
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize("failure", ["prepare", "iterate"])
+def test_legacy_fts_metadata_refusal_closes_declaration_scope(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    failure,
+):
+    _, path, store, _ = core_store
+    store.close()
+    before = path.read_bytes()
+    observed = legacy_fts_metadata(failure=failure)
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=False) == (
+        "sqlite_validation_unavailable",
+    )
+    assert (
+        observed[0].authorize(
+            sqlite3.SQLITE_UPDATE, "sqlite_master", "type", "main", None
+        )
+        == sqlite3.SQLITE_DENY
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize(
+    "extra",
+    [
+        (sqlite3.SQLITE_UPDATE, "sqlite_master", "rowid", "main", None),
+        (sqlite3.SQLITE_UPDATE, "notes", "content", "main", None),
+        (sqlite3.SQLITE_UPDATE, "sqlite_master", "type", "temp", None),
+        (sqlite3.SQLITE_UPDATE, "sqlite_master", "type", "main", "surprise"),
+        (sqlite3.SQLITE_INSERT, "sqlite_master", None, "main", None),
+        (sqlite3.SQLITE_DELETE, "sqlite_master", None, "main", None),
+    ],
+)
+def test_legacy_fts_metadata_refuses_unrelated_writes(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    extra,
+):
+    _, path, store, _ = core_store
+    store.close()
+    before = path.read_bytes()
+    legacy_fts_metadata(extra=extra)
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "sqlite_validation_unavailable",
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize(
+    "query",
+    [
+        'PRAGMA table_xinfo("canvas_revisions")',
+        'PRAGMA index_list("character_cards_fts")',
+    ],
+)
+def test_legacy_fts_declaration_permission_is_only_for_fts_columns(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    query,
+):
+    _, path, store, _ = core_store
+    store.close()
+    legacy_fts_metadata(query=query)
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=False) == (
+        "sqlite_validation_unavailable",
+    )
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+def test_legacy_fts_metadata_does_not_inspect_uninstalled_catalog(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+):
+    _, path, store, _ = core_store
+    store.close()
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("CREATE VIRTUAL TABLE surprise USING fts5(content)")
+    before = path.read_bytes()
+    legacy_fts_metadata(failure="prepare")
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "unsupported_schema",
+    )
+    assert path.read_bytes() == before
 
 
 def test_owned_tts_reference_digest_checked_on_restricted_connection(tmp_path):
