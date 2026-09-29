@@ -1395,7 +1395,10 @@ def test_existing_mount_binds_before_screen_work() -> None:
 
 
 def test_unmount_closes_owned_tts_resources_from_outer_finally() -> None:
-    method = _method_node(REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "on_unmount")
+    # TASK-33011: TldwCli.on_unmount moved verbatim to LifecycleMixin.
+    method = _method_node(
+        REPO_ROOT / "tldw_chatbook/app_lifecycle.py", "LifecycleMixin", "on_unmount"
+    )
     close_calls = _self_method_calls(method, "_close_owned_tts_resources")
 
     assert len(close_calls) == 1

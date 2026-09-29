@@ -74,6 +74,9 @@ TERMINAL_RUNTIME_OWNERS = frozenset(
         # TASK-33011: the lazy `terminal_session_manager` property moved to
         # TldwCli's ServiceWiringMixin.
         "tldw_chatbook/app_service_wiring.py",
+        # TASK-33011: the terminal-session-manager shutdown moved to TldwCli's
+        # LifecycleMixin.
+        "tldw_chatbook/app_lifecycle.py",
     }
 )
 FORBIDDEN_SINKS = (
