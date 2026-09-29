@@ -1069,3 +1069,32 @@ def test_budget_expiry_mid_upload_is_op_timeout_and_keeps_the_warm_path(
     executor = _session_executor(env, sessions)  # a normal budget
     assert env.read(executor)["outcome"] == "success"
     assert len(sessions.spawns) == 2  # the key was not disabled: a session again
+
+
+def test_close_between_register_and_write_reacquires(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-33421: no tool error; the call gets a fresh session."""
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+    from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker
+
+    executor = _session_executor(env, sessions)
+    assert env.read(executor)["outcome"] == "success"
+    real_write = RemoteSessionWorker._write
+    raced = {"left": 1}
+
+    def reap_first(self, data, deadline):
+        if raced["left"] and self._alive:
+            raced["left"] -= 1
+            # Exactly what the idle reaper does, made synchronous: pop the
+            # session from the registry, then close it -- after this call
+            # registered its request and before any REQUEST byte is written.
+            registry_module.get_session_registry()._sessions.pop((sessions.key, "binding-1"), None)
+            self.close()
+        return real_write(self, data, deadline)
+
+    monkeypatch.setattr(RemoteSessionWorker, "_write", reap_first)
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2
+    registry = registry_module.get_session_registry()
+    assert (sessions.key, "binding-1") not in registry._restarted  # a reap costs no restart

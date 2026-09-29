@@ -782,3 +782,40 @@ def test_host_spawn_failure_is_status_preserving(worker_factory):
     result = worker._result(pending, 5.0, killed=False)
     assert not result.admitted
     assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
+
+
+def test_close_between_register_and_write_raises_session_closed(worker_factory, workspace, monkeypatch):
+    """TASK-33421: registered, then retired before any REQUEST byte: nothing was sent."""
+    worker, _ = worker_factory()
+    worker.start()
+    real_write = worker._write
+
+    def close_first(data, deadline):
+        worker.close()  # lands after registration, before the REQUEST write
+        return real_write(data, deadline)
+
+    monkeypatch.setattr(worker, "_write", close_first)
+    with pytest.raises(worker_module.SessionClosed):
+        worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert worker._pending == {}
+
+
+def test_cancel_write_on_closed_stdin_is_not_session_closed(worker_factory, workspace, monkeypatch):
+    """A REQUEST that was written is never retried, even if a later CANCEL finds stdin closed."""
+    worker, _ = worker_factory()
+    worker.start()
+    real_write = worker._write
+    calls = {"n": 0}
+
+    def close_before_cancel(data, deadline):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the CANCEL: the REQUEST already went out
+            worker.close()
+        return real_write(data, deadline)
+
+    monkeypatch.setattr(worker, "_write", close_before_cancel)
+    # The request's own budget (30 s) outlives the call's deadline
+    # (0.2 s + grace 1.0 s), so the laptop CANCELs before the watchdog ends it.
+    result = worker.call(grep_request(workspace, "(a+)+$", budget=30), budget=0.2)
+    assert calls["n"] == 2, "the CANCEL write was never reached"
+    assert result.failure is not None  # a classified failure, never SessionClosed

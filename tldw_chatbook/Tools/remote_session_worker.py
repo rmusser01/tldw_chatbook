@@ -105,8 +105,9 @@ class SessionStartError(Exception):
 
 class SessionClosed(Exception):
     """The laptop closed this healthy session (idle reap, run end, app
-    exit) before the call's request was registered: nothing was sent, so
-    the caller may ask the registry again (TASK-33401)."""
+    exit) before the call's request was registered (TASK-33401) or before
+    any byte of it was written (TASK-33421): nothing was sent, so the
+    caller may ask the registry again."""
 
 
 class _HandshakeFailed(Exception):
@@ -125,6 +126,11 @@ class _WriteStalled(Exception):
 class _NotSent(Exception):
     """Internal: the write lock stayed busy until the deadline; nothing was
     written and the stream is intact."""
+
+
+class _StdinClosed(BrokenPipeError):
+    """Internal: stdin was already closed (by ``close()``) before any byte
+    of this write went out -- distinct from a mid-write EPIPE."""
 
 
 def _checked_status(body: bytes) -> tuple[int | None, int | None]:
@@ -496,6 +502,7 @@ class RemoteSessionWorker:
                 the whole write window before the frame was out: the host is
                 not reading (and a partial frame corrupts the stream), so
                 the session must die.
+            _StdinClosed: stdin was closed before anything was written.
             OSError: The pipe broke (the process is gone).
         """
         if not self._write_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
@@ -506,7 +513,7 @@ class RemoteSessionWorker:
             # another thread's open) while this loop writes to it.
             stdin = self._proc.stdin  # type: ignore[union-attr]
             if stdin is None or stdin.closed:
-                raise BrokenPipeError("session stdin closed")
+                raise _StdinClosed("session stdin closed")
             fd = stdin.fileno()
             view = memoryview(data)
             write_deadline = max(deadline, time.monotonic() + self._transport.grace_seconds)
@@ -613,6 +620,11 @@ class RemoteSessionWorker:
         one-shot path's answer at once -- the worker's unadmitted
         ``invalid_request`` failure frame. The executor already refuses
         such requests while building them, so this is a defensive bound.
+
+        Raises:
+            SessionClosed: ``close()`` retired this healthy session before
+                any byte of the REQUEST was written (TASK-33401/33421); a
+                request that was written is never reported this way.
         """
         if len(request_bytes) > MAX_REQUEST_BYTES:
             return RemoteCallResult(False, _OVERSIZED_REQUEST_FRAME, None)
@@ -633,7 +645,15 @@ class RemoteSessionWorker:
         killed = False
         not_sent = False
         try:
-            self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
+            try:
+                self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
+            except _StdinClosed:
+                if self._retired:
+                    # close() retired this healthy session after the request
+                    # registered but before any REQUEST byte was written:
+                    # nothing ran, so the caller may ask again (TASK-33421).
+                    raise SessionClosed() from None
+                raise
             while not pending.done.is_set():
                 remaining = (pending.admitted_at or sent_at) + budget + grace - time.monotonic()
                 if remaining <= 0:
