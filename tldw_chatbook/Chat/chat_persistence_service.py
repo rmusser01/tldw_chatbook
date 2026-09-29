@@ -1,5 +1,6 @@
 import base64
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -174,6 +175,32 @@ _VOICE_PROMOTION_LOCATOR_EXEMPTIONS = frozenset(
         ("messages", "variant_of"),
     }
 )
+
+
+#: PERF-10 (TASK-33269): raised after exchange rows are appended, so parked
+#: legacy trace maintenance wakes on new work instead of polling the database
+#: once a second. ``append_message_exchanges`` is the only exchange writer.
+_TRACE_MAINTENANCE_WORK = threading.Event()
+
+
+def signal_trace_maintenance_work() -> None:
+    """Tell parked legacy trace maintenance that new exchange rows exist."""
+
+    _TRACE_MAINTENANCE_WORK.set()
+
+
+def consume_trace_maintenance_work_signal() -> bool:
+    """Return whether work was signalled since the last call, and clear it.
+
+    A signal raised between the check and the clear is not lost in practice:
+    its rows were committed before it was raised, so the maintenance pass the
+    caller is about to run reads them.
+    """
+
+    if _TRACE_MAINTENANCE_WORK.is_set():
+        _TRACE_MAINTENANCE_WORK.clear()
+        return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -3173,12 +3200,13 @@ class ChatPersistenceService:
         """
         try:
             self.db.append_message_exchanges_local(message_id, rows)
-            return True
         except Exception as exc:  # noqa: BLE001 -- best-effort capture flush
             logger.bind(message_id=message_id, error_type=type(exc).__name__).warning(
                 "exchange_append_failed"
             )
             return False
+        signal_trace_maintenance_work()
+        return True
 
     def list_full_exchange_keys_for_conversation(
         self, conversation_id: str
