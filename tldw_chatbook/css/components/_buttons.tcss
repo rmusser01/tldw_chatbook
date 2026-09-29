@@ -21,21 +21,22 @@ Button:hover {
     text-style: $ds-text-strong;
 }
 
-/* Enhanced focus state with visible, non-obscuring cues */
-Button:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    outline: none;
-}
-
-/* When both hovering AND focused */
+/* Enhanced focus state with visible, non-obscuring cues, hovered or not */
+Button:focus,
 Button:hover:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
 }
+
+/* TASK-33003.6: a variant keeps its fill on focus; the tint above made a
+   focused primary darker, so it read as disabled. Same specificity as
+   `Button:hover:focus` and later, so these win hovered too. */
+Button.-primary:focus { background: $primary; }
+Button.-success:focus { background: $success; }
+Button.-warning:focus { background: $warning; }
+Button.-error:focus { background: $error; }
 
 /* Disabled state.
    TASK-25822: the darkened surface plus muted-but-readable text IS the cue --

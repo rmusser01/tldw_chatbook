@@ -161,6 +161,26 @@ NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
     "#settings-discovered-models-list .selection-list--button-selected-highlighted",
 )
 
+# TASK-33065 / TASK-33003.6: where a list's highlighted row must read at 3:1
+# against the other rows (the shared $surface highlight measured 1.0-1.12:1),
+# it is an inverted bar -- the AA-pinned primary text tint as the fill, the
+# panel colour as the label -- measured rendered by the owning tests
+# (test_settings_theme_card_contrast.py, test_theme_contrast.py and
+# test_console_session_settings.py / test_settings_configuration_hub.py).
+NATIVE_CHOICE_BAR_OVERRIDES = (
+    "#settings-theme-list > .option-list--option-highlighted",
+    "ConsoleSettingsModal OptionList > .option-list--option-highlighted",
+    "ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted",
+    "#settings-providers-models-card OptionList > .option-list--option-highlighted",
+)
+
+
+def assert_native_choice_bar_contract(block: str) -> None:
+    assert "reverse" not in block
+    assert re.search(r"background: \$(text-primary|ds-active-fg);", block), block
+    assert "color: $ds-surface-panel;" in block
+    assert "text-style: bold;" in block
+
 
 def css_blocks(text: str, selector: str) -> list[str]:
     """Return CSS rule bodies whose selector lists contain selector."""
@@ -386,7 +406,10 @@ def assert_all_native_choice_selectors_follow_contracts(text: str) -> None:
     assert selected_selectors
     for selector in selected_selectors:
         for block in css_blocks(text, selector):
-            assert_native_row_selected_state_contract(block)
+            if selector in NATIVE_CHOICE_BAR_OVERRIDES:
+                assert_native_choice_bar_contract(block)
+            else:
+                assert_native_row_selected_state_contract(block)
 
     hover_selectors = [
         selector
@@ -1012,12 +1035,9 @@ def test_console_settings_modal_select_overlay_is_readable():
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
-        option = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option")
-        hover = css_block(
-            text, "ConsoleSettingsModal Select > SelectOverlay Option:hover"
-        )
-        selected = css_block(
-            text, "ConsoleSettingsModal Select > SelectOverlay Option.-selected"
+        highlighted = css_block(
+            LISTS.read_text(encoding="utf-8") + text,
+            "ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted",
         )
 
         assert "border: solid $ds-grid-line;" in overlay
@@ -1025,15 +1045,16 @@ def test_console_settings_modal_select_overlay_is_readable():
         assert "color: $ds-text-primary;" in overlay
         assert "padding: 0 1;" in overlay
         assert "min-width: 30;" in overlay
-        assert "background: $ds-surface-inspector;" in option
-        assert "color: $ds-text-primary;" in option
-        assert "min-height: 3;" in option
-        assert "background: $ds-input-focus-bg;" in hover
-        assert "color: $ds-text-primary;" in hover
-        assert "background: $ds-focus-bg;" in selected
-        assert "color: $ds-focus-fg;" in selected
-        assert "text-style: bold underline;" in selected
-        assert "reverse" not in overlay + option + hover + selected
+        # Deliberately rewritten for TASK-33003.6 AC#5: the three
+        # `SelectOverlay Option` rules this pinned never matched (Textual 8
+        # options are lines, not widgets) and were removed. The highlighted
+        # option is now a readable bar; its contrast is measured rendered in
+        # test_console_settings_select_highlight_is_a_readable_bar.
+        assert "ConsoleSettingsModal Select > SelectOverlay Option" not in text
+        assert "background: $ds-active-fg;" in highlighted
+        assert "color: $ds-surface-panel;" in highlighted
+        assert "text-style: bold;" in highlighted
+        assert "reverse" not in overlay + highlighted
 
 
 @pytest.mark.unit
@@ -1156,20 +1177,36 @@ def test_settings_detail_and_inspector_panes_scroll_long_content():
 
 
 def test_settings_category_active_states_use_selected_contract():
+    """Deliberately rewritten for TASK-33003.6 AC#6: this pinned one body for
+    the active row and the focused active row, so focus on the current
+    category was invisible. The intent holds -- a readable selected label and
+    no dominant geometry -- and the two focus states add a thick focus edge
+    whose column the base rule reserves as a blank edge, so focus costs no
+    row and moves no label (the rendered check is
+    test_settings_rail_focus_draws_a_readable_edge_on_every_row)."""
+    focus_edge = "border-left: thick $ds-active-fg;"
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         _bundle_union_text(),
     ):
+        base = css_block(text, "Button.settings-category-button")
+        assert "border-left: blank;" in base
         for selector in (
             ".settings-active-section",
             "Button.settings-category-button.settings-active-section",
-            "Button.settings-category-button.settings-active-section:focus",
             "Button.settings-category-button.settings-active-section:hover",
-            "Button.settings-category-button.settings-active-section:hover:focus",
         ):
             active = css_block(text, selector)
             assert_readable_selected_state_contract(active)
             assert_no_dominant_selected_geometry(active)
+        for selector in (
+            "Button.settings-category-button.settings-active-section:focus",
+            "Button.settings-category-button.settings-active-section:hover:focus",
+        ):
+            focused = css_block(text, selector)
+            assert_readable_selected_state_contract(focused)
+            assert focus_edge in focused, selector
+            assert_no_dominant_selected_geometry(focused.replace(focus_edge, ""))
 
 
 def test_acp_selected_session_row_uses_selected_contract():

@@ -3452,3 +3452,20 @@ a scratch HOME, XDG dirs, `TLDW_CONFIG_PATH` and `[paths].data_dir`, all set **b
 the first `tldw_chatbook` import. A `--rootdir` flag or a `sys.path` insert gives no
 isolation. Check afterwards: the real `config.toml` sha256 and the mtimes under
 `~/.local/share/tldw_cli/default_user` must be unchanged.
+
+## `capture-pane -e` colours carry across lines — parse the dump as one stream (TASK-33003.6, 2026-09-29)
+
+**What happened.** Measuring the Settings category rail's new focus edge from a
+`tmux capture-pane -p -e` dump, the first cells of every rail row came back with no
+background at all, so the edge's contrast could not be taken. The parser reset its
+colour state at every newline, like the Chat settings script before it. tmux writes an
+SGR sequence only when a colour changes, so a captured line starts in whatever state
+the previous line ended in: the rail row's raw text was
+`│\x1b[39m \x1b[38;2;0;255;0m \x1b[39m …` with no `48;2;…` until the fifth cell. The
+earlier script got away with it only because it measured cells that sat after an
+explicit sequence on the same line.
+
+**What to do.** Parse the whole dump as one stream and carry fg, bg and attributes
+across newlines (`qa/model-config-p3-2026-09-28/task-6/ansi_cells.py`, `rows()`). In a
+truecolor Textual capture every painted cell has a colour, so a `None` colour is a
+parser bug, not a transparent cell.

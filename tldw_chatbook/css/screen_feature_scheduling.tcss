@@ -10,7 +10,7 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-$ds-grid-line: $surface-lighten-1;
+$ds-grid-line: $tldw-boundary;
 $ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
@@ -22,7 +22,7 @@ $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
 $ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
-$ds-control-edge: $surface-lighten-2;
+$ds-control-edge: $tldw-boundary;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;

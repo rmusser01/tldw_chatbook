@@ -10,7 +10,7 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-$ds-grid-line: $surface-lighten-1;
+$ds-grid-line: $tldw-boundary;
 $ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
@@ -22,7 +22,7 @@ $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
 $ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
-$ds-control-edge: $surface-lighten-2;
+$ds-control-edge: $tldw-boundary;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;
@@ -444,6 +444,9 @@ Button.settings-category-button {
     content-align: left middle;
     text-align: left;
     background: $ds-surface-panel;
+    /* TASK-33003.6: the focus edge's column, blank (the row's own fill) at
+       rest, so focus moves no label. */
+    border-left: blank;
 }
 
 Button.settings-category-button.settings-active-section {
@@ -452,21 +455,28 @@ Button.settings-category-button.settings-active-section {
     text-style: bold underline;
 }
 
+/* TASK-33003.6 (WCAG 1.4.11): focus swapped only the fill (1.1:1). The cue
+   is now a thick edge in the readable primary tint, 3:1 on panel, surface
+   and the focus fill in every theme (test_theme_contrast.py). The text
+   colour and weight come from `#settings-shell Button:focus`, which
+   outranks these rules. */
 Button.settings-category-button:focus {
     outline: none;
+    border-left: thick $ds-active-fg;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold;
 }
 
-Button.settings-category-button.settings-active-section:focus {
+Button.settings-category-button.settings-active-section:focus,
+Button.settings-category-button.settings-active-section:hover:focus {
+    border-left: thick $ds-active-fg;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
 }
 
-Button.settings-category-button.settings-active-section:hover,
-Button.settings-category-button.settings-active-section:hover:focus {
+Button.settings-category-button.settings-active-section:hover {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -538,9 +548,14 @@ Button.settings-category-button.settings-secondary-search-match {
     color: $ds-text-muted;
 }
 
+/* TASK-33003.6: no `background` here. It was `$ds-surface-raised`, the
+   resting surface (design-language §2.7 forbids that alias): a focused
+   primary lost its fill, and on light themes Textual's focus tint pulled a
+   default button's fill toward the card (1.08:1 -> 1.02:1 in textual-light).
+   The fill now comes from components/_buttons.tcss: the focus tint, or a
+   variant's own colour. */
 #settings-shell Button:focus,
 #settings-shell Button:hover:focus {
-    background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold underline;
     outline: none;
@@ -1166,9 +1181,9 @@ Button.settings-category-group-toggle:focus {
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
+/* TASK-33003.6: fill from components/_buttons.tcss, as above. */
 .settings-action-row Button:focus,
 #settings-impact-pane Button:focus {
-    background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold underline;
     outline: none;

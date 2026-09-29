@@ -4807,6 +4807,102 @@ async def test_console_settings_focused_one_row_field_paints_value_and_focus_edg
         ).bgcolor
 
 
+def _painted_cell(screen, x: int, y: int):
+    """(glyph, fg, bg) the compositor paints at screen cell (x, y)."""
+    position = 0
+    for segment in screen._compositor.render_strips()[y]:
+        if position + len(segment.text) > x:
+            return segment.text[x - position], segment.style.color, segment.style.bgcolor
+        position += len(segment.text)
+    raise AssertionError(f"({x}, {y}) is off screen")
+
+
+def _painted_ratio(first, second) -> float:
+    from textual.color import Color
+
+    from tldw_chatbook.css.Themes.themes import _contrast_ratio
+
+    return _contrast_ratio(Color.from_rich_color(first), Color.from_rich_color(second))
+
+
+def _themed_modal_harness() -> "StyledModalHarness":
+    from tldw_chatbook.css.Themes.themes import agentic_terminal_theme
+
+    app = StyledModalHarness()
+    app.register_theme(agentic_terminal_theme)
+    return app
+
+
+@pytest.mark.parametrize("theme", ["agentic_terminal", "textual-light"])
+@pytest.mark.asyncio
+async def test_console_settings_select_highlight_is_a_readable_bar(theme) -> None:
+    """TASK-33003.6 AC#5: the highlighted option of an open Chat settings
+    Select differs from the other options by 3:1 and keeps its label
+    readable. The shared OptionList contract paints $surface over a $panel
+    overlay (1.12:1 measured), and the modal's `SelectOverlay Option` rules
+    never matched: Textual 8 options are lines, not widgets."""
+    from textual.widgets._select import SelectOverlay
+
+    app = _themed_modal_harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        budget = screen.query_one("#console-context-budget-mode", Select)
+        budget.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        overlay = budget.query_one(SelectOverlay)
+        assert overlay.display and overlay.option_count >= 2
+        box = overlay.content_region
+        highlighted = overlay.highlighted
+        other = 1 if highlighted == 0 else 0
+        top = box.y - int(overlay.scroll_offset.y)
+        _, _, bar = _painted_cell(screen, box.x, top + highlighted)
+        _, _, rest = _painted_cell(screen, box.x, top + other)
+        label = overlay.get_option_at_index(highlighted).prompt
+        row = screen._compositor.render_strips()[top + highlighted].text
+        ink_x = row.index(str(label), box.x)
+        _, ink, _ = _painted_cell(screen, ink_x, top + highlighted)
+        assert _painted_ratio(bar, rest) >= 3.0, (theme, bar, rest)
+        assert _painted_ratio(ink, bar) >= 4.5, (theme, ink, bar)
+
+
+@pytest.mark.parametrize("theme", ["agentic_terminal", "textual-light"])
+@pytest.mark.asyncio
+async def test_console_settings_focused_button_keeps_its_contrast(theme) -> None:
+    """TASK-33003.6 AC#4: focus never lowers a Chat settings button's
+    contrast against the modal. The global `Button:focus` fill (primary at
+    30%) replaced the primary Apply button's $primary, so a focused Apply
+    read as disabled; a default button must not lose contrast either."""
+    app = _themed_modal_harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        for button_id in ("#console-settings-save", "#console-settings-cancel"):
+            button = screen.query_one(button_id, Button)
+            assert not button.disabled, button_id
+            panel = button.parent.background_colors[1].rich_color
+            screen.set_focus(None)
+            await pilot.pause()
+            _, _, rest = _painted_cell(screen, button.region.x + 1, button.region.y)
+            button.focus()
+            await pilot.pause()
+            _, _, focused = _painted_cell(screen, button.region.x + 1, button.region.y)
+            assert _painted_ratio(focused, panel) >= _painted_ratio(rest, panel), (
+                theme,
+                button_id,
+                rest,
+                focused,
+            )
+
+
 #: TASK-33003.3 AC#1: the numeric fields, by the ids that size them.
 _NUMERIC_FIELD_IDS = (
     "console-settings-temperature",

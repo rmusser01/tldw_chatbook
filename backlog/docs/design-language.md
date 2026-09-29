@@ -38,7 +38,10 @@ source or copied token definitions are needed (TASK-32816).
 ### 2.1 Color and semantic meaning (existing layer)
 
 - **Surfaces:** `$ds-surface-panel`, `$ds-surface-raised`,
-  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`,
+  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`
+  (`$ds-grid-line` and `$ds-control-edge` resolve to `$tldw-boundary`, a
+  theme variable `ensure_readable_text_hues` pins to 3:1 on surface and
+  panel for every theme, TASK-33003.6),
   `$ds-surface-sunken` (recessed resting surface for **enabled** chrome —
   inactive toggles, sunken strips; never a disabled state)
 - **Text:** `$ds-text-primary`, `$ds-text-muted`, `$ds-text-disabled`
@@ -113,7 +116,10 @@ Every interactive control must define, at minimum:
 - **focus:** `$ds-focus-bg` / `$ds-focus-fg` / `bold underline` — the
   non-obscuring focus contract: focus must be visibly distinct from rest
   AND must not obscure content. Never alias the focus surface back to a
-  resting surface (this nullified focus twice: TASK-345, task-1586)
+  resting surface (this nullified focus twice: TASK-345, task-1586). A
+  variant Button keeps its own fill on focus (the tint is darker than
+  `$primary`), and a focus cue that is an edge must reach 3:1 against the
+  row it marks (TASK-33003.6: the Settings rail edge is `$ds-active-fg`)
 - **disabled:** `$ds-disabled-bg` + `$ds-text-disabled-readable` at full
   opacity (never opacity-stacked — see §2.5); hover on disabled keeps the
   disabled surface

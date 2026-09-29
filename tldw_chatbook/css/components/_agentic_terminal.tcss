@@ -142,24 +142,9 @@ ConsoleSettingsModal Select > SelectOverlay {
     min-width: $ds-size-30;
 }
 
-ConsoleSettingsModal Select > SelectOverlay Option {
-    padding: $ds-space-0 $ds-space-2;
-    min-height: $ds-size-3;
-    background: $ds-surface-inspector;
-    color: $ds-text-primary;
-}
-
-ConsoleSettingsModal Select > SelectOverlay Option:hover {
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-}
-
-ConsoleSettingsModal Select > SelectOverlay Option.-selected {
-    padding: $ds-space-0 $ds-space-2;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
+/* TASK-33003.6: `SelectOverlay Option` rules never matched (Textual 8
+   options are lines, not widgets); the highlighted-option bar for this
+   modal lives in components/_lists.tcss. */
 
 ConsolePromptPickerModal {
     align: center middle;

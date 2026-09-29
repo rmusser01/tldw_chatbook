@@ -17,6 +17,10 @@
 #   text-error, block-cursor-blurred-background, input-selection-background,
 #   footer-key-foreground, ...) DO override, and are gated for readability by
 #   Tests/UI/test_theme_contrast.py.
+# - TASK-33003.6: `BOUNDARY_VARIABLE` is the app's own such name. `$ds-grid-line`
+#   and `$ds-control-edge` point at it, so EVERY theme must carry it (an
+#   undefined `$name` fails the stylesheet parse); ensure_readable_text_hues
+#   sets it on the shipped, built-in and user-theme load paths.
 import re
 from pathlib import Path
 
@@ -120,6 +124,12 @@ _READABLE_TEXT_HUES = (
 )
 _AA_RATIO = 4.5
 
+#: TASK-33003.6: the colour grid lines and control edges paint with. No tcss
+#: defines it, so the theme's entry paints (mechanism note above).
+BOUNDARY_VARIABLE = "tldw-boundary"
+#: WCAG 1.4.11: component boundaries need 3:1 against adjacent colours.
+_NON_TEXT_RATIO = 3.0
+
 #: Review finding #3: ensure_readable_text_hues records the keys it wrote on
 #: the Theme under this attribute. A key a theme set by hand (22 shipped
 #: themes set text-error) is not in it, so the editor keeps that one.
@@ -127,14 +137,14 @@ _PINNED_ATTR = "_tldw_pinned_text_hues"
 
 
 def pinned_text_hues(theme: Theme) -> set[str]:
-    """The readable text-* keys the AA guard generated for ``theme``.
+    """The keys the guard generated for ``theme`` (text-* hues, boundary).
 
     Args:
         theme: A theme that may have passed through
             ``ensure_readable_text_hues``.
 
     Returns:
-        The generated ``text-*`` variable names; empty when none were pinned.
+        The generated variable names; empty when none were pinned.
     """
     return set(getattr(theme, _PINNED_ATTR, ()))
 
@@ -157,50 +167,82 @@ def _contrast_ratio(a: Color, b: Color) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-def ensure_readable_text_hues(theme: Theme) -> Theme:
-    """Pin the readable ``text-*`` tints (_READABLE_TEXT_HUES) to AA in place.
+def _clears(color: Color, surfaces: list[Color], ratio: float) -> bool:
+    return all(_contrast_ratio(color, s) >= ratio for s in surfaces)
 
-    Textual derives both as a 66% tint of the theme's contrast text toward
-    the hue; on mid-tone palettes (20 of the 70 shipped themes, and any
-    pastel a user saves from Settings ▸ Theme) that lands below 4.5:1 on the
-    theme's own surfaces. Where it does, blend further toward the text pole
-    (white on dark surfaces, black on light) until both ``surface`` and
-    ``panel`` clear AA. These are GENERATED names no tcss defines, so the
-    ``variables`` entry is honoured (mechanism note atop this module); an
-    explicit per-theme entry is left alone. Themes whose colours cannot be
-    resolved (ANSI palettes) are returned untouched.
+
+def _blend_to_floor(color: Color, pole: Color, surfaces: list[Color], ratio: float) -> str:
+    """The first 5% step from ``color`` (itself first) toward ``pole`` clearing ``ratio``."""
+    for step in range(21):
+        candidate = color.blend(pole, step / 20)
+        if _clears(candidate, surfaces, ratio):
+            return candidate.hex
+    return pole.hex
+
+
+def _opaque(value: object) -> Color | None:
+    try:
+        color = Color.parse(str(value))
+    except Exception:  # noqa: BLE001 - "auto 50%" etc. cannot be measured
+        return None
+    return color if color.a == 1 else None
+
+
+def ensure_readable_text_hues(theme: Theme) -> Theme:
+    """Pin the ``text-*`` tints to AA and the boundary colour to 3:1, in place.
+
+    Textual derives the text tints (_READABLE_TEXT_HUES) as a 66% tint of
+    the theme's contrast text toward the hue; on mid-tone palettes (20 of
+    the 70 shipped themes, and any pastel a user saves from Settings ▸
+    Theme) that lands below 4.5:1 on the theme's own surfaces. Where it
+    does, blend further toward the text pole (white on dark surfaces, black
+    on light) until both ``surface`` and ``panel`` clear AA. These are
+    GENERATED names no tcss defines, so the ``variables`` entry is honoured
+    (mechanism note atop this module); an explicit per-theme entry is left
+    alone.
+
+    TASK-33003.6: ``BOUNDARY_VARIABLE`` (grid lines, control edges) starts
+    from the theme's own entry or ``surface-lighten-2`` and blends the same
+    way until it clears 3:1 (WCAG 1.4.11) on both surfaces; an explicit
+    entry below that floor is replaced. Themes whose colours cannot be
+    resolved (ANSI palettes) still get it, at its old ``surface-lighten-2``
+    value, because the tcss references it.
 
     Args:
         theme: The theme to adjust; mutated and returned for chaining.
 
     Returns:
-        The same theme, with readable entries added to ``variables`` as needed.
+        The same theme, with the generated entries added to ``variables``.
     """
+    variables = dict(theme.variables or {})
+    pinned = set(getattr(theme, _PINNED_ATTR, ()))
     try:
         generated = theme.to_color_system().generate()
         surfaces = [Color.parse(generated[key]) for key in ("surface", "panel")]
     except Exception:  # noqa: BLE001 - ANSI/transparent palettes have no hex to measure
-        return theme
-    if any(surface.a < 1 for surface in surfaces):
+        generated, surfaces = {}, []
+    if not surfaces or any(surface.a < 1 for surface in surfaces):
+        if BOUNDARY_VARIABLE not in variables:
+            variables[BOUNDARY_VARIABLE] = generated.get("surface-lighten-2", "transparent")
+            pinned.add(BOUNDARY_VARIABLE)
+        theme.variables = variables
+        setattr(theme, _PINNED_ATTR, frozenset(pinned))
         return theme
     dark_surface = sum(s.brightness for s in surfaces) / len(surfaces) < 0.5
     pole = Color(255, 255, 255) if dark_surface else Color(0, 0, 0)
-    variables = dict(theme.variables or {})
-    pinned = set(getattr(theme, _PINNED_ATTR, ()))
     for token in _READABLE_TEXT_HUES:
         if token in variables:
             continue
         color = Color.parse(generated[token])
-        if all(_contrast_ratio(color, s) >= _AA_RATIO for s in surfaces):
+        if _clears(color, surfaces, _AA_RATIO):
             continue
         pinned.add(token)
-        for step in range(1, 21):
-            candidate = color.blend(pole, step / 20)
-            if all(_contrast_ratio(candidate, s) >= _AA_RATIO for s in surfaces):
-                variables[token] = candidate.hex
-                break
-        else:
-            variables[token] = pole.hex
+        variables[token] = _blend_to_floor(color, pole, surfaces, _AA_RATIO)
+    edge = _opaque(variables.get(BOUNDARY_VARIABLE))
+    if edge is None or not _clears(edge, surfaces, _NON_TEXT_RATIO):
+        start = edge or Color.parse(generated["surface-lighten-2"])
+        pinned.add(BOUNDARY_VARIABLE)
+        variables[BOUNDARY_VARIABLE] = _blend_to_floor(start, pole, surfaces, _NON_TEXT_RATIO)
     theme.variables = variables
     setattr(theme, _PINNED_ATTR, frozenset(pinned))
     return theme

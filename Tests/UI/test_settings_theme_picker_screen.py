@@ -467,11 +467,21 @@ async def test_theme_help_copy_describes_the_picker(request):
 
 # TASK-32948 PR 2 Task 3: the picker's file actions route through the
 # editor's backup-scoped API; Rename prompts via RagProfileNameModal.
+def _loaded(path):
+    """The theme the startup loader builds from ``path`` (TASK-33003.6: a bare
+    ``Theme()`` lacks the $tldw-boundary every loaded theme carries, so the
+    stylesheet fails to parse the moment it is applied)."""
+    import tomllib
+
+    from tldw_chatbook.css.Themes.themes import theme_from_file_data
+
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    return theme_from_file_data(data, path.stem, path.name)
+
+
 def _saved_theme(host, name="mine"):
     """Write ``name`` into the private profile's themes dir and register it
     (the test harness does not run the app's startup theme loader)."""
-    from textual.theme import Theme
-
     from tldw_chatbook import config
 
     themes = config._get_effective_config_path().parent / "themes"
@@ -481,7 +491,7 @@ def _saved_theme(host, name="mine"):
         f'[theme]\nname = "{name}"\ndark = true\n[colors]\nprimary = "#0099FF"\n',
         encoding="utf-8",
     )
-    host.register_theme(Theme(name=name, primary="#0099FF", dark=True))
+    host.register_theme(_loaded(path))
     return path
 
 
@@ -755,8 +765,6 @@ async def test_save_buttons_disabled_while_theme_files_are_paused(request, monke
 # Final-review fixes (TASK-32948).
 def _saved_theme_file(host, stem, name, primary="#AB0001"):
     """A saved theme whose ``[theme].name`` differs from its file stem (R12)."""
-    from textual.theme import Theme
-
     from tldw_chatbook import config
 
     themes = config._get_effective_config_path().parent / "themes"
@@ -766,7 +774,7 @@ def _saved_theme_file(host, stem, name, primary="#AB0001"):
         f'[theme]\nname = "{name}"\ndark = true\n[colors]\nprimary = "{primary}"\n',
         encoding="utf-8",
     )
-    host.register_theme(Theme(name=name, primary=primary, dark=True))
+    host.register_theme(_loaded(path))
     return path
 
 
@@ -1776,13 +1784,15 @@ async def test_revert_after_try_back_and_picker_try_targets_the_listed_theme(req
 async def test_picker_revert_never_targets_an_unlisted_custom_theme(request):
     """Defence in depth: a custom_* registration is never a picker row, so a
     Try from one records the listed theme behind it (or the launch default)."""
-    from textual.theme import Theme
     from textual.widgets import Button
+
+    from tldw_chatbook.css.Themes.themes import create_theme_from_dict
 
     host = _host()
     _saved_theme(host)
-    host.register_theme(Theme(name="custom_mine", primary="#FF0000", dark=True))
-    host.register_theme(Theme(name="custom_ghost", primary="#00FF00", dark=True))
+    # Built the way the editor's Apply builds a custom_* theme (TASK-33003.6).
+    host.register_theme(create_theme_from_dict("custom_mine", {"primary": "#FF0000", "dark": True}))
+    host.register_theme(create_theme_from_dict("custom_ghost", {"primary": "#00FF00", "dark": True}))
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Theme")
         settings = host.screen

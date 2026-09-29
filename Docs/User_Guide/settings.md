@@ -43,7 +43,7 @@ you touch them; some are read-only and point you elsewhere.
 |---|---|
 | **Header line** | "Settings \| Global preferences, appearance, storage, and app behavior \| Local". |
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls stay in MCP and ACP". |
-| **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (10)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its ten rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. |
+| **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (10)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its ten rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. The row with keyboard focus also shows a thick bar at its left edge, in the theme's primary text colour. |
 | **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
 | **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the seven draft categories — Overview shows **Open Theme picker** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
 | **Footer** | This category's live shortcut hints (see [Keyboard & commands](#keyboard--commands)). |
@@ -203,7 +203,7 @@ The biggest page, and where to start.
 
 | Group | What's in it |
 |---|---|
-| **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider", under the same display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and old names still work as typed provider IDs), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
+| **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, whose highlighted row is a solid bar in the theme's primary text colour, plus "Manual / custom provider", under the same display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and old names still work as typed provider IDs), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
 | **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
@@ -827,7 +827,10 @@ Library readers after a successful save.
 
 ### Interface — Theme
 
-Theme now opens on a **picker**, not the editor. A **Filter themes** box
+Theme now opens on a **picker**, not the editor. Every theme, including one
+you save, gets frame lines and field edges at 3:1 or more against its own
+backgrounds: when a theme loads, Chatbook works that colour out from its
+surface colours. A **Filter themes** box
 narrows the list live, by theme name or id (not by group words such as
 "built-in" or "shipped" — the group headings already sort by those). Below it, one grouped,
 scrollable list holds every theme: **YOUR THEMES**, **SHIPPED**, then

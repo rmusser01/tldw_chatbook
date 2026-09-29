@@ -16,7 +16,7 @@ colors:
   ready-success: "$success"
   warning-amber: "$warning"
   blocked-error: "$error"
-  grid-line: "$surface-lighten-1"
+  grid-line: "$tldw-boundary"
 typography:
   display:
     fontFamily: "terminal emulator monospace"
@@ -262,10 +262,21 @@ fields (task-1586):
 - **Rest:** every editable field carries a one-column left edge
   (`border-left: solid $ds-control-edge`). The edge's *presence* is the
   carrier — a structural marker separating controls from prose — so
-  color is reinforcement, never the sole signal. Muted at rest.
+  color is reinforcement, never the sole signal. Quieter than text at
+  rest, but at least 3:1 against both surfaces in every theme
+  (TASK-33003.6): `$ds-control-edge` and `$ds-grid-line` resolve to
+  `$tldw-boundary`, which `ensure_readable_text_hues` (themes.py) works out
+  per theme, user themes included.
 - **Focus:** the edge flips to `thick $ds-action-focus` and the
   background swaps to `$ds-focus-bg` (the task-345 focus surface) with
   bold text. Three concurrent signals: edge weight, background, weight.
+  The Settings category rail uses the same thick edge, in `$ds-active-fg`
+  (3:1 on every row fill). A variant Button (primary, success, warning,
+  error) keeps its fill on focus; the focus tint would make it darker.
+- **Highlighted list rows:** where the shared `$surface` highlight reads
+  under 3:1 (Chat settings; Settings ▸ Providers & Models; the Theme
+  picker), the highlighted option is an inverted bar: `$ds-active-fg`
+  fill, `$ds-surface-panel` label.
 - **Toggles and switches:** always paired with a text-state word
   ("On"/"Off", "Enabled"/"Disabled") — the word is the state.
 - **Inert actions:** disabled buttons carry a text annotation for *why*
