@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 from textual.worker import WorkerState
 
+from Tests.app_module_patches import set_app_global
+
 pytestmark = pytest.mark.unit
 
 
@@ -17,8 +19,7 @@ async def test_worker_error_records_worker_failed(monkeypatch):
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event",
+    set_app_global(monkeypatch, "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),
@@ -59,8 +60,7 @@ async def test_successful_worker_records_nothing(monkeypatch):
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event",
+    set_app_global(monkeypatch, "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),
