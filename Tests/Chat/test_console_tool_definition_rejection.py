@@ -546,3 +546,41 @@ def test_anthropic_bad_request_log_masks_a_short_echoed_key():
     assert "Anthropic request failed; status=400" in log
     assert "invalid x-api-key" in log
     assert api_key not in log
+
+
+def test_anthropic_bad_request_log_is_bounded_and_off_for_sensitive_requests():
+    """Qodo #2931: the logged provider body is bounded, never whole.
+
+    The detail passes through ``redact_log_line``, whose token-aligned cut
+    (``MAX_REDACTED_LINE_CHARS``) keeps an oversized body out of the log, and a
+    request run under ``sensitive_llm_request()`` logs no provider text at all.
+    """
+    from tldw_chatbook.Utils.log_sanitizer import MAX_REDACTED_LINE_CHARS
+    from tldw_chatbook.Utils.sensitive_llm_logging import (
+        SENSITIVE_ERROR_REDACTION,
+        sensitive_llm_request,
+    )
+
+    tail_marker = "ECHOED-TAIL-SENTINEL"
+    message = "input_schema rejected " + "word " * 4000 + tail_marker
+
+    log = _logged_anthropic_bad_request(
+        "anthropic-canary-credential-7f3e9a1c2b", message
+    )
+
+    line = next(
+        entry for entry in log.splitlines() if "Anthropic request failed" in entry
+    )
+    detail = line.split("detail=", 1)[1]
+    assert "input_schema rejected" in detail
+    assert tail_marker not in detail
+    assert "[truncated," in detail
+    assert len(detail) < MAX_REDACTED_LINE_CHARS + 100
+
+    with sensitive_llm_request():
+        sensitive_log = _logged_anthropic_bad_request(
+            "anthropic-canary-credential-7f3e9a1c2b", message
+        )
+    assert "Anthropic request failed; status=400" in sensitive_log
+    assert SENSITIVE_ERROR_REDACTION in sensitive_log
+    assert "input_schema rejected" not in sensitive_log
