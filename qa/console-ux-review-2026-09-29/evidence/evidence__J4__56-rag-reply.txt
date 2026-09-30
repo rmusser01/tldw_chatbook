@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+            │ Conversation | --- Contents of photosynthe...                                                                                                                           │
+            │   --- Contents of ph…  ✕    New tab     Temporary                                                                                                                       │  ▸ Inspect
+            │                                                                                                                                                                         │              Choose folder · Project
+            │                                                                                                                                                                         │  What happens if I send now?
+            │                                                                                                                                                                         │  Where: Default › --- Contents of photosynthe...
+            │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  Scope: Everything available
+            │   User                                                                                                                                                                  │  Run: Ready
+            │   --- Contents of photosynthesis.md ---                                                                                                                                 │  Sources: None staged
+            │   # Photosynthesis notes                                                                                                                                                │  Approvals: None pending
+            │                                                                                                                                                                         │ Environment                                    ▾
+            │   Photosynthesis converts light energy into chemical energy. The Calvin cycle fixes CO2 into G3P.                                                                       │   Changes aren't tracked for this workspace.
+            │   Key enzyme: RuBisCO.                                                                                                                                                  │   Bind a folder and enable Change Review in Set…
+            │                                                                                                                                                                         │                      Refresh
+            │   --- End of photosynthesis.md --- --- Contents of glossary.md ---                                                                                                      │
+            │   # Glossary                                                                                                                                                            │ Agents                             Run history ▸
+            │                                                                                                                                                                         │                   View all runs
+            │   - ATP: adenosine triphosphate                                                                                                                                         │
+            │   - NADPH: reduced nicotinamide adenine dinucleotide phosphate                                                                                                          │  Sources — next send                           1
+ Context ▸  │                                                                                                                                                                         │  --- Contents of photosynthe... (Library Search
+            │   --- End of glossary.md --- Using only these two notes, what enzyme fixes CO2? Answer in one sentence.                                                                 │     Ready · --- Contents of photosynthe... ·
+            │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  Review citations before sending.
+            │  ▊ Assistant                                                                                                                                                            │
+            │  ▊                                                                                                                                                                      │  Sources: Notes, Media, Conversations (Prompts
+            │  ▊  Based on the photosynthesis.md note, RuBisCO is the key enzyme that fixes CO2 into G3P during the Calvin cycle.                                                     │  off)
+            │  ▊                                                                                                                                                                      │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+            │  ▊                                                                                                                                                                      │  ▊  RuBisCO enzyme                             ▎
+            │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+            │   User                                                                                                                                                                  │    Search Library
+            │   Which enzyme fixes CO2? Cite your source.                                                                                                                             │
+            │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  Scope: everything                      Narrow…
+            │  ▊ Assistant                                                                                                                                                            │
+            │  ▊                                                                                                                                                                      │ Run
+            │  ▊  RuBisCO fixes CO2. This information comes from the photosynthesis.md note, which states "Key enzyme: RuBisCO" in the context of the Calvin cycle that fixes CO2     │ Run recipe: Anthropic / claude-haiku-4-5 /
+            │  ▊  into G3P.                                                                                                                                                           │ sources sent with the last message · 1 source /
+            │  ▊                                                                                                                                                                      │ tools 6 / approvals 0
+            │  ▊  Citation repair unavailable · Original response kept                                                                                                                │ Live work: No active work
+            │  ▊                                                                                                                                                                      │ ▼ more sections — scroll
+            │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 1 source                                                                                                                                                                                                Un-stage
+ --- Contents of photosynthe... — conversation
+ Status ▾   Library · Auto on · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 0% · Current $0.004
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                                                      Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

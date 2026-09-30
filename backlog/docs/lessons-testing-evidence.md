@@ -16986,3 +16986,21 @@ burst and driving each one's tick directly in its own phase. Storage
 admissions and helper spawns still jitter *downward* by 1-3 (a worker that
 lands on an executor thread with a live connection skips the connect), so pin
 observed maxima, not a single run.
+
+## The Impeccable detector "passes" a Textual screen by scanning zero files (Console UX review, 2026-09-29)
+
+**Incident.** Assessment B of the 2026-09-29 Console critique ran
+`detect.mjs --json` over `UI/Console_Modules`, `Widgets/Console` and
+`Docs/User_Guide/console`, and every run exited 0. `.py` and `.md` are outside the
+detector's `SCANNABLE_EXTENSIONS`, so the directory targets scanned **0 files**. When
+files were passed explicitly, the web-CSS regex rules also missed a Textual
+`border-left: thick $accent` side stripe, even inside a `.css` control file. The
+whole Console produced one hit, `rgb(245,245,245)` in `_console.tcss`, and that was a
+false positive: DESIGN.md's Legible Disabled Rule documents that exact literal. The
+same review's grep audit and SGR census found 52 named-colour literals, 25 side
+stripes, a 1.03:1 focus change and 1,958 unpainted cells.
+
+**What to do.** For Textual surfaces, record a detector zero as "inapplicable", never
+as clean. Use a static token/CSS grep over the Python `DEFAULT_CSS` tier plus
+measured SGR contrast and focus deltas from a real capture as the deterministic
+evidence.

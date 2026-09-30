@@ -1,0 +1,52 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+                                                         ▊                                                                                                                      ▎
+                                                         ▊  Project instructions need a folder                                                                                  ▎
+                                                         ▊  Select one authorized folder for this session. Stale folders cannot be selected.                                    ▎
+                                                         ▊                                                      proj-alpha                                                      ▎
+                                                         ▊                                                                                                                      ▎
+                                                         ▊      Disable          Cancel                                                                                         ▎
+                                                         ▊   esc Cancel  d Disable  c Cancel                                                                                    ▎
+                                                         ▊                                                                                                                      ▎
+                                                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+
+
+
+
+
+
+
+
+
+                                                                                                                                                                             ╭──────────────────────────────────────────────────────────╮
+                                                                                                                                                                             │                                                          │
+                                                                                                                                                                             │ Something went wrong in                                  │
+                                                                                                                                                                             │ _select_project_instruction_binding — the screen was     │
+                                                                                                                                                                             │ kept open. That panel may stop responding or disappear   │
+                                                                                                                                                                             │ until you reopen it; details are in the log file.        │
+                                                                                                                                                                             │                                                          │
+                                                                                                                                                                             ╰──────────────────────────────────────────────────────────╯
+
+
+

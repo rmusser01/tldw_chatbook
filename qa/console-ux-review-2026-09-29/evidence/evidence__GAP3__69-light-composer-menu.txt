@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                    ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎         │
+                  Co▊                                                                                                                      ▎         │
+   Terminal         ▊   Composer actions                                                                                                   ▎         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▊                                                                                                                      ▎      x  │
+  ▊  Search workspac▊                                                                                                                      ▎         │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▊                                                Browse Prompt Library…                                                ▎         │
+                    ▊                                                                                                                      ▎         │
+ ───────────────────▊                                                                                                                      ▎         │
+ Conversations      ▊                                                     Attach file                                                      ▎         │
+   New conversation ▊                                                                                                                      ▎         │
+     Archive this ch▊                                                                                                                      ▎         │
+      Archived chats▊                                                   Save as Chatbook                                                   ▎         │
+     Search all chat▊                                                                                                                      ▎         │
+   Say hi in two wor▊    No Chatbook artifact is available to save yet                                                                     ▎         │
+                    ▊                                                                                                                      ▎         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ▊                                                                                                                      ▎         │
+  ▊  Filter      ▎  ▊                                                    Generate Image                                                    ▎         │< Inspect
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ▊                                                                                                                      ▎         │
+                    ▊                                                                                                                      ▎         │
+  Chats             ▊                                                   Generate Caption                                                   ▎         │
+   Say hi in tw…  [r▊                                                                                                                      ▎         │
+   Reply with e… [fa▊    Attach an image first                                                                                             ▎         │
+   Failed           ▊                                                                                                                      ▎         │
+                    ▊                                                                                                                      ▎───────  │
+ ───────────────────▊                                                     Impersonate                                                      ▎         │
+ Character · No chat▊                                                                                                                      ▎         │
+ ───────────────────▊                                                                                                                      ▎───────  │
+ Model              ▊                                                        Buddy…                                                        ▎         │
+ ───────────────────▊                                                                                                                      ▎         │
+ Agent              ▊  Esc closes without changing your draft.                                                                             ▎         │
+ ───────────────────▊                                                                                                                      ▎         │
+                    ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎         │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0
+
+█  Composer v  Menu  |Ask, command, or paste task...                                           Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q
