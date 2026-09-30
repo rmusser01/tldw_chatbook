@@ -25625,10 +25625,14 @@ class SettingsScreen(BaseAppScreen):
         self._reveal_settings_focus_after_refresh()
 
     def _reveal_settings_focus_after_refresh(self) -> None:
-        """Keep the same attached control visible after a layout change."""
+        """Keep the same attached control, and its field guide, visible after a layout change."""
         focused = self.focused
         if focused is None:
             return
+        if focused.id and focused.id == self._active_settings_field_id:
+            # TASK-33003.9: a resize re-wraps the inspector but keeps its
+            # scroll offset, which slid the guide past the fold.
+            self._scroll_impact_pane_to_field_guide(self._active_category_id())
 
         def reveal_retained_focus() -> None:
             if self.is_current and focused is self.focused and focused.is_attached:

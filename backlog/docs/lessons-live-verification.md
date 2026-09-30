@@ -3470,3 +3470,25 @@ across newlines (`qa/model-config-p3-2026-09-28/task-6/ansi_cells.py`, `rows()`)
 truecolor Textual capture every painted cell has a background, so a `None`
 *background* is a parser bug, not a transparent cell. A `None` foreground can be real:
 `\x1b[39m` (default foreground) is exactly what the sample above emits for blank cells.
+
+## A capture taken after resizing the session carries the first size's scroll state (TASK-33003.9, 2026-09-30)
+
+**What happened.** The Phase 2 capture of Settings ▸ Console Behavior with the
+Temperature fallback focused at 211x44 showed the Focused field guide cut off after
+"Saved as", with "Validation" below the inspector's fold. The capture triage re-drove it
+live at 211x44 by click, and by Shift+Tab then Tab, and every time the whole guide was in
+view, so the filed task called the route unknown. The capture was not a fresh 211x44
+state: the captures were taken at 235x52 and at 211x44, and in this one the terminal had
+been resized from 235x52 after Temperature took focus. Focus pins the guide once
+(`_scroll_impact_pane_to_field_guide`). The resize re-wrapped the narrower inspector but
+kept the 235x52 scroll offset. A pilot that focused at 235x52 and then called
+`resize_terminal(211, 44)` put every guide row on the captured screen row ("Focused
+setting" y=32, "Purpose" y=34, "Saved as" y=38, "Validation" y=40 against a 16..39
+view). The same pilot started directly at 211x44 put the guide at y=18..27.
+
+**What to do.** When a capture shows a state that a re-drive at that size cannot
+produce, ask how the capture reached that size before hunting for a focus route. Re-drive
+in the same size order, and treat "resized after the focus" as a route of its own.
+Anything that scrolls to follow focus has to run again on a resize: here
+`SettingsScreen._reveal_settings_focus_after_refresh`, which already ran on resize for
+the focused control, now re-pins the guide too.
