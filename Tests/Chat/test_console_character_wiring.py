@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from Tests.Chat.test_console_skill_script_confirm import _FakeApp
 from Tests.console_provider_doubles import persisted_console_store
@@ -85,3 +88,54 @@ def test_changed_posts_character_card_changed_without_call_from_thread():
     posted = app.posted[0]
     assert isinstance(posted, CharacterCardChanged)
     assert posted.character_id == 42
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["server", "local"])
+async def test_composed_mcp_provider_reads_the_calling_sessions_runtime_source(backend):
+    """TASK-33106: the Console's MCP provider judges ADR-183 writes by its session.
+
+    A server-backed session's `create_character` through the in-process MCP
+    bridge is refused with the Console character tools' message before it
+    reaches the runtime; a local session's provider reports "local".
+
+    Args:
+        backend: The calling session's runtime backend.
+    """
+    from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _tool_dict
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    controller, store = _make_controller()
+    session = store.create_session(runtime_backend=backend)
+    service = FakeMCPService(
+        inventory={"tools": [_tool_dict("create_character")]},
+        default_state=EffectiveToolState(state="allow", origin="tool_override"),
+    )
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+
+    provider = await controller._compose_mcp_provider(session.id)
+
+    assert provider is not None
+    assert provider._runtime_source_provider() == backend
+    if backend == "server":
+        write_id = provider.list_catalog()[0].id
+        result = provider.invoke(write_id, {"name": "Ada"})
+        assert result.ok is False
+        assert result.error == SERVER_REFUSAL
+        assert service.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_composed_mcp_provider_without_a_session_applies_no_check():
+    """TASK-33106: a provider composed without a session keeps today's behaviour."""
+    from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _tool_dict
+
+    controller, _store = _make_controller()
+    controller.app = SimpleNamespace(
+        unified_mcp_service=FakeMCPService(inventory={"tools": [_tool_dict("create_character")]})
+    )
+
+    provider = await controller._compose_mcp_provider()
+
+    assert provider is not None
+    assert provider._runtime_source_provider is None

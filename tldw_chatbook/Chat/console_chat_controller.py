@@ -16384,6 +16384,13 @@ class ConsoleChatController:
             builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
             profile_id_provider=profile_id_provider,
             persona_policy_provider=persona_policy_provider,
+            # TASK-33106: ADR-183's built-in character writes follow THIS
+            # session's runtime source, like the Console's character_save.
+            runtime_source_provider=(
+                None
+                if session_id is None
+                else functools.partial(self._session_runtime_source, session_id)
+            ),
             maximum_tool_ids=maximum_tool_ids,
             maximum_definition_hashes=maximum_definition_hashes,
         )
@@ -17062,6 +17069,22 @@ class ConsoleChatController:
 
         return {"ask_user": _ask}
 
+    def _session_runtime_source(self, session_id: str) -> str:
+        """The runtime source ``session_id`` runs on: ``"server"`` or ``"local"``.
+
+        Read fresh on every call, from the worker thread that dispatches the
+        tool, so a session switched mid-run is judged by its current backend.
+
+        Args:
+            session_id: The session whose backend decides.
+
+        Returns:
+            ``"server"`` for a server-backed session; ``"local"`` otherwise,
+            including a session that no longer exists.
+        """
+        current = next((s for s in self.store.sessions() if s.id == session_id), None)
+        return "server" if current and current.runtime_backend == "server" else "local"
+
     def _character_wiring(self, session_id: str | None) -> dict[str, Any]:
         """The ``character_service`` kwarg for ``LocalToolProvider`` (TASK-32954).
 
@@ -17094,10 +17117,6 @@ class ConsoleChatController:
                 raise RuntimeError("local character service unavailable")
             return service
 
-        def _runtime_source() -> str:
-            current = next((s for s in self.store.sessions() if s.id == session_id), None)
-            return "server" if current and current.runtime_backend == "server" else "local"
-
         def _changed(character_id: int) -> None:
             from tldw_chatbook.Character_Chat.character_events import (
                 CharacterCardChanged,
@@ -17111,7 +17130,8 @@ class ConsoleChatController:
             app.post_message(CharacterCardChanged(character_id))
 
         return {"character_service": CharacterToolService(
-            service_loader=_service, runtime_source_loader=_runtime_source,
+            service_loader=_service,
+            runtime_source_loader=functools.partial(self._session_runtime_source, session_id),
             read_guard=guard, on_changed=_changed)}
 
     def _library_provider_for_context(
