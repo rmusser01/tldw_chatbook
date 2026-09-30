@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import sys
 import threading
 import tomllib
 from dataclasses import replace
@@ -18,6 +19,8 @@ from uuid import uuid4
 
 import pytest
 from textual.widgets import Button, Input, Select, Static
+
+from Tests.private_profile import private_profile_test
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
@@ -1183,7 +1186,9 @@ def _install_ready_vllm_target(app, *, generation: int = 7):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_vllm_console_handoff_replaces_only_active_session_without_config_write(
+    request,
     monkeypatch,
 ) -> None:
     """Calling any durable writer or rebasing from saved vLLM loses this contract."""
@@ -1259,7 +1264,8 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
 
 
 @pytest.mark.asyncio
-async def test_vllm_console_session_endpoint_never_enters_conversation_metadata() -> (
+@private_profile_test
+async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(request) -> (
     None
 ):
     """The verified endpoint stays live-only through persist, message, and reload."""
@@ -1348,7 +1354,8 @@ async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(
 
 
 @pytest.mark.asyncio
-async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint() -> (
+@private_profile_test
+async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(request) -> (
     None
 ):
     """A later first persist and message never serialize the live endpoint."""
@@ -1406,7 +1413,8 @@ async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults() -> (
+@private_profile_test
+async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults(request) -> (
     None
 ):
     """Atomic temporary promotion cannot serialize either live endpoint."""
@@ -1458,7 +1466,8 @@ async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_de
 
 
 @pytest.mark.asyncio
-async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy() -> (
+@private_profile_test
+async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy(request) -> (
     None
 ):
     """A durable fork transfers live policy without pinning either URL."""
@@ -1530,7 +1539,9 @@ async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
+    request,
     monkeypatch,
 ) -> None:
     """A sync exception after store mutation must restore every active projection."""
@@ -1608,7 +1619,9 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
+    request,
     monkeypatch,
 ) -> None:
     """A failed compensation is disclosed and cannot leave a sendable endpoint."""
@@ -1685,7 +1698,9 @@ async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
+    request,
     monkeypatch,
 ) -> None:
     """A concurrent SQLite winner survives while the adopted session fails closed."""
@@ -1787,7 +1802,9 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
     "failing_sync",
     ("_sync_console_chat_core_state", "_sync_console_settings_summary"),
 )
+@private_profile_test
 async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fails(
+    request,
     monkeypatch,
     failing_sync,
 ) -> None:
@@ -1820,10 +1837,22 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         )
         summary_before = summary_widget.state
         original_sync = getattr(console, failing_sync)
+        handoff_owner_code = console._consume_verified_console_intent.__func__.__code__
         calls = 0
+        fault_policies: list[bool] = []
 
         def apply_forward_then_fail_rollback():
             nonlocal calls
+            if sys._getframe(1).f_code is not handoff_owner_code or (
+                calls == 0
+                and session_store._sessions[session_id].ephemeral_endpoint_policy
+                is None
+            ):
+                return original_sync()
+            fault_policies.append(
+                session_store._sessions[session_id].ephemeral_endpoint_policy
+                is not None
+            )
             calls += 1
             if calls == 1:
                 original_sync()
@@ -1838,6 +1867,7 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         assert console.consume_pending_vllm_console_intent() is False
         monkeypatch.setattr(console, failing_sync, original_sync)
         assert calls == 2
+        assert fault_policies == [True, False]
         assert session_store.session_settings(session_id) == before
         assert (
             controller.provider,
@@ -1851,7 +1881,8 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
 
 
 @pytest.mark.asyncio
-async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay() -> (
+@private_profile_test
+async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(request) -> (
     None
 ):
     """Dropping the claim on a stale owner or failed replace loses user intent."""
@@ -1932,7 +1963,9 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("release_failure", ("false", "exception"))
+@private_profile_test
 async def test_vllm_console_failed_release_survives_for_later_readoption(
+    request,
     monkeypatch,
     release_failure,
 ) -> None:

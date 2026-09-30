@@ -1471,6 +1471,8 @@ async def test_runtime_and_scope_authority_controls_show_exact_state_and_persist
         authority = panel.query_one("#personal-context-authority-0", Select)
         assert authority.value == AgentAuthority.PROPOSE.value
         authority.value = AgentAuthority.READ_ONLY.value
+        await pilot.pause()
+        await host.workers.wait_for_complete()
         await _until(
             pilot,
             lambda: panel.snapshot.scopes[0].authority is AgentAuthority.READ_ONLY,
@@ -1513,6 +1515,150 @@ async def test_scope_authority_control_carries_snapshot_policy_version() -> None
             "scope-policy-version",
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", ["scope", "policy"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_scope_authority_control_cannot_mutate_replacement(
+    replacement,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        origin = panel.query_one("#personal-context-authority-0", Select)
+        held = Select.Changed(origin, AgentAuthority.READ_ONLY.value)
+        scopes = snapshot.scopes
+        if replacement == "scope":
+            scopes = (scopes[1], scopes[0], scopes[2])
+        else:
+            scopes = (replace(scopes[0], policy_version_id="new-policy"), *scopes[1:])
+        service.snapshot = replace(snapshot, scopes=scopes)
+        if timing == "before_recompose":
+            panel._apply_snapshot(panel._load_generation, service.snapshot, service)
+            assert panel.query_one("#personal-context-authority-0", Select) is origin
+        else:
+            panel.load_records()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert (
+                panel.query_one("#personal-context-authority-0", Select) is not origin
+            )
+
+        panel.handle_select_changed(held)
+        await host.workers.wait_for_complete()
+        assert service.authority_changes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["runtime", "record"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_profile_button_cannot_act_on_replacement(
+    control,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        button_id = (
+            "personal-context-runtime"
+            if control == "runtime"
+            else "personal-context-record-1"
+        )
+        origin = panel.query_one(f"#{button_id}", Button)
+        held = Button.Pressed(origin)
+        if control == "runtime":
+            service.snapshot = replace(
+                snapshot,
+                status=replace(
+                    snapshot.status, runtime_enabled=not snapshot.status.runtime_enabled
+                ),
+            )
+        else:
+            service.snapshot = replace(
+                snapshot,
+                records=(snapshot.records[0], snapshot.records[2], snapshot.records[1]),
+            )
+        if timing == "before_recompose":
+            panel._apply_snapshot(panel._load_generation, service.snapshot, service)
+            assert panel.query_one(f"#{button_id}", Button) is origin
+        else:
+            panel.load_records()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert panel.query_one(f"#{button_id}", Button) is not origin
+        selected = panel.selected_record_id
+
+        panel.handle_button_pressed(held)
+        await host.workers.wait_for_complete()
+        assert panel.selected_record_id == selected
+        assert service.runtime_changes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["record", "edit"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_profile_button_cannot_act_on_changed_local_view(
+    control,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        button_id = (
+            "personal-context-record-0"
+            if control == "record"
+            else "personal-context-edit"
+        )
+        origin = panel.query_one(f"#{button_id}", Button)
+        held = Button.Pressed(origin)
+        if control == "record":
+            panel.selected_scope_id = snapshot.scopes[1].scope.scope_id
+        else:
+            panel.selected_record_id = snapshot.records[1].record_id
+        assert panel.snapshot is snapshot
+        if timing == "before_recompose":
+            assert panel.query_one(f"#{button_id}", Button) is origin
+        else:
+            await pilot.pause()
+            assert panel.query_one(f"#{button_id}", Button) is not origin
+        selected = panel.selected_record_id
+
+        panel.handle_button_pressed(held)
+        await host.workers.wait_for_complete()
+        assert panel.selected_record_id == selected
+        assert panel.editor_mode == ""
 
 
 @pytest.mark.asyncio

@@ -70,10 +70,10 @@ _STATUS = {
 class LlamaCppSetupView(Vertical):
     """Session-local launch draft with device-local tuning profiles."""
 
-    DEFAULT_CSS = """
-    LlamaCppSetupView { height: auto; }
-    LlamaCppSetupView Horizontal { height: auto; }
-    LlamaCppSetupView .llamacpp-status { height: auto; }
+    BUNDLED_CSS = """
+    LlamaCppSetupView { height: $ds-height-auto; }
+    LlamaCppSetupView Horizontal { height: $ds-height-auto; }
+    LlamaCppSetupView .llamacpp-status { height: $ds-height-auto; }
     """
 
     def __init__(

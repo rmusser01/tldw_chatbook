@@ -92,12 +92,12 @@ _BUDGETS: dict[str, int] = {
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
     "tldw_chatbook/app_feature_glue.py": 742,
-    "tldw_chatbook/Chat/console_chat_controller.py": 29367,
-    "tldw_chatbook/Chat/console_chat_store.py": 22344,
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29210,
+    "tldw_chatbook/Chat/console_chat_store.py": 22092,
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16419,
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8265,
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7802,
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6744,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
     # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)
@@ -112,13 +112,31 @@ _BUDGETS: dict[str, int] = {
     # `_request(...)` -> `Model.model_validate` shape, so the honest
     # decomposition is per-API-namespace delegates -- `MCPUnifiedClient` is
     # the precedent already in the package.
-    "tldw_chatbook/tldw_api/client.py": 16687,
+    "tldw_chatbook/tldw_api/client.py": 16672,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
-    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 10404,
-    "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14312,
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 10401,
+    "tldw_chatbook/UI/Screens/llm_screen.py": 5172,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
+    # 2026-09-29, task-25907.23: governed code retains exact recipient
+    # caps after mechanical moves; original source ceilings only shrink.
+    "tldw_chatbook/Chat/console_draft_submission.py": 1594,
+    "tldw_chatbook/Chat/console_chat_persistence.py": 407,
+    "tldw_chatbook/Chat/console_chat_fork.py": 949,
+    "tldw_chatbook/UI/Console_Modules/inspector_data.py": 132,
+    "tldw_chatbook/Library/library_skills_state.py": 1208,
+    "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 411,
+    "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py": 189,
+    "tldw_chatbook/UI/MCP_Modules/mcp_rail.py": 621,
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1272,
+    "tldw_chatbook/UI/Screens/model_browser_state.py": 583,
+    "tldw_chatbook/UI/Watchlists_Modules/opml_dialogs.py": 437,
+    "tldw_chatbook/Widgets/Console/console_assistant_turn.py": 695,
+    "tldw_chatbook/UI/Wizards/first_run_setup_widgets.py": 494,
+    "tldw_chatbook/tldw_api/utils.py": 296,
+    "tldw_chatbook/Library/library_shell_state.py": 829,
+    "tldw_chatbook/Library/library_rag_state.py": 2583,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

@@ -61,10 +61,7 @@ from ..Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
 )
-from ..Navigation.vllm_handoff import (
-    VllmConsoleIntent,
-    owner_has_current_intent,
-)
+from ..Navigation.vllm_handoff import VllmConsoleIntent, owner_has_current_intent
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
 
@@ -345,7 +342,6 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
     _estimate_tokens_locally,
-    _summary_row_value,
     build_console_context_estimate,
     build_console_rail_system_line,
     build_default_console_session_settings,
@@ -1599,30 +1595,11 @@ def _console_screen_is_torn_down(screen: Any) -> bool:
 
 
 def _console_inspector_turn_preview(content: Any) -> str:
-    """Best-effort short text preview for one Conversation Inspector
-    Costs-tab turn row (task-8 review finding 5).
+    from tldw_chatbook.UI.Console_Modules.inspector_data import (
+        _console_inspector_turn_preview,
+    )
 
-    ``ConsoleChatMessage.content`` is declared ``str``, but a multimodal
-    (structured, OpenAI-style content-block list) message is not
-    guaranteed to have been coerced to text by the time it reaches here --
-    several other modules in this codebase (``Chat/Chat_Functions.py``,
-    ``console_provider_gateway.py``) carry their own ``isinstance(content,
-    str)`` guards for exactly this reason. Slicing a list with ``[:60]``
-    would silently yield up to 60 LIST ELEMENTS, not characters -- not a
-    preview, and not obviously wrong-looking in a diff either. Falls back
-    to the first text block's text (bounded to 60 chars, matching the str
-    path), or ``""`` when nothing text-shaped is found -- never a
-    fabricated summary.
-    """
-    if isinstance(content, str):
-        return content[:60]
-    if isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text = block.get("text")
-                if isinstance(text, str):
-                    return text[:60]
-    return ""
+    return _console_inspector_turn_preview(content)
 
 
 def _build_console_inspector_exchanges_loader(
@@ -1630,85 +1607,13 @@ def _build_console_inspector_exchanges_loader(
     projected_calls_reader: Callable[[str], Sequence[ProjectedTraceCall]],
     abandoned_run_tags_for: Callable[[str], AbstractSet[str]] | None = None,
 ) -> Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]]:
-    """Build the Costs-tab ``exchanges_loader`` for
-    ``ConsoleConversationInspector`` (task-8, extended task-9).
+    from tldw_chatbook.UI.Console_Modules.inspector_data import (
+        _build_console_inspector_exchanges_loader,
+    )
 
-    A standalone function rather than a method-local closure specifically
-    so it is unit-testable without mounting a ``ChatScreen`` (review
-    finding 6) -- pure extraction, no behavior change from the closure
-    this replaced in ``ChatScreen._build_console_inspector_cost_data``.
-
-    Args:
-        messages_by_native_id: ``ConsoleChatMessage.id`` -> the matching
-            in-memory message, for the native-first check.
-        projected_calls_reader: Store-owned persisted-message reader returning
-            discriminated normalized/legacy calls. Called lazily only on the
-            durable fallback path, so this Textual helper never receives a DB
-            handle and an ephemeral session never performs durable I/O.
-        abandoned_run_tags_for: Optional ``native_message_id ->
-            {run_tag, ...}`` lookup (task-9; ``ConsoleChatStore.
-            abandoned_exchange_run_tags`` in production) used ONLY on the
-            native-capture path to resolve each capture's real
-            ``abandoned`` flag. Defaults to ``None``, which preserves the
-            task-8 behavior of reporting ``abandoned=False`` for every
-            native capture -- kept optional (rather than required) so the
-            existing unit tests in
-            ``Tests/UI/test_chat_screen_console_inspector_loader.py``,
-            which construct this loader with just the first two
-            positional args, are unaffected.
-
-    Returns:
-        An async ``native_message_id -> [(capture, abandoned), ...]``
-        callable (see ``console_conversation_inspector``'s module
-        docstring for the pair contract and the ordering caveat -- callers
-        must NOT trust the returned order, only ``(created_at, seq)``).
-        Prefers ``message.exchanges`` (native, in-memory captures resolve
-        ``abandoned`` via ``abandoned_run_tags_for`` when supplied, else
-        always ``False``) and only falls back to a threaded
-        ``get_message_exchanges`` + ``capture_from_blob`` read when there
-        is no native capture AND the message has a
-        ``persisted_message_id`` (an ephemeral session has neither, so it
-        returns ``[]`` without any durable read). Corrupt legacy isolation and
-        normalized-first selection belong to the injected projection.
-    """
-
-    async def _exchanges_loader(
-        native_message_id: str,
-    ) -> list[tuple[ExchangeCapture, bool]]:
-        message = messages_by_native_id.get(native_message_id)
-        if message is not None and message.exchanges:
-            # Native captures win when present -- they are fresher than
-            # whatever was last flushed to the DB.
-            abandoned_tags: AbstractSet[str] = (
-                abandoned_run_tags_for(native_message_id)
-                if abandoned_run_tags_for is not None
-                else frozenset()
-            )
-            return [
-                (capture, capture.run_tag in abandoned_tags)
-                for capture in message.exchanges
-            ]
-        persisted_id = message.persisted_message_id if message is not None else None
-        if not persisted_id:
-            return []
-
-        def _read() -> list[tuple[ExchangeCapture, bool]]:
-            return [
-                (
-                    replace(
-                        projected.capture,
-                        trace_provenance=projected.provenance,
-                        trace_chronology=projected.chronology,
-                        trace_uncertainty=projected.uncertainty_codes,
-                    ),
-                    projected.abandoned,
-                )
-                for projected in projected_calls_reader(persisted_id)
-            ]
-
-        return await asyncio.to_thread(_read)
-
-    return _exchanges_loader
+    return _build_console_inspector_exchanges_loader(
+        messages_by_native_id, projected_calls_reader, abandoned_run_tags_for
+    )
 
 
 class _ControllerState:
@@ -5256,10 +5161,6 @@ class ChatScreen(BaseAppScreen):
         self.set_class(focused, "-focus")
         self._register_console_footer_shortcuts()
 
-    def _clear_console_footer_shortcuts(self) -> None:
-        """Clear Console Workbench shortcuts from this screen's own footer."""
-        self.clear_footer_shortcuts(source="console")
-
     async def action_open_console_session_switcher(
         self,
         *,
@@ -8119,11 +8020,11 @@ class ChatScreen(BaseAppScreen):
         replacement_started = False
         try:
             intent = claim.value
-            if type(intent) is not VllmConsoleIntent:
-                raise TypeError("vLLM Console handoff was not exact")
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
-            if not owner_has_current_intent(owner, intent):
-                raise ValueError("vLLM Console handoff is stale")
+            if type(intent) is not intent_type:
+                raise TypeError("Verified provider Console handoff was not exact")
+            owner = getattr(self.app_instance, owner_attribute, None)
+            if not current_intent(owner, intent):
+                raise ValueError("Verified provider Console handoff is stale")
             if not self.is_attached:
                 raise RuntimeError("Console is detached")
             session_store = self._ensure_console_chat_store()
@@ -8141,20 +8042,20 @@ class ChatScreen(BaseAppScreen):
             current_controller = self._console_chat_controller
             current_provider_selection = self._build_console_provider_selection()
             current_summary_state = self._build_console_settings_summary_state()
-            configured_vllm = build_target_default_console_session_settings(
+            configured_provider = build_target_default_console_session_settings(
                 self._provider_readiness_app_config(),
-                "vllm",
+                provider,
                 intent.model_id,
             )
             next_settings = replace(
                 current,
-                provider="vllm",
+                provider=provider,
                 model=intent.model_id,
-                base_url=configured_vllm.base_url,
+                base_url=configured_provider.base_url,
                 source="user",
             )
             endpoint_policy = ConsoleEphemeralEndpointPolicy(
-                provider="vllm",
+                provider=provider,
                 model=intent.model_id,
                 base_url=intent.api_url,
             )
@@ -8163,7 +8064,7 @@ class ChatScreen(BaseAppScreen):
                 app_config=self._provider_readiness_app_config(),
             )
             if errors:
-                raise ValueError("vLLM Console session settings are invalid")
+                raise ValueError("Verified provider Console session settings are invalid")
             adoption_receipt = session_store.adopt_session_ephemeral_endpoint(
                 session_id,
                 settings=next_settings,
@@ -8175,10 +8076,10 @@ class ChatScreen(BaseAppScreen):
             if (
                 not self.is_attached
                 or session_store.active_session_id != session_id
-                or not owner_has_current_intent(owner, intent)
+                or not current_intent(owner, intent)
                 or not store.acknowledge_current(claim)
             ):
-                raise RuntimeError("vLLM Console handoff changed during adoption")
+                raise RuntimeError("Verified provider Console handoff changed during adoption")
         except BaseException as error:
             if (
                 replacement_started
@@ -8202,7 +8103,7 @@ class ChatScreen(BaseAppScreen):
                     )
                     if outcome is ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE:
                         raise RuntimeError(
-                            "vLLM Console rollback lost its session fence"
+                            "Verified provider Console rollback lost its session fence"
                         )
                     if (
                         outcome is ConsoleEndpointRollbackOutcome.RESTORED
@@ -8234,7 +8135,7 @@ class ChatScreen(BaseAppScreen):
                         and session_store.active_session_id == session_id
                     ):
                         self.app_instance.notify(
-                            "vLLM session endpoint blocked because the prior "
+                            "Verified provider session endpoint blocked because the prior "
                             "conversation metadata could not be restored. Retry "
                             "the handoff or choose a provider before sending.",
                             severity="error",
@@ -8243,13 +8144,13 @@ class ChatScreen(BaseAppScreen):
                         self._sync_console_settings_summary()
                 except BaseException as rollback_error:
                     logger.warning(
-                        "vLLM Console handoff rollback failed "
+                        "Verified provider Console handoff rollback failed "
                         "(revision={}, exception_category={})",
                         claim.revision,
                         type(rollback_error).__name__,
                     )
                     self.app_instance.notify(
-                        "vLLM session handoff could not restore its exact prior "
+                        "Verified provider session handoff could not restore its exact prior "
                         "state. Review the current provider before sending.",
                         severity="error",
                     )
@@ -8260,7 +8161,7 @@ class ChatScreen(BaseAppScreen):
                 released = False
                 release_failure = "exception"
                 logger.warning(
-                    "vLLM Console handoff claim release failed "
+                    "Verified provider Console handoff claim release failed "
                     "(revision={}, exception_category={})",
                     claim.revision,
                     type(release_error).__name__,
@@ -8275,13 +8176,13 @@ class ChatScreen(BaseAppScreen):
                     )
                 except BaseException as retention_error:
                     logger.warning(
-                        "vLLM Console handoff cleanup ownership transfer failed "
+                        "Verified provider Console handoff cleanup ownership transfer failed "
                         "(revision={}, exception_category={})",
                         claim.revision,
                         type(retention_error).__name__,
                     )
                 self.app_instance.notify(
-                    "vLLM session handoff could not be re-queued yet. Console "
+                    "Verified provider session handoff could not be re-queued yet. Console "
                     "retained cleanup ownership and will retry before adoption.",
                     severity="error",
                 )
@@ -8291,7 +8192,7 @@ class ChatScreen(BaseAppScreen):
             ):
                 raise
             logger.warning(
-                "vLLM Console handoff will retry "
+                "Verified provider Console handoff will retry "
                 "(channel={}, revision={}, exception_category={})",
                 claim.channel.value,
                 claim.revision,
@@ -8299,7 +8200,7 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         self.app_instance.notify(
-            "Using the verified vLLM target for this Console session only.",
+            "Using the verified provider target for this Console session only.",
             severity="information",
         )
         return True
@@ -17022,6 +16923,7 @@ class ChatScreen(BaseAppScreen):
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return)
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_llamacpp_console_intent)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the
@@ -23929,6 +23831,7 @@ class ChatScreen(BaseAppScreen):
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self.consume_pending_vllm_console_intent,
                 ),
+                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_llamacpp_console_intent),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
                 # resume too.
@@ -24768,208 +24671,6 @@ class ChatScreen(BaseAppScreen):
             event.allow, event.remember, request_id=event.request_id
         )
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """
-        Handle button events at the screen level.
-        This ensures buttons work properly with screen-based navigation.
-        """
-        button_id = event.button.id
-
-        # Log for debugging
-        logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")
-
-        if button_id == "console-composer-menu":
-            event.stop()
-            await self._open_console_composer_menu()
-            return
-        if button_id == "console-send-message":
-            await self.handle_console_send_message(event)
-            return
-        if button_id == "console-dictation":
-            event.stop()
-            self._dictation._handle_console_dictation_button()
-            return
-        if button_id in {
-            "console-stop-generation",
-            "console-collapsed-stop-generation",
-        }:
-            await self.handle_console_stop_generation(event)
-            return
-        if button_id == "console-settings-open":
-            await self.on_console_settings_open(event)
-            return
-        if button_id == "console-model-section-configure":
-            await self.on_console_settings_open(event)
-            return
-        if button_id == "console-agent-drilldown-back":
-            event.stop()
-            self._console_agent_drilldown_run_id = None
-            self.run_worker(
-                self._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
-            return
-        if button_id == "console-agent-view-full-log":
-            event.stop()
-            self._agent._open_console_agent_run_log_viewer()
-            return
-        if button_id == "console-new-chat-tab":
-            event.stop()
-            await self._session._create_native_console_session_from_active_context()
-            return
-        if button_id and button_id.startswith(
-            "console-conversation-browser-section-toggle-"
-        ):
-            event.stop()
-            self._workspace._toggle_console_conversation_browser_section(
-                str(getattr(event.button, "group_id", "") or "").strip()
-            )
-            return
-        if button_id and button_id.startswith(
-            "console-conversation-browser-group-toggle-"
-        ):
-            event.stop()
-            self._workspace._toggle_console_conversation_browser_group(
-                str(getattr(event.button, "group_id", "") or "").strip()
-            )
-            return
-        if button_id and button_id.startswith("console-conversation-star-"):
-            event.stop()
-            self._workspace._toggle_console_conversation_star(
-                str(getattr(event.button, "conversation_id", "") or "").strip(),
-                starred=bool(getattr(event.button, "starred", False)),
-                conversation_title=str(
-                    getattr(event.button, "conversation_title", "") or ""
-                ),
-            )
-            return
-        # NOTE: the `console-workspace-conversations-toggle` branch that stood
-        # here was deleted in wave 4. Commit 3b0374479 removed the only button
-        # carrying that id; the string survives only as a CSS class on toggles
-        # whose ids are `console-conversation-browser-{section,group}-toggle-*`,
-        # and those take their own branches below. The body was dead twice over:
-        # it also required `state.conversation_browser is None`, a state that
-        # same commit retired. `Tests/UI/test_console_button_routing.py` pins the
-        # id's absence so it cannot quietly come back as a branch nobody reaches.
-        if button_id == "console-new-workspace-conversation":
-            event.stop()
-            await self._session._create_native_console_session_from_active_context()
-            return
-        if button_id == "console-workspace-conversation-search-clear":
-            event.stop()
-            self._workspace.clear_console_conversation_browser_search()
-            return
-        if button_id and button_id.startswith("console-workspace-conversation-"):
-            event.stop()
-            conversation_id = str(
-                getattr(event.button, "conversation_id", "") or ""
-            ).strip()
-            row_key = str(getattr(event.button, "row_key", "") or "").strip()
-            browser_row = self._workspace._find_console_browser_row(
-                row_key or conversation_id,
-                conversation_id=conversation_id,
-            )
-            if browser_row is not None:
-                self._workspace._activate_console_workspace_for_browser_row(browser_row)
-                row_conversation_id = str(browser_row.conversation_id or "").strip()
-                session_id = self._session._console_session_id_for_browser_row(
-                    browser_row
-                )
-            else:
-                row_conversation_id = conversation_id
-                session_id = (
-                    self._workspace._console_session_id_for_workspace_conversation(
-                        conversation_id
-                    )
-                )
-            if session_id is None:
-                if not row_conversation_id:
-                    self.app_instance.notify(
-                        "This conversation row is no longer available.",
-                        severity="warning",
-                    )
-                    return
-                # task-457(b): the resume is awaited inline and can be slow or
-                # fail; flag the pressed row loading for the duration so it does
-                # not read as a dead click, and always clear it afterwards (a
-                # successful resume also recomposes the rail, which drops the
-                # flag; the finally covers the not-resumable/error return).
-                self._set_console_conversation_row_loading(row_conversation_id, True)
-                try:
-                    resumed = (
-                        await self._workspace._resume_console_workspace_conversation(
-                            row_conversation_id,
-                            target_scope_type=(
-                                browser_row.scope_type
-                                if browser_row is not None
-                                else None
-                            ),
-                            target_workspace_id=(
-                                browser_row.workspace_id
-                                if browser_row is not None
-                                else None
-                            ),
-                        )
-                    )
-                finally:
-                    self._set_console_conversation_row_loading(
-                        row_conversation_id, False
-                    )
-                if resumed:
-                    await self._workspace._refresh_console_conversation_browser_after_selection()
-                    return
-                if resumed is None:
-                    # Transient failure; the resume path already explained it.
-                    return
-                # TASK-717: the record is missing - say so honestly (Library
-                # has no affordance for a nonexistent record) and mark the
-                # row visibly broken so it stops presenting as openable.
-                self._mark_console_conversation_row_broken(row_conversation_id)
-                self.app_instance.notify(
-                    "This saved conversation could not be loaded - "
-                    "its record is missing.",
-                    severity="warning",
-                )
-                return
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id != session_id:
-                if browser_row is None:
-                    self._workspace._set_active_workspace_for_console_session(
-                        session_id
-                    )
-                controller.switch_session(session_id)
-                await self._sync_native_console_chat_ui()
-                # task-7 review: an already-open native tab for this
-                # conversation is never ephemeral, but the PREVIOUS active
-                # session might have been -- `_sync_native_console_chat_ui`
-                # above never touches the temporary chip (see
-                # `_sync_console_temporary_chip`), so without this the chip
-                # could keep reading "Temporary" after switching onto a
-                # saved conversation.
-                self._sync_console_temporary_chip()
-            self._focus_console_composer_if_needed(force=True)
-            await (
-                self._workspace._refresh_console_conversation_browser_after_selection()
-            )
-            return
-        if button_id and button_id.startswith("console-close-session-tab-"):
-            event.stop()
-            self._session.start_close_console_session_tab(
-                button_id.removeprefix("console-close-session-tab-")
-            )
-            return
-        if button_id and button_id.startswith("console-session-tab-"):
-            event.stop()
-            await self._session._handle_console_session_tab_press(
-                button_id.removeprefix("console-session-tab-")
-            )
-            return
-        if button_id and button_id.startswith("console-message-action-"):
-            handled = await self.handle_console_message_action(event)
-            if handled:
-                return
-
     def watch_sidebar_state(self, new_state: dict) -> None:
         """Debounce persistence when sidebar state changes.
 
@@ -25149,33 +24850,6 @@ class ChatScreen(BaseAppScreen):
                 self._sidebar_state_persistence_error,
             )
             return False
-
-    def _restore_collapsible_states(self) -> None:
-        """Restore collapsible states from saved state."""
-        if not self.ui_state.collapsible_states:
-            logger.debug("No collapsible states to restore")
-            return
-
-        try:
-            # Find all collapsibles in the sidebar
-            collapsibles = self.query(Collapsible)
-            restored_count = 0
-
-            for collapsible in collapsibles:
-                if (
-                    collapsible.id
-                    and collapsible.id in self.ui_state.collapsible_states
-                ):
-                    collapsed_state = self.ui_state.collapsible_states[collapsible.id]
-                    collapsible.collapsed = collapsed_state
-                    restored_count += 1
-                    logger.debug(
-                        f"Restored {collapsible.id}: collapsed={collapsed_state}"
-                    )
-
-            logger.info(f"Restored {restored_count} collapsible states")
-        except Exception as e:
-            logger.error(f"Error restoring collapsible states: {e}")
 
     @on(SkillScriptConfirmCard.ScriptDecided)
     def handle_console_skill_script_decided(self, event: Any) -> None:

@@ -15,8 +15,9 @@ captured by a handler appending to a plain list.
 from __future__ import annotations
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.skill_eval.models import (
     SkillEvalConfig,
@@ -103,6 +104,7 @@ async def test_panel_mounts_and_posts_run_requested():
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
         panel = app.screen.query_one(SkillEvalPanel)
+        assert tuple(panel.styles.padding) == (1, 1, 1, 1)
         panel.set_subject("csv-cleaner", "store")
         panel.set_targets(_TARGETS)
         await pilot.pause()

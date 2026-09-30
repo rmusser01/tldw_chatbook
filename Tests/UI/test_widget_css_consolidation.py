@@ -1214,7 +1214,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("Widgets/Media/media_list_panel.py", "MediaListPanel", "DEFAULT_CSS"),
     ("Widgets/Media/media_navigation_panel.py", "MediaNavigationPanel", "DEFAULT_CSS"),
     ("Widgets/Media/media_search_panel.py", "MediaSearchPanel", "DEFAULT_CSS"),
-    ("Widgets/Media/media_viewer_panel.py", "DeleteConfirmDialog", "DEFAULT_CSS"),
     ("Widgets/Media/media_viewer_panel.py", "MediaViewerPanel", "DEFAULT_CSS"),
     ("Widgets/model_search_picker.py", "ModelSearchPicker", "DEFAULT_CSS"),
     ("Widgets/ModelArtifacts/activation_controls.py", "ModelActivationControls", "DEFAULT_CSS"),

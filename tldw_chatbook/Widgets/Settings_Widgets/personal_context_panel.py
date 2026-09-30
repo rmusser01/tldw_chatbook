@@ -296,6 +296,16 @@ class PersonalContextSettingsPanel(Vertical):
             refresh()
 
     def compose(self) -> ComposeResult:
+        """Bind interactive controls to the snapshot and local view they render."""
+        snapshot = self.snapshot
+        view_state = self._control_view_state()
+        for control in self._compose_contents():
+            if isinstance(control, (Button, Select)):
+                control._personal_context_snapshot = snapshot
+                control._personal_context_view_state = view_state
+            yield control
+
+    def _compose_contents(self) -> ComposeResult:
         yield Static("My Profile", classes="destination-section settings-column-title")
         if self.load_failed:
             yield Static(
@@ -792,12 +802,37 @@ class PersonalContextSettingsPanel(Vertical):
                 yield Button("Save", id="personal-context-save", variant="primary")
                 yield Button("Cancel", id="personal-context-cancel")
 
+    def _control_view_state(self) -> tuple[str, str, str, str, str, bool]:
+        """Return the local state used to compose indexed rows and actions."""
+        return (
+            self.editor_mode,
+            self.selected_record_id,
+            self.selected_deleted_record_id,
+            self.selected_scope_id,
+            self.interview_mode,
+            self.load_failed,
+        )
+
+    def _rendered_control_is_current(self, control: Button | Select) -> bool:
+        try:
+            current = self.query_one(f"#{control.id}")
+        except QueryError:
+            return False
+        return (
+            control is current
+            and getattr(control, "_personal_context_snapshot", None) is self.snapshot
+            and getattr(control, "_personal_context_view_state", None)
+            == self._control_view_state()
+        )
+
     @on(Button.Pressed)
     def handle_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         if not button_id.startswith("personal-context-"):
             return
         event.stop()
+        if not self._rendered_control_is_current(event.button):
+            return
         if button_id == "personal-context-reload":
             self.load_records(retry_locked=True)
         elif button_id == "personal-context-runtime":
@@ -953,16 +988,12 @@ class PersonalContextSettingsPanel(Vertical):
     @on(Select.Changed)
     def handle_select_changed(self, event: Select.Changed) -> None:
         select_id = event.select.id or ""
+        if not select_id.startswith("personal-context-"):
+            return
+        if not self._rendered_control_is_current(event.select):
+            return
         if select_id == "personal-context-scope-filter":
             if event.value is Select.BLANK:
-                return
-            try:
-                current_filter = self.query_one(
-                    "#personal-context-scope-filter", Select
-                )
-            except QueryError:
-                return
-            if event.select is not current_filter:
                 return
             self.selected_scope_id = str(event.value)
             visible_records = self._visible_records()

@@ -54,8 +54,8 @@ class SkillEvalDetail(Widget):
     per dimension, layer statistics, findings with remediation, warnings,
     artifact count."""
 
-    DEFAULT_CSS = """
-    SkillEvalDetail { padding: 1; }
+    BUNDLED_CSS = """
+    SkillEvalDetail { padding: $ds-space-inset; }
     """
 
     class StopRequested(Message, namespace="skill_eval_detail"):

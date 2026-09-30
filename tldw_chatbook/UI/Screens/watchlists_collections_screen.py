@@ -175,6 +175,7 @@ from ..Watchlists_Modules.notifications_pane import (
 )
 from ..Watchlists_Modules.opml_dialogs import (
     ConfirmDeleteDialog,
+    watchlist_delete_consequence,
     OpmlExportDialog,
     OpmlImportDialog,
     WatchlistNameDialog,
@@ -518,25 +519,6 @@ class TreeDataSnapshot:
     source_counts: dict[int, dict[str, int]]
     failures: frozenset[str] = frozenset()
     watchlist_source_ids: dict[int, frozenset[int]] = field(default_factory=dict)
-
-
-def watchlist_delete_consequence(source_count: int) -> str:
-    """Explain what happens to a watchlist's sources when it is deleted.
-
-    Split out so the wording is testable without driving a modal. The noun was
-    already pluralised; the verb and pronoun were not, so a single-source
-    watchlist read "Its 1 source are not deleted. They stay in..." (TASK-1091).
-    """
-    if source_count == 1:
-        return (
-            "Its 1 source is not deleted. It stays in Watchlists and appears "
-            "under Unassigned unless it also belongs to another watchlist."
-        )
-    return (
-        f"Its {source_count} sources are not deleted. They stay in Watchlists "
-        "and appear under Unassigned unless they also belong to another "
-        "watchlist."
-    )
 
 
 # task-895. Watchlist bundles and their membership are a LOCAL concept: the

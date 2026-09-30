@@ -27060,6 +27060,7 @@ def _apply_continue_skill_scope(
     controller.freshness = "fresh"
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_round_trips_media_scope_separately_from_route():
     app = _build_test_app()
     scope = MediaBrowseScope(
@@ -27101,6 +27102,7 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
     assert restored._media_state.selected_media_id == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("row_id", "expected_scope"),
     (
@@ -27126,7 +27128,7 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
             LIBRARY_ROW_BROWSE_SKILLS,
             {"sort": "status", "filter": "python", "page": 2},
         ),
-        (LIBRARY_ROW_BROWSE_COLLECTIONS, {}),
+        (LIBRARY_ROW_BROWSE_COLLECTIONS, {"page": 1}),
         (
             LIBRARY_ROW_BROWSE_SEARCH,
             {
@@ -27171,7 +27173,17 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
             SkillBrowseScope(query="python", sort="status", page=2),
         )
     elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+        from tldw_chatbook.Library.collections_capture_models import CapturePageRequest
+
         screen._collections_state.requested_page = 1
+        assert screen._library_continue_receipt_for_current_route() is None
+        controller = screen._library_collections_capture_controller
+        assert controller is not None
+        controller.state = dataclasses.replace(
+            controller.state,
+            applied_scope=CapturePageRequest(authority_key="continue-collections", page=1),
+            page_stale=False,
+        )
     else:
         screen._rag_search_state.query = "retrieval"
         screen._rag_search_state.searched_query = "retrieval"
@@ -27216,6 +27228,7 @@ def test_library_skills_applied_scope_round_trips_without_rows() -> None:
     assert restored._skills_state.sort == "status"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row_id",
     (
@@ -27236,6 +27249,7 @@ def test_library_landing_continue_receipt_rejects_nonresumable_routes(
     assert screen.save_state()["library_continue_receipt"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_rejects_file_notes_and_media_trash():
     app = _build_test_app()
     file_notes = LibraryScreen(app)
@@ -27252,6 +27266,7 @@ def test_library_landing_continue_receipt_rejects_file_notes_and_media_trash():
     assert media_trash.save_state()["library_continue_receipt"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_uses_current_admitted_route_not_late_success():
     screen = LibraryScreen(_build_test_app())
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
@@ -27270,6 +27285,7 @@ def test_library_landing_continue_receipt_uses_current_admitted_route_not_late_s
     assert screen.save_state()["library_continue_receipt"] == prompt_receipt
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_restore_fails_closed_and_legacy_still_routes():
     app = _build_test_app()
     malformed = LibraryScreen(app)

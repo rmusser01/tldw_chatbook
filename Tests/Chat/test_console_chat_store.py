@@ -73,6 +73,10 @@ from tldw_chatbook.Video_Generation.video_store import video_content_marker
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 
 
+# Real Console config reads retain the private collection-selected source.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSettings:
     return ConsoleSessionSettings(provider="openai", model=model)
 
@@ -4158,12 +4162,14 @@ def test_store_updates_persisted_streaming_assistant_content_and_status():
     assert persistence.updated_messages[-1]["image_mime_type"] is None
 
 
-def test_store_persists_workspace_session_with_real_chat_persistence_service(tmp_path):
+def test_store_persists_workspace_session_with_real_chat_persistence_service(tmp_path, request):
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     try:
-        registry = LocalWorkspaceRegistryService(
-            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="test_client")
+        workspace_db = WorkspaceDB(
+            tmp_path / "workspaces.sqlite", client_id="test_client"
         )
+        request.addfinalizer(workspace_db.close)
+        registry = LocalWorkspaceRegistryService(workspace_db)
         registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
         store = ConsoleChatStore(
             persistence=ChatPersistenceService(db, workspace_registry=registry)
@@ -4253,12 +4259,14 @@ def test_invalid_runtime_source_never_reaches_real_chat_persistence(
         db.close()
 
 
-def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path):
+def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path, request):
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     try:
-        registry = LocalWorkspaceRegistryService(
-            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="test_client")
+        workspace_db = WorkspaceDB(
+            tmp_path / "workspaces.sqlite", client_id="test_client"
         )
+        request.addfinalizer(workspace_db.close)
+        registry = LocalWorkspaceRegistryService(workspace_db)
         registry.ensure_default_workspace()
         store = ConsoleChatStore(
             persistence=ChatPersistenceService(db, workspace_registry=registry)
@@ -4330,10 +4338,11 @@ def test_store_system_prompt_round_trips_through_real_chat_persistence_service(
         db.close()
 
 
-def test_update_conversation_pinned_prefill_preserves_sibling_metadata(tmp_path):
+def test_update_conversation_pinned_prefill_preserves_sibling_metadata(tmp_path, request):
     import json
 
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    request.addfinalizer(db.close)
     service = ChatPersistenceService(db)
     conversation_id = service.create_conversation(
         assistant_kind="generic", assistant_id="console", conversation_title="T"
@@ -4746,6 +4755,8 @@ def test_failed_variant_restore_preserves_concurrent_identity_increment(
     """A failed owner removes none of another message's identity publication."""
 
     db = CharactersRAGDB(tmp_path / "variant-identity-race.sqlite", "identity-race")
+    thread = None
+    release = Event()
     try:
         persistence = ChatPersistenceService(db)
         store = ConsoleChatStore(persistence=persistence)
@@ -4771,7 +4782,6 @@ def test_failed_variant_restore_preserves_concurrent_identity_increment(
         store.append_stream_chunk(failing.id, "replacement")
         baseline_identity = session.identity_revision
         entered = Event()
-        release = Event()
         original_writer = (
             persistence.replace_assistant_generation_projection_with_contributions
         )
@@ -4813,7 +4823,11 @@ def test_failed_variant_restore_preserves_concurrent_identity_increment(
             "Manual greeting."
         )
     finally:
-        db.close_connection()
+        release.set()
+        if thread is not None:
+            thread.join(timeout=5)
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.parametrize(
@@ -6106,6 +6120,8 @@ def test_quarantine_reload_never_mixes_row_and_sidecar_versions(
     db, service, store, assistant, _adapter = _legacy_projection_fixture(
         tmp_path, "quarantine-atomic-bundle"
     )
+    writer = None
+    row_read = Event()
     try:
         baseline = dict(db.get_message_by_id(assistant.persisted_message_id))
         assert service.update_message_content(
@@ -6130,7 +6146,6 @@ def test_quarantine_reload_never_mixes_row_and_sidecar_versions(
         store.persistence = service
 
         reader_thread = get_ident()
-        row_read = Event()
         writer_done = Event()
         writer_errors: list[BaseException] = []
         original_get = db.get_message_by_id
@@ -6178,7 +6193,11 @@ def test_quarantine_reload_never_mixes_row_and_sidecar_versions(
             ("row-v4", b"image-v4"),
         }
     finally:
-        db.close_connection()
+        row_read.set()
+        if writer is not None:
+            writer.join(timeout=3)
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.parametrize("route", ["finalize", "add", "select"])
@@ -9160,6 +9179,7 @@ def test_canvas_promotion_lease_rejects_concurrent_update_without_stranding_grap
             assert release.wait(timeout=5)
             return self.delegate.promote_console_conversation_bundle(**kwargs)
 
+    thread = None
     try:
         staging = CanvasStagingStore()
         store = ConsoleChatStore(
@@ -9214,7 +9234,10 @@ def test_canvas_promotion_lease_rejects_concurrent_update_without_stranding_grap
         )
     finally:
         release.set()
-        db.close_connection()
+        if thread is not None:
+            thread.join(timeout=5)
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 def test_canvas_promotion_reservation_refuses_close_and_same_id_recreate(
@@ -9265,16 +9288,16 @@ def test_canvas_promotion_reservation_refuses_close_and_same_id_recreate(
     thread = Thread(target=promote)
     thread.start()
     try:
-        assert entered.wait(timeout=5)
-        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
-            store.close_session(session.id)
-        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
-            store.create_session(session_id=session.id, ephemeral=True)
-    finally:
-        release.set()
-        thread.join(timeout=5)
+        try:
+            assert entered.wait(timeout=5)
+            with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+                store.close_session(session.id)
+            with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+                store.create_session(session_id=session.id, ephemeral=True)
+        finally:
+            release.set()
+            thread.join(timeout=5)
 
-    try:
         assert not thread.is_alive()
         assert "error" not in outcome
         assert store._sessions[session.id] is session
@@ -9288,7 +9311,8 @@ def test_canvas_promotion_reservation_refuses_close_and_same_id_recreate(
             == 1
         )
     finally:
-        db.close_connection()
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
@@ -9342,19 +9366,19 @@ def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
     thread = Thread(target=promote)
     thread.start()
     try:
-        assert entered.wait(timeout=5)
-        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
-            store.restore_state(
-                sessions=[replacement],
-                messages_by_session={replacement.id: ()},
-            )
-        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
-            store.end_app_runtime()
-    finally:
-        release.set()
-        thread.join(timeout=5)
+        try:
+            assert entered.wait(timeout=5)
+            with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+                store.restore_state(
+                    sessions=[replacement],
+                    messages_by_session={replacement.id: ()},
+                )
+            with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+                store.end_app_runtime()
+        finally:
+            release.set()
+            thread.join(timeout=5)
 
-    try:
         assert not thread.is_alive()
         assert "error" not in outcome
         assert store._sessions[session.id] is session
@@ -9368,7 +9392,8 @@ def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
             == 1
         )
     finally:
-        db.close_connection()
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 def test_delayed_second_promotion_returns_idempotently_before_any_write(

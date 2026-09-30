@@ -13,6 +13,7 @@ IMAGE_RECOVERY_PATH = Path("tldw_chatbook/UI/Console_Modules/image.py")
 RETRIEVAL_PATH = Path("tldw_chatbook/UI/Console_Modules/retrieval.py")
 HYDRATION_PATH = Path("tldw_chatbook/Chat/console_conversation_hydration.py")
 CONTROLLER_PATH = Path("tldw_chatbook/Chat/console_chat_controller.py")
+SUBMISSION_PATH = Path("tldw_chatbook/Chat/console_draft_submission.py")
 
 
 # Bidirectional contract: every direct owner appears here and every entry must
@@ -20,6 +21,16 @@ CONTROLLER_PATH = Path("tldw_chatbook/Chat/console_chat_controller.py")
 # are listed separately so a future rename cannot silently remove the owner.
 DIRECT_TRANSITION_ROUTES = frozenset(
     {
+        "adopt_session_ephemeral_endpoint",
+        "rollback_session_ephemeral_endpoint_adoption",
+        "rollback_session_settings_replacement",
+        "update_message_thinking_block",
+        "commit_console_settings_live",
+        "prepare_session_user_display_name_override_for_commit",
+        "publish_first_persisted_conversation",
+        "rebind_persisted_conversation",
+        "seed_persona_roleplay",
+        "set_session_assistant_name",
         "add_variant",
         "accept_roleplay_projection_persistence_result",
         "append_generation_message",
@@ -88,6 +99,7 @@ DIRECT_TRANSITION_ROUTES = frozenset(
 )
 
 DELEGATED_TRANSITION_ROUTES = {
+    "set_session_user_display_name_override_for_commit": "set_session_user_display_name_override",
     "confirm_auto_speak_destination": "_set_speech_preferences",
     "pause_auto_speak": "_set_speech_preferences",
     "resume_auto_speak": "_set_speech_preferences",
@@ -284,8 +296,150 @@ def _root_name(node: ast.expr) -> str | None:
     return current.id if isinstance(current, ast.Name) else None
 
 
+
+# Exact detached data owners, not whole-method exclusions. The canonical
+# dataclass and registry field schemas are checked below against actual source.
+_DETACHED_DRAIN_TYPE = "_ConsoleSettingsPersistenceDrain"
+_DETACHED_LIFECYCLE_TYPE = "_ConsoleSettingsPersistenceLifecycle"
+_FRESH_MESSAGE_TYPE = "ConsoleChatMessage"
+
+
+def _detached_field_writes(node: ast.AST) -> frozenset[tuple[int, str]]:
+    """Prove exact DTO writes or fresh message writes before custody transfer."""
+    known: dict[str, tuple[str, int]] = {}
+    published: set[tuple[str, int]] = set()
+    safe: set[tuple[int, str]] = set()
+    executed = sorted(
+        _executed_nodes(node),
+        key=lambda child: child.lineno if hasattr(child, "lineno") else -1,
+    )
+    parameters = (
+        (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        else ()
+    )
+    shadowed = {parameter.arg for parameter in parameters}
+    shadowed.update(
+        target.id
+        for child in executed
+        if isinstance(child, (ast.Assign, ast.AnnAssign))
+        for target in (
+            child.targets if isinstance(child, ast.Assign) else [child.target]
+        )
+        if isinstance(target, ast.Name)
+    )
+    for parameter in parameters:
+        if isinstance(parameter.annotation, ast.Name) and parameter.annotation.id in {
+            _DETACHED_DRAIN_TYPE,
+            _DETACHED_LIFECYCLE_TYPE,
+        }:
+            known[parameter.arg] = (parameter.annotation.id, parameter.lineno)
+
+    def constructed(value: ast.expr | None) -> tuple[str, int] | None:
+        if isinstance(value, ast.Name):
+            return known.get(value.id)
+        if isinstance(value, ast.Attribute) and value.attr == "drain":
+            parent = known.get(_root_name(value.value) or "")
+            if parent is not None and parent[0] == _DETACHED_LIFECYCLE_TYPE:
+                return (_DETACHED_DRAIN_TYPE, parent[1])
+        if not isinstance(value, ast.Call):
+            return None
+        if (
+            isinstance(value.func, ast.Name)
+            and value.func.id
+            in {_DETACHED_DRAIN_TYPE, _DETACHED_LIFECYCLE_TYPE, _FRESH_MESSAGE_TYPE}
+            and value.func.id not in shadowed
+        ):
+            return (value.func.id, value.lineno)
+        if (
+            _expr_text(value.func) == "self._settings_persistence_lifecycles.setdefault"
+            and len(value.args) == 2
+            and isinstance(value.args[1], ast.Call)
+            and _expr_text(value.args[1].func) == _DETACHED_LIFECYCLE_TYPE
+            and _DETACHED_LIFECYCLE_TYPE not in shadowed
+        ):
+            return (_DETACHED_LIFECYCLE_TYPE, value.lineno)
+        return None
+
+    def transferred_objects(value: ast.AST | None) -> set[tuple[str, int]]:
+        if value is None:
+            return set()
+        if isinstance(value, ast.Name):
+            owner = known.get(value.id)
+            return {owner} if owner is not None else set()
+        if (
+            isinstance(value, ast.Attribute)
+            and isinstance(value.value, ast.Name)
+            and value.value.id in known
+            and (
+                value.attr == "id"
+                or (
+                    known[value.value.id][0] == _DETACHED_DRAIN_TYPE
+                    and value.attr == "initial_components"
+                )
+            )
+        ):
+            return set()
+        owners: set[tuple[str, int]] = set()
+        for part in ast.iter_child_nodes(value):
+            owners.update(transferred_objects(part))
+        return owners
+
+    for child in executed:
+        if isinstance(child, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+            value = child.value
+            inferred = constructed(value)
+            # Capture escaping uses before any target can replace an alias.
+            transferred = transferred_objects(value)
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    if inferred is not None:
+                        known[target.id] = inferred
+                    elif not (
+                        isinstance(value, ast.Constant)
+                        and value.value is None
+                        and known.get(target.id, (None,))[0]
+                        in {_DETACHED_DRAIN_TYPE, _DETACHED_LIFECYCLE_TYPE}
+                    ):
+                        known.pop(target.id, None)
+                    if inferred is None:
+                        # A container alias is conservatively a custody escape
+                        # as soon as it embeds a known object. Scalar .id reads
+                        # and exact bare-object aliases retain their proof.
+                        published.update(transferred)
+                    continue
+                root = _root_name(target)
+                owner = known.get(root or "")
+                if (
+                    owner is not None
+                    and owner not in published
+                    and isinstance(target, ast.Attribute)
+                    and (
+                        owner[0] == _FRESH_MESSAGE_TYPE
+                        or (
+                            owner[0] == _DETACHED_DRAIN_TYPE
+                            and target.attr == "context_policy_overrides"
+                        )
+                    )
+                ):
+                    safe.add((child.lineno, root or ""))
+                # Any attribute/subscript receiver can publish through a
+                # live alias; its provenance cannot justify an exemption.
+                published.update(transferred)
+        if not isinstance(child, ast.Call):
+            continue
+        # Registering a fresh object transfers custody for every alias. Other
+        # calls receiving the object are conservatively treated as transfers;
+        # transitive delegate writes remain visible to the route scanner.
+        for argument in (*child.args, *(keyword.value for keyword in child.keywords)):
+            published.update(transferred_objects(argument))
+    return frozenset(safe)
+
+
 def _mutation_events(node: ast.AST) -> tuple[tuple[int, str | None], ...]:
     bindings = _owner_bindings(node)
+    detached_writes = _detached_field_writes(node)
     parameter_names = set()
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         parameter_names = {arg.arg for arg in (*node.args.posonlyargs, *node.args.args)}
@@ -328,6 +482,8 @@ def _mutation_events(node: ast.AST) -> tuple[tuple[int, str | None], ...]:
             if not attrs & FORK_FIELD_ASSIGNMENTS:
                 continue
             root = _root_name(target)
+            if (child.lineno, root or "") in detached_writes:
+                continue
             owner = bindings.get(root or "")
             if owner is None and root == "self":
                 owner = default_owner
@@ -1228,6 +1384,7 @@ def test_external_console_modules_do_not_write_live_fork_fields_directly() -> No
     for path in (
         HYDRATION_PATH,
         CONTROLLER_PATH,
+        SUBMISSION_PATH,
         IMAGE_RECOVERY_PATH,
         RETRIEVAL_PATH,
     ):
@@ -1248,7 +1405,7 @@ def test_external_console_modules_do_not_write_live_fork_fields_directly() -> No
         "character_system_template",
     }
 
-    controller = ast.parse(CONTROLLER_PATH.read_text(encoding="utf-8"))
+    controller = ast.parse(SUBMISSION_PATH.read_text(encoding="utf-8"))
     rollback_calls = [
         child
         for child in ast.walk(controller)
@@ -1256,7 +1413,68 @@ def test_external_console_modules_do_not_write_live_fork_fields_directly() -> No
         and isinstance(child.func, ast.Attribute)
         and child.func.attr == "rollback_transient_send"
     ]
-    assert len(rollback_calls) == 2
+    # Each compensating branch restores the exact pre-send title/binding.
+    assert not any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and child.func.attr == "rollback_transient_send"
+        for child in ast.walk(ast.parse(CONTROLLER_PATH.read_text(encoding="utf-8")))
+    )
+    submission = ast.parse(SUBMISSION_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        child
+        for child in submission.body
+        if isinstance(child, ast.AsyncFunctionDef) and child.name == "submit_draft_body"
+    )
+    rollback_calls.sort(key=lambda call: call.lineno)
+    assert len(rollback_calls) == 3
+    for call in rollback_calls:
+        assert _expr_text(call.func) == "self.store.rollback_transient_send"
+        assert [_expr_text(argument) for argument in call.args] == [
+            "session.id",
+            "echoed_user.id",
+        ]
+        assert {
+            keyword.arg: _expr_text(keyword.value) for keyword in call.keywords
+        } == {
+            "title": "pre_send_title",
+            "persisted_conversation_id": "pre_send_conversation_id",
+        }
+    parents = {
+        child: parent
+        for parent in ast.walk(owner)
+        for child in ast.iter_child_nodes(parent)
+    }
+    branch_conditions = []
+    for call in rollback_calls:
+        canonical = next(
+            child
+            for child in ast.walk(owner)
+            if isinstance(child, ast.Call)
+            and child.lineno == call.lineno
+            and child.col_offset == call.col_offset
+        )
+        conditions = []
+        ancestor = canonical
+        while ancestor in parents:
+            ancestor = parents[ancestor]
+            if isinstance(ancestor, ast.If):
+                conditions.append(_expr_text(ancestor.test))
+            elif isinstance(ancestor, ast.ExceptHandler):
+                conditions.append(_expr_text(ancestor.type))
+        branch_conditions.append(tuple(conditions))
+    assert branch_conditions == [
+        (
+            "self._shutdown_requested.is_set()",
+            "echoed_user is not None",
+            "BaseException",
+        ),
+        ("echoed_user is not None", "thinking_block is not None"),
+        (
+            "echoed_user is not None",
+            "resumed_preparation is None and session.ephemeral and (origin is owner.ConsoleSubmissionOrigin.QUEUED) and (capture_mode is owner.ConsoleTraceCaptureMode.CAPTURE_ON)",
+        ),
+    ]
 
 
 def test_external_writer_scan_follows_alias_setattr_and_holder_mutations() -> None:
@@ -1362,3 +1580,334 @@ def test_external_rag_writer_uses_one_store_transition_and_publication_seam() ->
     assert "fork_source_transition" in _called_attributes(owner)
     assert "_apply_console_retrieval_scope_save_transition" in _called_attributes(owner)
     assert "set_session_rag_scope" in _called_attributes(delegated)
+
+
+@pytest.mark.parametrize(
+    ("body", "mutates"),
+    (
+        (
+            "message = ConsoleChatMessage()\n    message.parent_message_id = parent",
+            False,
+        ),
+        (
+            "message = ConsoleChatMessage()\n    alias = message\n    alias.parent_message_id = parent",
+            False,
+        ),
+        (
+            "message = ConsoleChatMessage()\n    self._register_tree_node(session_id, message)\n    message.parent_message_id = parent",
+            True,
+        ),
+        (
+            "message = ConsoleChatMessage()\n    alias = message\n    self._register_tree_node(session_id, alias)\n    message.parent_message_id = parent",
+            True,
+        ),
+        (
+            "message = ConsoleChatMessage()\n    message = self._message_or_raise(message_id)\n    message.parent_message_id = parent",
+            True,
+        ),
+        (
+            "message = evil.ConsoleChatMessage()\n    message.parent_message_id = parent",
+            True,
+        ),
+        (
+            "message = ConsoleChatMessage()\n    delegate(message)\n    message.parent_message_id = parent",
+            True,
+        ),
+        (
+            "message = ConsoleChatMessage()\n    self._nodes_by_session[session_id] = message\n    message.parent_message_id = parent",
+            True,
+        ),
+        (
+            "drain = _ConsoleSettingsPersistenceDrain()\n    drain.context_policy_overrides = overrides",
+            False,
+        ),
+        (
+            "drain = self._session_or_raise(session_id)\n    drain.context_policy_overrides = overrides",
+            True,
+        ),
+        (
+            "drain = _ConsoleSettingsPersistenceDrain()\n    drain = self._session_or_raise(session_id)\n    drain.context_policy_overrides = overrides",
+            True,
+        ),
+        (
+            "drain = evil._ConsoleSettingsPersistenceDrain()\n    drain.context_policy_overrides = overrides",
+            True,
+        ),
+        (
+            "drain = _ConsoleSettingsPersistenceDrain()\n    self._sessions[session_id] = drain\n    drain.context_policy_overrides = overrides",
+            True,
+        ),
+        (
+            "drain = _ConsoleSettingsPersistenceDrain()\n    delegate(drain)\n    drain.context_policy_overrides = overrides",
+            True,
+        ),
+        (
+            "lifecycle = self._settings_persistence_lifecycles.setdefault(session_id, _ConsoleSettingsPersistenceLifecycle())\n    drain = lifecycle.drain\n    drain.context_policy_overrides = overrides",
+            False,
+        ),
+        (
+            "lifecycle = evil.setdefault(session_id, _ConsoleSettingsPersistenceLifecycle())\n    drain = lifecycle.drain\n    drain.context_policy_overrides = overrides",
+            True,
+        ),
+    ),
+)
+def test_detached_receiver_proof_stops_at_live_rebinding_or_custody_transfer(
+    body: str, mutates: bool
+) -> None:
+    node = _synthetic_method(
+        f"def mutate(self, session_id, message_id, parent, overrides):\n    {body}\n"
+    )
+    assert bool(_mutation_events(node)) is mutates
+
+
+def test_fresh_constructor_cannot_be_shadowed_by_a_live_factory() -> None:
+    node = _synthetic_method(
+        """
+def mutate(self, session_id, ConsoleChatMessage):
+    message = ConsoleChatMessage()
+    message.parent_message_id = "changed"
+"""
+    )
+    assert _mutation_events(node)
+
+
+def test_detached_delegate_cannot_hide_a_live_parameter_mutation() -> None:
+    tree = ast.parse(
+        """
+class Store:
+    def public(self, session_id):
+        message = ConsoleChatMessage()
+        self._private(message)
+
+    def _private(self, message):
+        message.parent_message_id = "changed"
+"""
+    )
+    methods = {node.name: node for node in tree.body[0].body}
+    assert "public" in _fork_mutating_routes(methods)
+    assert not _transitioned(methods["public"], methods=methods)
+
+
+def test_detached_drain_class_and_registry_schemas_are_canonical() -> None:
+    tree = ast.parse(STORE_PATH.read_text(encoding="utf-8"))
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    drain = classes[_DETACHED_DRAIN_TYPE]
+    lifecycle = classes[_DETACHED_LIFECYCLE_TYPE]
+    for owner in (drain, lifecycle):
+        assert any(
+            isinstance(decorator, ast.Call)
+            and _expr_text(decorator.func) == "dataclass"
+            and any(
+                keyword.arg == "slots" and _expr_text(keyword.value) == "True"
+                for keyword in decorator.keywords
+            )
+            for decorator in owner.decorator_list
+        )
+        assert not owner.bases
+    fields = {
+        child.target.id: _expr_text(child.annotation)
+        for child in drain.body
+        if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name)
+    }
+    assert set(fields) & FORK_FIELD_ASSIGNMENTS == {
+        "persisted_conversation_id",
+        "context_policy_overrides",
+    }
+    assert fields["context_policy_overrides"] == "ConsoleContextPolicyOverrides | None"
+    assert fields["initial_components"] == "frozenset[ConsoleSettingsComponent]"
+    assert any(
+        isinstance(child, ast.AnnAssign)
+        and _expr_text(child.target) == "drain"
+        and _expr_text(child.annotation) == "_ConsoleSettingsPersistenceDrain | None"
+        for child in lifecycle.body
+    )
+    initializer = _store_methods()["__init__"]
+    assert any(
+        isinstance(child, ast.AnnAssign)
+        and _expr_text(child.target) == "self._settings_persistence_lifecycles"
+        and _expr_text(child.annotation)
+        == "dict[str, _ConsoleSettingsPersistenceLifecycle]"
+        and _expr_text(child.value) == "{}"
+        for child in ast.walk(initializer)
+    )
+
+
+def _voice_tree_publication_fenced(node: ast.FunctionDef) -> bool:
+    boundaries = [
+        child
+        for child in _executed_nodes(node)
+        if isinstance(child, ast.With)
+        and any(
+            _expr_text(item.context_expr)
+            == "self._fork_source_transition_admitted(session_id)"
+            for item in child.items
+        )
+    ]
+    if len(boundaries) != 1:
+        return False
+    boundary = boundaries[0]
+    mutations = [
+        child
+        for child in _executed_nodes(node)
+        if (
+            isinstance(child, ast.Call)
+            and _expr_text(child.func)
+            in {
+                "self._register_tree_node",
+                "self._recompute_active_path",
+                "self._bump_payload_revision",
+            }
+        )
+        or (
+            isinstance(child, ast.Assign)
+            and any(
+                _root_name(target) == "self"
+                and any(
+                    isinstance(part, ast.Attribute)
+                    and part.attr
+                    in {
+                        "_nodes_by_session",
+                        "_children_by_parent",
+                        "_messages_by_session",
+                        "_active_leaf_by_session",
+                        "_payload_revisions",
+                        "_conversation_context_epochs",
+                    }
+                    for part in ast.walk(target)
+                )
+                for target in child.targets
+            )
+        )
+    ]
+    return bool(mutations) and all(
+        boundary.lineno < child.lineno <= boundary.end_lineno for child in mutations
+    )
+
+
+def test_voice_publication_and_rollback_share_the_exact_admitted_fork_boundary() -> (
+    None
+):
+    methods = _store_methods()
+    assert _voice_tree_publication_fenced(methods["_publish_voice_pair"])
+    for route, count in {
+        "publish_temporary_voice_pair": 1,
+        "publish_durable_voice_pair": 1,
+        "retry_voice_promotion_recovery": 2,
+    }.items():
+        node = methods[route]
+        calls = [
+            call
+            for call in _self_call_records(node)
+            if _expr_text(call.func) == "self._publish_voice_pair"
+        ]
+        assert len(calls) == count
+        locked = [
+            child
+            for child in _executed_nodes(node)
+            if isinstance(child, ast.With)
+            and any(
+                _expr_text(item.context_expr) == "self._voice_promotion_lock"
+                for item in child.items
+            )
+        ]
+        assert len(locked) == 1
+        assert all(
+            locked[0].lineno < call.lineno <= locked[0].end_lineno for call in calls
+        )
+    assert "_voice_promotion_lease_is_live" in _called_attributes(
+        methods["_publish_voice_pair"]
+    )
+
+
+@pytest.mark.parametrize("unsafe", ("after", "wrong_session"))
+def test_voice_tree_boundary_cannot_be_late_or_cover_a_different_session(
+    unsafe,
+) -> None:
+    boundary = "other_session" if unsafe == "wrong_session" else "session_id"
+    node = _synthetic_method(f"""
+def publish(self, session_id):
+    self._register_tree_node(session_id, message)
+    with self._fork_source_transition_admitted({boundary}):
+        self._unrelated()
+""")
+    assert not _voice_tree_publication_fenced(node)
+
+
+@pytest.mark.parametrize(
+    ("transfer", "mutates"),
+    (
+        ("self._nodes_by_session[session_id] = {message.id: message}", True),
+        ("delegate([message])", True),
+        ("payload = [message]\n    delegate(payload)", True),
+        ("delegate(payload={'items': (message,)})", True),
+        ("payload = {'items': [[message]]}", True),
+        ("payload = tuple([message])", True),
+        ("assistant = ConsoleChatMessage(parent_message_id=message.id)", False),
+        ("delegate({'ids': [message.id]})", False),
+    ),
+)
+def test_container_custody_transfer_keeps_live_writes_visible(
+    transfer: str, mutates: bool
+) -> None:
+    node = _synthetic_method(
+        "def mutate(self, session_id, parent):\n"
+        "    message = ConsoleChatMessage()\n"
+        f"    {transfer}\n"
+        "    message.parent_message_id = parent\n"
+    )
+    assert bool(_mutation_events(node)) is mutates
+
+
+def test_detached_drain_custody_cannot_escape_inside_a_container() -> None:
+    node = _synthetic_method(
+        """
+def mutate(self, overrides):
+    drain = _ConsoleSettingsPersistenceDrain()
+    payload = {"nested": [drain]}
+    delegate(payload)
+    drain.context_policy_overrides = overrides
+"""
+    )
+    assert _mutation_events(node)
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        (
+            "nodes = self._nodes_by_session[session_id]\n"
+            "    nodes[message.id] = message\n"
+            "    message.parent_message_id = parent"
+        ),
+        (
+            "alias = message\n"
+            "    message = delegate(message)\n"
+            "    alias.parent_message_id = parent"
+        ),
+    ),
+)
+def test_mapping_alias_and_rebinding_cannot_hide_a_custody_transfer(body: str) -> None:
+    node = _synthetic_method(
+        "def mutate(self, session_id, parent):\n"
+        "    message = ConsoleChatMessage()\n"
+        f"    {body}\n"
+    )
+    assert _mutation_events(node)
+
+
+@pytest.mark.parametrize("canonical_drain", (True, False))
+def test_only_canonical_drain_component_union_retains_detached_custody(
+    canonical_drain: bool,
+) -> None:
+    receiver = (
+        "_ConsoleSettingsPersistenceDrain()"
+        if canonical_drain
+        else "self._session_or_raise(session_id)"
+    )
+    node = _synthetic_method(
+        "def mutate(self, session_id, components, overrides):\n"
+        f"    drain = {receiver}\n"
+        "    drain.initial_components = drain.initial_components | components\n"
+        "    drain.context_policy_overrides = overrides\n"
+    )
+    assert bool(_mutation_events(node)) is not canonical_drain

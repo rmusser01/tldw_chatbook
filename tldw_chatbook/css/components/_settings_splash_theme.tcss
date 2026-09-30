@@ -31,7 +31,7 @@
 }
 #settings-theme-list-column,
 #settings-theme-card-column {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 #settings-theme-list {
     height: auto;
@@ -230,7 +230,7 @@
 }
 #settings-theme-editor-palette-column,
 #settings-theme-editor-preview-column {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 #settings-theme-editor.-stacked #settings-theme-editor-columns {
     layout: vertical;

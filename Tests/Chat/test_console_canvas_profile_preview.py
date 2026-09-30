@@ -398,6 +398,14 @@ async def test_canvas_changes_discard_late_profile_preview(
     rig.controller._canvas_enabled_reader = lambda: enabled[0]
     if change == "owner_available":
         rig.store.canvas_turn_controller = None
+    # First-use catalog imports are setup, before the bounded publication race.
+    ready = await rig.controller.build_context_snapshot(
+        draft="question", session_id=rig.session.id
+    )
+    assert ready.personal_context_snapshot.source_version_ids == (
+        rig.record.version_id,
+    )
+    assert rig.canvas._runs == rig.canvas._assistant_runs == {}
     started = threading.Event()
     release = threading.Event()
     original = rig.bridge.build_personal_context_preview_snapshot

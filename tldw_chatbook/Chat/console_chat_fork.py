@@ -7,7 +7,7 @@ import json
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Sequence  # noqa: UP035 - preserve extracted annotations.
 
 from PIL import Image as PILImage
 
@@ -17,7 +17,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
     MessageAttachment,
 )
-from tldw_chatbook.Chat.attachment_core import MAX_IMAGE_BYTES
+from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, MAX_IMAGE_BYTES
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ConsoleContextPolicyOverrides,
@@ -855,3 +855,95 @@ def _validate_canonical_json(value: object) -> None:
             _validate_canonical_json(item)
         return
     raise TypeError("Fork fingerprint payload must be canonical JSON.")
+
+
+def fingerprint_console_fork_attachments(
+    attachments: Sequence[MessageAttachment | ConsoleForkProjectedAttachment],
+    generation: Sequence[GenerationVariantMeta | ConsoleForkProjectedGeneration],
+) -> str:
+    payload: list[dict[str, object]] = []
+    if generation and len(generation) != len(attachments):
+        raise ValueError("Console fork generation metadata is unavailable.")
+    for index, attachment in enumerate(attachments):
+        if (
+            type(attachment)
+            not in {MessageAttachment, ConsoleForkProjectedAttachment}
+            or type(attachment.data) is not bytes
+            or not attachment.data
+            or len(attachment.data) > MAX_ATTACHMENT_BYTES
+            or type(attachment.mime_type) is not str
+            or not attachment.mime_type
+            or type(attachment.display_name) is not str
+            or attachment.position != index
+        ):
+            raise ValueError("Console fork attachment is unavailable.")
+        if attachment.mime_type.startswith("image/") or generation:
+            validate_console_fork_image_payload(
+                attachment.data,
+                attachment.mime_type,
+            )
+        metadata = generation[index] if index < len(generation) else None
+        metadata_payload: dict[str, object] | None = None
+        if metadata is not None:
+            if (
+                type(metadata)
+                not in {GenerationVariantMeta, ConsoleForkProjectedGeneration}
+                or type(metadata.prompt) is not str
+                or type(metadata.negative_prompt) is not str
+                or type(metadata.backend) is not str
+                or type(metadata.model) not in {str, type(None)}
+                or type(metadata.seed) not in {int, type(None)}
+                or type(metadata.style) not in {str, type(None)}
+            ):
+                raise ValueError("Console fork generation metadata is unavailable.")
+            if type(metadata) is GenerationVariantMeta:
+                if type(metadata.params) is not dict:
+                    raise ValueError(
+                        "Console fork generation metadata is unavailable."
+                    )
+                try:
+                    params_json = json.dumps(
+                        metadata.params,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "Console fork generation metadata is unavailable."
+                    ) from None
+            elif (
+                type(metadata) is ConsoleForkProjectedGeneration
+                and metadata.position == index
+                and type(metadata.params_json) is str
+            ):
+                params_json = metadata.params_json
+            else:
+                raise ValueError("Console fork generation metadata is unavailable.")
+            metadata_payload = {
+                "prompt": metadata.prompt,
+                "negative_prompt": metadata.negative_prompt,
+                "backend": metadata.backend,
+                "model": metadata.model,
+                "seed": metadata.seed,
+                "style": metadata.style,
+                "params_json": params_json,
+            }
+        payload.append(
+            {
+                "position": attachment.position,
+                "data_sha256": hashlib.sha256(attachment.data).hexdigest(),
+                "mime_type": attachment.mime_type,
+                "display_name": attachment.display_name,
+                "generation": metadata_payload,
+            }
+        )
+    canonical = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(b"console-fork-attachments-v1\0" + canonical).hexdigest()

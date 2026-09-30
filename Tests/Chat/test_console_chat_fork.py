@@ -1830,6 +1830,7 @@ def test_configuration_and_leaf_writers_block_fork_through_live_publication(
         def blocking_leaf(_session_id, _message_id):
             entered.set()
             assert release.wait(2)
+            return True
 
         monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
 

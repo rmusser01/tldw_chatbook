@@ -1184,3 +1184,25 @@ def classify_skill_save_error(result: Any, message: str, exc: Exception | None) 
     if exc is None and isinstance(result, Mapping) and result.get("name") is not None:
         return "ok"
     return "error"
+
+
+def skill_editor_fields_match_state(
+    state: SkillEditorState, fields: tuple[str, str, str, str, str, str]
+) -> bool:
+    """Compare live editor text with the corresponding stored field values."""
+    (
+        raw_name,
+        raw_description,
+        raw_argument_hint,
+        raw_allowed_tools_csv,
+        raw_model,
+        raw_body,
+    ) = fields
+    return (
+        raw_name == (state.name or "")
+        and raw_description == (state.description or "")
+        and raw_argument_hint == (state.argument_hint or "")
+        and raw_allowed_tools_csv == (state.allowed_tools_csv or "")
+        and raw_model == (state.model or "")
+        and raw_body == (state.body or "")
+    )

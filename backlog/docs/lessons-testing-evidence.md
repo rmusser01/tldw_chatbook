@@ -1,5 +1,28 @@
 # Lessons: what counts as evidence a change works
 
+## Passing UI cases can retain constructor-owned database caches
+
+**TASK-25907.23, 2026-09-29.** All 99 scoped native UI cases passed, but the
+unchanged descriptor sentinel reported growth of 380 (27 to 407, limit 200).
+The shared factory constructed real `TldwCli` objects, often wrapped by an
+unmounted `DestinationHarness`, then removed their temporary directories
+without closing four eager database caches. Native storage admission retains
+those registered connections through live leases, so unlinking the files and
+collecting the app cannot replace explicit database ownership cleanup.
+
+A three-app probe kept every app referenced while normal owner close released
+32 regular descriptors and retired all 12 native handles. The factory now
+records its exact constructor-owned Library Collections, Workspaces,
+Subscriptions and Evals databases and closes them before directory removal;
+later test-injected replacements remain caller-owned. Three native regressions
+prove closed handles before fixture teardown, replacement ownership, and a
+raised close error that preserves pending cleanup for retry. Their fresh session
+returned to 13 total / 8 regular descriptors; the subsequent ten Settings control
+cases also held regular descriptors at 8. The existing GC cadence and descriptor
+limit were unchanged. Check native handle retirement under retained app references
+and collect source-free before/after counts; a successful directory drain is not
+resource-lifecycle evidence.
+
 ## Tests that read a moved file's source run outside the PR gate
 
 **TASK-33011, 2026-09-29.** Nine PRs moved code verbatim out of `app.py` into `app_*.py`
@@ -16994,3 +17017,100 @@ controls. The fixture now uses the actual `sharing_scope_service` attribute and
 Sharing_Interop wrapper constructed by TldwCli; it failed before fixing the panel
 lookup. A mounted workflow test must also match the application's wiring names
 and service family, not only the underlying HTTP contract (TASK-32881).
+
+### Separate first-use setup from the bounded publication race (TASK-25907.23)
+
+The 2026-09-29 native integration batch exceeded the Canvas preview test's
+five-second start wait, while the exact case passed alone. A controlled six-second
+delay in the first real preview call reproduced the failure before the held
+snapshot reached its race gate. Building one real snapshot before starting the
+bounded lifecycle race kept both existing five-second gate limits and passed the
+same delayed control; it also verified that inspection created no live Canvas run.
+Do not charge first-use catalog setup to a timer intended to measure a subsequent
+publication race, or call an isolated pass proof that the original failure is fixed.
+
+The Settings authority case likewise checked its follow-up snapshot before the
+actual mutation worker completed. Joining that worker before the existing
+five-second snapshot predicate passed a controlled six-second mutation delay.
+Mounted regressions proved that a held Select event could otherwise apply its
+old value to a replacement scope or policy. Reviewing the first identity guard
+exposed a second gap: the snapshot changes before recomposition detaches the old
+control, so that control still passes the identity check. Deterministic delivery
+before and after recomposition now verifies both control identity and the exact
+snapshot it rendered. The same delivery gap affected Buttons: a held runtime
+click toggled the replacement value, and a held record click selected the
+replacement slot. Four native failures before the shared guard and ten passing
+Button/Select lifecycle cases afterward verify both families against their
+rendered snapshot. These controlled failures establish the repaired conditions,
+not the unknown cause of every historical intermittent timeout.
+
+A further held-event regression changed only the local scope filter or selected
+record while retaining the same snapshot. Two deliveries before recomposition
+still acted on the replacement local view. Capturing the six existing compose
+inputs alongside snapshot and widget identity made all thirteen currentness
+cases pass, followed by the complete 110-case UI qualification. The rendered
+snapshot alone does not identify an indexed row or toolbar target when local
+view state can change independently.
+
+### Trace maintenance must fence preparation and the actual worker (TASK-25907.23)
+
+The 2026-09-29 complete native Console continuation lost a saved user semantic
+revision before its next provider call. An immutable post-run database read
+showed completed logical GC at epoch 54 had removed two unrooted revisions;
+the user message still existed. The same saved-turn cases passed alone, which
+did not establish a fix. Runtime admission counted provider streams, while the
+registered submit was already writing revisions during preparation. Event-based
+regressions reproduced both that ownership gap and a submit starting after
+the idle check but before the first collection job.
+
+Review then found that cancelling an await of run_owned_db_call does not stop
+its native executor callback. A coroutine-level finally could release the
+preparation fence while collection continued. A held collection callback under
+two cancellations now verifies the existing shield-and-drain pattern retains
+exclusion until that exact job finishes, then releases it and propagates
+cancellation. Count the complete registered operation, and fence the actual
+worker lifetime; a quiet provider registry or a cancelled await is not evidence
+that semantic writes or collection have finished.
+
+The saved-Canvas continuation then passed its behavior assertions while the
+complete Console batch retained 201 extra descriptors. Exact native handle
+tracing found two finite automatic-work ledger callbacks using asyncio.to_thread
+before the already guarded agent worker. Reusing run_owned_db_call for those two
+callbacks retired their fresh AgentRuns connections while preserving the caller's
+MainThread handle; the 26-case ownership matrix passed. A guard around the main
+worker does not cover separate callbacks that run before it.
+
+Remaining growth came from exact test-owned databases. Their deterministic
+finalizers removed those handles; a durable fixture still refused its unchanged
+two-second quiescence deadline because a response-link read cursor remained
+borrowed. Closing that cursor in finally before shutdown made all ten focused
+fixture cases pass with zero test-owned native connections. Keep borrowed global
+owners intact and distinguish a held cursor from an unfinished worker.
+
+### Detached receiver guards must track custody transfer before rebinding
+
+During TASK-25907.23 qualification, a new fork census recognized fresh message
+constructors but missed objects passed inside containers, published through a
+mapping alias, or delegated before a local name was rebound. Native negative
+controls reproduced seven wrapped transfers and two alias/rebinding escapes.
+The existing helper now invalidates known object custody conservatively before
+changing bindings. Exact scalar reads remain separate: tightening transfer
+checks initially misclassified the private settings drain's immutable
+`frozenset[ConsoleSettingsComponent]` member union. Its actual annotation and
+canonical receiver are pinned, with a positive and a live-receiver negative.
+The final complete census and new fork controls pass 82 cases without adding a
+SAFE exemption. Constructor recognition alone does not establish continued
+ownership after the object is handed elsewhere.
+
+### Fault injection must identify the coordinator entry it intends to fail
+
+During TASK-25907.23 native provider qualification, the controlled core-sync
+rollback mock counted three entries instead of its two intended faults. Exact
+stacks proved forward adoption and rollback were direct shared-handoff calls;
+the third entry was a later summary projection refresh. The fixture now compares
+the immediate caller's code with the existing shared handoff owner and forwards
+helper refreshes normally, retaining no frame. All ten original restoration and
+replay assertions remain, and an additional assertion observes the two actual
+policy phases. All 20 provider journeys and 18 private children pass. Target
+the intended fault owner rather than treating every use of a shared helper as
+the same transaction.

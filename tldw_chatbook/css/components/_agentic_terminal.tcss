@@ -1354,7 +1354,7 @@ Button.mcp-callout {
 
 .mcp-compact #mcp-detail-toolbar .console-action-primary,
 .mcp-compact #mcp-detail-toolbar .console-action-secondary {
-    width: 1fr;
+    width: $ds-width-fill;
     min-width: $ds-size-0;
 }
 

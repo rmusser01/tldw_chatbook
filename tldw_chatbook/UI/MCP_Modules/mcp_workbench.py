@@ -109,6 +109,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     _PROFILE_HINT_TEXT,
+    _cycled_ui_label,
     MCPPermissionsMode,
     PermissionProfileContext,
     PermRow,
@@ -117,7 +118,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     format_tool_state_label,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
-from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail, _target_id_from_server_key
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
@@ -226,23 +227,6 @@ class _ToolProfileLeaseHandoff:
             )
 
 
-def _target_id_from_server_key(key: str | None) -> str | None:
-    """Parse a server-target id out of a `"server:<id>"` or
-    `"server:<id>/<sub>"` key (a target row directly, or an external-record
-    row beneath it), or `None` for anything else (a `local:`/`builtin:` key,
-    an empty string, or `None` itself).
-
-    Shared by `MCPWorkbench._selected_target_id()` (parses the workbench's
-    OWN rail/table selection) and `_refresh_server_discovery()` (New Minor
-    2, MCP Hub Phase 6 finale -- parses an arbitrary triggering event's
-    `server_key`, which need not match whatever is currently selected).
-    """
-    if not key or not key.startswith("server:"):
-        return None
-    remainder = key.split(":", 1)[1]
-    return remainder.split("/", 1)[0] if remainder else None
-
-
 # A pasted/imported mcpServers config JSON. 1MB comfortably covers even a
 # large hand-authored config while catching anything clearly not one --
 # mirrors attachment_core.MAX_ATTACHMENT_BYTES's constant style (a fixed
@@ -286,20 +270,6 @@ def _toast(text: str) -> str:
     layer that needs its own guard.
     """
     return escape_markup(text)
-
-
-def _cycled_ui_label(state: str | None) -> str:
-    """The mutation-echo word for a just-cycled TOOL-row state (Task 3, MCP
-    Hub Phase 6) -- `"Inherit"` for `None` (`cycle_ui_state()`'s own Inherit
-    rung), otherwise the same `EffectiveToolState.ui_label` word every other
-    state-word surface in this module uses (`"Allow"|"Ask"|"Off"`). A plain
-    `EffectiveToolState` can't represent Inherit at all (its `state` field
-    is a bare `str`, not `str | None`), so that one case is spelled out
-    directly rather than routed through it.
-    """
-    if state is None:
-        return "Inherit"
-    return EffectiveToolState(state=state, origin="tool_override").ui_label
 
 
 # Task 3 (built-in permissions UI, TASK-627): the Permissions matrix's

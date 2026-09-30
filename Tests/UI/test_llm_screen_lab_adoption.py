@@ -27,6 +27,7 @@ from tldw_chatbook.Model_Artifacts.machine_memory import (
 )
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 
 _MODELS_MOUNT_POLL_ATTEMPTS = 200
@@ -2750,9 +2751,11 @@ def test_declining_insufficient_space_persists_exact_required_and_free_bytes():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisions(
     tmp_path,
     monkeypatch,
+    request,
 ):
     """The real 80x24 Lab modal returns to a focused byte-exact Retry action."""
     from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module

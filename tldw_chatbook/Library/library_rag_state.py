@@ -2570,3 +2570,14 @@ def _blocked_next_action(recovery_copy: str) -> str:
         if line.startswith("Next: "):
             return line.removeprefix("Next: ")
     return "Resolve the blocker before running Search/RAG."
+
+
+def _trailing_index(button_id: str | None) -> int | None:
+    """Parse the trailing `-{index}` integer from a button id, or None."""
+    if not button_id:
+        return None
+    try:
+        index = int(button_id.rsplit("-", 1)[-1])
+    except ValueError:
+        return None
+    return index if index >= 0 else None

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select
 
 from Tests.app_module_patches import set_app_global
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.LLM_Management.llamacpp_connection import LlamaCppProbeResult
 from tldw_chatbook.LLM_Management.llamacpp_profiles import LlamaCppProfileRepository
 from tldw_chatbook.UI.LLM_Management.llamacpp_setup_view import LlamaCppSetupView
@@ -30,6 +32,9 @@ async def test_profile_save_select_reload_and_delete(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         view = app.query_one(LlamaCppSetupView)
+        assert view.styles.height.is_auto
+        assert all(row.styles.height.is_auto for row in view.query("Horizontal"))
+        assert all(row.styles.height.is_auto for row in view.query(".llamacpp-status"))
         view.query_one(Collapsible).collapsed = False
         await pilot.pause()
         view.query_one("#llamacpp-context-size", Input).focus()
@@ -146,8 +151,9 @@ async def test_initial_select_event_does_not_erase_retained_draft(tmp_path):
         assert view.query_one("#llamacpp-profile-name", Input).value == "Laptop draft"
 
 
-@pytest.mark.asyncio
+@private_profile_test
 async def test_real_models_pane_preserves_sources_snapshots_and_navigates_to_console(
+    request,
     monkeypatch,
 ):
     from Tests.UI.app_factory import _build_test_app
@@ -240,7 +246,9 @@ def test_credentials_are_exact_endpoint_scoped_and_malformed_config_is_ignored(
     tmp_path,
 ):
     app = Harness(tmp_path / "profiles.json")
-    view = LlamaCppSetupView(app)
+    view = LlamaCppSetupView(
+        app, repository=LlamaCppProfileRepository(tmp_path / "profiles.json")
+    )
     app.app_config = {
         "api_settings": {
             "llama_cpp": {"api_url": "http://127.0.0.1:8181", "api_key": "PRIVATE"}
