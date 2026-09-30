@@ -186,6 +186,8 @@ def _unresolved_reads() -> tuple[int, dict[str, int]]:
 
 
 def test_console_controllers_read_only_self_attributes_they_define() -> None:
+    """Every ``self.<name>`` a base-less Console_Modules class reads is defined."""
+
     scanned, unresolved = _unresolved_reads()
     # A glob or scope bug that silently scans nothing must not pass as clean.
     assert scanned >= 50, f"only {scanned} Console_Modules classes were scanned"
