@@ -210,3 +210,97 @@ async def test_choosing_a_rail_chat_leaves_typing_in_the_composer(request, how) 
             f"the key went elsewhere; draft={composer.draft_text()!r}, "
             f"focus={_describe(pilot.app.focused)}"
         )
+
+
+def _chats_state(order: tuple[str, ...]):
+    """A context snapshot whose Chats list shows ``order``, newest first."""
+    from dataclasses import replace
+
+    from Tests.UI.test_console_rail_reconciliation import _workspace_state
+    from tldw_chatbook.Workspaces.conversation_browser_state import (
+        ConsoleConversationBrowserInputRow,
+        build_console_conversation_browser_state,
+    )
+
+    rows = tuple(
+        ConsoleConversationBrowserInputRow(
+            row_key=key,
+            conversation_id=key,
+            native_session_id=None,
+            title=f"Chat {key}",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+            # Newest first: the first key in `order` gets the latest stamp.
+            updated_sort=f"2026-09-{30 - position:02d}T00:00:00",
+        )
+        for position, key in enumerate(order)
+    )
+    return replace(
+        _workspace_state(),
+        conversation_browser=build_console_conversation_browser_state(
+            rows=rows,
+            active_workspace_id=None,
+            group_collapse_preferences={"section:chats": False},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restorer", ["tray", "rail"])
+@pytest.mark.parametrize(
+    "control_prefix",
+    ["console-workspace-conversation-", "console-conversation-actions-"],
+)
+async def test_a_rebuild_that_reorders_chats_keeps_focus_on_the_same_chat(
+    control_prefix, restorer, monkeypatch
+) -> None:
+    """Qodo #2932: row ids are positional, so an id alone names another chat.
+
+    A tray rebuild that reorders the list -- a star, or another chat getting
+    newer -- used to put focus on whichever chat now held the focused
+    control's index, so the next Enter or ``m`` acted on the wrong chat.
+    Focus must follow the chat, onto the same kind of control. Drives the
+    real rail and the real tray. ``tray``: the tray's own restore acts first.
+    ``rail``: with the tray's opt-in off, only the rail's focus recovery can
+    put focus back -- it resolves the same identity and must agree.
+    """
+    from Tests.UI.test_console_rail_reconciliation import _RailHarness, _settle
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    if restorer == "rail":
+        monkeypatch.setattr(
+            ConsoleWorkspaceContextTray, "RECOMPOSE_KEEPS_FOCUS", False
+        )
+    app = _RailHarness(workspace_state=_chats_state(("c0", "c1", "c2")))
+    async with app.run_test(size=(60, 40)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        tray = app.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        control = tray.query_one(f"#{control_prefix}1", Button)
+        assert control.row_key == "c1"
+        control.focus()
+        await pilot.pause()
+        assert app.focused is control
+
+        # c2 becomes the newest chat: c1 moves from index 1 to index 2, and
+        # index 1 now belongs to c0.
+        rail.sync_workspace_context(_chats_state(("c2", "c0", "c1")))
+        assert await _wait_until(
+            pilot, lambda: not control.is_attached and not tray.recompose_in_flight
+        ), "the tray never rebuilt the rows"
+        await pilot.pause(0.3)
+        await _settle(pilot)
+
+        assert tray.query_one(f"#{control_prefix}2", Button).row_key == "c1"
+        focused = app.focused
+        assert focused is not None and focused.is_attached, _describe(focused)
+        assert str(focused.id or "").startswith(control_prefix), (
+            f"focus moved to another kind of control: {_describe(focused)}"
+        )
+        assert getattr(focused, "row_key", None) == "c1", (
+            f"focus followed the position, not the chat: {_describe(focused)} "
+            f"is chat {getattr(focused, 'row_key', None)!r}"
+        )

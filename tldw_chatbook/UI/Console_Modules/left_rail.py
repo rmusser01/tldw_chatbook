@@ -91,6 +91,7 @@ from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
+from ...Widgets.recompose_capture_guard import focus_identity
 from ...Workspaces.conversation_browser_state import (
     console_rail_section_height_budget,
 )
@@ -890,7 +891,10 @@ class ConsoleLeftRail(Vertical):
 
     @staticmethod
     def _stable_focus_id(widget: Widget) -> str | None:
-        return widget.id or None
+        # A reordered list hands a row's positional id to another item, so a
+        # row control's own identity wins over its id -- the key the tray's
+        # rebuild restore uses too (Qodo #2932).
+        return focus_identity(widget)
 
     def _focus_recovery_incident(
         self,

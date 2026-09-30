@@ -45,12 +45,28 @@ widget can never be a legitimate capture for anyone.
 from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
-from textual.css.query import QueryError
 from textual.geometry import Region
 from textual.widget import Widget
 
 if TYPE_CHECKING:
     from typing_extensions import Self
+
+
+def focus_identity(widget: Widget) -> Optional[str]:
+    """What a rebuilt replacement must share with ``widget`` to inherit its focus.
+
+    A control's ``focus_identity`` attribute when it has one, else its DOM id.
+    List rows get positional ids (``console-conversation-actions-3``), and a
+    rebuild that reorders the list hands that id to a different item, so a
+    row control carries a ``focus_identity`` naming its item instead (Qodo
+    #2932). Give such a key a ``:`` -- a Textual DOM id cannot contain one --
+    so it can never equal another control's id. ``ConsoleLeftRail``'s focus
+    recovery resolves the same key, so the two restorers agree on the target.
+    """
+    identity = getattr(widget, "focus_identity", None)
+    if identity:
+        return str(identity)
+    return widget.id or None
 
 
 class RecomposeCaptureGuard:
@@ -75,15 +91,15 @@ class RecomposeCaptureGuard:
     recompose_in_flight: bool = False
 
     #: Opt-in (TASK-33621.12): when one of this widget's own descendants had
-    #: focus as its rebuild began, put focus back on the unique same-id
-    #: replacement once the rebuild has mounted. The rebuild removes the
-    #: focused control, and Textual's ``_reset_focus`` then moves focus to
-    #: whatever precedes it in the focus chain -- for the Console's
-    #: Conversations tray that was the section toggle, "New conversation", or
-    #: the Console header's Settings control. Only focus still sitting on
-    #: that automatic reset target is taken back: a move made on purpose
-    #: while the rebuild ran (selecting a chat focuses the composer mid-
-    #: rebuild) is left alone. Off by default so no other guarded widget
+    #: focus as its rebuild began, put focus back on the unique replacement
+    #: with the same :func:`focus_identity` once the rebuild has mounted. The
+    #: rebuild removes the focused control, and Textual's ``_reset_focus`` then
+    #: moves focus to whatever precedes it in the focus chain -- for the
+    #: Console's Conversations tray that was the section toggle, "New
+    #: conversation", or the Console header's Settings control. Only focus
+    #: still sitting on that automatic reset target is taken back: a move made
+    #: on purpose while the rebuild ran (selecting a chat focuses the composer
+    #: mid-rebuild) is left alone. Off by default so no other guarded widget
     #: changes behaviour.
     RECOMPOSE_KEEPS_FOCUS: bool = False
 
@@ -118,12 +134,12 @@ class RecomposeCaptureGuard:
             )
 
     def _focus_to_keep(self) -> Optional[tuple[str, Optional[Widget]]]:
-        """The focused descendant's id and where Textual's reset will send it.
+        """The focused descendant's identity and where Textual's reset sends it.
 
         Returns ``None`` unless a descendant of ``self`` (not ``self``) with a
-        DOM id holds this screen's focus. Read from the screen that owns
-        ``self`` -- the one whose ``_reset_focus`` the teardown triggers --
-        so a modal on top does not hide a focused row underneath it.
+        :func:`focus_identity` holds this screen's focus. Read from the screen
+        that owns ``self`` -- the one whose ``_reset_focus`` the teardown
+        triggers -- so a modal on top does not hide a focused row underneath.
         """
         try:
             focused = self.screen.focused
@@ -131,9 +147,10 @@ class RecomposeCaptureGuard:
             return None
         if focused is None or focused is self or self not in focused.ancestors:
             return None
-        if not focused.id:
+        identity = focus_identity(focused)
+        if identity is None:
             return None
-        return focused.id, self._predicted_reset_target(focused)
+        return identity, self._predicted_reset_target(focused)
 
     def _predicted_reset_target(self, focused: Widget) -> Optional[Widget]:
         """Mirror ``Screen._reset_focus`` for a teardown of all of ``self``'s children.
@@ -163,9 +180,9 @@ class RecomposeCaptureGuard:
         return None
 
     def _refocus_rebuilt_descendant(
-        self, widget_id: str, reset_target: Optional[Widget]
+        self, identity: str, reset_target: Optional[Widget]
     ) -> None:
-        """Return focus to the same-id replacement a rebuild just mounted.
+        """Return focus to the same-identity replacement a rebuild just mounted.
 
         Only while focus is still exactly where Textual's reset put it
         (``reset_target``, predicted before the teardown). Anything else means
@@ -174,7 +191,8 @@ class RecomposeCaptureGuard:
         The focus is set synchronously, so a move that was only queued
         (``Widget.focus`` defers through ``call_later``) still lands after
         this one. Exactly one focusable match is required, so an ambiguous
-        or vanished id changes nothing.
+        or vanished identity changes nothing -- a reordered row's positional
+        id is never enough on its own (see :func:`focus_identity`).
         """
         if not self.is_attached:
             return
@@ -184,12 +202,12 @@ class RecomposeCaptureGuard:
             return
         if screen.focused is not reset_target:
             return
-        try:
-            candidates = list(self.query(f"#{widget_id}"))
-        except QueryError:
-            return
         matches = [
-            widget for widget in candidates if widget.is_mounted and widget.focusable
+            widget
+            for widget in self.walk_children(Widget)
+            if widget.is_mounted
+            and widget.focusable
+            and focus_identity(widget) == identity
         ]
         if len(matches) == 1:
             screen.set_focus(matches[0])
