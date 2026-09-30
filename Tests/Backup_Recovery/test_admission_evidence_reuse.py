@@ -351,14 +351,21 @@ class _Tracer:
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="maps descriptors with F_GETPATH")
-@pytest.mark.parametrize("bound", [True, False], ids=["bound", "unbound"])
+@pytest.mark.parametrize("scope", ["bound", "unbound", "drifted"])
 def test_the_evidence_stamps_every_path_the_derivation_reads(
-    local_scope, reuse_switch, monkeypatch, bound  # noqa: F811
+    local_scope, reuse_switch, monkeypatch, scope  # noqa: F811
 ):
-    """Dependency completeness: nothing the full derivation reads is unstamped."""
+    """Dependency completeness: nothing the full derivation reads is unstamped.
+
+    ``drifted`` is unbound with a profile on disk: the derivation fingerprints
+    the selector to decide that, so its content is an input too.
+    """
     root, config, data, _ = local_scope
-    if bound:
+    bound = scope == "bound"
+    if scope != "unbound":
         bind_profile(root, config, ("profile",), root / "admission")
+    if scope == "drifted":
+        config.write_text("drifted")
     target = data / "store.db"
     reuse_switch(True)
     tracer = _Tracer(monkeypatch)
@@ -390,10 +397,10 @@ def test_the_evidence_stamps_every_path_the_derivation_reads(
         for p, stamp in hold.evidence[str(config)].content
         if stamp is not None and stat.S_ISDIR(os.stat(p).st_mode)
     }
-    # _execution_selection_for resolves the selector and the target on every
-    # call, the reuse path included, so their chains need no evidence.
-    per_call = {str(p) for target_path in (config, target) for p in (
-        *target_path.parents, target_path)}
+    # _execution_selection_for resolves the selector's and the target's chains
+    # on every call, the reuse path included. Resolving never reads the
+    # selector's bytes, so the selector itself is not exempt.
+    per_call = {str(p) for p in (*config.parents, *target.parents, target)}
 
     def covered(path: str) -> bool:
         if path in stamped or path in per_call:
@@ -405,6 +412,90 @@ def test_the_evidence_stamps_every_path_the_derivation_reads(
     assert str(root / "admission" / "registry.json") in tracer.paths, "trace saw nothing"
     unstamped = sorted(p for p in tracer.paths if not covered(p))
     assert not unstamped, "\n".join(unstamped)
+
+
+def test_restoring_a_drifted_selector_is_not_served_from_unbound_evidence(
+    local_scope, reuse_switch  # noqa: F811
+):
+    """A profile whose selector drifted leaves the hold unbound. Restoring the
+    selector makes the derivation bind -- a scope change it refuses -- so the
+    unbound evidence must notice the restore too (Qodo, #2919)."""
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    original = config.read_bytes()
+    config.write_text("drifted")
+    target = data / "store.db"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(2):
+            assert _verdict(target)[0] == "allowed"
+        config.write_bytes(original)
+        reused = _verdict(target)
+        reuse_switch(False)
+        derived = _verdict(target)
+    finally:
+        startup.close()
+
+    assert derived[0] == "refused", derived
+    assert reused == derived, f"reuse gave {reused}, derivation {derived}"
+
+
+@pytest.mark.parametrize("change", ["data-swapped-for-symlink", "epoch-advanced"])
+def test_a_change_just_before_the_lease_is_counted_falls_back(
+    local_scope, reuse_switch, monkeypatch, tmp_path, change  # noqa: F811
+):
+    """Reuse revalidates after counting its lease, as the derivation does, so a
+    change landing between its first look and the count is seen (Qodo, #2919/#2924)."""
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(2):
+            assert _verdict(target)[0] == "allowed"
+        real = storage._mount_read_only  # runs between the first look and the count
+
+        def race(path):
+            monkeypatch.setattr(storage, "_mount_read_only", real)
+            if change == "epoch-advanced":
+                bootstrap.advance_admission_epoch()
+            else:
+                _data_swapped_for_symlink(root, config, data, tmp_path)
+            return real(path)
+
+        monkeypatch.setattr(storage, "_mount_read_only", race)
+        calls = _count_derivations(monkeypatch)
+        _verdict(target)  # a mid-call swap may refuse; the derivation decides
+    finally:
+        startup.close()
+
+    assert calls["scope"] >= 1, "a lease was reused over a change made before it was counted"
+
+
+def test_evidence_stamps_and_settle_margin_in_isolation(tmp_path, monkeypatch):
+    """The stamp comparisons and the settle decision, without an acquisition."""
+    record = tmp_path / "record"
+    record.write_text("a")
+    evidence = storage._Evidence(("n",), storage._chain(tmp_path), (record, tmp_path / "absent"))
+    assert evidence.observe() == evidence.stamps()
+
+    changed_at = evidence.content[0][1][4]
+    monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 10)
+    assert evidence.settled_before(changed_at + 10)  # an absent input is settled
+    assert not evidence.settled_before(changed_at + 9)
+
+    record.write_text("bb")
+    assert evidence.observe() != evidence.stamps()
+    (tmp_path / "absent").write_text("")
+    record.write_text("a")
+    assert evidence.observe()[1][1] is not None  # appearing is a mismatch too
+
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path, target_is_directory=True)
+    assert storage._path_evidence(("n",), link / "leaf") is None
+    assert storage._path_evidence(("n",), tmp_path / "leaf") is not None
 
 
 def test_an_in_process_admission_write_drops_reused_evidence(

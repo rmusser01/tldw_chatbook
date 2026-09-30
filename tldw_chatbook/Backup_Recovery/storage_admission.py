@@ -855,9 +855,6 @@ class _Evidence:
             tuple(_content(p) for p, _ in self.content),
         )
 
-    def content_unchanged(self) -> bool:
-        return all(_content(p) == s for p, s in self.content)
-
     def settled_before(self, when_ns: int) -> bool:
         return all(
             s is None or s[4] <= when_ns - _EVIDENCE_SETTLE_NS for _, s in self.content
@@ -891,18 +888,20 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         _QUALIFICATION_FILE,
         *sorted(root / n for n in entries if n not in _NOT_BOOTSTRAP_RECORDS),
     ]
-    walked = [root, admission]
+    # The selector is an input even when unbound: a profile whose fingerprint
+    # stopped matching binds again once the selector is restored.
+    walked = [root, admission, selector.parent]
     if names != (UNBOUND_NAMESPACE,):
         if roots is None or not all(os.path.lexists(r) for r in roots):
             return None  # absence-proved roots are never reused
-        content.append(selector)
-        walked.extend((selector.parent, *roots))
+        walked.extend(roots)
     posture = sorted({p for target in walked for p in _chain(Path(target))})
-    evidence = _Evidence(names, posture, content)
+    evidence = _Evidence(names, posture, (*content, selector))
     posture_ok = all(
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
     )
-    content_ok = all(s is not None for _, s in evidence.content)
+    # An absent selector is observed as absent; its appearance is a mismatch.
+    content_ok = all(s is not None for p, s in evidence.content if p != selector)
     return evidence if posture_ok and content_ok else None
 
 
@@ -941,7 +940,12 @@ def _selected_paths(path, related_paths) -> tuple[Path, ...]:
 
 
 def _reuse_evidence(root, selector, path, related_paths, check, execution_selection):
-    """Return a lease from confirmed evidence, or None to run the derivation."""
+    """Return a lease from confirmed evidence, or None to run the derivation.
+
+    Like the derivation, the lease is counted before the final revalidation, so a
+    drain that starts meanwhile sees it. Every stamp and the admission epoch are
+    then observed again; any difference closes the lease and falls back.
+    """
     key = (os.getpid(), str(root))
     selected = _selected_paths(path, related_paths)
     with _lock:
@@ -968,11 +972,6 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
                 return None
             hold.path_evidence.move_to_end((str(selector), str(item)))
             per_path.append(entry)
-    # Native filesystem observation never runs under the coordinator lock.
-    if evidence.observe() != evidence.stamps() or any(
-        entry.observe() != entry.stamps() for entry in per_path
-    ):
-        return None
     if _mount_read_only(root.parent):
         return None
     with _lock:
@@ -985,13 +984,18 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
             _holds.get(key) is not hold
             or not _hold_serving(hold)
             or hold.evidence.get(str(selector)) is not evidence
+            or evidence.epoch != bootstrap._admission_epoch
         ):
             return None
         hold.count += 1
         token = StorageLease(key)
         token._execution_selection = execution_selection
-    # The lease is counted before the final content read, as in the derivation.
-    if not evidence.content_unchanged():
+    # Native filesystem observation never runs under the coordinator lock.
+    if (
+        evidence.observe() != evidence.stamps()
+        or any(entry.observe() != entry.stamps() for entry in per_path)
+        or evidence.epoch != bootstrap._admission_epoch
+    ):
         token.close()
         return None
     return token

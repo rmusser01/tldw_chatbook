@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+from typing import ParamSpec, TypeVar
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
@@ -42,11 +43,22 @@ def advance_admission_epoch() -> None:
         _admission_epoch += 1
 
 
-def advances_admission_epoch(function):
-    """Advance the admission epoch before and after a writer of admission state."""
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def advances_admission_epoch(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Advance the admission epoch before and after a writer of admission state.
+
+    Args:
+        function: A writer of admission records, the registry, or the profile.
+
+    Returns:
+        The writer, wrapped; its arguments, result and exceptions pass through.
+    """
 
     @functools.wraps(function)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         advance_admission_epoch()
         try:
             return function(*args, **kwargs)
