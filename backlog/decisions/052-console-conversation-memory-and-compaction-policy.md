@@ -292,11 +292,15 @@ a transcript/tree node.
 
 ### 2026-09-30 amendment: failed attempts are explained and not re-billed (TASK-33621.3)
 
-The durable lineage fence is built from the parent each row was **written
-with**, not from the live node's parent mirror. Turns created by an ordinary
-durable send never set that mirror, so every automatic compaction in a live
-session failed its commit fence after a billed summary call. Only a restart,
-which reloads parents from the database, hid the fault.
+When the live node's parent mirror is unset, the durable lineage fence takes
+the parent from the same nearest-persisted-ancestor walk the durable writer
+uses (`ConsoleChatStore.durable_parent_for_message`). Turns created by an
+ordinary durable send never set that mirror, so every automatic compaction in
+a live session failed its commit fence after a billed summary call. Only a
+restart, which reloads parents from the database, hid the fault. The fence's
+structural checks (one ordered parent chain, leaf, boundary, ownership) read
+nothing from the summary, so they now also run **before** the summary call:
+a commit that can never land fails at no cost.
 
 A non-successful attempt records its content-free reason code on the
 auxiliary-call ledger row (`failure_reason`, schema v74) and in the log.
@@ -304,14 +308,26 @@ User copy names that cause and the failed call's reported token spend (with
 its cost when the model is priced). It says whether the message was sent and
 gives a next step. It never claims "the provider request was not sent".
 
-A FAILED automatic attempt latches per conversation. Later automatic attempts
-(sends, Retry, micro-compaction) make no provider call while two things hold:
-the settings digest is unchanged (provider, model, prompt, policy other than
-failure behavior, model window, effective memory), and the durable history
-before the failed request is an unchanged prefix. Compact now is explicit and
-bypasses the latch; a success clears it. A stale result (the conversation
-moved under the call) does not latch. This restores TASK-14811.2.1's "at most
-one automatic summary call per send, without retry loops".
+A billed attempt that FAILED latches per conversation and per route
+(provider and model), whichever path made it: a send, Retry, a micro-compaction
+tick or Compact now. Later automatic attempts (sends, Retry, micro-compaction)
+on that route make no provider call while two things hold: the settings digest
+is unchanged (provider, model, prompt, policy other than failure behavior,
+model window, effective memory), and the durable history before the failed
+request is an unchanged prefix. Keeping one pause per route means a failed
+Compact now on the `[chat_defaults] auxiliary_model` cannot replace the pause
+the sends' model set. Compact now is explicit and bypasses the latch; a
+success clears every route's pause. A stale result (the conversation moved
+under the call) does not latch. The latch lives in the controller's
+compaction service, so it lasts for the app session: after a restart the
+first automatic attempt may bill once more, then latches again. This restores
+TASK-14811.2.1's "at most one automatic summary call per send, without retry
+loops".
+
+Under **Omit older context** a failed automatic attempt sends the request
+uncompacted; when that attempt made a summary call, one transcript note
+discloses the cause and spend. Compact now is not a send, so the failure
+behavior never changes what it reports.
 
 ## Context
 

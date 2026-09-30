@@ -1273,6 +1273,19 @@ class ConsoleContextRepository:
         return tuple(dict(row) for row in rows)
 
 
+def validate_branch_memory_commit(commit: BranchMemoryCommit) -> None:
+    """Run the commit fence's structural checks without reading the database.
+
+    TASK-33621.3: none of these checks read the summary, so automatic
+    compaction runs them BEFORE its billed call. A commit that can never land
+    (the live-session parent-chain fault) then fails at no cost.
+
+    Raises:
+        ValueError: If the memory, scope, selection or lineage disagree.
+    """
+    _validate_branch_memory_commit_ownership(commit)
+
+
 def _validate_branch_memory_commit_ownership(commit: BranchMemoryCommit) -> None:
     memory = commit.memory
     scope = commit.scope

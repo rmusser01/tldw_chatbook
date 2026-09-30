@@ -15,9 +15,15 @@ no Console widget, store, or controller imports.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from tldw_chatbook.Chat.cost_display import format_cost_amount
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_context_compaction import (
+        CompactionTransactionResult,
+    )
 
 #: Reason code -> the clause completing "... because <clause>".
 _REASON_CLAUSES: dict[str, str] = {
@@ -49,11 +55,15 @@ _REASON_CLAUSES: dict[str, str] = {
     "plan_unreachable": (
         "one summary call cannot bring this chat under its target size"
     ),
+    # A catch-all: the kept recent turns alone fill the target, or no summary
+    # would be smaller than the turns it replaces, or the older turns do not
+    # fit one summary call.
     "no_positive_useful_summary_allowance": (
-        "summarizing this chat's older turns would not make it smaller"
+        "no summary of the older turns would both fit under the chat's target "
+        "size and make it smaller"
     ),
     "no_complete_durable_units": (
-        "this chat has no older complete turns to summarize yet"
+        "this chat has no older complete turns to summarize"
     ),
     "unknown_or_empty_budget": "this chat's conversation budget is unknown",
     "automatic_visual_input_limit_exceeded": (
@@ -64,12 +74,13 @@ _REASON_CLAUSES: dict[str, str] = {
     ),
 }
 _DEFAULT_CLAUSE = "compaction did not complete"
+#: Integrity faults in a saved memory range (invalid_effective_range_*,
+#: range_projection_*): not a size problem, so never worded as one.
+_RANGE_FAULT_CLAUSE = "this chat's saved memory range does not match its messages"
 
-#: Planner outcomes that only mean "nothing worth summarizing yet"; a manual
-#: Compact now needs no next step for them.
-_NOTHING_TO_COMPACT = frozenset(
-    {"no_positive_useful_summary_allowance", "no_complete_durable_units"}
-)
+#: The planner outcome that means "nothing to summarize yet"; a manual
+#: Compact now says so plainly, with no failure and no next step.
+_NOTHING_TO_COMPACT = "no_complete_durable_units"
 
 #: Failures a plain retry can fix; everything else needs a settings change.
 _TRANSIENT_REASONS = frozenset(
@@ -93,6 +104,12 @@ NEXT_STEP_SETTINGS = (
     "max tokens, set If compaction fails to Omit older context to send without "
     "compacting, or set When limit nears to Off; or start a new chat."
 )
+#: The pause lives in memory (ConsoleCompactionService), so say it ends on
+#: restart rather than promise it outlives the app session.
+_PAUSED = (
+    "Automatic compaction stays paused for this chat until you change these "
+    "settings or its earlier messages, or restart the app."
+)
 
 
 def compaction_failure_reason_clause(reason: str | None) -> str:
@@ -110,7 +127,7 @@ def compaction_failure_reason_clause(reason: str | None) -> str:
         and reason not in _REASON_CLAUSES
         and (reason.startswith(("invalid_effective_range", "range_projection")))
     ):
-        reason = "plan_unreachable"
+        return _RANGE_FAULT_CLAUSE
     return _REASON_CLAUSES.get(reason or "", _DEFAULT_CLAUSE)
 
 
@@ -159,6 +176,7 @@ def compaction_failure_copy(
     usage: ProviderUsage | None = None,
     attempted: bool = False,
     suppressed: bool = False,
+    omitted: bool = False,
 ) -> str:
     """Compose the copy shown when a compaction does not complete.
 
@@ -169,12 +187,16 @@ def compaction_failure_copy(
         attempted: Whether a summary call was made (and may be billed).
         suppressed: True when an earlier failure stopped this automatic
             attempt before any call.
+        omitted: True when If compaction fails is Omit older context, so the
+            message goes out uncompacted instead of being held.
 
     Returns:
         Reason-specific copy with the spend, whether the message was sent,
         and a next step. Never claims "the provider request was not sent".
     """
 
+    if omitted:
+        return _omitted_copy(reason, usage=usage)
     clause = compaction_failure_reason_clause(reason)
     retry = (
         "Try Compact now in Conversation settings > Context and memory later. "
@@ -188,6 +210,8 @@ def compaction_failure_copy(
             f"call was made. {retry}{NEXT_STEP_SETTINGS}"
         )
     spend = compaction_spend_copy(usage, attempted=attempted)
+    if manual and reason == _NOTHING_TO_COMPACT:
+        return f"Nothing to compact yet: {clause}."
     if manual:
         head = f"Compaction failed and nothing changed: {clause}."
     else:
@@ -201,12 +225,58 @@ def compaction_failure_copy(
     if not manual and reason in _STALE_REASONS:
         parts.append("Send again to retry.")
         return " ".join(parts)
-    if manual and reason in _NOTHING_TO_COMPACT:
-        return " ".join(parts)
     parts.append(f"{retry}{NEXT_STEP_SETTINGS}")
     if not manual and attempted:
+        parts.append(_PAUSED)
+    return " ".join(parts)
+
+
+def transaction_failure_copy(
+    result: CompactionTransactionResult,
+    *,
+    manual: bool,
+    omitted: bool = False,
+) -> str:
+    """Compose failure copy straight from a compaction transaction result.
+
+    Args:
+        result: The FAILED or STALE transaction result.
+        manual: True for Compact now.
+        omitted: True when the send goes out uncompacted (Omit older context).
+
+    Returns:
+        The same copy as :func:`compaction_failure_copy`.
+    """
+
+    return compaction_failure_copy(
+        result.reason,
+        manual=manual,
+        usage=result.usage,
+        attempted=result.attempted,
+        suppressed=result.suppressed,
+        omitted=omitted,
+    )
+
+
+def _omitted_copy(reason: str | None, *, usage: ProviderUsage | None) -> str:
+    """Disclose a billed failure that the send survived uncompacted.
+
+    With If compaction fails set to Omit older context the message still
+    goes out, so nothing blocks -- but the failed summary call was made and
+    may be billed, and automatic compaction pauses. The controller shows it
+    once, on the attempt that was billed; the paused sends that follow stay
+    quiet.
+    """
+
+    parts = [
+        "Your message was sent without compacting (If compaction fails is set "
+        "to Omit older context): this chat could not be compacted because "
+        f"{compaction_failure_reason_clause(reason)}.",
+        compaction_spend_copy(usage, attempted=True),
+    ]
+    if reason not in _STALE_REASONS:
         parts.append(
-            "Automatic compaction stays paused for this chat until you change "
-            "these settings or its earlier messages."
+            "Automatic compaction is paused for this chat until you change its "
+            "compaction settings or earlier messages, or restart the app."
         )
     return " ".join(parts)

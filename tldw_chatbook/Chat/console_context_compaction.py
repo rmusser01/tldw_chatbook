@@ -42,6 +42,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryCoverageKind,
     MemoryOriginKind,
     MemorySelectionKind,
+    validate_branch_memory_commit,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_prepared_request import (
@@ -423,12 +424,15 @@ class CompactionRetryFence:
     ``history`` is the durable history before the active request. A later
     fence stays blocked while its settings match and it only APPENDED turns
     after that history; an edit, delete, branch switch, memory change or
-    policy change lifts the block.
+    policy change lifts the block. ``route`` names the provider and model the
+    summary call goes to: each route keeps its own pause, so a failed Compact
+    now on the auxiliary model never replaces the pause the sends' model set.
     """
 
     conversation_id: str
     settings_key: str
     history: tuple[DurableMessageSnapshot, ...] = field(repr=False)
+    route: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -508,7 +512,12 @@ def compaction_retry_fence(
             legacy_boundary,
         ],
     }
-    return CompactionRetryFence(conversation_id, _digest_json(settings), history)
+    return CompactionRetryFence(
+        conversation_id,
+        _digest_json(settings),
+        history,
+        route=f"{resolution.provider}/{resolution.model or ''}",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1969,8 +1978,9 @@ class ConsoleCompactionService:
         # the capability for the resolution (no bridged provider does today
         # -- this is the seam a future gateway capability flips).
         self._native_compaction_delegation = native_compaction_delegation is True
-        # TASK-33621.3: the last FAILED automatic attempt per conversation.
-        self._failed_compactions: dict[str, _FailedCompaction] = {}
+        # TASK-33621.3: the last FAILED attempt per conversation and route.
+        # In memory only: the pause lasts for this app session.
+        self._failed_compactions: dict[str, dict[str, _FailedCompaction]] = {}
 
     async def summarize_manual(
         self,
@@ -2268,9 +2278,14 @@ class ConsoleCompactionService:
         provider call, no ledger row -- until the conversation or its
         compaction settings change (AC#5). ``honor_failure_latch=False`` is
         the explicit user action (Compact now), which may always try again.
+        A pause is kept per ``retry_fence.route`` (provider and model).
         """
         conversation_id = admission.conversation_id
-        failed = self._failed_compactions.get(conversation_id)
+        failed = (
+            self._failed_compactions.get(conversation_id, {}).get(retry_fence.route)
+            if retry_fence is not None
+            else None
+        )
         if (
             retry_fence is not None
             and honor_failure_latch
@@ -2298,7 +2313,8 @@ class ConsoleCompactionService:
             and result.attempted
             and result.terminal is CompactionTerminal.FAILED
         ):
-            self._failed_compactions[conversation_id] = _FailedCompaction(
+            routes = self._failed_compactions.setdefault(conversation_id, {})
+            routes[retry_fence.route] = _FailedCompaction(
                 settings_key=retry_fence.settings_key,
                 history_length=len(retry_fence.history),
                 history_digest=_persisted_prefix_digest(retry_fence.history),
@@ -2332,6 +2348,17 @@ class ConsoleCompactionService:
             return CompactionTransactionResult(
                 CompactionTerminal.FAILED,
                 reason="invalid_automatic_admission",
+            )
+        try:
+            validate_branch_memory_commit(branch_commit)
+        except ValueError as exc:
+            logger.warning(
+                "console_compaction_failed reason=memory_commit_failed "
+                "status=not_started error_type={}",
+                type(exc).__name__,
+            )
+            return CompactionTransactionResult(
+                CompactionTerminal.FAILED, reason="memory_commit_failed"
             )
         lock = self._locks.setdefault(admission.conversation_id, asyncio.Lock())
         if lock.locked():
@@ -2692,12 +2719,15 @@ class ConsoleCompactionService:
         self._finish(
             operation_id, status, started_tick, usage=usage, failure_reason=reason
         )
-        logger.warning(
-            "console_compaction_failed reason={} status={} error_type={}",
-            reason,
-            status.value,
-            error_type or "none",
-        )
+        if terminal is CompactionTerminal.STALE:
+            logger.info("console_compaction_stale reason={}", reason)
+        else:
+            logger.warning(
+                "console_compaction_failed reason={} status={} error_type={}",
+                reason,
+                status.value,
+                error_type or "none",
+            )
         return CompactionTransactionResult(
             terminal, reason=reason, usage=usage, attempted=True
         )

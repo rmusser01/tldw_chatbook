@@ -29,9 +29,10 @@ from loguru import logger
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunState
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import (
+    CompactionFailureBehavior,
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
     ContextCompactionMode,
@@ -50,6 +51,15 @@ from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 
+# The real controller reads settings through the guarded config loader
+# (ConsoleChatController.__init__ -> get_cli_setting). Under the per-test
+# sandbox that admission fails closed with
+# RecoveryRequired("raw_source_selection_changed") before any test body runs,
+# and the pricing catalog the copy discloses reads the same loader. These
+# tests fake the provider network, never the config getters, so they keep
+# the bootstrap profile like the console continuation suites in conftest.
+pytestmark = pytest.mark.bootstrap_profile
+
 _MODEL = "gpt-test-live"
 _REPLY_WORDS = 220
 _SUMMARY = "The user asked numbered questions; the assistant answered each."
@@ -61,6 +71,9 @@ _OVERRIDES = ConsoleContextPolicyOverrides(
     custom_budget_tokens=1_800,
     compaction_mode=ContextCompactionMode.AUTOMATIC,
     summary_max_tokens=100,
+)
+_OMIT = replace(
+    _OVERRIDES, failure_behavior=CompactionFailureBehavior.OMIT_OLDER_CONTEXT
 )
 
 
@@ -386,4 +399,217 @@ async def test_live_failure_is_not_rebilled_until_the_policy_changes(
     assert [row["failure_reason"] for row in _attempt_rows(db)] == [
         "invalid_summary_output",
         "invalid_summary_output",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_live_compact_now_retries_once_after_an_automatic_failure(
+    tmp_path: Path,
+) -> None:
+    """AC#5: the pause stops automatic attempts only; Compact now still tries."""
+
+    db, _store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    await _send_until_compaction(controller, gateway)
+    discarded = await controller.discard_dispatch_recovery("session-1")
+    assert discarded.accepted is True, discarded.visible_copy
+
+    gateway.summary = _SUMMARY
+    succeeded, copy = await controller.compact_context_now("session-1")
+
+    assert succeeded is True, copy
+    assert gateway.auxiliary_calls == 2
+    assert [row["status"] for row in _attempt_rows(db)] == ["failed", "succeeded"]
+    assert _active_memory_count(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_live_failed_compact_now_pauses_automatic_compaction(
+    tmp_path: Path,
+) -> None:
+    """AC#5: a billed Compact now failure is not re-billed by the next sends."""
+
+    _db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    for index in range(2):
+        await controller.submit_draft(f"question-{index}.", session_id="session-1")
+    assert gateway.auxiliary_calls == 0
+
+    succeeded, _copy = await controller.compact_context_now("session-1")
+    assert succeeded is False
+    assert gateway.auxiliary_calls == 1
+
+    for index in range(2, 12):
+        streams = gateway.stream_calls
+        await controller.submit_draft(f"question-{index}.", session_id="session-1")
+        if gateway.stream_calls == streams:
+            break
+    else:
+        raise AssertionError("the custom budget was never crossed")
+    assert gateway.auxiliary_calls == 1
+    assert "automatic compaction is paused" in _system_rows(store)[-1]
+
+
+async def _cheap_auxiliary(_selection: object, main: ConsoleProviderResolution):
+    return replace(main, model="gpt-aux-cheap")
+
+
+@pytest.mark.asyncio
+async def test_live_failed_auxiliary_compact_now_keeps_the_send_pause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC#5: a pause is kept per model; Compact now on another cannot lift it."""
+
+    db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    # [chat_defaults] auxiliary_model routes Compact now (not sends) to a
+    # cheaper model; only that resolution step is replaced here.
+    monkeypatch.setattr(controller, "_auxiliary_compaction_resolution", _cheap_auxiliary)
+    await _send_until_compaction(controller, gateway)
+    discarded = await controller.discard_dispatch_recovery("session-1")
+    assert discarded.accepted is True, discarded.visible_copy
+
+    succeeded, _copy = await controller.compact_context_now("session-1")
+    assert succeeded is False
+    assert gateway.auxiliary_calls == 2
+
+    streams = gateway.stream_calls
+    await controller.submit_draft("after compact now", session_id="session-1")
+    assert gateway.auxiliary_calls == 2
+    assert gateway.stream_calls == streams
+    assert "automatic compaction is paused" in _system_rows(store)[-1]
+    assert [(row["model"], row["status"]) for row in _attempt_rows(db)] == [
+        (_MODEL, "failed"),
+        ("gpt-aux-cheap", "failed"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_live_failed_compact_now_under_omit_still_reports_the_failure(
+    tmp_path: Path,
+) -> None:
+    """AC#3/#4: 'Omit older context' governs sends, never Compact now's copy."""
+
+    db, _store, controller, gateway = _live_controller(
+        tmp_path,
+        gateway=_LiveProviderGateway(summary=""),
+        overrides=replace(_OMIT, compaction_mode=ContextCompactionMode.OFF),
+    )
+    for index in range(3):
+        await controller.submit_draft(f"question-{index}.", session_id="session-1")
+
+    succeeded, copy = await controller.compact_context_now("session-1")
+
+    assert succeeded is False
+    assert gateway.auxiliary_calls == 1
+    assert copy.startswith("Compaction failed and nothing changed: "), copy
+    assert "1,234 input + 17 output tokens" in copy
+    assert [row["failure_reason"] for row in _attempt_rows(db)] == [
+        "invalid_summary_output"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_live_failed_automatic_compaction_under_omit_is_disclosed_once(
+    tmp_path: Path,
+) -> None:
+    """AC#2/#4: a billed failure the send survives is still disclosed, once."""
+
+    db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary=""), overrides=_OMIT
+    )
+
+    index, result = await _send_until_compaction(controller, gateway)
+
+    # The message still went out, uncompacted, and got its reply.
+    assert result.accepted is True
+    assert gateway.stream_calls == index + 1
+    notes = _system_rows(store)
+    assert len(notes) == 1, notes
+    assert "empty, oversized or malformed summary" in notes[0]
+    assert "1,234 input + 17 output tokens" in notes[0]
+    assert "Your message was sent without compacting" in notes[0]
+    assert "Automatic compaction is paused" in notes[0]
+    assert "provider request was not sent" not in notes[0]
+
+    # Paused from here on: the next send goes out, is not billed, and does
+    # not repeat the note.
+    await controller.submit_draft("one more question", session_id="session-1")
+    assert gateway.auxiliary_calls == 1
+    assert gateway.stream_calls == index + 2
+    assert len(_system_rows(store)) == 1
+    assert [row["failure_reason"] for row in _attempt_rows(db)] == [
+        "invalid_summary_output"
+    ]
+
+    # The transcript-only note sits on the live path between turns; a later
+    # compaction must still commit against the durable lineage.
+    gateway.summary = _SUMMARY
+    store.set_session_context_policy_overrides(
+        "session-1", replace(_OMIT, summary_max_tokens=120)
+    )
+    await controller.submit_draft("after the policy change", session_id="session-1")
+    assert gateway.auxiliary_calls == 2
+    assert [row["status"] for row in _attempt_rows(db)] == ["failed", "succeeded"]
+    assert _active_memory_count(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_live_recovery_fallback_keeps_only_the_preflight_blocks_own_copy(
+    tmp_path: Path,
+) -> None:
+    """The settlement fallback keeps the compaction block's copy -- only it.
+
+    Any other BLOCKED state that happens to be current (a trace-capture pause,
+    say) must not be shown in place of the generic recovery copy.
+    """
+
+    _db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    await _send_until_compaction(controller, gateway)
+    recovery = store.dispatch_recovery_for_session("session-1")
+    assert recovery is not None
+    assert controller.run_state_for("session-1").visible_copy.startswith(
+        "Your message was not sent"
+    )
+
+    controller._set_run_state(  # an unrelated block, e.g. trace capture
+        ConsoleRunState.blocked("Retry, Send without capture, or Cancel."),
+        session_id="session-1",
+    )
+    controller._restore_dispatch_recovery_after_settlement_failure(
+        "session-1", recovery.assistant_message_id
+    )
+
+    assert controller.run_state_for("session-1").visible_copy == (
+        "Response recovery failed. Try again or discard."
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_failed_micro_compaction_is_not_rebilled_by_the_next_tick(
+    tmp_path: Path,
+) -> None:
+    """AC#5: a background micro-compaction pass honours the pause too."""
+
+    db, _store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    # Below the trigger, so a micro pass folds exactly the oldest exchange.
+    for index in range(2):
+        await controller.submit_draft(f"question-{index}.", session_id="session-1")
+    assert gateway.auxiliary_calls == 0
+
+    await controller.compact_context_now("session-1", micro=True)
+    assert gateway.auxiliary_calls == 1  # the tick's own billed attempt
+    await controller.compact_context_now("session-1", micro=True)
+
+    assert gateway.auxiliary_calls == 1
+    assert [row["failure_reason"] for row in _attempt_rows(db)] == [
+        "invalid_summary_output"
     ]

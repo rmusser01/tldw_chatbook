@@ -38,6 +38,10 @@ _UNPRICED = replace(_PRICED, model="no-such-model-anywhere")
 _FORBIDDEN = "provider request was not sent"
 
 
+# The cost comes from the real pricing catalog, which reads the guarded config
+# loader; under the per-test sandbox that admission fails closed and the copy
+# (correctly) drops the price. Keep the bootstrap profile for this one node.
+@pytest.mark.bootstrap_profile
 def test_automatic_failure_copy_names_cause_spend_and_next_step() -> None:
     copy = compaction_failure_copy(
         "summary_did_not_make_progress",
@@ -54,6 +58,8 @@ def test_automatic_failure_copy_names_cause_spend_and_next_step() -> None:
     assert "When limit nears to Off" in copy
     assert "start a new chat" in copy
     assert "stays paused" in copy
+    # The pause is in memory only; the copy must not promise more.
+    assert copy.endswith("or restart the app.")
     assert _FORBIDDEN not in copy
 
 
@@ -108,19 +114,52 @@ def test_spend_copy_never_fabricates_a_price(usage, attempted, expected) -> None
 
 
 def test_manual_compact_now_with_nothing_to_summarize_says_so_plainly() -> None:
-    copy = compaction_failure_copy("no_positive_useful_summary_allowance", manual=True)
+    copy = compaction_failure_copy("no_complete_durable_units", manual=True)
 
     assert copy == (
-        "Compaction failed and nothing changed: summarizing this chat's older "
-        "turns would not make it smaller."
+        "Nothing to compact yet: this chat has no older complete turns to "
+        "summarize."
     )
 
 
-def test_unmapped_range_planner_reasons_read_as_unreachable_target() -> None:
-    copy = compaction_failure_copy("invalid_effective_range_memory", manual=False)
+def test_manual_compact_now_with_no_useful_summary_gives_a_next_step() -> None:
+    """The planner's catch-all is a size problem, not 'nothing to do'."""
 
-    assert "cannot bring this chat under its target size" in copy
+    copy = compaction_failure_copy("no_positive_useful_summary_allowance", manual=True)
+
+    assert copy.startswith("Compaction failed and nothing changed: ")
+    assert "fit under the chat's target size and make it smaller" in copy
     assert "raise Conversation max tokens" in copy
+    assert "spent" not in copy  # the planner made no summary call
+
+
+def test_saved_range_faults_are_not_worded_as_a_size_problem() -> None:
+    for reason in (
+        "invalid_effective_range_memory",
+        "invalid_effective_range_anchors",
+        "range_projection_units_mismatch",
+    ):
+        copy = compaction_failure_copy(reason, manual=False)
+
+        assert "saved memory range does not match its messages" in copy, reason
+        assert "target size" not in copy, reason
+
+
+@pytest.mark.parametrize(
+    ("reason", "paused"),
+    [("invalid_summary_output", True), ("branch_memory_changed_before_commit", False)],
+)
+def test_omitted_copy_discloses_a_billed_failure_the_send_survived(
+    reason: str, paused: bool
+) -> None:
+    copy = compaction_failure_copy(
+        reason, manual=False, usage=_UNPRICED, attempted=True, omitted=True
+    )
+
+    assert copy.startswith("Your message was sent without compacting")
+    assert "2,000 input + 50 output tokens." in copy
+    assert ("Automatic compaction is paused" in copy) is paused
+    assert "not sent" not in copy
 
 
 def test_every_known_reason_has_specific_copy() -> None:
@@ -205,6 +244,53 @@ async def test_failed_attempt_suppresses_rebilling_until_the_fence_changes() -> 
     )
     assert (await _compact(service, inputs, edited)).attempted is True
     assert gateway.calls == 4
+
+
+@pytest.mark.asyncio
+async def test_each_route_keeps_its_own_pause() -> None:
+    """A failure on another model must not replace the sends' pause."""
+
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    service = ConsoleCompactionService(repository, gateway)
+    inputs = _transaction_inputs()
+    prefix = inputs[2]
+    sends = CompactionRetryFence("conversation-1", "main", prefix[:4], "openai/main")
+    auxiliary = CompactionRetryFence("conversation-1", "aux", prefix[:4], "openai/aux")
+
+    await _compact(service, inputs, sends)
+    await _compact(service, inputs, auxiliary, honor=False)
+    assert gateway.calls == 2
+
+    assert (await _compact(service, inputs, sends)).suppressed is True
+    assert (await _compact(service, inputs, auxiliary)).suppressed is True
+    assert gateway.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_commit_that_can_never_land_fails_before_the_billed_call() -> None:
+    """The live-session P0 shape (no parent chain) must cost nothing."""
+
+    repository = _Repository()
+    gateway = _Gateway()
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
+    orphaned = replace(
+        branch_commit,
+        durable_lineage=tuple(
+            replace(row, parent_message_id=None) for row in branch_commit.durable_lineage
+        ),
+    )
+
+    result = await _compact(
+        service, (plan, prompt, prefix, admission, orphaned), None
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "memory_commit_failed"
+    assert result.attempted is False
+    assert gateway.calls == 0
+    assert repository.starts == []
 
 
 @pytest.mark.asyncio

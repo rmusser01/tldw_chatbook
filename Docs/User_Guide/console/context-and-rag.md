@@ -111,7 +111,9 @@ oversized or malformed summary" or "the summary plus the recent turns kept
 with it would still be over the target size". It also says what the failed
 summary call spent, as input and output tokens, with its cost when the model
 is priced. Before a send, the note starts with "Your message was not sent". A
-failed **Compact now** starts with "Compaction failed and nothing changed".
+failed **Compact now** starts with "Compaction failed and nothing changed";
+when the chat has no older complete turns yet, it says "Nothing to compact
+yet" instead.
 
 Every note ends with a next step. In **Conversation settings > Context and
 memory** you can raise **Conversation max tokens**, set **If compaction
@@ -120,16 +122,28 @@ compacting), or set **When limit nears** to **Off**. You can also start a new
 chat. In a saved chat, the unsent turn stays in response recovery, so you can
 **Retry response** or **Discard** it once you have changed something.
 
-After a failed automatic attempt, automatic compaction pauses for that chat. A
-Retry, a new send, or a micro-compaction tick makes no further summary call,
-so nothing more is billed. Instead, the note says "automatic compaction is
-paused … No new summary call was made". The pause lifts when the chat's
-compaction settings change (budget, **When limit nears**, **Reduce context
-to**, **Summary response max**, **Keep after compaction**, representation, or
-model) or when an earlier message changes (edit, delete, branch switch, or
-memory reset). Changing only **If compaction fails** keeps the pause in place,
-so the chat goes out without compacting. **Compact now** is an explicit retry
-and always makes one summary call. If the conversation changed while it was
+With **If compaction fails** set to **Omit older context**, a failed automatic
+compaction does not hold the message: it is sent without compacting. The
+failed summary call was still made, so a note starting "Your message was sent
+without compacting" names the cause and what the call spent. It appears once,
+on the send that made the call. **Compact now** is not a send, so it always
+reports its failure, whatever this setting says.
+
+After a failed summary call, automatic compaction pauses for that chat on that
+model. A Retry, a new send, or a micro-compaction tick makes no further
+summary call, so nothing more is billed. Instead, the note says "automatic
+compaction is paused … No new summary call was made". A failed **Compact
+now** or a failed micro-compaction tick pauses it too. The pause lifts when
+the chat's compaction settings change (budget, **When limit nears**, **Reduce
+context to**, **Summary response max**, **Keep after compaction**,
+representation, or model), when an earlier message changes (edit, delete,
+branch switch, or memory reset), or when a compaction succeeds. It is kept in
+memory only, so it also ends when the app restarts; the first automatic
+attempt after a restart may make one more summary call. Changing only **If
+compaction fails** keeps the pause in place, so the chat goes out without
+compacting. **Compact now** is an explicit retry and makes at most one summary
+call; it makes none when there is nothing to summarize or when the target
+size leaves no room for a summary. If the conversation changed while it was
 being summarized, the note asks you to send again, and automatic compaction
 is not paused. No send makes more than one automatic summary call.
 
