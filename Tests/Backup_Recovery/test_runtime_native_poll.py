@@ -171,6 +171,10 @@ async def test_monitor_probes_once_a_second_not_ten_times(monkeypatch):
 
     The monitor's sleeps are recorded from inside the probe (patching
     ``asyncio.sleep`` would also slow this test's own waits).
+
+    Args:
+        monkeypatch: Replaces the monitor's ``asyncio.sleep`` with a recorder
+            and the native pause probe with a stub that reports no pause.
     """
     loop = asyncio.get_running_loop()
     probed = asyncio.Event()
@@ -197,3 +201,31 @@ async def test_monitor_probes_once_a_second_not_ten_times(monkeypatch):
 
     assert maintenance.MAINTENANCE_PROBE_INTERVAL_SECONDS == 1.0
     assert delays[:3] == [1.0, 1.0, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_the_unpatched_monitor_probes_about_once_a_second(monkeypatch):
+    """Integration: the real monitor, real sleeps and the real native probe.
+
+    Only a counter wraps the probe. At the old 10 Hz, this ~3 s window saw
+    about 30 probes (Qodo, #2920).
+
+    Args:
+        monkeypatch: Wraps the native pause probe with a call counter.
+    """
+    calls = []
+    real_probe = storage._local_pause_requested
+
+    def counted():
+        calls.append(None)
+        return real_probe()
+
+    monkeypatch.setattr(storage, "_local_pause_requested", counted)
+    monitoring = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
+    try:
+        await asyncio.sleep(3.2)
+    finally:
+        monitoring.cancel()
+        await asyncio.gather(monitoring, return_exceptions=True)
+
+    assert 2 <= len(calls) <= 4, f"{len(calls)} probes in 3.2 s"
