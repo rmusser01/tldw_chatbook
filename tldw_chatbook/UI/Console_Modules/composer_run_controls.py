@@ -213,8 +213,18 @@ def composer_menu_state(screen: Any) -> dict[str, Any]:
 
 
 async def open_composer_menu(screen: Any) -> None:
-    """Open the Composer actions menu (palette route, TASK-33622.2)."""
+    """Open the Composer actions menu (palette route, TASK-33622.2).
 
+    Inert while the first-run setup card blocks the Console, like every
+    other Console palette action: the card is embedded in the Console, not
+    a pushed screen, so Ctrl+P still lists this entry under it.
+
+    Args:
+        screen: The Console screen the palette entry was built for.
+    """
+
+    if screen._console_setup_modal_blocking():
+        return
     await screen._open_console_composer_menu()
 
 
@@ -223,9 +233,16 @@ def run_composer_menu_action(screen: Any, action_id: str) -> None:
 
     Honours the menu's own contract: an entry the menu would disable (or not
     list) is refused with the reason the menu would show, never run behind
-    its back -- e.g. Save as Chatbook in a temporary chat.
+    its back -- e.g. Save as Chatbook in a temporary chat. Inert while the
+    setup card blocks the Console (see `open_composer_menu`).
+
+    Args:
+        screen: The Console screen the palette entry was built for.
+        action_id: The Composer-menu action to run (``ACTION_*``).
     """
 
+    if screen._console_setup_modal_blocking():
+        return
     entries = {
         entry.action_id: entry
         for entry in build_composer_menu_entries(**composer_menu_state(screen))

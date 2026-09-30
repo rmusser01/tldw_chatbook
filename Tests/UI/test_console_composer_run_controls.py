@@ -982,6 +982,66 @@ async def test_palette_opens_the_composer_menu_and_its_menu_only_actions(request
 
 
 # ---------------------------------------------------------------------------
+# PR #2934 review: the setup gate, Redirect's reservation, a paste's target
+# ---------------------------------------------------------------------------
+
+
+def _setup_blocked_palette_host():
+    """A Console whose first-run setup card blocks it (empty OpenAI key)."""
+
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4.1-2025-04-14"},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    return _PaletteConsoleHarness(app)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_palette_composer_actions_are_inert_while_setup_blocks(
+    request, monkeypatch
+):
+    """The setup card is embedded in the Console, not a pushed screen, so
+    Ctrl+P still lists the composer entries under it. Like every other
+    Console palette action, they must not open the menu or run an action
+    over the card (Qodo, PR #2934)."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    host = _setup_blocked_palette_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for(
+            pilot,
+            console._console_setup_modal_blocking,
+            "the setup card never blocked the Console",
+        )
+        chosen: list[str] = []
+        original_choice = console._handle_console_composer_menu_choice
+
+        def recording_choice(action_id):
+            chosen.append(action_id)
+            return original_choice(action_id)
+
+        console._handle_console_composer_menu_choice = recording_choice
+
+        for query, expected in (
+            ("open composer menu", "Open composer menu"),
+            ("attach file", "Attach file"),
+            ("impersonate", "Impersonate"),
+        ):
+            await _run_palette_command(host, pilot, query, expected)
+            await pilot.pause(0.2)
+            assert host.screen_stack[-1] is console, (
+                f"palette {expected!r} opened "
+                f"{type(host.screen_stack[-1]).__name__} over the setup card"
+            )
+            assert chosen == [], f"palette {expected!r} ran {chosen} under setup"
+
+
+# ---------------------------------------------------------------------------
 # Contract pins for the routes above (pure, no mounted app)
 # ---------------------------------------------------------------------------
 
