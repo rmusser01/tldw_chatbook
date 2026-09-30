@@ -2834,14 +2834,27 @@ class ProviderStep(SetupStep):
             pass
 
     def select_provider(self, provider_key: str) -> None:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            read_provider_secret_presence,
-        )
-
         provider_key = self._canonical_provider_key(provider_key)
         previous_provider = self.selected_provider_key
         provider_changed = provider_key != previous_provider
         had_saved_draft = provider_key in self._provider_drafts
+        # TASK-33621.14: all that can raise runs before any state moves, so a failed
+        # switch leaves the previous provider whole (never its key under this one).
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        presence = wizard_state.read_provider_secret_presence(
+            app_config, self._environment(), provider_key=provider_key
+        )
+        initial_endpoint = (
+            "" if had_saved_draft else self._initial_endpoint_for(provider_key)
+        )
+        optional_auth = not self._provider_requires_api_key(provider_key)
+        endpoint_visible = self._provider_exposes_endpoint(provider_key)
+        status = self.query_one("#setup-provider-key-status", Static)
+        actions = self.query_one("#setup-provider-key-actions", Horizontal)
+        key_input = self.query_one("#setup-provider-api-key", Input)
+        connection = self.query_one("#setup-provider-connection", Vertical)
+        auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
+        endpoint_input = self.query_one("#setup-provider-endpoint", Input)
         if provider_changed:
             self._capture_provider_ui_draft(previous_provider)
             self._invalidate_provider_test(changed=False)
@@ -2849,34 +2862,23 @@ class ProviderStep(SetupStep):
             self._local_discovery_provider_key = ""
             self._cancel_worker_groups("setup-provider-local-discovery")
             self._clear_detected_provider_state()
-        self.selected_provider_key = provider_key
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        presence = read_provider_secret_presence(
-            app_config, self._environment(), provider_key=provider_key
-        )
         ui_draft = self._provider_ui_draft(provider_key)
         if not had_saved_draft:
-            ui_draft.endpoint = self._initial_endpoint_for(provider_key)
+            ui_draft.endpoint = initial_endpoint
             ui_draft.key_input_visible = not (
                 presence.inline_configured or presence.env_var_set
             )
-            ui_draft.auth_collapsed = not self._provider_requires_api_key(provider_key)
+            ui_draft.auth_collapsed = optional_auth
+        self.selected_provider_key = provider_key
         self._clear_requested = ui_draft.clear_requested
         self._credential_revision = ui_draft.credential_revision
-        status = self.query_one("#setup-provider-key-status", Static)
-        actions = self.query_one("#setup-provider-key-actions", Horizontal)
-        key_input = self.query_one("#setup-provider-api-key", Input)
-        connection = self.query_one("#setup-provider-connection", Vertical)
-        auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
         if provider_changed:
             self._updating_connection_controls = True
             try:
                 key_input.value = ui_draft.api_key
                 key_input.display = ui_draft.key_input_visible
-                endpoint_visible = self._provider_exposes_endpoint(provider_key)
                 connection.display = endpoint_visible
                 connection.set_class(not endpoint_visible, "hidden")
-                endpoint_input = self.query_one("#setup-provider-endpoint", Input)
                 restored_endpoint = ui_draft.endpoint if endpoint_visible else ""
                 if endpoint_input.value != restored_endpoint:
                     self._pending_programmatic_endpoint_changes.append(
@@ -2885,10 +2887,7 @@ class ProviderStep(SetupStep):
                     endpoint_input.value = restored_endpoint
                 auth.display = True
                 auth.remove_class("hidden")
-                optional_auth = not self._provider_requires_api_key(provider_key)
-                auth.title = (
-                    "Authentication (optional)" if optional_auth else "Authentication"
-                )
+                auth.title = "Authentication" + (" (optional)" if optional_auth else "")
                 auth.collapsed = ui_draft.auth_collapsed
             finally:
                 self._updating_connection_controls = False

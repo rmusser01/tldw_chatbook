@@ -13,8 +13,11 @@ don't) can be changed later in Settings.
 If a step can't save what you entered, the reason appears just above the
 navigation buttons — fix it and press Next again, or go Back. The same line
 reports an unexpected error on a step: the step stays on screen, the keyboard
-keeps working, and **← Back** and **Esc** (exit setup) stay available. That
-includes a run you resumed from "Continue setup?".
+keeps working, and **Esc** (exit setup) and, after the first step, **← Back**
+stay available. That includes a run you resumed from "Continue setup?". If
+picking a provider fails this way, the provider you had picked before stays
+selected, together with any key you typed for it; a key is never carried over
+to a different provider.
 
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked and set

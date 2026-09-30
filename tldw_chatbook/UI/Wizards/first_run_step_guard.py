@@ -25,18 +25,44 @@ opts in, so the suite keeps its exception signal.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from loguru import logger
 
-STEP_HANDLER_ERROR_COPY = (
-    "Something went wrong on this step. Try again or choose something else; "
-    "Back and Esc (exit setup) still work. Details are in the log file."
-)
-ADVANCE_ERROR_COPY = (
-    "Something went wrong on this step, so setup stayed here. Retry with Next, "
-    "go Back, or press Esc to exit setup. Details are in the log file."
-)
+#: The ``persist_event`` component for first-run setup's contained errors.
+_DIAGNOSTICS_COMPONENT = "first_run"
+#: Container attribute holding each ``(step, category, type, site)`` already
+#: reported, so a failure that repeats (a 250 ms interval) logs once.
+_REPORTED_ATTR = "_first_run_contained_error_sites"
+_NO_FRAME = ("", "", 0)
+
+
+def error_copy(category: str, *, back: bool) -> str:
+    """Return the pinned-line explanation for a contained error.
+
+    Args:
+        category: ``"advance"`` for a Next that raised, else a step handler.
+        back: Whether the step has a ← Back (the first step does not).
+
+    Returns:
+        User-facing copy that names only controls that work.
+    """
+    if category == "advance":
+        options = "Retry with Next, go Back, or" if back else "Retry with Next or"
+        return (
+            "Something went wrong on this step, so setup stayed here. "
+            f"{options} press Esc to exit setup. The error was logged."
+        )
+    keys = (
+        "Back and Esc (exit setup) still work"
+        if back
+        else "Esc (exit setup) still works"
+    )
+    return (
+        "Something went wrong on this step. Try again or choose something "
+        f"else; {keys}. The error was logged."
+    )
 
 
 def first_run_provider_catalog() -> tuple[Any, ...]:
@@ -70,60 +96,142 @@ def contains_wizard_errors(node: Any) -> bool:
     )
 
 
-def _raise_site(error: BaseException) -> tuple[str, str, int]:
-    """Return the innermost frame as identifiers only: module, function, line."""
-    site = ("", "", 0)
+def _raise_sites(
+    error: BaseException,
+) -> tuple[tuple[str, str, int], tuple[str, str, int]]:
+    """Return the innermost frame and the innermost Chatbook frame.
+
+    Identifiers only (module, function, line), the same selection
+    ``app_lifecycle._handle_exception`` persists: the innermost frame is often
+    Textual's own (``query_one`` for ``NoMatches``), so the deepest
+    ``tldw_chatbook.`` frame is the one that names the failing call site.
+    Walked here rather than imported, because ``app_lifecycle`` pulls in the
+    whole application.
+    """
+    frames: list[tuple[str, str, int]] = []
     trace = error.__traceback__
     while trace is not None:
         frame = trace.tb_frame
-        site = (
-            str(frame.f_globals.get("__name__", "")),
-            frame.f_code.co_name,
-            trace.tb_lineno,
-        )
+        name = str(frame.f_globals.get("__name__", ""))
+        frames.append((name, frame.f_code.co_name, trace.tb_lineno))
         trace = trace.tb_next
-    return site
+    if not frames:
+        return _NO_FRAME, _NO_FRAME
+    own = (frame for frame in reversed(frames) if frame[0].startswith("tldw_chatbook."))
+    return frames[-1], next(own, frames[-1])
 
 
-def report_contained_error(
-    node: Any, category: str, error: Exception, copy: str
+def _wizard_steps(node: Any) -> tuple[Any, Any, Any]:
+    """Return ``(container, step that raised, step on screen)`` for ``node``."""
+    container = node if hasattr(node, "steps") else getattr(node, "wizard", None)
+    try:
+        current = container.steps[container.current_step]
+    except Exception:  # noqa: BLE001 - no container, or no step on screen yet.
+        current = None
+    return container, (current if node is container else node), current
+
+
+def _back_available(container: Any) -> bool:
+    """Whether the step on screen has a ← Back, read from its track position.
+
+    The button's own state is no guide mid-Next: ``_advance`` disables Back
+    until it settles, which is exactly when an advance error is reported.
+    """
+    position = getattr(container, "_active_position", None)
+    try:
+        return callable(position) and position(container.current_step) > 0
+    except Exception:  # noqa: BLE001 - unknown position: do not promise Back.
+        return False
+
+
+def _persist(
+    node: Any, category: str, step_id: str, error: Exception, sites: Any
 ) -> None:
+    """Record the contained error on the persistent diagnostics channel."""
+    (raise_mod, raise_fn, raise_line), (site_mod, site_fn, site_line) = sites
+    frame_fields: dict[str, object] = {}
+    if raise_mod:
+        frame_fields = {
+            "raise_module": raise_mod,
+            "raise_function": raise_fn,
+            "raise_line": raise_line,
+            "site_module": site_mod,
+            "site_function": site_fn,
+            "site_line": site_line,
+        }
+    try:
+        from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+
+        persist_event(
+            _DIAGNOSTICS_COMPONENT,
+            "contained_exception",
+            level=logging.ERROR,
+            operation=category,
+            phase=step_id,
+            exception_type=type(error).__name__,
+            widget_type=type(node).__name__,
+            **frame_fields,
+        )
+    except Exception:  # noqa: BLE001 - diagnostics must never fail the recovery.
+        pass
+
+
+def report_contained_error(node: Any, category: str, error: Exception) -> None:
     """Log a contained error and put its step back in the user's hands.
 
-    Logs the error type and raising frame only. The message and traceback
-    values can hold what the user typed (an API key), so they are never
-    logged. The current step shows ``copy`` on the pinned error line, and
-    keyboard focus is re-anchored if the error orphaned it.
+    Records the error type and the raising frames only. The message and
+    traceback values can hold what the user typed (an API key), so they are
+    never logged. The log names the step whose work raised; only the step on
+    screen shows the pinned error line (a hidden step's timer must not put
+    "went wrong" over a healthy step). A repeat of the same failure logs once.
+    Keyboard focus is re-anchored if the error orphaned it.
 
     Args:
         node: The step or container whose work raised.
-        category: ``"handler"`` or ``"advance"``, for the log line.
+        category: ``"handler"`` or ``"advance"``, for the log and the copy.
         error: The contained exception.
-        copy: The user-facing explanation.
     """
-    container = node if hasattr(node, "steps") else getattr(node, "wizard", None)
-    step = node
-    try:
-        step = container.steps[container.current_step]
-    except Exception:  # noqa: BLE001 - fall back to the node that raised.
-        pass
-    step_id = getattr(getattr(step, "config", None), "id", "") or "unknown"
-    module, function, line = _raise_site(error)
-    logger.error(
-        "First-run setup error contained (category={}, step={}, error_type={}, "
-        "raise_module={}, raise_function={}, raise_line={})",
-        category,
-        step_id,
-        type(error).__name__,
-        module,
-        function,
-        line,
-    )
-    recovery = (
-        ("show_step_error", (copy,)),
-        ("_heal_orphaned_focus", ()),
-    )
-    for name, args in recovery:
+    container, raising, current = _wizard_steps(node)
+    step_id = getattr(getattr(raising, "config", None), "id", "") or "unknown"
+    sites = _raise_sites(error)
+    key = (step_id, category, type(error).__name__, sites)
+    owner = container if container is not None else node
+    reported = getattr(owner, _REPORTED_ATTR, None)
+    if reported is None:
+        reported = set()
+        setattr(owner, _REPORTED_ATTR, reported)
+    (raise_mod, raise_fn, raise_line), (site_mod, site_fn, site_line) = sites
+    if key in reported:
+        logger.debug(
+            "First-run setup error contained again (category={}, step={}, "
+            "error_type={})",
+            category,
+            step_id,
+            type(error).__name__,
+        )
+    else:
+        reported.add(key)
+        logger.error(
+            "First-run setup error contained (category={}, step={}, error_type={}, "
+            "raise_module={}, raise_function={}, raise_line={}, site_module={}, "
+            "site_function={}, site_line={})",
+            category,
+            step_id,
+            type(error).__name__,
+            raise_mod,
+            raise_fn,
+            raise_line,
+            site_mod,
+            site_fn,
+            site_line,
+        )
+        _persist(node, category, step_id, error, sites)
+    recovery: list[tuple[Any, str, tuple[Any, ...]]] = []
+    if raising is current:
+        copy = error_copy(category, back=_back_available(container))
+        recovery.append((current, "show_step_error", (copy,)))
+    recovery.append((current, "_heal_orphaned_focus", ()))
+    for step, name, args in recovery:
         action = getattr(step, name, None)
         if not callable(action):
             continue
@@ -147,14 +255,16 @@ class WizardErrorGuard:
         except Exception as error:
             if not contains_wizard_errors(self):
                 raise
-            report_contained_error(self, "handler", error, STEP_HANDLER_ERROR_COPY)
+            report_contained_error(self, "handler", error)
 
 
 def contain_advance_error(container: Any, error: Exception) -> bool:
     """Report a Next that raised, if the app keeps its UI alive.
 
     ``_advance`` runs as an ``exit_on_error`` worker, so an exception that
-    escapes it exits the whole app.
+    escapes it exits the whole app. Its ``finally`` then re-syncs the nav bar
+    (``_set_advancing(False)`` runs ``update_progress``), so a Next that
+    failed part-way through a step change still shows the right position.
 
     Args:
         container: The ``SetupWizardContainer`` whose advance raised.
@@ -166,5 +276,5 @@ def contain_advance_error(container: Any, error: Exception) -> bool:
     """
     if not contains_wizard_errors(container):
         return False
-    report_contained_error(container, "advance", error, ADVANCE_ERROR_COPY)
+    report_contained_error(container, "advance", error)
     return True

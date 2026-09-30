@@ -22,11 +22,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from loguru import logger
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_session_settings import settings_provider_catalog
+from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_DRAFT_VERSION,
     STEP_PROVIDER,
@@ -351,6 +353,261 @@ async def test_a_raising_step_commit_is_reported_not_fatal(monkeypatch):
         assert wizard.query_one("#wizard-back", Button).disabled is False
         assert wizard.query_one("#wizard-next", Button).disabled is False
         assert wizard.query_one("#wizard-cancel", Button).disabled is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_failed_provider_switch_keeps_the_typed_key_with_its_provider(
+    request, monkeypatch
+):
+    """A contained switch error must not hand OpenAI's typed key to Anthropic.
+
+    Review finding (major): ``select_provider`` recorded the new provider
+    before its fallible reads and before it swapped the key field. A failure
+    in between left Anthropic selected with the key typed for OpenAI still in
+    the field; the error guard kept the step alive, and Next staged that key
+    as Anthropic's credential (model discovery would then send it to
+    Anthropic). The switch now reads everything that can fail before any
+    state moves, so a failed switch leaves OpenAI whole. Runs in a private
+    profile because Next writes the setup checkpoint.
+    """
+    from tldw_chatbook.UI.Wizards import first_run_setup_state
+
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    real_presence = first_run_setup_state.read_provider_secret_presence
+
+    def _fail_for_anthropic(*args, provider_key, **kwargs):
+        if provider_key == "anthropic":
+            raise ValueError("Provider is not supported.")
+        return real_presence(*args, provider_key=provider_key, **kwargs)
+
+    monkeypatch.setattr(
+        first_run_setup_state, "read_provider_secret_presence", _fail_for_anthropic
+    )
+    typed = "sk-typed-for-openai-REVIEWPROBE-0001"
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, step = _current_step(wizard)
+        choices = _provider_list(step)
+        choices.focus()
+        await pilot.pause()
+        await _arrow_to(pilot, choices, "openai")
+        assert step.selected_provider_key == "openai"
+        key_input = step.query_one("#setup-provider-api-key", Input)
+        assert key_input.display, "the OpenAI key field is hidden"
+        key_input.focus()
+        await pilot.pause()
+        await pilot.press(*typed)
+        await pilot.pause()
+        assert key_input.value == typed
+
+        choices.focus()
+        await pilot.pause()
+        await pilot.press("down")  # onto Anthropic: its switch raises
+        await pilot.pause()
+        assert choices.highlighted_option.provider_key == "anthropic"
+        assert "went wrong" in _pinned_error(wizard)
+        # The failed switch moved nothing: OpenAI is still selected, with its key.
+        assert step.selected_provider_key == "openai"
+        assert key_input.value == typed
+
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.5)
+        assert app.is_running and app._exception is None
+        staged = step.wizard._staged_provider_draft  # the container stages it
+        # Control: the typed key did reach the staging boundary ...
+        assert staged is not None
+        # ... and only as the credential of the provider it was typed for.
+        assert staged.provider == "openai"
+        value = first_run_setup_state._credential_value_for_boundary(staged.credential)
+        assert value == typed
+
+
+@pytest.mark.asyncio
+async def test_a_raising_wizard_container_handler_keeps_the_wizard(monkeypatch):
+    """AC#3: the guard covers the wizard container's own handlers, not only steps.
+
+    Back is handled by ``SetupWizardContainer`` itself. Unguarded, a raise
+    there stops the container's message loop and the whole wizard body goes.
+    """
+    calls = []
+    real_previous = SetupWizardContainer._previous_active_index
+
+    def _raise_once(self, absolute_index):
+        calls.append(absolute_index)
+        if len(calls) == 1:
+            raise RuntimeError("container handler failure")
+        return real_previous(self, absolute_index)
+
+    monkeypatch.setattr(SetupWizardContainer, "_previous_active_index", _raise_once)
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        container, step = _current_step(wizard)
+
+        await pilot.click("#wizard-back")
+        await pilot.pause()
+
+        assert len(calls) == 1
+        assert app.is_running and app._exception is None
+        assert container.is_attached and container.display
+        _assert_step_is_live(app, wizard, step)
+        assert "went wrong" in _pinned_error(wizard)
+
+        await pilot.pause(0.3)  # a Button ignores clicks during its press effect
+        await pilot.click("#wizard-back")
+        await _wait_for_step(pilot, wizard, STEP_WELCOME)
+        assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_contained_error_that_dropped_focus_puts_the_keyboard_back(
+    monkeypatch,
+):
+    """AC#3: an error that left nothing focused re-anchors focus on the step.
+
+    With no focused widget, Ctrl+B / Ctrl+N (bound on the wizard container)
+    have no focus chain to resolve through, and the keyboard is dead.
+    """
+    from tldw_chatbook.UI.Wizards import first_run_setup_state
+
+    hosts: list[App] = []
+
+    def _drop_focus_then_raise(*_args, **_kwargs):
+        hosts[0].screen.set_focus(None)
+        raise ValueError("Provider is not supported.")
+
+    monkeypatch.setattr(
+        first_run_setup_state, "read_provider_secret_presence", _drop_focus_then_raise
+    )
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    hosts.append(app)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, step = _current_step(wizard)
+        choices = _provider_list(step)
+        choices.focus()
+        await pilot.pause()
+
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert app.is_running and app._exception is None
+        assert app.focused is choices, "focus was not re-anchored on the step"
+        await pilot.press("ctrl+b")
+        await _wait_for_step(pilot, wizard, STEP_WELCOME)
+
+
+@pytest.mark.asyncio
+async def test_wizard_navigation_back_follows_can_go_back_on_its_own():
+    """Review (minor): Back tracks ``can_go_back`` even when it changes last.
+
+    ``WizardNavigation`` used to refresh its buttons only when ``current_step``
+    or ``can_go_forward`` changed, so every ``BaseWizard`` that set
+    ``can_go_back`` after ``current_step`` showed a disabled Back on step 2.
+    """
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardNavigation
+
+    class _NavHost(App):
+        def compose(self) -> ComposeResult:
+            yield WizardNavigation()
+
+    app = _NavHost()
+    async with app.run_test() as pilot:
+        nav = app.query_one(WizardNavigation)
+        nav.can_go_back = False
+        nav.total_steps = 3
+        nav.current_step = 2
+        await pilot.pause()
+        back = nav.query_one("#wizard-back", Button)
+        assert back.disabled
+
+        nav.can_go_back = True  # nothing else changes: only a watcher can react
+        await pilot.pause()
+        assert back.disabled is False
+
+
+def _raised(error: Exception) -> Exception:
+    """Return ``error`` with a real traceback, as a handler would raise it."""
+    try:
+        raise error
+    except Exception as caught:
+        return caught
+
+
+@pytest.mark.asyncio
+async def test_a_contained_error_is_attributed_to_the_step_that_raised():
+    """Review (minor): log the raising step; pin copy only on the shown step.
+
+    A hidden step's error must not put "something went wrong on this step"
+    over a healthy step, and a handler that fails on every tick (a 250 ms
+    interval) must not log an ERROR each time.
+    """
+    records: list[dict] = []
+    sink = logger.add(
+        lambda message: records.append(message.record),
+        level="DEBUG",
+        filter=lambda record: "First-run setup error contained" in record["message"],
+    )
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    try:
+        async with app.run_test(size=_SIZE) as pilot:
+            await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+            container, provider = _current_step(wizard)
+            welcome = next(
+                step
+                for step in container.steps
+                if step.config is not None and step.config.id == STEP_WELCOME
+            )
+            assert not welcome.display
+
+            step_guard.report_contained_error(
+                welcome, "handler", _raised(ValueError("hidden"))
+            )
+            assert _pinned_error(wizard) == ""
+
+            repeated = _raised(ValueError("shown"))
+            for _ in range(3):
+                step_guard.report_contained_error(provider, "handler", repeated)
+            assert "went wrong" in _pinned_error(wizard)
+            await pilot.pause()
+    finally:
+        logger.remove(sink)
+
+    errors = [record for record in records if record["level"].name == "ERROR"]
+    assert len(errors) == 2, [record["message"] for record in records]
+    assert f"step={STEP_WELCOME}," in errors[0]["message"]
+    assert f"step={STEP_PROVIDER}," in errors[1]["message"]
+    assert all("hidden" not in r["message"] for r in records)
+    assert all("shown" not in r["message"] for r in records)
+
+
+@pytest.mark.asyncio
+async def test_error_copy_offers_back_only_where_back_works():
+    """Review (nit): Welcome has no Back, so its error copy must not offer it."""
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, provider = _current_step(wizard)
+        step_guard.report_contained_error(provider, "handler", _raised(KeyError()))
+        assert "Back" in _pinned_error(wizard)
+
+        await pilot.press("ctrl+b")
+        await _wait_for_step(pilot, wizard, STEP_WELCOME)
+        _container, welcome = _current_step(wizard)
+        assert wizard.query_one("#wizard-back", Button).disabled
+        for category in ("handler", "advance"):
+            step_guard.report_contained_error(welcome, category, _raised(KeyError()))
+            message = _pinned_error(wizard)
+            assert "went wrong" in message and "Esc" in message
+            assert "Back" not in message
 
 
 def _fresh_wizard() -> FirstRunSetupWizard:
