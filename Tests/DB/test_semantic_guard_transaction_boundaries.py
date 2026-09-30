@@ -45,7 +45,12 @@ def _seed_traced_message(db: CharactersRAGDB) -> str:
 def test_guard_does_not_trace_statements_on_managed_connections(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Managed ChaChaNotes connections never route statements through a trace callback."""
+    """Managed ChaChaNotes connections never route statements through a trace callback.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+        monkeypatch: pytest fixture; wraps ``trace_transaction`` to count calls.
+    """
     calls: list[str] = []
     original = base_db._SemanticMutationAuthorization.trace_transaction
 
@@ -80,6 +85,9 @@ def test_cached_commit_and_begin_inside_a_scope_fail_closed(tmp_path: Path) -> N
     A statement served from Python's sqlite3 statement cache is not
     re-prepared, so the authorizer's COMMIT/ROLLBACK denial never sees it.
     The generation check is what refuses the guarded write afterwards.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
     """
     db = CharactersRAGDB(tmp_path / "cached-boundary.sqlite", "cached-boundary")
     try:
@@ -119,7 +127,11 @@ def test_cached_commit_and_begin_inside_a_scope_fail_closed(tmp_path: Path) -> N
 def test_authorized_update_in_the_same_transaction_still_succeeds(
     tmp_path: Path,
 ) -> None:
-    """The guard keeps allowing the authorized mutation in its own transaction."""
+    """The guard keeps allowing the authorized mutation in its own transaction.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+    """
     db = CharactersRAGDB(tmp_path / "same-transaction.sqlite", "same-transaction")
     try:
         message_id = _seed_traced_message(db)
@@ -150,7 +162,11 @@ def test_authorized_update_in_the_same_transaction_still_succeeds(
 def test_commit_outside_python_method_is_seen_before_the_next_statement(
     tmp_path: Path,
 ) -> None:
-    """A transaction ended by C-level commit is noticed at the next statement."""
+    """A transaction ended by C-level commit is noticed at the next statement.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+    """
     db = CharactersRAGDB(tmp_path / "c-level-commit.sqlite", "c-level-commit")
     try:
         message_id = _seed_traced_message(db)
@@ -170,6 +186,54 @@ def test_commit_outside_python_method_is_seen_before_the_next_statement(
         assert message_id
     finally:
         db.close_connection()
+
+
+class _ObservedCursor(sqlite3.Cursor):
+    """A caller's own cursor type, as Tests/Workflows passes to observe statements."""
+
+
+@pytest.mark.parametrize("factory", [sqlite3.Cursor, _ObservedCursor])
+def test_a_cursor_from_any_factory_still_reports_transaction_boundaries(
+    tmp_path: Path, factory: type[sqlite3.Cursor]
+) -> None:
+    """A C-level commit then a BEGIN through a caller-chosen cursor is a new transaction.
+
+    Before the fix, ``cursor(factory)`` returned an untracked cursor: after
+    ``with connection:`` committed in C, a BEGIN through it left
+    ``in_transaction`` True at every tracked observation, so an authorization
+    from the first transaction still held in the second (Qodo, #2894).
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+        factory: The cursor type the caller asks for.
+    """
+    db = CharactersRAGDB(tmp_path / "cursor-factory.sqlite", "cursor-factory")
+    try:
+        _seed_traced_message(db)
+        conn = db.get_connection()
+        authorization = db._semantic_mutation_authorization_for_coordinator(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        generation = authorization._transaction_generation
+        sqlite3.Connection.__exit__(conn, None, None, None)
+        cursor = conn.cursor(factory)
+        assert isinstance(cursor, factory)
+        cursor.execute("BEGIN IMMEDIATE")
+        try:
+            assert authorization._transaction_generation != generation
+        finally:
+            conn.execute("ROLLBACK")
+    finally:
+        db.close_connection()
+
+
+def test_a_non_class_cursor_factory_is_refused() -> None:
+    """A factory that cannot be made tracked fails closed rather than untracked."""
+    conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
+    try:
+        with pytest.raises(TypeError):
+            conn.cursor(lambda connection: sqlite3.Cursor(connection))
+    finally:
+        conn.close()
 
 
 def test_a_script_that_ends_and_restarts_a_transaction_reports_a_boundary() -> None:
@@ -192,7 +256,11 @@ def test_a_script_that_ends_and_restarts_a_transaction_reports_a_boundary() -> N
 def test_a_script_boundary_advances_the_managed_guard_generation(
     tmp_path: Path,
 ) -> None:
-    """The same script on a managed connection starts a new guard generation."""
+    """The same script on a managed connection starts a new guard generation.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+    """
     db = CharactersRAGDB(tmp_path / "script-boundary.sqlite", "script-boundary")
     try:
         _seed_traced_message(db)
@@ -221,7 +289,12 @@ def test_a_script_boundary_advances_the_managed_guard_generation(
 def test_a_cursor_used_after_close_does_not_pin_the_quiescence_registry(
     method: str, args: tuple[object, ...]
 ) -> None:
-    """A stale cursor's failed call releases its use token, so maintenance can drain."""
+    """A stale cursor's failed call releases its use token, so maintenance can drain.
+
+    Args:
+        method: The cursor method called after its connection closed.
+        args: Arguments for that call.
+    """
     conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
     registry = base_db.SQLiteConnectionQuiescenceRegistry()
     conn.attach_quiescence_registry(registry)

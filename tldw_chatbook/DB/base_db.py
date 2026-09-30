@@ -14,6 +14,7 @@ This ensures consistent behavior across all DB classes for:
 """
 
 import asyncio
+import functools
 import sqlite3
 import threading
 import time
@@ -431,9 +432,23 @@ class _QuiescentSQLiteConnection(sqlite3.Connection):
         self,
         factory: type[sqlite3.Cursor] | None = None,
     ) -> sqlite3.Cursor:
-        """Create a cursor that tracks its complete execute/fetch lifetime."""
+        """Create a cursor that tracks its complete execute/fetch lifetime.
 
-        return super().cursor(factory or _QuiescentSQLiteCursor)
+        A caller's own cursor type is kept but always combined with the
+        tracked cursor: an untracked cursor could BEGIN a transaction the
+        mutation guard never sees (Qodo, #2894).
+
+        Args:
+            factory: Optional ``sqlite3.Cursor`` subclass to create.
+
+        Returns:
+            A cursor that is an instance of ``factory`` and is tracked.
+
+        Raises:
+            TypeError: ``factory`` is not a ``sqlite3.Cursor`` subclass.
+        """
+
+        return super().cursor(_tracked_cursor_type(factory or _QuiescentSQLiteCursor))
 
     def execute(  # type: ignore[override]
         self,
@@ -613,6 +628,30 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
             self._quiescence_token = None
             connection._end_cursor_use(token)
 
+
+@functools.lru_cache(maxsize=64)
+def _tracked_cursor_type(factory: type[sqlite3.Cursor]) -> type[sqlite3.Cursor]:
+    """Return ``factory`` combined with ``_QuiescentSQLiteCursor``.
+
+    Args:
+        factory: The cursor type a caller asked for.
+
+    Returns:
+        ``factory`` itself when it is already tracked, the tracked cursor for
+        a plain ``sqlite3.Cursor``, otherwise a subclass of both.
+
+    Raises:
+        TypeError: ``factory`` is not a ``sqlite3.Cursor`` subclass, so it
+            cannot be made tracked; refusing fails closed.
+    """
+
+    if not (isinstance(factory, type) and issubclass(factory, sqlite3.Cursor)):
+        raise TypeError("cursor factory must be a sqlite3.Cursor subclass")
+    if issubclass(factory, _QuiescentSQLiteCursor):
+        return factory
+    if issubclass(_QuiescentSQLiteCursor, factory):
+        return _QuiescentSQLiteCursor
+    return type(f"_Quiescent{factory.__name__}", (factory, _QuiescentSQLiteCursor), {})
 
 class _SemanticMutationAuthorization:
     """Connection-local authorization read by SQLite mutation triggers.
