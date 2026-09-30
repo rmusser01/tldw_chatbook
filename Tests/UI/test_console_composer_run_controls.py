@@ -271,6 +271,12 @@ async def test_running_stop_is_painted_whole_inside_the_action_row(size, request
                     f"Redirect clipped by the action row at {size}"
                 )
                 assert _painted_at(host, redirect)
+                # Redirect is paid for by the row, never by the draft floor
+                # (`_redirect_fits`): where it shows, the draft keeps it.
+                draft = composer.query_one("#console-command-visible-text", Static)
+                assert draft.region.width >= ConsoleComposerBar.DRAFT_MIN_RENDER_WIDTH, (
+                    f"Redirect squeezed the draft to {draft.region.width} at {size}"
+                )
             else:
                 assert redirect not in host.screen.focus_chain
 
@@ -879,6 +885,33 @@ async def test_enter_on_clear_attachment_returns_focus_to_the_draft(request):
         )
         await _type(pilot, "ab")
         assert composer.draft_text() == "ab"
+        gateway.release.set()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_undo_chord_still_reaches_the_draft_from_a_focused_button(request):
+    """Typing is swallowed on a focused button, but the draft-wide chords
+    (undo/redo, paging) keep their route (TASK-33622.2's passthrough)."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        composer.focus()
+        composer.load_draft("hello")
+        await pilot.pause()
+        await _type(pilot, " world")
+        assert composer.draft_text() == "hello world"
+        menu = composer.query_one("#console-composer-menu", Button)
+        menu.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+z")
+        await _wait_for(
+            pilot,
+            lambda: composer.draft_text() != "hello world",
+            "Ctrl+Z on a focused composer button never reached the draft",
+        )
+        assert "hello world".startswith(composer.draft_text())
+        assert console.app.focused is menu
         gateway.release.set()
 
 
