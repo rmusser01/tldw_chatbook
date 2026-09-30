@@ -1623,6 +1623,12 @@ def _tool_definition_rejection_copy(
     Only a tool name the request actually sent is ever echoed; the provider's
     own text never reaches the copy.
 
+    The advice follows the tool's source, which its sent name tells apart:
+    every MCP-bridged tool is named ``mcp__<server>__<tool>``
+    (``MCP.tool_naming.llm_tool_name``), and every other tool is Chatbook's
+    own -- its rejection is a Chatbook bug to report, and not every such
+    tool has a switch to promise.
+
     Args:
         provider_message: The adapter exception's text (untrusted).
         tools: The OpenAI-shape tool definitions this request sent.
@@ -1639,16 +1645,30 @@ def _tool_definition_rejection_copy(
     )
 
     name = rejected_tool_name(provider_message, tools)
-    if name is not None:
-        subject = f"the tool definition for {escape_markup(name)}"
-    elif blames_tool_definition(provider_message):
-        subject = "one of the tool definitions sent with this request"
-    else:
-        return None
+    if name is None:
+        if not blames_tool_definition(provider_message):
+            return None
+        # Blamed only through a marker in the provider's text: say what is
+        # likely, not what is certain.
+        return (
+            "The provider rejected one of the tool definitions sent with this "
+            "request before the model ran, so choosing another model is "
+            "unlikely to help. A tool from an MCP server is the likeliest "
+            "cause: turn MCP servers off on the MCP screen, then send again."
+        )
+    rejected = (
+        f"The provider rejected the tool definition for {escape_markup(name)} "
+        "before the model ran, so choosing another model will not help."
+    )
+    if name.startswith("mcp__"):
+        return (
+            f"{rejected} Turn off the MCP server that provides it on the MCP "
+            "screen, then send again."
+        )
     return (
-        f"The provider rejected {subject} before the model ran, so choosing "
-        "another model will not help. Turn off the tool group or MCP server "
-        "that provides it on the MCP screen, then send again."
+        f"{rejected} It is one of Chatbook's own tools, so please report it. "
+        "If its tool group has a switch on the MCP screen, turning that off "
+        "lets you send meanwhile."
     )
 
 

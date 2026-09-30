@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    TODO_UPDATE_DELETE_RULE,
     LocalApprovalEffect,
     LocalToolExposure,
     LocalToolProvider,
@@ -3109,19 +3110,34 @@ def test_todo_content_schemas_are_nonblank_without_restricting_active_form(tmp_p
     assert Draft202012Validator(update_active_form).is_valid(None)
 
 
-def test_todo_update_schema_requires_deleted_to_be_the_only_mutation(tmp_path):
-    schema = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))[
-        "todo_update"
-    ]
-    validator = Draft202012Validator(schema)
+@pytest.mark.bootstrap_profile
+def test_todo_update_delete_rule_is_enforced_by_the_handler_not_the_schema(tmp_path):
+    # TASK-33621.1: 'status "deleted" must be the only change' used to be a
+    # top-level allOf in this schema. OpenAI and Anthropic refuse top-level
+    # combinators (every default Console send failed with HTTP 400), so the
+    # schema is flat now and the handler refuses the call, naming the rule.
+    store = SessionTodoStore()
+    store.create(content="keep")
+    provider = make_provider(root=tmp_path, todo_store=store)
+    validator = Draft202012Validator(_task_schemas(provider)["todo_update"])
     base = {"id": "1", "expected_version": 1}
 
     assert validator.is_valid({**base, "status": "deleted"})
-    assert not validator.is_valid({**base, "status": "deleted", "content": "private"})
-    assert not validator.is_valid({**base, "status": "deleted", "activeForm": None})
     assert validator.is_valid({**base, "content": "task"})
     assert validator.is_valid({**base, "activeForm": None})
     assert validator.is_valid({**base, "status": "completed", "content": "task"})
+
+    before = store.export_snapshot()
+    for extra in ({"content": "private"}, {"activeForm": None}):
+        args = {**base, "status": "deleted", **extra}
+        assert validator.is_valid(args), args  # the schema no longer says no...
+
+        result = provider.invoke("local:todo_update", args)
+
+        assert not result.ok, args  # ...the handler does, and names the rule
+        assert result.error == f"rule: {TODO_UPDATE_DELETE_RULE}"
+        assert "private" not in result.error
+        assert store.export_snapshot() == before
 
 
 @pytest.mark.parametrize(

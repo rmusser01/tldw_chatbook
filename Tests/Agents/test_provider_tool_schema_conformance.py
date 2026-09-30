@@ -340,6 +340,113 @@ def test_mcp_bridged_tools_lose_top_level_combinators_at_projection():
     assert [schema.parameters for schema in schemas] == list(originals.values())
 
 
+def _project_third_party_mcp_tools(schemas: dict[str, dict]) -> dict[str, dict]:
+    """Compose the real MCP bridge over ``schemas``; return projected functions."""
+    tools = [
+        {"name": name, "description": f"{name} tool", "inputSchema": schema}
+        for name, schema in schemas.items()
+    ]
+    loop = asyncio.new_event_loop()
+    try:
+        provider = MCPToolProvider(service=_MCPHub(tools), main_loop=loop)
+        with use_run_id("conformance"):
+            asyncio.run(provider.compose_catalog())
+        loaded = [provider.load_schema(entry.id) for entry in provider.list_catalog()]
+    finally:
+        loop.close()
+    projected = {}
+    for tool in schemas_to_openai_tools(loaded):
+        name = tool["function"]["name"]
+        projected[next(key for key in schemas if name.endswith(key))] = tool["function"]
+    return projected
+
+
+def test_projection_tells_the_model_the_either_or_rule_it_strips():
+    # Review of TASK-33621.1: a stripped "give a or b" rule must not simply
+    # vanish -- the model would treat every field as optional and waste a
+    # turn on a call the server refuses. A rule that only lists which
+    # arguments to give is restated in the description the provider sees.
+    projected = _project_third_party_mcp_tools(_THIRD_PARTY_SCHEMAS)
+
+    assert projected["pick_any"]["description"] == (
+        "pick_any tool Argument rule: provide at least one of a or b."
+    )
+    assert projected["pick_one"]["description"] == (
+        "pick_one tool Argument rule: provide exactly one of a or b."
+    )
+    assert projected["pick_all"]["description"] == (
+        "pick_all tool Argument rule: provide a."
+    )
+    # A rule that is not a plain list of required arguments cannot be put
+    # into words faithfully, so nothing is invented for it.
+    for untouched in ("enum_top", "const_top", "not_top", "untyped"):
+        assert projected[untouched]["description"] == f"{untouched} tool", untouched
+
+
+@pytest.mark.parametrize(
+    ("description", "parameters", "expected"),
+    [
+        (
+            "Find a person.",
+            {
+                "type": "object",
+                "properties": {},
+                "anyOf": [{"required": ["first", "last"]}, {"required": ["email"]}],
+            },
+            "Find a person. Argument rule: provide at least one of "
+            "(first and last) or email.",
+        ),
+        (
+            "",
+            {
+                "type": "object",
+                "properties": {},
+                "oneOf": [
+                    {"required": ["a"]},
+                    {"required": ["b"]},
+                    {"required": ["c"]},
+                ],
+            },
+            "Argument rule: provide exactly one of a, b or c.",
+        ),
+        (
+            "Mixed.",
+            {
+                "type": "object",
+                "properties": {"a": {"type": "string"}},
+                "anyOf": [{"required": ["a"]}, {"properties": {"a": {"minLength": 2}}}],
+            },
+            "Mixed.",
+        ),
+    ],
+    ids=["grouped-alternative", "empty-description", "not-required-only"],
+)
+def test_projection_rule_sentence_only_restates_required_only_alternatives(
+    description, parameters, expected
+):
+    schema = ToolSchema(
+        id="x", name="x", description=description, parameters=parameters
+    )
+
+    [tool] = schemas_to_openai_tools([schema])
+
+    assert tool["function"]["description"] == expected
+    assert provider_schema_violations(tool["function"]["parameters"]) == []
+
+
+def test_library_search_notes_keeps_its_selector_rule_on_the_wire():
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    provider = LibraryToolProvider(SimpleNamespace(invoke=lambda *_a: {}))
+    schema = provider.load_schema("library_search_notes")
+    [tool] = schemas_to_openai_tools([schema])
+
+    assert "anyOf" not in tool["function"]["parameters"]
+    assert tool["function"]["description"].endswith(
+        "Argument rule: provide at least one of query, keyword, folder_id or folder."
+    )
+
+
 def test_projection_passes_conformant_schemas_through_unchanged():
     conformant = {
         "type": "object",
@@ -565,6 +672,77 @@ def test_rejected_tool_name_refuses_positions_when_a_sent_entry_is_unnamed():
     assert rejected_tool_name("tools.1.custom.input_schema: bad", None) is None
 
 
+def test_rejected_tool_name_still_matches_a_sent_name_beside_an_unnamed_entry():
+    from tldw_chatbook.Agents.native_tools import rejected_tool_name
+
+    unnamed = [{"type": "function", "function": {"name": ""}}, *_SENT]
+
+    # A name is matched against what was sent, so it stays trustworthy...
+    assert (
+        rejected_tool_name("Invalid schema for function 'todo_update': bad", unnamed)
+        == "todo_update"
+    )
+    # ...a position is not: the adapter may have dropped the unnamed entry.
+    assert rejected_tool_name("tools.1.custom.input_schema: bad", unnamed) is None
+
+
+def test_rejected_tool_name_treats_a_blank_name_as_unnamed():
+    from tldw_chatbook.Agents.native_tools import rejected_tool_name
+
+    # Anthropic's adapter drops a name that is empty after strip(), which
+    # shifts every later tools.N by one.
+    blank = [{"type": "function", "function": {"name": "   "}}, *_SENT]
+
+    assert rejected_tool_name("tools.1.custom.input_schema: bad", blank) is None
+
+
+_SENT_WITH_MCP = schemas_to_openai_tools(
+    [
+        ToolSchema(id=f"t:{name}", name=name, description=name, parameters={})
+        for name in ("todo_update", "mcp__thirdparty__lookup")
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "advice", "absent"),
+    [
+        (
+            "mcp__thirdparty__lookup",
+            "Turn off the MCP server that provides it on the MCP screen",
+            "one of Chatbook's own tools",
+        ),
+        (
+            "todo_update",
+            "one of Chatbook's own tools, so please report it",
+            "Turn off the MCP server",
+        ),
+    ],
+    ids=["mcp-tool", "chatbook-tool"],
+)
+def test_tool_rejection_copy_gives_advice_that_fits_the_tool_source(
+    name, advice, absent
+):
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _provider_error_copy_with_model_recovery,
+    )
+
+    copy = _provider_error_copy_with_model_recovery(
+        "Provider error from openai: bad request. Status: 400.",
+        model="gpt-4.1-mini",
+        status_code=400,
+        provider_message=f"Invalid schema for function '{name}': bad",
+        tools=_SENT_WITH_MCP,
+    )
+
+    assert f"the tool definition for {name} before the model ran" in copy
+    assert "choosing another model will not help" in copy
+    assert advice in copy, copy
+    assert absent not in copy, copy
+    assert "Confirm the model is still available" not in copy
+    assert "model picker" not in copy
+
+
 def test_a_non_tool_bad_request_keeps_the_model_recovery_copy():
     from tldw_chatbook.Chat.console_provider_gateway import (
         _provider_error_copy_with_model_recovery,
@@ -588,5 +766,9 @@ def test_a_non_tool_bad_request_keeps_the_model_recovery_copy():
 
     assert "Confirm the model is still available" in model_copy
     assert "one of the tool definitions sent with this request" in unnamed_tool_copy
+    # Unnamed, the blame rests only on a marker in the provider's text, so the
+    # copy does not state as fact that no other model could help.
+    assert "choosing another model is unlikely to help" in unnamed_tool_copy
+    assert "will not help" not in unnamed_tool_copy
     assert "Confirm the model is still available" not in unnamed_tool_copy
     assert "model picker" not in unnamed_tool_copy

@@ -349,7 +349,17 @@ def test_default_console_send_to_anthropic_gets_a_reply(tmp_path, streaming):
         "watchlists_check_sources",
         "todo_update",
     } <= names
-    assert any(name.endswith("lookup") for name in names)
+    assert "mcp__thirdparty__lookup" in names
+    # The MCP tool's stripped "id or name" rule reaches the model in words.
+    [lookup] = [
+        tool
+        for tool in server.requests[0]["tools"]
+        if tool["name"] == "mcp__thirdparty__lookup"
+    ]
+    assert lookup["description"] == (
+        "Look something up by id or by name. "
+        "Argument rule: provide at least one of id or name."
+    )
     for tool in server.requests[0]["tools"]:
         schema = tool["input_schema"]
         assert schema["type"] == "object", tool["name"]
@@ -370,27 +380,37 @@ def test_default_console_send_to_anthropic_gets_a_reply(tmp_path, streaming):
 
 
 @pytest.mark.loopback_network
-def test_anthropic_tool_definition_rejection_names_the_tool_not_the_model(tmp_path):
-    with _anthropic_server(reject_tool="todo_update") as server:
+@pytest.mark.parametrize(
+    ("reject_tool", "advice"),
+    [
+        ("todo_update", "one of Chatbook's own tools, so please report it"),
+        (
+            "mcp__thirdparty__lookup",
+            "Turn off the MCP server that provides it on the MCP screen, "
+            "then send again.",
+        ),
+    ],
+    ids=["chatbook-tool", "mcp-tool"],
+)
+def test_anthropic_tool_definition_rejection_names_the_tool_not_the_model(
+    tmp_path, reject_tool, advice
+):
+    with _anthropic_server(reject_tool=reject_tool) as server:
         outcome, _store = _run_console_reply(
             tmp_path, _anthropic_resolution(server, streaming=True)
         )
 
     assert outcome.status != "done"
-    assert len(server.rejected) == 1
-    rejected = server.rejected[0]
+    assert server.rejected == [reject_tool]
     copy = ConsoleChatController._agent_failure_visible_copy(outcome)
     assert "HTTP 400" in copy
-    assert f"tool definition for {rejected}" in copy, copy
-    for advice in _MODEL_ADVICE:
-        assert advice not in copy, copy
-    assert copy == (
-        "Agent run failed: provider returned HTTP 400 (Provider error from "
-        "anthropic: bad request. Status: 400. The provider rejected the tool "
-        f"definition for {rejected} before the model ran, so choosing another "
-        "model will not help. Turn off the tool group or MCP server that "
-        "provides it on the MCP screen, then send again.)."
-    )
+    assert (
+        f"The provider rejected the tool definition for {reject_tool} before "
+        "the model ran, so choosing another model will not help."
+    ) in copy, copy
+    assert advice in copy, copy
+    for model_advice in _MODEL_ADVICE:
+        assert model_advice not in copy, copy
 
 
 def _openai_tool_error(name: str, index: int) -> Mock:

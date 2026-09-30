@@ -172,8 +172,9 @@ def provider_conformant_parameters(parameters: object) -> object:
     and ``additionalProperties`` are kept verbatim, and the input is never
     mutated. This is the single projection seam for EVERY tool source, so a
     third-party MCP server's schema cannot fail every send (TASK-33621.1).
-    A removed rule is not lost for enforcement: the tool's own handler (or
-    MCP server) still validates the call it receives.
+    ``schemas_to_openai_tools`` restates a removed rule in the tool's
+    description when ``argument_rule_sentence`` can put it into words;
+    enforcing it stays with the tool's own handler or MCP server.
 
     Args:
         parameters: The disclosed ``ToolSchema.parameters`` value.
@@ -200,6 +201,77 @@ def provider_conformant_parameters(parameters: object) -> object:
     return conformant
 
 
+#: How a stripped top-level either/or rule is put into words (TASK-33621.1
+#: review): "allOf" is handled separately, as a plain list of arguments.
+_ARGUMENT_RULE_QUANTIFIERS = (("anyOf", "at least one of"), ("oneOf", "exactly one of"))
+
+
+def _required_only_alternatives(branches: object) -> list[list[str]] | None:
+    """Return each branch's required names, or None unless every branch is
+    exactly ``{"required": [<non-blank names>]}``."""
+    if not isinstance(branches, Sequence) or isinstance(branches, (str, bytes)):
+        return None
+    alternatives: list[list[str]] = []
+    for branch in branches:
+        if not isinstance(branch, Mapping) or set(branch) != {"required"}:
+            return None
+        required = branch["required"]
+        if (
+            not isinstance(required, Sequence)
+            or isinstance(required, (str, bytes))
+            or not required
+            or not all(isinstance(name, str) and name.strip() for name in required)
+        ):
+            return None
+        alternatives.append(list(required))
+    return alternatives or None
+
+
+def _joined(items: list[str], conjunction: str) -> str:
+    """Join ``items`` as prose: ``a``, ``a or b``, ``a, b or c``."""
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} {conjunction} {items[-1]}"
+
+
+def argument_rule_sentence(parameters: object) -> str | None:
+    """Describe the top-level either/or rule the projection strips, if it can.
+
+    Only a rule that is nothing but lists of required arguments is restated
+    (e.g. ``anyOf: [{required: [id]}, {required: [name]}]`` becomes
+    "Argument rule: provide at least one of id or name."); anything else is
+    left unsaid rather than paraphrased wrongly.
+
+    Args:
+        parameters: The tool's source parameter schema (before projection).
+
+    Returns:
+        One sentence for the tool description, or None.
+    """
+    if not isinstance(parameters, Mapping):
+        return None
+    clauses: list[str] = []
+    for key, quantifier in _ARGUMENT_RULE_QUANTIFIERS:
+        alternatives = _required_only_alternatives(parameters.get(key))
+        if alternatives is None:
+            continue
+        if len(alternatives) == 1:
+            clauses.append(f"provide {_joined(alternatives[0], 'and')}")
+            continue
+        labels = [
+            group[0] if len(group) == 1 else f"({' and '.join(group)})"
+            for group in alternatives
+        ]
+        clauses.append(f"provide {quantifier} {_joined(labels, 'or')}")
+    every = _required_only_alternatives(parameters.get("allOf"))
+    if every is not None:
+        names = list(dict.fromkeys(name for group in every for name in group))
+        clauses.append(f"provide {_joined(names, 'and')}")
+    if not clauses:
+        return None
+    return f"Argument rule: {'; '.join(clauses)}."
+
+
 def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:
     """Convert ``ToolSchema`` entries to the OpenAI ``tools=`` wire format.
 
@@ -209,16 +281,23 @@ def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:
     Returns:
         One ``{"type": "function", "function": {...}}`` entry per schema,
         its ``parameters`` made provider-conformant by
-        ``provider_conformant_parameters``.
+        ``provider_conformant_parameters``; a rule that projection strips is
+        appended to the description when ``argument_rule_sentence`` can
+        state it, so the model still sees it.
     """
     tools = []
     for schema in schemas:
+        description = schema.description
+        rule = argument_rule_sentence(schema.parameters)
+        if rule is not None:
+            base = description.rstrip() if isinstance(description, str) else ""
+            description = f"{base} {rule}" if base else rule
         tools.append(
             {
                 "type": "function",
                 "function": {
                     "name": schema.name,
-                    "description": schema.description,
+                    "description": description,
                     "parameters": provider_conformant_parameters(schema.parameters),
                 },
             }
@@ -253,17 +332,20 @@ def rejected_tool_name(
 
     Returns:
         The rejected tool's name exactly as sent, or None when the message
-        names no tool from ``tools`` (a position is honoured only when every
-        entry is a named function tool, so it maps to the same index the
-        provider adapter sent).
+        names no tool from ``tools``. A quoted name is matched against every
+        named entry. A position is honoured only when every entry is a
+        function tool with a non-blank name, so it maps to the same index the
+        provider adapter sent (Anthropic's adapter drops a blank-named entry,
+        which would shift every later ``tools.N``).
     """
     names: list[str] = []
+    positions_align = True
     for tool in tools or ():
         function = tool.get("function") if isinstance(tool, Mapping) else None
         name = function.get("name") if isinstance(function, Mapping) else None
-        if not isinstance(name, str) or not name:
-            names = []
-            break
+        if not isinstance(name, str) or not name.strip():
+            positions_align = False
+            continue
         names.append(name)
     if not names:
         return None
@@ -271,6 +353,8 @@ def rejected_tool_name(
     for match in _REJECTED_TOOL_NAME.finditer(text):
         if match.group(1) in names:
             return match.group(1)
+    if not positions_align:
+        return None
     for pattern in _REJECTED_TOOL_INDEX:
         match = pattern.search(text)
         if match is not None:
