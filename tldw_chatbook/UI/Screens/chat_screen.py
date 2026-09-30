@@ -176,9 +176,7 @@ from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
-)
-from tldw_chatbook.Chat.console_chat_controller import (
-    resolve_console_selection_core,
+    build_console_provider_selection_from_settings,
 )
 from ...Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -240,7 +238,6 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
     normalize_console_transcript_style,
     resolve_console_message_presentation,
-    resolve_send_system_prompt,
 )
 from ...Chat.prompt_history import PromptHistory
 from ...Backup_Recovery import raw_participants as raw
@@ -362,7 +359,6 @@ from ...Chat.console_session_endpoint_policy import (
     ConsoleEndpointRollbackOutcome,
     ConsoleEphemeralEndpointPolicy,
 )
-from ...Chat.console_endpoint_provenance import ConsoleEndpointProvenance
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
     ConsoleChatSession,
@@ -9709,113 +9705,35 @@ class ChatScreen(BaseAppScreen):
         *,
         legacy_model: object,
     ) -> ConsoleProviderSelection:
-        """Build a provider selection from one immutable settings snapshot."""
-        app_config = self._provider_readiness_app_config()
+        """Build a provider selection from one immutable settings snapshot.
+
+        TASK-33004.2: the one builder lives in console_chat_controller; the
+        screen supplies only its inputs (workspace, endpoint policy, identity).
+        """
         store = self._ensure_console_chat_store()
-        # TASK-32859: the provider/model/base-url core resolves through the
-        # ONE shared implementation in console_chat_controller (the
-        # PR-2668 identity fix now lives only there); this superset builder
-        # keeps only what it genuinely adds (endpoint policy, workspace
-        # context, identity re-expansion).
-        core = resolve_console_selection_core(
-            selection_settings, app_config=app_config, legacy_model=legacy_model
-        )
-        provider = core.provider
-        explicit_model = core.explicit_model
-        configured_model = core.configured_model
-        base_url = core.base_url
-
-        current_workspace_context = self._workspace._current_console_workspace_context()
-        if target_session_id is None:
-            workspace_context = current_workspace_context
-        else:
-            workspace_id = store.session_workspace_id(target_session_id)
-            workspace_context = (
-                current_workspace_context
-                if current_workspace_context.active_workspace_id == workspace_id
-                else ConsoleWorkspaceContext(active_workspace_id=workspace_id)
-            )
-
-        endpoint_policy = (
-            store.session_ephemeral_endpoint_policy(target_session_id)
-            if target_session_id is not None
-            else None
-        )
-        endpoint_policy_owns_selection = (
-            endpoint_policy is not None
-            and endpoint_policy.provider == selection_settings.provider
-            and endpoint_policy.model == selection_settings.model
-        )
-        selection = ConsoleProviderSelection(
-            provider=provider,
-            base_url=base_url,
-            configured_endpoint_fallback_allowed=(not endpoint_policy_owns_selection),
-            endpoint_provenance=(
-                ConsoleEndpointProvenance.EPHEMERAL_SESSION
-                if endpoint_policy_owns_selection
-                else ConsoleEndpointProvenance.DURABLE_CONFIGURATION
-            ),
-            explicit_model=explicit_model,
-            configured_model=configured_model,
-            temperature=selection_settings.temperature,
-            top_p=selection_settings.top_p,
-            min_p=selection_settings.min_p,
-            top_k=selection_settings.top_k,
-            max_tokens=selection_settings.max_tokens,
-            seed=selection_settings.seed,
-            presence_penalty=selection_settings.presence_penalty,
-            frequency_penalty=selection_settings.frequency_penalty,
-            reasoning_effort=selection_settings.reasoning_effort,
-            reasoning_summary=selection_settings.reasoning_summary,
-            verbosity=selection_settings.verbosity,
-            thinking_effort=selection_settings.thinking_effort,
-            thinking_budget_tokens=selection_settings.thinking_budget_tokens,
-            streaming=selection_settings.streaming,
-            system_prompt=selection_settings.system_prompt,
-            workspace_context=workspace_context,
-        )
-        # task-32484: the controller's per-send identity re-expansion never
-        # reached this production path (its persona/character branch only
-        # fires for bare controllers without a wired turn-context provider),
-        # so sends here reused the settings' last materialized projection.
-        # Apply the same shared resolver: a named persona/character session
-        # with a trusted template sends a fresh expansion against the current
-        # effective display name; anything else keeps the settings prompt.
+        workspace_context = self._workspace._current_console_workspace_context()
+        endpoint_policy = identity_session = None
         if target_session_id is not None:
+            workspace_id = store.session_workspace_id(target_session_id)
+            if workspace_context.active_workspace_id != workspace_id:
+                workspace_context = ConsoleWorkspaceContext(
+                    active_workspace_id=workspace_id
+                )
+            endpoint_policy = store.session_ephemeral_endpoint_policy(target_session_id)
             identity_session = next(
                 (item for item in store.sessions() if item.id == target_session_id),
                 None,
             )
-            if (
-                identity_session is not None
-                and identity_session.assistant_kind in {"persona", "character"}
-            ):
-                is_persona = identity_session.assistant_kind == "persona"
-                try:
-                    global_default = self._global_chat_display_name()
-                except Exception:
-                    global_default = "User"
-                selection = replace(
-                    selection,
-                    system_prompt=resolve_send_system_prompt(
-                        identity_name=(
-                            identity_session.assistant_name
-                            if is_persona
-                            else identity_session.character_name
-                        ),
-                        identity_template=(
-                            identity_session.persona_system_template
-                            if is_persona
-                            else identity_session.character_system_template
-                        ),
-                        user_name_override=(
-                            identity_session.user_display_name_override
-                        ),
-                        global_default=global_default,
-                        fallback=selection.system_prompt,
-                    ),
-                )
-        return selection
+        return build_console_provider_selection_from_settings(
+            selection_settings,
+            app_config=self._provider_readiness_app_config(),
+            workspace_context=workspace_context,
+            legacy_model=legacy_model,
+            endpoint_policy=endpoint_policy,
+            identity_session=identity_session,
+            # Lazy, as before: only an identity session reads the name.
+            global_user_name=lambda: self._global_chat_display_name(),
+        )
 
     def _active_console_provider_model_display(
         self,

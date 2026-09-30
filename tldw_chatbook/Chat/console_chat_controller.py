@@ -262,7 +262,8 @@ from tldw_chatbook.Chat.console_trace_redaction import (
 # `Chat.console_interrupt_rounds`, which the controller constructs at boot.
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
-    build_default_console_session_settings,
+    configured_provider_model,
+    console_provider_settings,
     build_target_default_console_session_settings,
     normalize_llamacpp_base_url,
     normalize_console_model_value,
@@ -298,7 +299,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     expand_character_template,
     resolve_console_message_presentation,
-    resolve_send_system_prompt,
+    session_send_system_prompt,
 )
 from tldw_chatbook.Chat.console_turn_context import (
     capture_change_review_admission,
@@ -648,18 +649,12 @@ def resolve_console_selection_core(
     # PR-2668 review (CE-001 class): ``ConsoleProviderSelection.provider`` is
     # a provider IDENTITY -- the gateway resolves registry entries through
     # ``entry_for``, whose slugs are dashed, so the config-key normalizer's
-    # underscore rewriting must not reach it. Only the ``api_settings``
-    # section lookup below wants the config-table key.
+    # underscore rewriting must not reach it. The unified lookup reads a
+    # registry entry by that identity (ADR-146), else the api_settings table.
     provider = provider_identity_key(settings.provider) or "llama_cpp"
     explicit_model = selected(settings.model)
-    provider_config = section(
-        section(app_config, "api_settings"), provider_config_key(provider)
-    )
-    configured_model = selected(
-        provider_config.get("model")
-        or provider_config.get("api_model")
-        or provider_config.get("default_model")
-    )
+    provider_config = console_provider_settings(app_config, provider)
+    configured_model = configured_provider_model(provider_config)
     if selected(legacy_model) is None and explicit_model == configured_model:
         explicit_model = None
 
@@ -690,36 +685,54 @@ def build_console_provider_selection_from_settings(
     app_config: Mapping[str, Any],
     workspace_context: Any,
     legacy_model: Any = None,
+    endpoint_policy: Any = None,
+    identity_session: Any = None,
+    global_user_name: Callable[[], object] = lambda: "User",
 ) -> ConsoleProviderSelection:
-    """Reconstruct the effective selection from one session snapshot."""
+    """Build the effective selection from one Console settings snapshot.
 
-    def section(value: Any, key: str) -> Mapping[str, Any]:
-        child = value.get(key, {}) if isinstance(value, Mapping) else {}
-        return child if isinstance(child, Mapping) else {}
+    TASK-33004.2: the ONE builder of a ``ConsoleProviderSelection`` from
+    Console session settings; the controller and ChatScreen both call it.
 
+    Args:
+        settings: The owning session's effective settings.
+        app_config: Raw application config mapping.
+        workspace_context: The owning session's workspace context.
+        legacy_model: Optional pre-settings model override (see the core).
+        endpoint_policy: The session's live-only endpoint policy; while it
+            owns this provider/model the endpoint is ephemeral and the
+            configured-endpoint fallback is off.
+        identity_session: The owning session; a named persona/character with
+            a trusted template sends a fresh expansion (task-32484).
+        global_user_name: Returns the global display name for that expansion.
+
+    Returns:
+        The selection the gateway resolves for a send.
+    """
     core = resolve_console_selection_core(
         settings, app_config=app_config, legacy_model=legacy_model
     )
-    provider = core.provider
-    explicit_model = core.explicit_model
-    configured_model = core.configured_model
-    base_url = core.base_url
-
-    defaults = build_default_console_session_settings(app_config, provider, None)
+    owns_endpoint = (
+        endpoint_policy is not None
+        and endpoint_policy.provider == settings.provider
+        and endpoint_policy.model == settings.model
+    )
     return ConsoleProviderSelection(
-        provider=provider,
-        base_url=base_url,
-        explicit_model=explicit_model,
-        configured_model=configured_model,
+        provider=core.provider,
+        base_url=core.base_url,
+        configured_endpoint_fallback_allowed=not owns_endpoint,
+        endpoint_provenance=(
+            ConsoleEndpointProvenance.EPHEMERAL_SESSION
+            if owns_endpoint
+            else ConsoleEndpointProvenance.DURABLE_CONFIGURATION
+        ),
+        explicit_model=core.explicit_model,
+        configured_model=core.configured_model,
         temperature=settings.temperature,
         top_p=settings.top_p,
         min_p=settings.min_p,
         top_k=settings.top_k,
-        max_tokens=(
-            settings.max_tokens
-            if settings.max_tokens is not None
-            else defaults.max_tokens
-        ),
+        max_tokens=settings.max_tokens,
         seed=settings.seed,
         presence_penalty=settings.presence_penalty,
         frequency_penalty=settings.frequency_penalty,
@@ -729,7 +742,11 @@ def build_console_provider_selection_from_settings(
         thinking_effort=settings.thinking_effort,
         thinking_budget_tokens=settings.thinking_budget_tokens,
         streaming=settings.streaming,
-        system_prompt=settings.system_prompt,
+        system_prompt=session_send_system_prompt(
+            identity_session,
+            fallback=settings.system_prompt,
+            global_user_name=global_user_name,
+        ),
         workspace_context=workspace_context,
     )
 
@@ -22646,46 +22663,17 @@ class ConsoleChatController:
                 workspace_context=workspace_context,
             )
 
-        app_config = self._provider_config() if self._provider_config else {}
-        selection = build_console_provider_selection_from_settings(
+        return build_console_provider_selection_from_settings(
             settings,
-            app_config=app_config,
+            app_config=self._provider_config() if self._provider_config else {},
             workspace_context=workspace_context,
+            endpoint_policy=endpoint_policy,
+            identity_session=next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            ),
+            global_user_name=self._global_user_display_name,
         )
-        if (
-            endpoint_policy is not None
-            and endpoint_policy.provider == settings.provider
-            and endpoint_policy.model == settings.model
-        ):
-            selection = replace(
-                selection,
-                configured_endpoint_fallback_allowed=False,
-                endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
-            )
-        session = next(
-            (item for item in self.store.sessions() if item.id == session_id), None
-        )
-        if session is not None and session.assistant_kind == "character":
-            selection = replace(
-                selection, system_prompt=self._resolved_system_prompt(session_id)
-            )
-        elif (
-            session is not None
-            and self.store._is_named_persona_session(session)
-            and isinstance(session.persona_system_template, str)
-            and session.persona_system_template.strip()
-        ):
-            # Persona sessions always carry settings, so without this override
-            # their sends would reuse the settings' last materialized
-            # projection. Swap in the per-turn re-expansion -- but only under
-            # exactly the conditions where `_resolved_system_prompt` returns a
-            # fresh expansion (named persona + trusted template). A
-            # template-less persona, or a resume whose name resolution failed
-            # (assistant_name=None), keeps the settings-derived prompt.
-            selection = replace(
-                selection, system_prompt=self._resolved_system_prompt(session_id)
-            )
-        return selection
 
     def resolve_turn_configuration_snapshot(
         self, session_id: str
@@ -29492,44 +29480,14 @@ class ConsoleChatController:
 
     def _resolved_system_prompt(self, session_id: str | None) -> str | None:
         """Resolve the trusted identity system template for the session kind."""
-        if session_id is None:
-            return self.system_prompt
         session = next(
             (candidate for candidate in self.store.sessions() if candidate.id == session_id),
             None,
         )
-        if session is None:
-            return self.system_prompt
-        if session.assistant_kind == "character":
-            name = session.character_name
-            template = session.character_system_template
-        elif session.assistant_kind == "persona":
-            name = session.assistant_name
-            template = session.persona_system_template
-        else:
-            return self.system_prompt
-        if (
-            not isinstance(name, str)
-            or not name.strip()
-            or not isinstance(template, str)
-            or not template.strip()
-        ):
-            return self.system_prompt
-        # task-32484: route through the shared resolver so this path and the
-        # production provider-selection path can never drift apart. The
-        # expansion is identical to the pre-refactor inline version: the
-        # presentation context's user_name IS effective_user_display_name(
-        # override, global_default) with the same guarded global accessor.
-        try:
-            global_default = self._global_user_display_name()
-        except Exception:
-            global_default = "User"
-        return resolve_send_system_prompt(
-            identity_name=name,
-            identity_template=template,
-            user_name_override=session.user_display_name_override,
-            global_default=global_default,
+        return session_send_system_prompt(
+            session,
             fallback=self.system_prompt,
+            global_user_name=self._global_user_display_name,
         )
 
     def _character_emote_authority(

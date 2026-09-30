@@ -74,6 +74,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_model_options,
     build_console_provider_options,
     build_console_settings_readiness,
+    configured_provider_model,
     console_settings_warnings,
     normalize_console_model_value,
     normalize_llamacpp_base_url,
@@ -7181,13 +7182,9 @@ class ConsoleSettingsModal(
         return None
 
     def _default_model_for_provider(self, provider: str) -> str | None:
-        provider_key = provider_config_key(provider)
-        provider_settings = self._provider_settings(provider_key)
-        for key in ("model", "api_model", "default_model"):
-            configured_model = normalize_console_model_value(provider_settings.get(key))
-            if configured_model:
-                return configured_model
-        return None
+        return configured_provider_model(
+            self._provider_settings(provider_config_key(provider))
+        )
 
     def _sync_base_url_control(self, provider: str, base_url: str | None) -> None:
         base_url_input = self.query_one("#console-settings-base-url", Input)

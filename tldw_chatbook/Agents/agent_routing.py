@@ -171,6 +171,7 @@ def _configured_model_for(app_config: Mapping[str, Any], provider: str) -> str:
     """The provider's configured/default model (mirrors the console
     selection builder's configured_model lookup); '' when none. Registry
     entries carry no default model by design (ADR-146)."""
+    from tldw_chatbook.Chat.console_session_settings import configured_provider_model
     from tldw_chatbook.Chat.custom_endpoint_registry import split_custom_endpoint_id
     from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
@@ -182,11 +183,7 @@ def _configured_model_for(app_config: Mapping[str, Any], provider: str) -> str:
     section = api_settings.get(provider_config_key(provider))
     if not isinstance(section, Mapping):
         return ""
-    for key in ("model", "api_model", "default_model"):
-        value = str(section.get(key) or "").strip()
-        if value:
-            return value
-    return ""
+    return configured_provider_model(section) or ""
 
 
 def _default_readiness(app_config: Mapping[str, Any], provider: str) -> str | None:

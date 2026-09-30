@@ -1115,7 +1115,7 @@ def build_default_console_session_settings(
         model=model,
     )
     configured_provider = effective.provider
-    provider_settings = _provider_settings(app_config, configured_provider)
+    provider_settings = console_provider_settings(app_config, configured_provider)
     configured_model = effective.model
     model_profile = _model_default_profile(provider_settings, configured_model)
     if excluded_model_profile_fields:
@@ -1274,7 +1274,7 @@ def normalized_console_model_profile_overrides(
     does not resolve any fallback precedence.
     """
 
-    provider_settings = _provider_settings(
+    provider_settings = console_provider_settings(
         app_config,
         _canonical_chat_provider_id(provider),
     )
@@ -1360,13 +1360,11 @@ def resolve_effective_chat_configuration(
     owns_defaults_model = provider_identity_key(provider_id) == provider_identity_key(
         defaults_provider_id
     )
-    provider_settings = _provider_settings(app_config, provider_id)
+    provider_settings = console_provider_settings(app_config, provider_id)
     candidates = (
         ("session", model),
         ("chat_defaults", chat_defaults.get("model") if owns_defaults_model else None),
-        ("provider_fallback", provider_settings.get("model")),
-        ("provider_fallback", provider_settings.get("api_model")),
-        ("provider_fallback", provider_settings.get("default_model")),
+        ("provider_fallback", configured_provider_model(provider_settings)),
     )
     model_source = "none"
     resolved_model = None
@@ -1557,7 +1555,7 @@ def validate_console_session_settings(
     """Return user-facing validation errors for Console settings."""
     errors = _console_session_settings_structural_errors(settings)
     provider_key = provider_config_key(settings.provider)
-    provider_settings = _provider_settings(app_config, provider_key)
+    provider_settings = console_provider_settings(app_config, provider_key)
 
     if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
         settings.model
@@ -2121,13 +2119,26 @@ def _canonical_chat_provider_id(
     ).readiness_key
 
 
-def _provider_settings(
-    app_config: Mapping[str, object], provider_key: str
+def console_provider_settings(
+    app_config: Mapping[str, object], provider_key: str, *, strict: bool = False
 ) -> Mapping[str, object]:
-    # ADR-146 (registry seam): custom-ep providers read their settings from
-    # the registry entry, not the api_settings table. Lazy import:
-    # custom_endpoint_registry imports this module for URL normalization, so
-    # a module-level import would cycle.
+    """Return one provider's settings: the Console's one lookup (TASK-33004.2).
+
+    Args:
+        app_config: The full CLI config mapping.
+        provider_key: Provider id or config key.
+        strict: Re-raise a malformed or ambiguous table (the gateway's policy)
+            instead of treating it as empty.
+
+    Returns:
+        The registry entry's flattened view for a ``custom-ep:`` id (ADR-146),
+        else the matching ``api_settings`` table, else an empty mapping.
+
+    Raises:
+        ProviderSettingsError: Only when ``strict`` and the table is invalid.
+    """
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         custom_endpoint_provider_settings,
     )
@@ -2141,7 +2152,22 @@ def _provider_settings(
     try:
         return provider_settings_for_key(api_settings, provider_key)
     except ProviderSettingsError:
+        if strict:
+            raise
         return {}
+
+
+def configured_provider_model(provider_settings: Mapping[str, object]) -> str | None:
+    """Return a provider table's own model: ``model``, ``api_model``, ``default_model``.
+
+    TASK-33004.2: the one spelling of this fallback chain. Blank values and
+    placeholder sentinels (``None``/``null``) are skipped.
+    """
+    for key in ("model", "api_model", "default_model"):
+        model = normalize_console_model_value(provider_settings.get(key))
+        if model is not None:
+            return model
+    return None
 
 
 def _custom_endpoint_declared_credential(
@@ -2379,8 +2405,8 @@ def _console_endpoint_restart_fallback(
 ) -> str | None:
     """Return the endpoint the next boot would derive for this provider.
 
-    Mirrors the selection fallback chain in
-    ``ChatScreen._build_console_provider_selection_uncached``: llama.cpp
+    Mirrors the base-URL chain in the Console selection core
+    (``console_chat_controller.resolve_console_selection_core``): llama.cpp
     resolves env override -> ``[console] llama_cpp_base_url_override`` -> the
     provider's configured endpoint -> the built-in default; other URL-based
     providers resolve only their configured endpoint.
@@ -2439,7 +2465,7 @@ def console_session_endpoint_survives_restart(
     if entry_for(app_config, settings.provider) is not None:
         return True
     provider_key = provider_config_key(settings.provider)
-    provider_settings = _provider_settings(app_config, provider_key)
+    provider_settings = console_provider_settings(app_config, provider_key)
     base_url = _string_value(settings.base_url)
     if not base_url or not _is_url_based_provider(provider_key, provider_settings):
         return True
