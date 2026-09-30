@@ -3034,6 +3034,15 @@ class TldwCli(
         #: reads and clears this one-shot slot to show a single toast.
         #: 0 means nothing to report.
         self._console_fleet_teardown_notice: int = 0
+        #: guardian task 2 (ADR-204 §Post-visit summary): the LAST Console
+        #: visit's Guardian summary payload (``{per_topic_counts,
+        #: escalated_rules, trend_notices}``), staged by
+        #: ``ChatScreen.on_unmount`` -> ``GuardianChecker.finalize_visit``
+        #: and consumed exactly once by the NEXT Console mount's slot
+        #: check (the report-on-next-mount precedent above). ``None``
+        #: means nothing to report; empty visits mint nothing. Task 3
+        #: polishes the surfacing copy.
+        self._guardian_visit_summary_notice: dict | None = None
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -6484,6 +6493,48 @@ class TldwCli(
 
         self.scheduler_loop.handlers["dream_track_check"] = DreamTrackHandler(
             deps_getter=_dreams_track_deps
+        )
+
+    def _wire_guardian_scheduler_integration(self) -> None:  # guardian task 2
+        """Wire the Guardian daily trend task into the live scheduler.
+
+        Same post-``_ui_ready`` seam as the Dreams wiring above (ADR-097
+        boot-census ratchet: deferred imports only, nothing
+        Guardian-shaped at module scope; this method is imported-lazy at
+        its call site in ``_on_ui_ready``'s tail). The projection is built
+        unconditionally because its ``[guardian] enabled`` gate is read
+        live on every ``tasks()`` call; the Guardian store itself is built
+        lazily by the enabled-gated ``get_guardian_db`` builder, so a
+        default (disabled) install never creates ``guardian.sqlite``. The
+        handler's deps getter re-reads the gate and the store on every
+        dispatch, so a mid-session disable stops the daily runs without a
+        restart.
+        """
+        from .Scheduling.services.guardian_projection import GuardianProjection
+
+        self.scheduler_loop.queue.guardian_projection = GuardianProjection(
+            self.get_guardian_db
+        )
+
+        from .Scheduling.scheduler.handlers.guardian_trend_handler import (
+            GuardianTrendDeps,
+            GuardianTrendHandler,
+        )
+        from .Guardian.settings import guardian_setting
+
+        def _guardian_trend_deps():
+            if not guardian_setting("enabled"):
+                return None
+            db = self.get_guardian_db()
+            if db is None:
+                return None
+            return GuardianTrendDeps(
+                guardian_db=db,
+                dispatch_service=self.notification_dispatch_service,
+            )
+
+        self.scheduler_loop.handlers["guardian_trends"] = GuardianTrendHandler(
+            deps_getter=_guardian_trend_deps
         )
 
     def _get_automation_definition_handler(self) -> Any:
@@ -11605,6 +11656,11 @@ class TldwCli(
         # `_ui_ready` (ADR-097 boot-census ratchet; guarded internally, a
         # disabled Dreams stops at two cheap settings reads).
         self._wire_dreams_scheduler_integration()
+
+        # guardian task 2: the daily trend task rides the same post-
+        # `_ui_ready` seam (same ADR-097 discipline; internally gated on
+        # `[guardian] enabled`, a disabled Guardian projects nothing).
+        self._wire_guardian_scheduler_integration()
 
         self._schedule_deferred_startup_work()
         from .Backup_Recovery.profile_open import acknowledge_mounted

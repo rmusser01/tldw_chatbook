@@ -621,6 +621,134 @@ class GuardianDB(BaseDB):
             logger.debug("Guardian retention pruned {} alerts", count)
         return count
 
+    def count_topic_alerts(self, topic: str, *, visit_id: str) -> int:
+        """Count a topic's alert rows inside one visit (any rule_id).
+
+        The trend analyzer's frequency-cap read: one trend notice per topic
+        per visit (spec §Trend analyzer). Topic-scoped, not rule-scoped, so
+        it counts exactly the rows the analyzer itself inserts
+        (``rule_id IS NULL``) plus any rule rows sharing the topic.
+
+        Args:
+            topic: The alert topic (e.g. ``fixation:<t>``).
+            visit_id: The visit whose rows are counted.
+
+        Returns:
+            The matching alert count.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM guardian_alerts"
+                " WHERE topic = ? AND visit_id = ?",
+                (topic, visit_id),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def visit_alert_rows(self, visit_id: str) -> list[dict]:
+        """Return per-rule aggregates for one visit, joined with rule state.
+
+        The post-visit summary's read (spec §Post-visit summary): one row
+        per rule that fired in the visit, with its hit count, display mode,
+        configured action, and the escalation state's current action -- the
+        inputs for ``per_topic_counts`` (non-silent rules only) and
+        ``escalated_rules`` (current action above the rule's base action).
+
+        Args:
+            visit_id: The visit being summarized.
+
+        Returns:
+            ``[{rule_id, topic, name, display_mode, rule_action,
+            current_action, hits}]`` ordered by rule id.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT a.rule_id AS rule_id, r.topic AS topic,"
+                " r.name AS name, r.display_mode AS display_mode,"
+                " r.action AS rule_action, s.current_action AS"
+                " current_action, COUNT(*) AS hits"
+                " FROM guardian_alerts a"
+                " JOIN guardian_rules r ON r.id = a.rule_id"
+                " LEFT JOIN guardian_escalation_state s"
+                " ON s.rule_id = a.rule_id"
+                " WHERE a.visit_id = ?"
+                " GROUP BY a.rule_id ORDER BY a.rule_id",
+                (visit_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Visit summaries
+    # ------------------------------------------------------------------
+
+    def insert_visit_summary(
+        self, *, visit_id: str, session_id: str, payload: dict
+    ) -> int:
+        """Insert (or replace) one visit's summary; returns the row id.
+
+        ``guardian_visit_summaries`` is keyed by ``visit_id`` (PRIMARY
+        KEY), so a visit finalized twice replaces its row rather than
+        duplicating it.
+
+        Args:
+            visit_id: The visit this summary describes.
+            session_id: The visit's persisted chat session.
+            payload: JSON-serializable summary dict (per-topic counts,
+                escalated rules, trend notices).
+
+        Returns:
+            The summary row id.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO guardian_visit_summaries"
+                " (visit_id, session_id, created_at, payload)"
+                " VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(visit_id) DO UPDATE SET"
+                " session_id = excluded.session_id,"
+                " created_at = excluded.created_at,"
+                " payload = excluded.payload",
+                (visit_id, session_id, _utc_now_iso(), json.dumps(payload)),
+            )
+            return int(cursor.lastrowid)
+
+    def get_visit_summary(self, visit_id: str) -> dict | None:
+        """Return one stored visit summary row, or None.
+
+        Args:
+            visit_id: The visit whose summary is read.
+
+        Returns:
+            ``{visit_id, session_id, created_at, payload}`` with ``payload``
+            still the stored JSON string, or None when no row exists.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM guardian_visit_summaries WHERE visit_id = ?",
+                (visit_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    # ------------------------------------------------------------------
+    # Meta (rules_version + the daily trend watermark)
+    # ------------------------------------------------------------------
+
+    def get_meta(self, key: str) -> str | None:
+        """Return one ``guardian_meta`` value, or None when unset."""
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM guardian_meta WHERE key = ?", (key,)
+            ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Set one ``guardian_meta`` value (upsert)."""
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO guardian_meta (key, value) VALUES (?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
     # ------------------------------------------------------------------
     # Escalation + cooldown
     # ------------------------------------------------------------------

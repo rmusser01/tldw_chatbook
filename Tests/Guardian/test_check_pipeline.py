@@ -404,6 +404,97 @@ async def test_check_uses_injected_clock_for_timestamps(gate_on, tmp_path):
     assert ts_values == [fixed]
 
 
+# ---------------------------------------------------------------------------
+# Escalated-block cooldown arming (ADR-204 contract 6, carried P4 ruling)
+# ---------------------------------------------------------------------------
+
+
+async def test_escalated_block_arms_the_rule_cooldown(gate_on, tmp_path):
+    db = _fresh_db(
+        tmp_path,
+        [
+            {
+                "name": "held topic",
+                "topic": "held",
+                "pattern": "forbidden tangent",
+                "action": "redact",
+                "escalate_session_threshold": 1,
+                "cooldown_minutes": 5,
+                "notification_frequency": "every_message",
+                "display_mode": "inline_banner",
+            }
+        ],
+    )
+    notes = _notes()
+    checker = _checker(db, notes)
+
+    result = await checker.check("a forbidden tangent appears")
+
+    assert result["action"] == "block", (
+        "the session threshold escalates redact one rung to block"
+    )
+    rules = db.list_rules()
+    assert db.cooldown_active(rules[0]["id"], now=FIXED_NOW) is True, (
+        "an ESCALATED block arms the rule's cooldown in the same record hop"
+    )
+
+
+async def test_base_action_block_does_not_arm_cooldown(gate_on, tmp_path):
+    db = _fresh_db(
+        tmp_path,
+        [
+            {
+                "name": "hard stop",
+                "topic": "stopped",
+                "pattern": "hard stop phrase",
+                "action": "block",
+                "cooldown_minutes": 5,
+                "notification_frequency": "every_message",
+                "display_mode": "inline_banner",
+            }
+        ],
+    )
+    notes = _notes()
+    checker = _checker(db, notes)
+
+    result = await checker.check("a hard stop phrase here")
+
+    assert result["action"] == "block"
+    rules = db.list_rules()
+    assert db.cooldown_active(rules[0]["id"], now=FIXED_NOW) is False, (
+        "a base-action block is the user's configured intent, not an "
+        "escalation event: no cooldown is armed"
+    )
+
+
+async def test_escalated_notify_or_redact_does_not_arm_cooldown(gate_on, tmp_path):
+    db = _fresh_db(
+        tmp_path,
+        [
+            {
+                "name": "climbing",
+                "topic": "climbing",
+                "pattern": "climbing phrase",
+                "action": "notify",
+                "escalate_session_threshold": 1,
+                "cooldown_minutes": 5,
+                "notification_frequency": "every_message",
+                "display_mode": "inline_banner",
+            }
+        ],
+    )
+    notes = _notes()
+    checker = _checker(db, notes)
+
+    result = await checker.check("a climbing phrase")
+
+    assert result["action"] == "redact", "escalated one rung, below block"
+    rules = db.list_rules()
+    assert db.cooldown_active(rules[0]["id"], now=FIXED_NOW) is False, (
+        "cooldowns arm only on escalated BLOCK, not on lesser escalations"
+    )
+
+
 async def test_block_short_circuits_before_hooks(dummy_hook_spy=None):
     # Seam-level pin (the checker alone cannot observe hook emission):
     # dispatching through the real ConsolePromptQueueUIController with a
