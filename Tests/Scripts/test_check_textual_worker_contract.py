@@ -686,6 +686,178 @@ class Unrelated(Screen):
     ]
 
 
+# `self.x()` is dynamic dispatch: it runs whatever the INSTANCE's class
+# resolves `x` to, and that class may be a subclass of the one holding the
+# call. 2ebe5b1a7e resolved only upward (the class and its bases), so both
+# shapes below -- a mixin calling what its host class defines, and a base
+# class template method calling what a subclass overrides -- went invisible
+# to W003 (TASK-33621.13, round 3 review).
+
+_SETTINGS_MIXIN = """
+class SettingsMixin:
+    async def action_leave(self):
+        await self._ask_leave_choice()
+"""
+
+#: An unrelated class with a waiting method of the same name, which must not
+#: be reached: subclass-aware is not "by bare name".
+_UNRELATED_LEAVE = """
+class UnrelatedPanel(Vertical):
+    async def _ask_leave_choice(self):
+        return await self.app.push_screen_wait(OtherLeaveModal())
+"""
+
+
+@pytest.mark.parametrize(
+    "host, site",
+    [
+        (
+            # The class that mixes the mixin in defines the method.
+            """
+class SettingsPane(SettingsMixin, Vertical):
+    async def _ask_leave_choice(self):
+        return await self.app.push_screen_wait(LeaveModal())
+""",
+            "SettingsPane._ask_leave_choice",
+        ),
+        (
+            # A SIBLING mixin of the same host defines it.
+            """
+class LeaveMixin:
+    async def _ask_leave_choice(self):
+        return await self.app.push_screen_wait(LeaveModal())
+
+
+class SettingsPane(SettingsMixin, LeaveMixin, Vertical):
+    pass
+""",
+            "LeaveMixin._ask_leave_choice",
+        ),
+        (
+            # The host binds it as an attribute. The package-wide alias
+            # `_ask_leave_choice` does NOT wait (`wire` binds it to `len`),
+            # so only the host's own binding can make this row.
+            """
+class SettingsPane(SettingsMixin, Vertical):
+    def __init__(self):
+        super().__init__()
+        self._ask_leave_choice = self._confirm
+
+    async def _confirm(self):
+        return await self.app.push_screen_wait(LeaveModal())
+
+
+def wire(other):
+    other._ask_leave_choice = len
+""",
+            "SettingsPane._confirm",
+        ),
+    ],
+    ids=["host-class", "sibling-mixin", "host-attribute"],
+)
+def test_w003_a_mixin_self_call_resolves_through_the_class_mixing_it_in(host, site):
+    """The real-tree shape: ``SpeechSettingsMixin`` code calling
+    ``SpeechSettingsPane._ask_leave_choice``. Flagged at 0bc03b4715 (by-name
+    fallback), silently passed at 2ebe5b1a7e (upward-only resolution)."""
+    assert _w003(_SETTINGS_MIXIN, host, _UNRELATED_LEAVE) == [
+        f"{_M0}::SettingsMixin.action_leave => tldw_chatbook/UI/m1.py::{site}"
+    ]
+
+
+_IMPORTER_BASE = """
+class ImporterBase(Screen):
+    async def action_import(self):
+        path = await self._choose_path()
+        self.load(path)
+
+    async def _choose_path(self):
+        {default}
+"""
+
+_FILE_IMPORTER = """
+class FileImporter(ImporterBase):
+    async def _choose_path(self):
+        return await self.app.push_screen_wait(FilePicker())
+"""
+
+
+@pytest.mark.parametrize(
+    "default", ["return None", "raise NotImplementedError"], ids=["default", "abstract"]
+)
+@pytest.mark.parametrize("depth", ["child", "grandchild"])
+def test_w003_a_template_method_reaches_a_subclass_override(default, depth):
+    """A base-class action awaiting ``self._choose_path()`` runs the
+    subclass's override on a subclass instance -- and that override waits."""
+    subclass = (
+        _FILE_IMPORTER
+        if depth == "child"
+        else _FILE_IMPORTER.replace("(ImporterBase)", "(MidImporter)")
+        + "\n\nclass MidImporter(ImporterBase):\n    pass\n"
+    )
+    assert _w003(_IMPORTER_BASE.format(default=default), subclass) == [
+        f"{_M0}::ImporterBase.action_import => "
+        "tldw_chatbook/UI/m1.py::FileImporter._choose_path"
+    ]
+
+
+def test_w003_a_sibling_subclass_override_does_not_reach_another_subclass():
+    """Subclass-aware resolution follows the calling class's OWN descendants.
+    ``Quiet`` instances run ``ImporterBase._choose_path``; ``FileImporter``'s
+    override is a sibling's and can never run for them."""
+    quiet = """
+class Quiet(ImporterBase):
+    async def action_quiet(self):
+        await self._choose_path()
+"""
+    base = _IMPORTER_BASE.format(default="return None")
+    assert _w003(base, quiet, _FILE_IMPORTER) == [
+        f"{_M0}::ImporterBase.action_import => "
+        "tldw_chatbook/UI/m2.py::FileImporter._choose_path"
+    ]
+
+
+# Python binds a name defined twice to its LAST definition. The collector
+# walks a LIFO stack, so siblings arrive last-first, and 2ebe5b1a7e let the
+# later-arriving FIRST definition overwrite it.
+_TWICE = {
+    "class": (
+        "class S:\n"
+        "    async def _ask(self):\n        {first}\n"
+        "    async def _ask(self):\n        {last}\n"
+        "    async def on_button_pressed(self, event):\n        await self._ask()\n",
+        "S._ask",
+    ),
+    "module": (
+        "async def _ask():\n    {first}\n"
+        "async def _ask():\n    {last}\n"
+        "class S:\n"
+        "    async def on_button_pressed(self, event):\n        await _ask()\n",
+        "_ask",
+    ),
+    "nested": (
+        "class S:\n"
+        "    async def on_button_pressed(self, event):\n"
+        "        async def _ask():\n            {first}\n"
+        "        async def _ask():\n            {last}\n"
+        "        await _ask()\n",
+        "_ask",
+    ),
+}
+
+_WAITS = "return await app.push_screen_wait(Picker())"
+_RETURNS = "return 1"
+
+
+@pytest.mark.parametrize("scope", sorted(_TWICE))
+@pytest.mark.parametrize("live_waits", [True, False], ids=["live-waits", "dead-waits"])
+def test_w003_a_name_defined_twice_resolves_to_its_last_definition(scope, live_waits):
+    template, site = _TWICE[scope]
+    first, last = (_RETURNS, _WAITS) if live_waits else (_WAITS, _RETURNS)
+    source = template.format(first=first, last=last)
+    expected = [_row("S.on_button_pressed", site)] if live_waits else []
+    assert _w003(source) == expected
+
+
 # `push_screen_wait` by hand -- PR #2922's request_hook_review.
 _HAND_ROLLED = """
 async def request_review(screen):
@@ -746,6 +918,91 @@ class S:
         self._pending = answer
 """
     assert _w003(source) == []
+
+
+class MissedHandRolledWait(Exception):
+    """The one failure the known-limitation xfail below accepts. Not an
+    ``AssertionError``, so a failed precondition cannot satisfy it."""
+
+
+# The hand-rolled wait split across two functions, as ``(split, joined,
+# push site)``: ``split`` creates the future and pushes in a helper and
+# awaits it in the handler; ``joined`` is the same wait in ONE function.
+_SPLIT_WAITS = {
+    "returned-future": (
+        """
+def open_review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=answer.set_result)
+    return answer
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await open_review(self)
+""",
+        """
+async def open_review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=answer.set_result)
+    return await answer
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await open_review(self)
+""",
+        "open_review",
+    ),
+    "future-on-self": (
+        """
+class S:
+    def _open_review(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._answer.set_result)
+
+    async def on_button_pressed(self, event):
+        self._open_review()
+        await self._answer
+""",
+        """
+class S:
+    async def _open_review(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._answer.set_result)
+        await self._answer
+
+    async def on_button_pressed(self, event):
+        await self._open_review()
+""",
+        "S._open_review",
+    ),
+}
+
+
+@pytest.mark.xfail(
+    raises=MissedHandRolledWait,
+    strict=True,
+    reason=(
+        "known limitation: a hand-rolled wait is recognized only when ONE "
+        "function creates the future, pushes with callback= and awaits it"
+    ),
+)
+@pytest.mark.parametrize("shape", sorted(_SPLIT_WAITS))
+def test_w003_a_hand_rolled_wait_split_across_functions_is_a_known_miss(shape):
+    """Pinned so an improvement is noticed: the day W003 follows the future
+    across functions, this XPASSes, strict fails it, and the xfail goes (the
+    checker docstring names the limitation too).
+
+    Only the missed row may satisfy the xfail -- a broken precondition fails
+    the test instead of passing as the expected XFAIL."""
+    split, joined, site = _SPLIT_WAITS[shape]
+    expected = [_row("S.on_button_pressed", site)]
+    # Precondition: the same wait in ONE function is flagged, at the same
+    # key, so the only thing missing from `split` is the cross-function link.
+    assert _w003(joined) == expected, "precondition: the one-function wait"
+    if _w003(split) != expected:
+        raise MissedHandRolledWait(f"{shape}: W003 does not see the split wait")
 
 
 # --------------------------------------------------------------------------
@@ -891,6 +1148,46 @@ def test_a_new_push_in_a_censused_console_dispatcher_is_flagged_on_the_real_tree
     assert new_key in _mod._added(known, _mod._tally(rows))
 
 
+_SPEECH_MIXIN = "tldw_chatbook/UI/Speech/speech_settings_mixin.py"
+_SPEECH_PANE = "tldw_chatbook/UI/Speech/speech_settings_pane.py"
+
+
+def test_a_new_mixin_action_reaching_its_host_pane_push_is_flagged_on_the_real_tree(
+    real_tree,
+):
+    """The round-3 reviewer's reproduction: a new ``SpeechSettingsMixin``
+    action awaiting ``self._ask_leave_choice()`` -- defined only by
+    ``SpeechSettingsPane``, the class that mixes it in -- was flagged at
+    0bc03b4715 and passed at 2ebe5b1a7e. Exactly one new row: the unrelated
+    ``SpeechTTSSettingsPanel._ask_leave_choice`` is not reached by name."""
+    known = _mod._read_census(_mod.WAIT_PUSH_CENSUS)
+    clean = _mod._WaitGraph(list(real_tree.values())).roots()
+    assert _mod._added(known, _mod._tally(clean)) == [], "real tree drifted"
+
+    tree = _parse_file(_mod.REPO_ROOT / _SPEECH_MIXIN)
+    mixin = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "SpeechSettingsMixin"
+    )
+    assert not _mod._class_methods(mixin).get("_ask_leave_choice"), (
+        "precondition: the mixin does not define the method itself"
+    )
+    mixin.body.append(
+        ast.parse(
+            "async def action_probe_leave(self):\n"
+            "    await self._ask_leave_choice()\n"
+        ).body[0]
+    )
+    mutated = dict(real_tree)
+    mutated[_SPEECH_MIXIN] = _mod._collect_module(tree, _SPEECH_MIXIN)
+    rows = _mod._WaitGraph(list(mutated.values())).roots()
+    assert _mod._added(known, _mod._tally(rows)) == [
+        f"{_SPEECH_MIXIN}::SpeechSettingsMixin.action_probe_leave => "
+        f"{_SPEECH_PANE}::SpeechSettingsPane._ask_leave_choice"
+    ]
+
+
 def test_w003_sees_the_hook_review_send_freeze_at_its_real_push_site(real_tree):
     """TASK-33621.28's three freezes stay visible to W003, keyed to
     ``request_hook_review`` -- the hand-rolled wait itself -- not to a
@@ -899,13 +1196,23 @@ def test_w003_sees_the_hook_review_send_freeze_at_its_real_push_site(real_tree):
     xfails in Tests/UI/test_console_hook_review_send_freeze.py."""
     rows = set(_mod._WaitGraph(list(real_tree.values())).roots())
     site = "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py::request_hook_review"
-    for root in (
-        "ChatScreen.on_button_pressed",
-        "ChatScreen.on_console_workbench_action_requested",
-        "ChatScreen.on_key->_send_console_message_from_visible_action",
-    ):
-        assert f"{_CHAT}::{root} => {site}" in rows
-    assert not [row for row in rows if "BuddyManagementModal" in row]
+    roots = {
+        f"{_CHAT}::{root}"
+        for root in (
+            "ChatScreen.on_button_pressed",
+            "ChatScreen.on_console_workbench_action_requested",
+            "ChatScreen.on_key->_send_console_message_from_visible_action",
+        )
+    }
+    for root in roots:
+        assert f"{root} => {site}" in rows
+    # Scoped to these roots: BuddyManagementModal's OWN handlers reaching its
+    # own `_review` would be a legitimate row, not the collision.
+    assert not [
+        row
+        for row in rows
+        if row.partition(" => ")[0] in roots and "BuddyManagementModal" in row
+    ]
 
 
 def test_w003_real_inspector_recovery_still_resolves_as_waiting(real_tree):

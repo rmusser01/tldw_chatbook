@@ -74,7 +74,12 @@ W003 (census ratchet, TASK-33621.13)
     pump's ``call_next``, and from a handler that pump is the one blocked on
     the await, so it deadlocks. PR #2922's
     ``request_hook_review`` is this, and freezes the Console's Send
-    (TASK-33621.28).
+    (TASK-33621.28). Known limitation: it is recognized only when ONE
+    function creates the future, pushes and awaits it. A helper that creates
+    and pushes and hands the future back (returned, or stored on ``self``)
+    for its caller to await is the same deadlock, and W003 does not see it;
+    a strict xfail in ``Tests/Scripts/test_check_textual_worker_contract.py``
+    pins that miss, so following the future across functions is noticed.
 
     The roots are message handlers (``@on``, ``on_*``/``_on_*``, ``key_*``),
     actions (``action_*``) and watchers (``watch_*``), none of which Textual
@@ -98,9 +103,14 @@ W003 (census ratchet, TASK-33621.13)
     a string-keyed dict entry, or an assignment whose value refers to a
     waiting callable (``partial`` and a one-call ``lambda`` unwrapped) makes
     its keyword/key/target name an alias for one; an ``await`` of an alias
-    waits too. ``self.x()`` resolves through the enclosing class, its package
-    base classes and what they assign to ``self.x`` -- never to an unrelated
-    class's ``x``; a bare ``x()`` to a nested or module-level ``x`` in scope
+    waits too. ``self.x()`` resolves as dispatch does, on every class
+    ``self`` can be: the enclosing class AND each of its in-package
+    subclasses, each through its own package base classes and what they
+    assign to ``self.x``. So a base-class template method reaches a
+    subclass's override, and a mixin reaches the class that mixes it in and
+    that class's other mixins -- but never an unrelated class's ``x``. A name
+    defined twice in one scope is its LAST definition, as Python binds it; a
+    bare ``x()`` resolves to a nested or module-level ``x`` in scope
     first. ``obj.x()``, and an imported ``x()``, are resolved by NAME: two
     unrelated functions sharing a name are one to it. That over-approximation
     is why W003 is a census like W002 rather than a zero-tolerance gate: the
@@ -536,6 +546,8 @@ class _Function:
         # until the graph is solved made the cyclic GC rescan them all and
         # more than doubled the checker's parse time.
         self.name = node.name
+        # Which of two same-named definitions Python binds: the later one.
+        self.lineno = node.lineno
         self.module = module
         self.cls = cls
         self.parent = parent
@@ -725,6 +737,21 @@ def _base_names(node: ast.ClassDef) -> list[str]:
     return names
 
 
+def _bind(table: dict[str, _Function], new: _Function) -> None:
+    """Register ``new`` under its name unless a LATER definition holds it.
+
+    Python binds a name defined twice in one scope to its last definition.
+    The collector's LIFO stack delivers siblings last-first, so plain
+    assignment let the first definition -- dead code, as far as Python is
+    concerned -- overwrite the live one (TASK-33621.13 review). Compared by
+    line rather than by arrival order, so the rule holds whatever order a
+    traversal visits them in.
+    """
+    current = table.get(new.name)
+    if current is None or new.lineno > current.lineno:
+        table[new.name] = new
+
+
 def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function]]:
     """One iterative pass: defs, their pushes/awaits/schedules, and aliases.
 
@@ -755,11 +782,11 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
             new = _Function(node, module, cls if fn is None else None, fn)
             functions.append(new)
             if fn is not None:
-                fn.nested[node.name] = new
+                _bind(fn.nested, new)
             elif cls is not None:
-                module.classes[cls][node.name] = new
+                _bind(module.classes[cls], new)
             else:
-                module.functions[node.name] = new
+                _bind(module.functions, new)
             fn = sink = new
         elif kind is ast.Lambda:
             sink = None
@@ -819,15 +846,19 @@ class _WaitGraph:
 
     References are resolved to targets once, statically:
 
-    * ``self.x()`` -- the enclosing class's own ``x``, else the first
-      package base class (by name) that defines one, else what that class
-      (or a base) assigns to ``self.x``, else an alias ``x`` bound from
-      outside the class. Never an unrelated class's method that happens to
-      be called ``x``: resolving by name there made ``ConsoleHooksController``'s
-      ``self._review`` (a constructor-injected callable) wait because
-      ``BuddyManagementModal`` has a waiting ``_review``, and so censused
-      the Console's Send dispatchers through a collision (TASK-33621.13
-      review).
+    * ``self.x()`` -- for the enclosing class and for each in-package
+      subclass of it: that class's own ``x``, else the first package base
+      class (by name) that defines one, else what that class (or a base)
+      assigns to ``self.x``. The union of those; an alias ``x`` bound from
+      outside only when none of them has one. Subclasses count because
+      ``self`` may be one of their instances: resolving upward only hid a
+      mixin's call into its host class and a template method's call into a
+      subclass override (TASK-33621.13, round 3). Never an unrelated class's
+      method that happens to be called ``x``: resolving by name there made
+      ``ConsoleHooksController``'s ``self._review`` (a constructor-injected
+      callable) wait because ``BuddyManagementModal`` has a waiting
+      ``_review``, and so censused the Console's Send dispatchers through a
+      collision (TASK-33621.13 review).
     * a bare ``x()`` -- a nested def, a local alias, a module-level def in
       scope, else every top-level def and alias named ``x``;
     * ``obj.x()`` -- every top-level def and alias named ``x``: the real
@@ -867,6 +898,17 @@ class _WaitGraph:
             for cls in module.classes:
                 self.classes_by_name.setdefault(cls, []).append((module, cls))
         self._mro_cache: dict[tuple[str, str], list[tuple[_Module, str]]] = {}
+        # Each class's in-package descendants: every class whose MRO holds it,
+        # found through the same base resolution as the MRO itself. A mixin's
+        # descendants are the classes that mix it in.
+        self._subclasses: dict[tuple[str, str], list[tuple[_Module, str]]] = {}
+        for module in self.modules:
+            for cls in module.classes:
+                for owner, base in self._mro(module, cls)[1:]:
+                    self._subclasses.setdefault((owner.rel, base), []).append(
+                        (module, cls)
+                    )
+        self._self_cache: dict[tuple[str, str, str], list[_Target]] = {}
         # Every node's targets, resolved once. An alias waits when EVERY
         # binding (one target list each) reaches a push; a class-bound
         # attribute when ANY of its bindings does -- one class's own
@@ -946,17 +988,7 @@ class _WaitGraph:
     ) -> list[_Target]:
         kind, name = ref
         if kind == "self" and cls is not None:
-            mro = self._mro(module, cls)
-            for owner, owner_cls in mro:
-                method = owner.classes[owner_cls].get(name)
-                if method is not None:
-                    return [method]
-            bound = [
-                ("bound", f"{owner.rel}::{owner_cls}.{name}")
-                for owner, owner_cls in mro
-                if (owner_cls, name) in owner.class_aliases
-            ]
-            return bound or [("alias", name)]
+            return self._self_targets(module, cls, name)
         if kind == "name":
             scope = fn
             while scope is not None:
@@ -979,6 +1011,48 @@ class _WaitGraph:
             if name in module.functions:
                 return [module.functions[name]]
         return [("defs", name)]
+
+    def _resolve_on(self, module: _Module, cls: str, name: str) -> list[_Target]:
+        """``self.name`` on an instance whose class is exactly ``cls``: the
+        nearest method in its MRO, else what that MRO assigns to
+        ``self.name`` -- empty when neither exists."""
+        mro = self._mro(module, cls)
+        for owner, owner_cls in mro:
+            method = owner.classes[owner_cls].get(name)
+            if method is not None:
+                return [method]
+        return [
+            ("bound", f"{owner.rel}::{owner_cls}.{name}")
+            for owner, owner_cls in mro
+            if (owner_cls, name) in owner.class_aliases
+        ]
+
+    def _self_targets(self, module: _Module, cls: str, name: str) -> list[_Target]:
+        """Everything ``self.name`` can be when the call sits in ``cls``.
+
+        ``self`` is an instance of ``cls`` OR of any in-package subclass, and
+        dispatch resolves ``name`` on the instance's own class. So this is the
+        union, over ``cls`` and each descendant, of what ``name`` resolves
+        to there: a subclass's override (a base-class template method), the
+        host class of a mixin, or a sibling mixin of that host. 2ebe5b1a7e
+        resolved upward only -- ``cls`` and its bases -- and both shapes went
+        invisible. Only when
+        none of them has ``name`` does it fall back to an alias bound from
+        outside -- never to an unrelated class's method of that name.
+        """
+        key = (module.rel, cls, name)
+        cached = self._self_cache.get(key)
+        if cached is None:
+            found: dict[_Target, None] = {}
+            for owner, owner_cls in (
+                (module, cls),
+                *self._subclasses.get((module.rel, cls), ()),
+            ):
+                for target in self._resolve_on(owner, owner_cls, name):
+                    found.setdefault(target, None)
+            cached = list(found) or [("alias", name)]
+            self._self_cache[key] = cached
+        return cached
 
     def _target_waits(self, target: _Target) -> bool:
         if isinstance(target, _Function):
@@ -1223,15 +1297,16 @@ def _write_census(sites: list[str]) -> None:
 def _write_wait_push_census(sites: list[str]) -> None:
     header = (
         "# Baseline census for W003: a non-worker entry point (message handler,\n"
-        "# action, watcher, or a callable handed to call_later/call_next/\n"
-        "# call_after_refresh/set_timer/set_interval/create_task/ensure_future)\n"
-        "# that reaches `push_screen_wait` or `push_screen(..., wait_for_dismiss=\n"
-        "# True)`. Textual pushes the screen and THEN raises NoActiveWorker, which\n"
-        "# kills the dispatching pump under the painted screen -- GAP4-01, the\n"
-        "# Console Inspector 'Choose folder' freeze (TASK-33621.13). The same wait\n"
-        "# by hand -- `push_screen(..., callback=done)` and then `await` a future\n"
-        "# `done` completes -- deadlocks instead: Textual queues `done` on the\n"
-        "# pump that is blocked on that await (TASK-33621.28). Generated by\n"
+        "# action, watcher, a `push_screen` result callback, or a callable handed\n"
+        "# to call_later/call_next/call_after_refresh/set_timer/set_interval/\n"
+        "# create_task/ensure_future) that reaches `push_screen_wait` or\n"
+        "# `push_screen(..., wait_for_dismiss=True)`. Textual pushes the screen\n"
+        "# and THEN raises NoActiveWorker, which kills the dispatching pump under\n"
+        "# the painted screen -- GAP4-01, the Console Inspector 'Choose folder'\n"
+        "# freeze (TASK-33621.13). The same wait by hand -- `push_screen(...,\n"
+        "# callback=done)` and then `await` a future `done` completes --\n"
+        "# deadlocks instead: Textual queues `done` on the pump that is blocked\n"
+        "# on that await (TASK-33621.28). Generated by\n"
         "# scripts/check_textual_worker_contract.py --write\n"
         "#\n"
         "# These rows are a BASELINE, not an endorsement: they were captured\n"
