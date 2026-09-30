@@ -2890,6 +2890,11 @@ class ConsoleSessionController:
         worker keeps ``exit_on_error=False`` (a failed close must not quit
         the app), so its body reports its own failures instead of letting
         Textual swallow them.
+
+        Args:
+            session_id: Native Console session id of the tab to close. An
+                empty id, or one whose close is already in flight, returns
+                without starting another close.
         """
 
         if not session_id or session_id in self._closing_session_requests:
