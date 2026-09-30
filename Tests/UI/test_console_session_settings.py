@@ -11841,6 +11841,10 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         )
         assert "Not ready — current run is active" in readiness_copy
         assert "Ready to send" not in readiness_copy
+        # TASK-33620.4: the modal's mutation gate is a run-state fact, not a
+        # provider problem -- it must never render "Provider setup needed".
+        assert "Provider setup needed" not in readiness_copy
+        assert "Settings changes wait for the current run to finish." in readiness_copy
 
         controller._set_run_state(ConsoleRunState(ConsoleRunStatus.IDLE, "Ready."))
         await pilot.pause()

@@ -164,7 +164,13 @@ def build_console_readiness_presentation(
         elif readiness.blocker == "credential_rejected":
             blocker_copy = f"{provider} {blocker_copy}"
         primary = f"Not ready — {blocker_copy}"
-        detail = f"Provider setup needed: {blocker_copy}"
+        # TASK-33620.4: an active run (the settings modal's mutation gate) is
+        # a run-state fact, never "Provider setup needed".
+        detail = (
+            "Settings changes wait for the current run to finish."
+            if readiness.blocker == "active_run"
+            else f"Provider setup needed: {blocker_copy}"
+        )
         action = _RECOVERY_COPY.get(
             readiness.recovery_action,
             ("Review settings", "console", "Review this Console session's settings"),

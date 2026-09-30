@@ -1401,6 +1401,47 @@ def test_console_disabled_reason_copy_maps_setup_blockers(
         assert reason == expected_reason
 
 
+def test_console_disabled_reason_names_queue_state_never_provider_setup():
+    """TASK-33620.4: the prompt queue's Preparing / Queue-full refusal has its
+    own slot. It used to ride ``setup_blocked_reason`` and fall through to
+    "finish provider setup" -- mid-run, as the setup-wizard link."""
+    for queue_copy in (
+        "Wait for this turn to start, then queue",
+        "Queue full (10/10) — manage it to make room",
+    ):
+        for has_draft in (False, True):
+            reason = build_console_disabled_reason(
+                action_id="send",
+                has_draft=has_draft,
+                send_blocked=True,
+                queue_blocked_reason=queue_copy,
+            )
+            assert reason == queue_copy
+            assert "provider setup" not in reason.lower()
+    # A genuine setup blocker still outranks the queue's wait.
+    assert (
+        build_console_disabled_reason(
+            action_id="send",
+            has_draft=True,
+            send_blocked=True,
+            setup_blocked_reason="Add API key in Settings > Providers & Models before sending.",
+            queue_blocked_reason="Wait for this turn to start, then queue",
+        )
+        == "Send blocked — add an API key to continue"
+    )
+    # And a sub-agent wake still names itself over the queue's Preparing.
+    assert (
+        build_console_disabled_reason(
+            action_id="send",
+            has_draft=False,
+            send_blocked=True,
+            wake_turn_active=True,
+            queue_blocked_reason="Wait for this turn to start, then queue",
+        )
+        == "Send blocked — delivering a sub-agent result"
+    )
+
+
 def test_console_disabled_reason_copy_handles_draft_and_ready_states():
     assert (
         build_console_disabled_reason(

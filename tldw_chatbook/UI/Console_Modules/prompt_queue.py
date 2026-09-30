@@ -126,14 +126,19 @@ def derive_prompt_queue_presentation(
 
     count = snapshot.total_count
     queue_owned = activity.accepted_live_turn or count > 0
+    # TASK-33620.4: a refusing state's tooltip is also the composer's reason
+    # strip copy (its own queue slot, never the provider-setup one), so it
+    # names the queue state and fits the strip's 52-cell budget.
     if activity.occupies_slot and not queue_owned:
         send_label = "Preparing..."
         send_enabled = False
-        send_tooltip = "Wait for this turn to be accepted before queueing a message."
+        send_tooltip = "Wait for this turn to start, then queue"
     elif queue_owned and count >= MAX_CONSOLE_QUEUE_ENTRIES:
         send_label = "Queue full"
         send_enabled = False
-        send_tooltip = f"{count}/{MAX_CONSOLE_QUEUE_ENTRIES} · Manage to make room"
+        send_tooltip = (
+            f"Queue full ({count}/{MAX_CONSOLE_QUEUE_ENTRIES}) — manage it to make room"
+        )
     elif queue_owned:
         send_label = "Queue"
         send_enabled = True

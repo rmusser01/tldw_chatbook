@@ -307,6 +307,53 @@ def test_console_inspector_rail_badge_prioritizes_run_and_review_state():
     assert build_console_inspector_rail_badge() == ""
 
 
+@pytest.mark.parametrize(
+    "run_status", ("validating", "streaming", "checking_citations", "retrying")
+)
+def test_console_inspector_rail_badge_shows_running_from_structured_status(
+    run_status,
+):
+    """TASK-33620.4: an active run badges "running" (read from the canonical
+    active-status set, not row text) and never "setup" while the provider is
+    ready; action-required signals still outrank it."""
+    ready_rows = ConsoleInspectorState.from_values(
+        provider_ready=True, run_active=True
+    ).rows
+    assert (
+        build_console_inspector_rail_badge(
+            run_status=run_status, inspector_rows=ready_rows
+        )
+        == "running"
+    )
+    assert (
+        build_console_inspector_rail_badge(run_status=run_status, approval_count=1)
+        == "1 approval"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            run_status=run_status, staged_source_count=2, can_save_chatbook=True
+        )
+        == "running"
+    )
+    # A genuine provider blocker is still named, even mid-run.
+    assert (
+        build_console_inspector_rail_badge(
+            run_status=run_status,
+            inspector_rows=(Row("Provider", status="blocked"),),
+        )
+        == "setup"
+    )
+
+
+@pytest.mark.parametrize(
+    "run_status", ("idle", "completed", "stopped", "blocked", "failed")
+)
+def test_console_inspector_rail_badge_is_not_running_when_no_run_is_active(
+    run_status,
+):
+    assert build_console_inspector_rail_badge(run_status=run_status) != "running"
+
+
 def test_console_inspector_rail_badge_detects_blocked_from_row_fields():
     assert (
         build_console_inspector_rail_badge(

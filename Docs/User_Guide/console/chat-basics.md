@@ -100,7 +100,9 @@ You can also open and close the rails with the keyboard — **Alt+C** for the
 Context rail, **Alt+I** for the Inspector — which works at every width,
 including the single-pane sizes where the handles hide. The handle badges
 abbreviate ("N appr" = N approvals pending, "art" = artifact ready); hover a
-badge for its full text.
+badge for its full text. While a turn is in flight the Inspect handle reads
+**running**; **setup** appears only when the provider or model genuinely needs
+configuring, never merely because a run is active.
 
 Console Behavior uses category-wide drafts: **Save** writes every pending edit
 in that category, and **Revert** discards every pending edit there, not just the
@@ -432,7 +434,12 @@ of the next prompt, and **Manage** plus a state-specific action such as
   the draft stays in the composer and the strip beside the button reads
   "Queue opens once this turn is accepted". With an empty draft after
   acceptance it reads "Type to queue".
-- **Queue full** preserves the draft and asks you to manage the existing 10.
+- **Queue full** preserves the draft and asks you to manage the existing 10;
+  the strip reads "Queue full — manage it to make room".
+- Neither is a provider problem: these queue messages never say "finish
+  provider setup" and never open the setup wizard. That wording, and its link
+  to setup, appear only when the provider or model genuinely needs
+  configuring.
 - Attachments and staged evidence are never captured by a queued text turn.
   Remove them or wait and send the complete message normally.
 - Recognized slash commands still run immediately and are never queued.

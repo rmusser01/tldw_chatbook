@@ -2352,7 +2352,10 @@ class ConsoleComposerBar(Horizontal):
         setup_blocked_reason = setup_blocked_reason.strip()
         queue_blocked_reason = queue_blocked_reason.strip()
         ephemeral = bool(ephemeral)
-        setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
+        setup_reason_changed = (
+            self._setup_blocked_reason != setup_blocked_reason
+            or self._queue_blocked_reason != queue_blocked_reason
+        )
         self._run_active = run_active
         self._send_blocked = send_blocked
         self._dispatch_recovery_blocked = bool(dispatch_recovery_blocked)
