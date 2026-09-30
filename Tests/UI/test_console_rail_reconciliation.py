@@ -2615,6 +2615,51 @@ async def test_focus_recovery_waits_for_the_focused_rows_own_rebuild(
 
 
 @pytest.mark.asyncio
+async def test_focus_moved_while_recovery_waits_for_a_rebuild_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33621.12 review: waiting for a rebuild must not undo a newer move.
+
+    While the incident waits (up to 2 s) for the rebuilding rows, the user
+    moves focus to another control in the SAME section -- Tab, Down, a click.
+    Only focus leaving the rail used to cancel the wait, so the recovery
+    later snapped focus back onto the rebuilt row.
+    """
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 20
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        rows = _RebuildingRows()
+        await body.mount(rows, before=configure)
+        await _settle(pilot)
+        rows.query_one("#context-rebuild-row", Button).focus()
+        await pilot.pause()
+
+        rows.refresh(recompose=True)
+        # Plain sleeps: `pilot.pause()` waits for the screen to go idle,
+        # which is only after the rebuild has finished.
+        for _ in range(200):
+            if rows.recompose_in_flight and "model" in rail._pending_focus_recoveries:
+                break
+            await asyncio.sleep(0.005)
+        else:
+            raise AssertionError("recovery never started waiting for the rebuild")
+        configure.focus()
+        await pilot.pause(0.8)
+        await _settle(pilot)
+
+        assert rows.recompose_in_flight is False
+        assert app.focused is configure, f"focus was moved to {app.focused!r}"
+        assert rail._pending_focus_recoveries == {}
+
+
+@pytest.mark.asyncio
 async def test_stale_context_focus_recovery_callback_cannot_consume_new_incident(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -45,6 +45,7 @@ widget can never be a legitimate capture for anyone.
 from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
+from textual.css.query import QueryError
 from textual.geometry import Region
 from textual.widget import Widget
 
@@ -79,8 +80,11 @@ class RecomposeCaptureGuard:
     #: focused control, and Textual's ``_reset_focus`` then moves focus to
     #: whatever precedes it in the focus chain -- for the Console's
     #: Conversations tray that was the section toggle, "New conversation", or
-    #: the Console header's Settings control. Off by default so no other
-    #: guarded widget changes behaviour.
+    #: the Console header's Settings control. Only focus still sitting on
+    #: that automatic reset target is taken back: a move made on purpose
+    #: while the rebuild ran (selecting a chat focuses the composer mid-
+    #: rebuild) is left alone. Off by default so no other guarded widget
+    #: changes behaviour.
     RECOMPOSE_KEEPS_FOCUS: bool = False
 
     def _capture_is_within_self(self, captured: Optional[Widget]) -> bool:
@@ -113,40 +117,82 @@ class RecomposeCaptureGuard:
                 f"{type(self).__name__}: mouse-capture release {context} skipped."
             )
 
-    def _focused_descendant_id(self) -> Optional[str]:
-        """The DOM id of the focused widget when it lies inside ``self``."""
+    def _focus_to_keep(self) -> Optional[tuple[str, Optional[Widget]]]:
+        """The focused descendant's id and where Textual's reset will send it.
+
+        Returns ``None`` unless a descendant of ``self`` (not ``self``) with a
+        DOM id holds this screen's focus. Read from the screen that owns
+        ``self`` -- the one whose ``_reset_focus`` the teardown triggers --
+        so a modal on top does not hide a focused row underneath it.
+        """
         try:
-            focused = self.app.focused
+            focused = self.screen.focused
         except Exception:
             return None
         if focused is None or focused is self or self not in focused.ancestors:
             return None
-        return focused.id or None
+        if not focused.id:
+            return None
+        return focused.id, self._predicted_reset_target(focused)
 
-    def _refocus_rebuilt_descendant(self, widget_id: str) -> None:
+    def _predicted_reset_target(self, focused: Widget) -> Optional[Widget]:
+        """Mirror ``Screen._reset_focus`` for a teardown of all of ``self``'s children.
+
+        Textual walks the focus chain backwards from the removed widget,
+        wrapping around, and takes the first control not being removed; a
+        focused widget outside the chain falls back to a focusable sibling.
+        ``Tests/Widgets/test_recompose_capture_guard.py`` pins the wrap-around.
+        """
+
+        def removed(widget: Widget) -> bool:
+            return self in widget.ancestors
+
+        try:
+            chain = self.screen.focus_chain
+        except Exception:
+            return None
+        if focused not in chain:
+            for sibling in focused.visible_siblings:
+                if not removed(sibling) and sibling.focusable:
+                    return sibling
+            return None
+        index = chain.index(focused)
+        for candidate in reversed(chain[index + 1 :] + chain[:index]):
+            if not removed(candidate):
+                return candidate
+        return None
+
+    def _refocus_rebuilt_descendant(
+        self, widget_id: str, reset_target: Optional[Widget]
+    ) -> None:
         """Return focus to the same-id replacement a rebuild just mounted.
 
-        Only when focus is no longer inside ``self`` -- the rebuild removed the
-        focused control, so wherever focus sits now is Textual's automatic
-        reset (a click landing inside the rebuild's own few frames would be
-        overridden too; that window is accepted) -- and only for exactly one
-        focusable match, so an ambiguous or vanished id changes nothing.
+        Only while focus is still exactly where Textual's reset put it
+        (``reset_target``, predicted before the teardown). Anything else means
+        focus moved during the rebuild -- the user clicked, or code such as
+        a chat selection focused the composer -- and that newer move wins.
+        The focus is set synchronously, so a move that was only queued
+        (``Widget.focus`` defers through ``call_later``) still lands after
+        this one. Exactly one focusable match is required, so an ambiguous
+        or vanished id changes nothing.
         """
         if not self.is_attached:
             return
         try:
-            focused = self.app.focused
+            screen = self.screen
         except Exception:
             return
-        if focused is not None and (focused is self or self in focused.ancestors):
+        if screen.focused is not reset_target:
+            return
+        try:
+            candidates = list(self.query(f"#{widget_id}"))
+        except QueryError:
             return
         matches = [
-            widget
-            for widget in self.query(f"#{widget_id}")
-            if widget.is_mounted and widget.focusable
+            widget for widget in candidates if widget.is_mounted and widget.focusable
         ]
         if len(matches) == 1:
-            matches[0].focus()
+            screen.set_focus(matches[0])
 
     def refresh(
         self,
@@ -191,16 +237,18 @@ class RecomposeCaptureGuard:
         DURING the drain it triggers).
         """
         self._release_own_capture_if_any(context="before recompose teardown")
-        keep_focus_id = (
-            self._focused_descendant_id() if self.RECOMPOSE_KEEPS_FOCUS else None
-        )
+        # Await nothing between this and the teardown: the prediction must see
+        # the focus chain the teardown's reset will see. (Only a contended
+        # widget lock inside super().recompose() can still delay it; a stale
+        # prediction then just means no restore -- the pre-opt-in behaviour.)
+        keep_focus = self._focus_to_keep() if self.RECOMPOSE_KEEPS_FOCUS else None
         self.recompose_in_flight = True
         try:
             await super().recompose()  # type: ignore[misc]
         finally:
             self.recompose_in_flight = False
-        if keep_focus_id is not None:
-            self._refocus_rebuilt_descendant(keep_focus_id)
+        if keep_focus is not None:
+            self._refocus_rebuilt_descendant(*keep_focus)
         if self.is_running:
             captured = self.app.mouse_captured
             if captured is not None and not captured.is_attached:

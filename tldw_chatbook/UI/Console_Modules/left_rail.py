@@ -937,6 +937,7 @@ class ConsoleLeftRail(Vertical):
         section_id: str,
         incident: _ContextFocusRecoveryIncident,
         rebuild_polls: int = 0,
+        landing: Widget | None = None,
     ) -> None:
         """Resolve one current incident against the section's current DOM.
 
@@ -945,6 +946,8 @@ class ConsoleLeftRail(Vertical):
             incident: The frozen identity of the control that lost focus.
             rebuild_polls: How many times resolution has already waited for
                 an in-flight rebuild inside the section (TASK-33621.12).
+            landing: Where focus sat when that wait began -- Textual's
+                automatic reset target. Only read once ``rebuild_polls`` > 0.
         """
 
         if self._pending_focus_recoveries.get(section_id) is not incident:
@@ -952,7 +955,8 @@ class ConsoleLeftRail(Vertical):
         if not self.is_attached:
             self._pending_focus_recoveries.pop(section_id, None)
             return
-        if self._focus_is_valid_outside_rail(self.app.focused):
+        focused = self.app.focused
+        if self._focus_is_valid_outside_rail(focused):
             self._pending_focus_recoveries.pop(section_id, None)
             self._section_focus_history.pop(section_id, None)
             return
@@ -964,22 +968,41 @@ class ConsoleLeftRail(Vertical):
             self._pending_focus_recoveries.pop(section_id, None)
             return
 
+        # TASK-33621.12: focus moved while this incident waited for a rebuild
+        # -- Tab, a click, or the rebuilt container restoring its own focus.
+        # That move is newer than the incident; recovering now would snap
+        # focus back to the old row.
+        if (
+            rebuild_polls
+            and focused is not None
+            and focused is not landing
+            and self._is_enabled_focus_target(focused)
+        ):
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._section_focus_history.pop(section_id, None)
+            if self._section_for_owned_target(focused) == section_id:
+                self._record_section_focus(section_id, focused)
+            bounded._acknowledge_focus_recovery(focused)
+            return
+
         # TASK-33621.12: the incident may come from a rebuild of the focused
         # control's own container. Until that recompose has mounted the
         # replacement, nothing matches the target's id and the index fallback
         # strands focus on a neighbour -- live, "New conversation" after the
         # Save .md prompt closed and the Conversations tray re-synced. Resolve
-        # once the rebuild is done. The incident stays pending meanwhile, so a
-        # newer incident or focus moving out of the rail still wins; the poll
-        # is bounded so a rebuild that never finishes cannot hold it forever.
+        # once the rebuild is done. A same-section incident merges into this
+        # pending one; focus leaving the rail or moving on (above) ends the
+        # wait, and the poll is bounded so a rebuild that never finishes
+        # cannot hold it forever.
         if (
             rebuild_polls < _FOCUS_RECOVERY_REBUILD_MAX_POLLS
             and self._section_rebuild_in_flight(bounded)
         ):
+            wait_landing = landing if rebuild_polls else focused
             self.set_timer(
                 _FOCUS_RECOVERY_REBUILD_POLL_SECONDS,
                 lambda: self._recover_pending_focus(
-                    section_id, incident, rebuild_polls + 1
+                    section_id, incident, rebuild_polls + 1, wait_landing
                 ),
                 name="console-rail-focus-recovery-rebuild-wait",
             )
