@@ -558,9 +558,12 @@ def test_native_capture_observes_incomplete_inventory_before_refusal(
     assert "positive-native-secret" not in path.read_text()
 
 
+@pytest.mark.parametrize("corrupt_copy", (None, "ciphertext", "receipt"))
 def test_native_destinations_seed_retargeted_profile_before_negative_checks(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, corrupt_copy
 ):
+    import shutil
+
     from Tests.ProductionApp import test_native_credential_recovery as product
 
     transfer = tmp_path / "transfer"
@@ -579,36 +582,74 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
                 }
             )
         )
+    originals = {path: path.read_bytes() for path in transfer.iterdir()}
+    copyfile = shutil.copyfile
+
+    def copied(source, destination):
+        result = copyfile(source, destination)
+        if corrupt_copy == "ciphertext" and destination.suffix == ".age":
+            destination.write_bytes(b"changed ciphertext")
+        elif corrupt_copy == "receipt" and destination.suffix == ".json":
+            receipt = json.loads(destination.read_text())
+            receipt["status"] = "failed"
+            destination.write_text(json.dumps(receipt))
+        return result
+
+    monkeypatch.setattr(shutil, "copyfile", copied)
     setups, completed_forward, reversed_roots = {}, set(), []
+    children, owned_sources = [], {}
 
     def child(root, installed, route, *, role="retargeted", source=None):
+        children.append((route, role))
+        if source is not None:
+            original = transfer / source.name
+            assert source != original and source.read_bytes() == originals[original]
+            assert (
+                source.with_suffix(".json").read_bytes()
+                == originals[original.with_suffix(".json")]
+            )
+            assert (
+                product._digest(source)
+                == json.loads(source.with_suffix(".json").read_text())["archive_sha256"]
+            )
+        if route in {"transfer", "rollback"}:
+            assert source.parent == root
         if route == "setup":
             setups.setdefault(root, []).append(role)
         elif route == "transfer":
             assert not (root / "direction.json").exists()
             completed_forward.add(root)
+            owned_sources[root] = source
         elif route == "rollback":
             assert root in completed_forward
+            assert source == owned_sources[root]
             assert not (root / "direction.json").exists()
             reversed_roots.append(root)
             (root / "direction.json").write_text("{}")
         else:
             assert route == "negative"
             assert setups.get(root) == ["retargeted"]
+            assert source == owned_sources[run / "Darwin"]
             (root / "negative-results.json").write_text('{"negative_checks":7}')
 
     monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", str(transfer))
     monkeypatch.setattr(runner, "validate_native_credential_environment", lambda: None)
     monkeypatch.setattr(product, "_child", child)
     monkeypatch.setattr(product, "_receipt", lambda installed, **extra: extra)
-    product.test_native_credential_destinations(run, tmp_path / "installed")
-    assert reversed_roots == [run / name for name in ("Darwin", "Linux", "Windows")]
-    assert (
-        json.loads((transfer / "outbound/destination-results.json").read_text())[
-            "negative_checks"
-        ]
-        == 7
-    )
+    if corrupt_copy is not None:
+        with pytest.raises(AssertionError):
+            product.test_native_credential_destinations(run, tmp_path / "installed")
+        assert not children
+    else:
+        product.test_native_credential_destinations(run, tmp_path / "installed")
+        assert reversed_roots == [run / name for name in ("Darwin", "Linux", "Windows")]
+        assert (
+            json.loads((transfer / "outbound/destination-results.json").read_text())[
+                "negative_checks"
+            ]
+            == 7
+        )
+    assert all(path.read_bytes() == before for path, before in originals.items())
 
 
 def test_native_rollback_child_diagnostics_keep_only_safe_frames(tmp_path):
@@ -1629,7 +1670,12 @@ def test_destination_publication_projects_three_direction_results(tmp_path):
     }
 
 
-def test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs(tmp_path):
+@pytest.mark.parametrize(
+    "native_credentials,timeout_expired", [(True, False), (False, False), (True, True)]
+)
+def test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs(
+    tmp_path, monkeypatch, native_credentials, timeout_expired
+):
     workspace = tmp_path / "workspace"
     (workspace / "Tests" / "Backup_Recovery").mkdir(parents=True)
     for package in (workspace / "Tests", workspace / "Tests" / "Backup_Recovery"):
@@ -1661,6 +1707,17 @@ def test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs(tmp_pat
         TLDW_CREDENTIAL_TRANSFER_ROOT="/owned/transfer",
         PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
     )
+    subprocess_run = runner.subprocess.run
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs["timeout"]))
+        if timeout_expired:
+            kwargs["stdout"].write("positive-native-secret\n")
+            raise runner.subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess_run(command, **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "run", run)
     result = runner._run_pytest_phase(
         workspace=workspace,
         private_root=private,
@@ -1670,11 +1727,28 @@ def test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs(tmp_pat
         tests=(str(test),),
         noconftest=True,
         timeout_seconds=30,
-        native_credentials=True,
+        native_credentials=native_credentials,
     )
-    assert result["pytest_returncode"] == 0
-    assert result["junit"]["collected"] == 1
-    assert not list(artifacts.iterdir())
+    assert len(calls) == 1
+    command, timeout = calls[0]
+    assert f"--timeout={30 if native_credentials else 2400}" in command
+    assert timeout == 30
+    if timeout_expired:
+        assert result["pytest_returncode"] == 124
+        assert result["junit"]["collected"] == 0
+        assert result["junit"]["parse_error"] == "pytest did not produce JUnit XML"
+        assert "positive-native-secret" in (private / "pytest-output.log").read_text()
+    else:
+        assert result["pytest_returncode"] == 0
+        assert result["junit"]["collected"] == 1
+        assert result["junit"]["parse_error"] is None
+    if native_credentials:
+        assert not list(artifacts.iterdir())
+    else:
+        assert {item.name for item in artifacts.iterdir()} == {
+            "pytest-output.log",
+            "pytest.xml",
+        }
 
 
 @pytest.mark.parametrize(

@@ -1130,7 +1130,7 @@ def _run_pytest_phase(
             "-vv",
             "--tb=no" if native_credentials else "--tb=long",
             *(("--show-capture=no",) if native_credentials else ()),
-            "--timeout=2400",
+            f"--timeout={timeout_seconds if native_credentials else 2400}",
             f"--basetemp={private_root / f'{phase}-pytest'}",
             f"--junitxml={raw_junit}",
         )

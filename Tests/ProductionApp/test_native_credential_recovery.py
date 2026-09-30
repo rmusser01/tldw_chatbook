@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import sqlite3
 import stat
 import subprocess  # nosec B404 - fixed installed-product test children
@@ -1019,23 +1020,30 @@ def test_native_credential_destinations(tmp_path, native_package):
         json.loads(source.with_suffix(".json").read_text())["system"]
         for source in sources
     } == {"Darwin", "Linux", "Windows"}
-    results = []
+    results, owned_sources = [], []
     for source in sources:
-        receipt = json.loads(source.with_suffix(".json").read_text())
+        receipt_bytes = source.with_suffix(".json").read_bytes()
+        receipt = json.loads(receipt_bytes)
         assert receipt["status"] == "passed" and receipt["archive_sha256"] == _digest(
             source
         )
         root = tmp_path / receipt["system"]
         root.mkdir(mode=0o700)
+        owned = root / source.name
+        shutil.copyfile(source, owned)
+        shutil.copyfile(source.with_suffix(".json"), owned.with_suffix(".json"))
+        assert _digest(owned) == receipt["archive_sha256"]
+        assert owned.with_suffix(".json").read_bytes() == receipt_bytes
+        owned_sources.append(owned)
         for role in ("default", "retargeted"):
             _child(root, native_package, "setup", role=role)
-        _child(root, native_package, "transfer", source=source)
-        _child(root, native_package, "rollback", source=source)
+        _child(root, native_package, "transfer", source=owned)
+        _child(root, native_package, "rollback", source=owned)
         results.append(json.loads((root / "direction.json").read_text()))
     negative_root = tmp_path / "negative-checks"
     negative_root.mkdir(mode=0o700)
     _child(negative_root, native_package, "setup", role="retargeted")
-    _child(negative_root, native_package, "negative", source=sources[0])
+    _child(negative_root, native_package, "negative", source=owned_sources[0])
     negative_checks = json.loads((negative_root / "negative-results.json").read_text())[
         "negative_checks"
     ]
