@@ -264,7 +264,7 @@ The row holds, in order:
 - A leading `▾`/`▸` on a group or tree row means expanded/collapsed (ADR-034). A trailing `▾` opens a menu, `…` opens a dialog, and `↗` opens another destination. `▾` keeps both of its current roles; TASK-33624 decides whether to split them.
 - At 80 columns the 1-column rail handles are the `▏` and `▕` edges, and each spells its rail's name upright (Settings' existing stacked-letter handle style). An open rail's head shows its toggle key.
 - ◆ needs you · ● running · ✓ unseen result · ◉ microphone capturing, from the TASK-33624 registry, which has ASCII fallbacks. 💬 is a chat's own default icon (ADR-171); a custom icon replaces it.
-- `Alt+X` stands for the stop chord (open question 1).
+- `Alt+X` in the mocks is the placeholder they were drawn with. The owner chose **Ctrl+G** as the stop chord on 2026-09-30 (open question 1, resolved), so read `Alt+X` as `Ctrl+G`. The mocks are left as drawn because `Ctrl+G` is one cell wider.
 - In prose, `▸` separates the steps of a menu path.
 
 Each block's committed width is in its heading (235 or 80 cells), and every row is exactly that wide, so trailing blanks are significant; an editor that strips them breaks the grid. A generator built each row and asserted its width with Rich `cell_len`, Textual's cell measure (💬 counts 2). It also derived each status strip, composer row, 80-column header and footer from the drop orders below. Grid dividers sit at columns 35 and 190 (1-based).
@@ -601,7 +601,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 | "Send disabled: type a message" | Composer | Removed; the consequence line shows real blockers only | — |
 | `Send \| $` | Composer | `Send`; the estimate moves to the Context slot as `next ~$` | Enter |
 | `Preparing...` / `Queue full` on the Send button | Composer | The consequence line | — |
-| Stop (0 cells today) | Composer | The primary slot while running (TASK-33625.1) | Stop chord (open question 1), /stop (new), palette (new) |
+| Stop (0 cells today) | Composer | The primary slot while running (TASK-33625.1) | Ctrl+G (decided 2026-09-30), /stop (new), palette (new) |
 | Queue | Composer | Shown while running with a draft; folds into Enter | Enter |
 | Redirect | Composer | Inline when there is room; otherwise `■ Stop ▾` ▸ Stop and redirect | /redirect |
 | Dictate | Composer | `Dictate ▾`; Menu ▸ Voice when folded | Palette (new) |
@@ -614,7 +614,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 
 ## Open questions (owner decisions)
 
-1. **The stop chord.** `Alt+X` is a placeholder; nothing binds it today. macOS terminals send Option as a character unless set to send Meta, so the candidates are Alt+X (with that caveat), Ctrl+Shift+X, or Esc Esc from the composer. Until this is decided, Stop is reachable by Tab then Enter from the draft, by `/stop` and from the palette (TASK-33625.1 AC#3).
+1. **The stop chord — resolved 2026-09-30: Ctrl+G.** The owner chose Ctrl+G over Alt+X, which needs Option-as-Meta on macOS and otherwise types `≈`, and over Esc Esc, which collides with Esc's existing jobs. Ctrl+G is BEL (0x07), so it reaches the app in every terminal. Its only other binding is the Speech playground, on a different screen. PR #2934 (TASK-33625.1) ships it as the single constant `STOP_RUN_KEY`. Stop is also reachable by Tab then Enter from the draft, by `/stop`, and from the palette.
 2. **A 1-row nav below 35 rows for every destination.** Accepting ships migration step 8 as a shell-wide amendment to ADR-015, and the transcript targets are the "Target" column. Declining keeps the 3-row nav, the targets fall back to the "Without the compact nav" column, and step 8 does only its cleanup.
 3. **The character portrait.** Either it shows only while the active chat is a character chat, or it is always present with a fixed ceiling. ADR-083's 2026-09-10 amendment grows the portrait with the viewport at the user's request, and that growth causes GAP5-22. Either option supersedes that amendment for the Characters group; keeping the amendment leaves GAP5-22 open.
 4. **Pane swap or side by side.** Below the rail budget, this ADR swaps the rail into the centre column, so the transcript never drops below 60 columns but the two are not visible together. ADR-043 today honours an explicit toggle side by side at any width by waiving the transcript minimum. Which should win?
