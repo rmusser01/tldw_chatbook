@@ -457,3 +457,79 @@ def test_choice_highlight_bar_clears_non_text_contrast(theme: Theme) -> None:
             ink = _resolve_color(_painted(table, ink_token), bar)
             assert _ratio(bar.hex, base.hex) >= NON_TEXT, (theme.name, selector, key)
             assert _ratio(ink.hex, bar.hex) >= AA, (theme.name, selector, key)
+
+
+def _paints_a_colour(value: str) -> bool:
+    """Whether a variable value paints a colour of its own: it parses, it is
+    not transparent, and it is not the terminal's default (ansi_default)."""
+    suffixed = re.fullmatch(r"(.+) (\d{1,3})%", value)
+    try:
+        color = Color.parse(suffixed[1] if suffixed else value)
+    except Exception:  # noqa: BLE001 - 'auto NN%', a text style: no colour
+        return False
+    if suffixed:
+        color = color.multiply_alpha(int(suffixed[2]) / 100)
+    return color.a > 0 and color.ansi != -1
+
+
+def _assert_guard_colours_visible(theme: Theme) -> None:
+    from tldw_chatbook.css.Themes.themes import GUARD_VARIABLES
+
+    resolved = _resolved_variables(theme)
+    for name in GUARD_VARIABLES:
+        value = resolved[name]
+        assert _paints_a_colour(value), f"{theme.name}: ${name} is {value!r}"
+        assert value not in (resolved["surface"], resolved["panel"]), (
+            f"{theme.name}: ${name} {value!r} is a surface's own colour"
+        )
+
+
+@pytest.mark.parametrize(
+    "theme", [*ALL_THEMES, *BUILTIN_THEMES.values()], ids=lambda t: t.name
+)
+def test_guard_colours_are_visible_on_every_registered_theme(theme: Theme) -> None:
+    """Qodo #2937: where the surfaces cannot be measured (the ANSI palettes)
+    the guard fell back to their old sources, a transparent edge and an
+    ansi_default focus fill -- the terminal's own background, so a focused
+    button showed no fill. The measurable themes' 3:1 and focus floors are
+    the tests above; here every theme must at least paint a colour."""
+    _assert_guard_colours_visible(theme)
+
+
+@pytest.mark.parametrize(
+    ("section", "name", "value"),
+    [
+        # sanitize_theme_variables keeps both forms on any name (TASK-33003.16).
+        ("variables", "surface", "#181818 50%"),
+        ("variables", "surface", "auto 50%"),
+        ("variables", "panel", "auto 10%"),
+        ("colors", "surface", "#18181880"),
+    ],
+)
+def test_user_theme_with_unmeasurable_surfaces_keeps_visible_guard_colours(
+    tmp_path, section, name, value
+) -> None:
+    """Qodo #2937: a user theme whose surface or panel has no hex to measure
+    lost every generated value, so both guard names became transparent: no
+    grid lines, no control edges and no focused-button fill."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    colors = {
+        "primary": "#3366CC",
+        "background": "#101010",
+        "surface": "#181818",
+        "panel": "#202020",
+        "foreground": "#E0E0E0",
+    }
+    variables = {}
+    (colors if section == "colors" else variables)[name] = value
+    (tmp_path / "probe.toml").write_text(
+        '[theme]\nname = "unmeasurable_probe"\ndark = true\n[colors]\n'
+        + "".join(f'{key} = "{val}"\n' for key, val in colors.items())
+        + "[variables]\n"
+        + "".join(f'{key} = "{val}"\n' for key, val in variables.items()),
+        encoding="utf-8",
+    )
+    (theme,) = load_user_themes(tmp_path)
+    assert not _measurable(theme)
+    _assert_guard_colours_visible(theme)

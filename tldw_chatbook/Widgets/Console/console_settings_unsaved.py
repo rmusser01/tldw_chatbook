@@ -6,7 +6,8 @@ gains an ``unsaved`` mode, after the memory-reset and compaction modes, that
 names the edited fields and offers Apply to this chat (Enter), Discard (d)
 and Keep editing (Esc). An unedited draft still closes at once.
 
-A field counts as edited when its effective value differs from its baseline:
+A field counts as edited when its effective value differs from its baseline
+(a blank Temperature or Top P as blank, Streaming as its Inherit/On/Off choice):
 the committed value for a field that arrived already changed (quick-surface
 transfer), otherwise the value the controls showed once the modal finished its
 initial sync. The second half keeps values the controls merely normalize at
@@ -222,7 +223,18 @@ class ConsoleSettingsUnsavedGuardMixin:
             name = normalize_chat_display_name(name, blank_means_none=True)
         except ChatDisplayNameError:
             pass
-        return chat_settings_values(self._build_draft(), overrides, name)
+        values = chat_settings_values(self._build_draft(), overrides, name)
+        # The draft falls back to the opened value for a blank Temperature or
+        # Top P (Apply refuses the blank), so a cleared field reads as blank.
+        for field in ("temperature", "top_p"):
+            control = f"#console-settings-{field.replace('_', '-')}"
+            if not self.query_one(control, Input).value.strip():
+                values[_SETTINGS_FIELDS[field]] = None
+        # Streaming's Inherit/On/Off choice, not the effective bool: Inherit ->
+        # On over an On default is an edit (TASK-33003.10), and so is a model
+        # switch re-basing an explicit On to Inherit.
+        values[_SETTINGS_FIELDS["streaming"]] = self._streaming_draft
+        return values
 
     def _capture_unsaved_baseline(self) -> None:
         """Record the unedited values once the initial control sync is done."""

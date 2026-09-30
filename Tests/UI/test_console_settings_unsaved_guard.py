@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -319,7 +320,8 @@ async def _round_trip_edit(pilot, modal: ConsoleSettingsModal, edit: str) -> Non
     elif edit == "provider":
         modal.query_one("#console-settings-provider", Select).value = "openai"
     elif edit == "model":
-        modal.query_one(ModelSearchPicker).set_model_value("model-b")
+        # The route a user takes: committing a catalog row.
+        modal.query_one(ModelSearchPicker)._commit_catalog_model("model-b")
     elif edit == "streaming":
         modal.query_one("#console-settings-streaming", Button).press()
     for _ in range(4):
@@ -779,7 +781,11 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         await _settle(pilot, first)
         await _round_trip_edit(pilot, first, edit)
         labels = first._unsaved_field_labels()
-        assert labels == (("Temperature",) if edit == "temperature" else ("Model",))
+        # Switching model re-bases Streaming's explicit On to Inherit, which
+        # counts: Inherit is a draft value of its own (Qodo #2937).
+        assert labels == (
+            ("Temperature",) if edit == "temperature" else ("Model", "Streaming")
+        )
         await pilot.click("#console-settings-configure-credential")
 
         settings = None
@@ -1072,3 +1078,87 @@ def test_every_snapshot_focus_target_survives_the_credential_handoff() -> None:
             focus_control_id=control_id,
         )
         assert intent.focus_control_id == control_id
+
+
+@pytest.mark.parametrize(
+    ("selector", "label"),
+    [
+        ("#console-settings-temperature", "Temperature"),
+        ("#console-settings-top-p", "Top P"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_clearing_a_required_sampling_field_asks_before_closing(
+    selector: str, label: str
+) -> None:
+    """Qodo #2937: a blank Temperature or Top P builds the draft from the
+    opened value, so a cleared field read as unedited and Esc closed the
+    modal. Apply refuses the blank; the close guard must ask."""
+    app = _GuardHarness()
+    modal = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        await _edit(pilot, modal, selector, "")
+        assert _text(modal, "#console-settings-esc-hint") == esc_hint_copy(1)
+
+        await _gesture(pilot, "escape")
+
+        assert app.screen is modal
+        assert app.results == []
+        assert f": {label}." in _text(modal, "#console-settings-close-message")
+
+
+def _inherit_streaming_modal() -> ConsoleSettingsModal:
+    """A modal opened with Streaming at Inherit over an inherited On."""
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", temperature=0.7
+    )
+    draft = ConsoleSettingsModal._initial_full_draft(settings)
+    fields = tuple(
+        replace(field, profile_override=None) if field.name == "streaming" else field
+        for field in draft.field_drafts
+    )
+    return _modal(initial_draft=replace(draft, field_drafts=fields))
+
+
+@pytest.mark.parametrize(
+    ("opened_at_inherit", "presses", "unsaved"),
+    [
+        (True, 1, True),  # Inherit -> On, the inherited default On
+        (False, 2, True),  # On -> Off -> Inherit, whose default is On
+        (True, 3, False),  # all the way round, back to Inherit
+    ],
+    ids=["inherit-to-on", "on-to-inherit", "round-trip"],
+)
+@pytest.mark.asyncio
+async def test_streaming_inherit_changes_count_as_edits(
+    opened_at_inherit: bool, presses: int, unsaved: bool
+) -> None:
+    """Qodo #2937: the guard compared the effective bool, so a change between
+    Inherit and the value Inherit resolves to closed without asking and lost
+    the override. Inherit is a draft value of its own (TASK-33003.10)."""
+    app = _GuardHarness()
+    modal = _inherit_streaming_modal() if opened_at_inherit else _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        assert modal._streaming_draft is (None if opened_at_inherit else True)
+        toggle = modal.query_one("#console-settings-streaming", Button)
+        toggle.focus()
+        for _ in range(presses):
+            toggle.press()
+            await pilot.pause()
+        await pilot.pause()
+        # The effective value never moved; only the Inherit/On/Off draft did.
+        assert modal._effective_streaming_value() is True
+        assert _text(modal, "#console-settings-esc-hint") == esc_hint_copy(
+            int(unsaved)
+        )
+
+        await _gesture(pilot, "escape")
+
+        if not unsaved:
+            assert app.results == [None]
+            return
+        assert app.screen is modal
+        assert app.results == []
+        assert ": Streaming." in _text(modal, "#console-settings-close-message")

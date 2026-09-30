@@ -10,23 +10,55 @@ import glob
 import json
 import os
 import sys
+from typing import Any
+
+#: One capture: ``node``, ``n``, ``screen`` and its widget ``rows``.
+Record = dict[str, Any]
+#: A widget row's identity: ``(kind, type, id, path)``.
+RowKey = tuple[str, str, str | None, str]
 
 
-def load(d):
+def load(d: str) -> dict[tuple[str, int], Record]:
+    """Read every capture geom_capture_plugin wrote under ``d``.
+
+    Args:
+        d: A directory of ``*.jsonl`` capture files.
+
+    Returns:
+        Each record keyed by ``(node, n)``: its test node id and the
+        capture's ordinal within that test.
+    """
     out = {}
     for path in glob.glob(os.path.join(d, "*.jsonl")):
-        for line in open(path, encoding="utf-8"):
-            rec = json.loads(line)
-            out[(rec["node"], rec["n"])] = rec
+        with open(path, encoding="utf-8") as capture:
+            for line in capture:
+                rec = json.loads(line)
+                out[(rec["node"], rec["n"])] = rec
     return out
 
 
-def key(row):
+def key(row: dict[str, Any]) -> RowKey:
+    """Return the identity a widget row keeps between base and head.
+
+    Args:
+        row: One entry of a record's ``rows``.
+
+    Returns:
+        ``(kind, type, id, path)``; ``id`` is ``None`` for an unnamed widget.
+    """
     return (row["kind"], row["type"], row["id"], row["path"])
 
 
-def index(rec):
-    counts = collections.Counter()
+def index(rec: Record) -> dict[tuple[str, str, str | None, str, int], dict[str, Any]]:
+    """Key a record's rows so repeated identities stay distinct.
+
+    Args:
+        rec: One capture record.
+
+    Returns:
+        Each row keyed by its ``key()`` plus its 1-based occurrence count.
+    """
+    counts: collections.Counter[RowKey] = collections.Counter()
     rows = {}
     for row in rec["rows"]:
         k = key(row)

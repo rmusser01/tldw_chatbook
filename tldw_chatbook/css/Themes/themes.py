@@ -23,6 +23,7 @@
 #   `$name` fails the stylesheet parse). ensure_readable_text_hues sets them
 #   on the shipped, built-in and user-theme load paths, and
 #   ThemeVariableDefaultsMixin supplies them for any theme that skipped it.
+import contextlib
 import copy
 import dataclasses
 import re
@@ -267,6 +268,15 @@ def _focus_fill(
     return (found or start).hex
 
 
+def _paints(value: object) -> bool:
+    """Whether ``value`` paints a colour: not transparent, not the terminal's default."""
+    try:
+        color = _parse(value)
+    except Exception:  # noqa: BLE001 - absent, 'auto NN%', a text style
+        return False
+    return color.a > 0 and color.ansi != -1
+
+
 def _opaque(value: object) -> Color | None:
     try:
         color = Color.parse(str(value))
@@ -293,9 +303,11 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     way until it clears 3:1 (WCAG 1.4.11) on both surfaces; an explicit
     entry below that floor is replaced. ``FOCUS_FILL_VARIABLE`` is the house
     focus tint wherever that keeps a focused default button at least as far
-    from its card as at rest (``_focus_fill``). Themes whose colours cannot
-    be resolved (ANSI palettes) still get both, at their old values
-    (``surface-lighten-2``, the focus tint), because the tcss references them.
+    from its card as at rest (``_focus_fill``). Themes whose surfaces cannot
+    be resolved (ANSI palettes, an 'auto NN%' surface) still get both, because
+    the tcss references them: the first of the old values
+    (``surface-lighten-2``, the focus tint) and Textual's ANSI ``border-blurred``
+    and ``ansi-background`` that paints a colour (Qodo #2937).
     The entries the guard reads (``text``, the focus tint,
     ``surface-lighten-2``) are measured as Textual paints them, the
     '<colour> NN%' form included; one with no colour to measure ('auto NN%'
@@ -309,18 +321,28 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     """
     variables = dict(theme.variables or {})
     pinned = set(getattr(theme, _PINNED_ATTR, ()))
-    try:
+    generated: dict = {}
+    defaults: dict = {}
+    surfaces: list[Color] = []
+    # A surface with no hex ('auto 50%', ANSI) keeps the generated values.
+    with contextlib.suppress(Exception):
         generated = theme.to_color_system().generate()
         # Textual's values, for a name the theme set to something unmeasurable.
         defaults = dataclasses.replace(theme, variables={}).to_color_system().generate()
         surfaces = [Color.parse(generated[key]) for key in ("surface", "panel")]
-    except Exception:  # noqa: BLE001 - ANSI/transparent palettes have no hex to measure
-        generated, defaults, surfaces = {}, {}, []
     if not surfaces or any(surface.a < 1 for surface in surfaces):
-        sources = ("surface-lighten-2", "block-cursor-blurred-background")
-        for name, source in zip(GUARD_VARIABLES, sources):
+        # First source that paints: the old ones, then Textual's ANSI resting
+        # edge and hover fill (an ANSI palette's old ones are transparent and
+        # the terminal's own background). Nothing paints only when Textual
+        # cannot generate the theme, and then it cannot apply it either.
+        sources = (
+            ("surface-lighten-2", "border-blurred"),
+            ("block-cursor-blurred-background", "ansi-background"),
+        )
+        for name, keys in zip(GUARD_VARIABLES, sources):
             if name not in variables:
-                variables[name] = generated.get(source, "transparent")
+                values = (table.get(key) for key in keys for table in (generated, defaults))
+                variables[name] = next(filter(_paints, values), "transparent")
                 pinned.add(name)
         theme.variables = variables
         setattr(theme, _PINNED_ATTR, frozenset(pinned))

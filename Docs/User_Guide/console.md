@@ -462,7 +462,10 @@ Closing never throws edits away without asking. Left of **Cancel**, the
 footer reads "Esc close" while nothing is edited, and "Esc close (asks: 2
 unsaved)" once something is, counting edits in both tabs and any carried in
 from the **Alt+M** popover. Changing a value back to what the chat already
-uses is not an edit. With edits, **Esc**, a click outside the modal, and
+uses is not an edit. Clearing **Temperature** or **Top P** is one, and so is
+moving **Streaming** between Inherit, On and Off, even to the value Inherit
+already gives; switching model can move it to Inherit, which counts too.
+With edits, **Esc**, a click outside the modal, and
 **Cancel** open a prompt that names the edited fields ("2 unsaved edits to
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**
 (Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you

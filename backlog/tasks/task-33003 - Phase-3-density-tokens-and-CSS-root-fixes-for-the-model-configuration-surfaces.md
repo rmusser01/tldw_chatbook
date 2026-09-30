@@ -264,4 +264,26 @@ Phase 3 ships as one PR. Chat settings becomes a dense form: one-row controls, f
 - Configure credential now answers a refused snapshot with a notice and keeps the draft.
 - console_settings_modal.py is still 7,764 lines.
 - The repro test fails against origin/dev 75c06af39a. It passes here, as does the live repro at 211x44. The covering run shows 0 branch-only reds against the pre-fix head. `preflight.sh` exits 0. Details are in TASK-33003.10.
+**Qodo review on PR #2937 (2026-09-30): six findings, all fixed.**
+- Bug, clearing Temperature or Top P closed without asking. `_build_draft` falls back to the opened value for a blank required field, so the unsaved guard saw no change. `_current_chat_settings_values` now reads a blank Temperature or Top P as blank. Apply still refuses it.
+- Bug, a change between Streaming's Inherit and the value it resolves to closed without asking. The guard now compares the Inherit/On/Off choice (`_streaming_draft`), not the effective bool. Consequence: a model switch that re-bases an explicit On to Inherit is named too ("Model, Streaming"). test_credential_round_trip_keeps_the_restored_edit_unsaved[model] now commits the model through the picker's catalog route, `_commit_catalog_model`, as a user does, and expects both labels. The old `set_model_value` route rebased the first modal only sometimes, which is the race TASK-33003.21 describes. With the bootstrap_profile marker it passed 5 of 5 serial runs. TASK-33003.21 stays open.
+- Bug, the guard's unmeasurable-theme path. A user theme whose surface or panel has no hex (`[variables] surface = "#181818 50%"` or `"auto 50%"`) lost every generated value, so `$tldw-boundary` and `$tldw-focus-fill` were `transparent`. The ANSI built-ins had a `transparent` edge and an `ansi_default` focus fill, which is the terminal's own background. Each name now takes the first source that paints a colour: the old source, then Textual's ANSI `border-blurred` and `ansi-background`, which Textual's own ANSI buttons use. Measurable themes are unchanged. No 3:1 is measurable where the surfaces do not resolve.
+- Rule findings in qa/.../probe-plugins/geom_diff.py: files are read in a `with` block, and `load`, `key` and `index` have Google docstrings and type hints.
+- Tests:
+  - test_clearing_a_required_sampling_field_asks_before_closing, 2 cases.
+  - test_streaming_inherit_changes_count_as_edits: Inherit -> On, On -> Inherit, and a full cycle back to Inherit as the negative control.
+  - test_guard_colours_are_visible_on_every_registered_theme: 70 shipped and 21 Textual built-in themes (91).
+  - test_user_theme_with_unmeasurable_surfaces_keeps_visible_guard_colours: 4 forms. The `#RRGGBBAA` form passed before the fix and is kept as a control.
+- RED before the fix: 9 failed. Both clearing cases and Inherit -> On / On -> Inherit read "Esc close". ansi-dark, ansi-light and 3 user forms had a `transparent` `$tldw-boundary`. GREEN after the fix: 100 passed.
+- Covering run of the unsaved-guard, dismissal, theme-contrast, built-in theme contrast, focus-contract, theme-card, disabled-button and theme-startup files, `-p no:xdist`:
+  - pre-fix head e2d6f8144d: 14 failed, 893 passed;
+  - fixed tree: 14 failed, 993 passed.
+  - The red sets are identical: the 2 credential round-trip nodes (ADR-126 RecoveryRequired in a plain run), the dismissal drift reds, 4 focus-contract reds and 2 theme-startup reds.
+  - The unsaved-guard file with the bootstrap_profile marker: 42/42 on a git archive of the pre-fix head, and 47/47 fixed.
+- Live check at 211x44 on tmux socket q2937, with a scratch HOME, XDG and TLDW_CONFIG_PATH and a null keyring:
+  - Clearing Temperature showed "Esc close (asks: 1 unsaved)", and Esc named Temperature.
+  - Streaming On -> Off -> Inherit stayed at 1 unsaved, and Esc named Streaming.
+  - Back to On read "Esc close", and Esc closed the modal.
+  - The app log had 0 tracebacks. The scratch profile was deleted afterwards.
+- console_settings_modal.py is unchanged (7,764). No CSS changed. console.md's close-guard paragraph says what counts.
 <!-- SECTION:NOTES:END -->
