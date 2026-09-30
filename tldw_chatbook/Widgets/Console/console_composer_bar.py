@@ -30,6 +30,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
+from textual.dom import NoScreen
 from textual.events import (
     Click,
     DescendantBlur,
@@ -44,7 +45,11 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
-from ...Chat.console_display_state import build_console_disabled_reason
+from ...Chat.console_display_state import (
+    SEND_LABEL_PREPARING,
+    SEND_LABEL_QUEUE_FULL,
+    build_console_disabled_reason,
+)
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
 from ...Chat.console_voice_input import (
     STATE_FINISHING,
@@ -370,6 +375,15 @@ BASE_ACTIONS_WIDTH = 6 + MIC_SEND_GAP + 11 + 6
 
 #: Width while an attachment is staged, adding the ✕ clear control (4).
 ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
+
+#: TASK-33625.1: Redirect's cells ("Redirect" + button padding). TASK-28227
+#: showed Redirect beside Stop without adding it to the budget above, so the
+#: pinned row clipped Redirect to "Redir" and gave Stop zero cells at every
+#: width. Redirect is now budgeted explicitly -- reserved at rest like Stop,
+#: and only where the row can spare it after the draft floor and the widest
+#: reason strip (`_redirect_fits`); elsewhere `/redirect` and the palette
+#: carry it, and Stop keeps the slot it was always budgeted.
+REDIRECT_ACTION_WIDTH = 10
 
 
 #: TASK-25826: every label this control can display for a given state, so its
@@ -789,16 +803,90 @@ class ConsoleComposerBar(Horizontal):
         actions.styles.min_width = width
         actions.styles.max_width = width
 
-    def _actions_row_width(self, *, attachment_visible: bool | None = None) -> int:
-        """Return the current dynamic-label action-row budget."""
+    def _actions_row_width(
+        self,
+        *,
+        attachment_visible: bool | None = None,
+        redirect_budgeted: bool | None = None,
+    ) -> int:
+        """Return the current dynamic-label action-row budget.
+
+        Stop's cells are always part of ``BASE_ACTIONS_WIDTH`` (budgeted even
+        while hidden). TASK-33625.1: Redirect's are added wherever the row
+        reserves them -- also at rest, exactly like Stop's, so a run starting
+        or ending never shifts Send or Dictate.
+        """
 
         if attachment_visible is None:
             attachment_visible = self._pending_attachment_label is not None
+        if redirect_budgeted is None:
+            redirect_budgeted = self._redirect_budgeted
         return (
             BASE_ACTIONS_WIDTH
             + (self._send_button_width - 6)
             + (4 if attachment_visible else 0)
+            + (REDIRECT_ACTION_WIDTH if redirect_budgeted else 0)
         )
+
+    def _redirect_fits(self) -> bool:
+        """Return whether this row reserves Redirect's cells (TASK-33625.1).
+
+        A function of the live row width only, never of run state: the
+        reservation holds at rest too, so Send and Dictate stay put when
+        Redirect appears. It is made only where it costs nothing the
+        composer shows -- the draft floor AND the widest reason strip still
+        fit after it; narrower rows keep the original Send/Dictate/Stop
+        budget and reach Redirect through `/redirect` or the palette. Before
+        the first layout the answer is no; `on_resize` re-derives it.
+        """
+        try:
+            row = self.query_one("#console-composer-expanded", Horizontal)
+        except NoMatches:
+            return False
+        row_width = int(row.content_region.width)
+        if row_width <= 0:
+            return False
+        spare = (
+            row_width
+            - self.LEFT_CLUSTER_WIDTH
+            - self._actions_row_width(redirect_budgeted=True)
+            - self.ADVISORY_MARGIN_ALLOWANCE
+            - self.DRAFT_MIN_RENDER_WIDTH
+            - self.SEND_REASON_MAX_WIDTH
+        )
+        return spare >= 0
+
+    @property
+    def run_active(self) -> bool:
+        """Whether this tab's run is stoppable -- exactly when Stop is shown."""
+        return self._run_active
+
+    @staticmethod
+    def is_text_entry_key(event: Key) -> bool:
+        """Return whether ``event`` is plain typing the draft would insert.
+
+        The same predicate `handle_console_key`'s printable fallthrough uses:
+        a printable character that is not a modifier chord (``alt+m`` reports
+        printable in Textual 8 but is a binding, not text).
+        """
+        return (
+            event.is_printable
+            and event.character is not None
+            and not _is_modified_chord(event.key)
+        )
+
+    @property
+    def draft_has_focus(self) -> bool:
+        """Whether the draft surface itself (not a composer button) has focus.
+
+        TASK-33622.2: the caret belongs to the draft. Reads the screen's
+        focus memory, the same source as ``has_focus_within``, so a covering
+        modal keeps the caret parked exactly as before.
+        """
+        try:
+            return self.screen.focused is self
+        except NoScreen:
+            return False
 
     def draft_text(self) -> str:
         """Return the canonical native Console draft payload.
@@ -2202,6 +2290,10 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_styles(width=self._send_button_width)
         send_button.styles.min_width = self._send_button_width
         send_button.styles.max_width = self._send_button_width
+        # TASK-33625.1: decided BEFORE the row width below, because Redirect
+        # is paid for by the row budget rather than squeezed out of Stop.
+        self._redirect_budgeted = self._redirect_fits()
+        redirect_visible = run_active and self._redirect_budgeted
         if not self._voice_full_width_preparing:
             self._set_actions_row_width(actions, self._actions_row_width())
 
@@ -2248,10 +2340,18 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
         send_button.set_class(effective_send_blocked, "console-send-blocked")
+        # TASK-33625.1: a mid-run queue state ("Preparing...", "Queue full")
+        # rides `setup_blocked_reason` too, but it is not a setup problem --
+        # the reason must not become a link into the setup wizard.
+        queue_state_blocked = normalized_send_label in {
+            SEND_LABEL_PREPARING,
+            SEND_LABEL_QUEUE_FULL,
+        }
         self.set_class(
             effective_send_blocked
             and bool(setup_blocked_reason)
             and not wake_turn_active
+            and not queue_state_blocked
             # Recovery is resolved at its own controls, not the setup wizard.
             and not dispatch_recovery_blocked,
             "console-composer-setup-blocked",
@@ -2263,6 +2363,7 @@ class ConsoleComposerBar(Horizontal):
             setup_blocked_reason=setup_blocked_reason,
             wake_turn_active=wake_turn_active,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
+            send_label=normalized_send_label,
         )
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason
@@ -2288,14 +2389,28 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
         stop_button.styles.display = "block" if run_active else "none"
-        # TASK-28227: Redirect shares Stop's visibility exactly -- present
-        # while (and only while) this tab's run is active.
+        # TASK-28227: Redirect appears only while this tab's run is active.
+        # TASK-33625.1: and only where the row budget holds it whole (see
+        # `_redirect_fits`); at narrow widths `/redirect` and the palette
+        # carry it, and Stop keeps the cells it was always budgeted.
         try:
             redirect_button = self.query_one("#console-redirect-generation", Button)
         except NoMatches:
             redirect_button = None
         if redirect_button is not None:
-            redirect_button.styles.display = "block" if run_active else "none"
+            redirect_button.styles.display = (
+                "block" if redirect_visible else "none"
+            )
+        # A control that just hid must not keep focus: Textual leaves focus on
+        # a display:none widget, so the next Enter would press a Stop nobody
+        # can see. Hand focus back to the draft instead.
+        hidden_with_focus = (not run_active and stop_button.has_focus) or (
+            redirect_button is not None
+            and not redirect_visible
+            and redirect_button.has_focus
+        )
+        if hidden_with_focus and self.can_focus:
+            self.focus()
 
         # Attach and Save Chatbook no longer live in this row -- their
         # enabled/disabled presentation (including the temporary-chat block
@@ -3046,7 +3161,7 @@ class ConsoleComposerBar(Horizontal):
         return self._draft_renderable(
             "",
             width=width,
-            focused=self.has_focus_within,
+            focused=self.draft_has_focus,
             cursor_visible=getattr(self, "_cursor_visible", True),
         )
 
@@ -3539,7 +3654,7 @@ class ConsoleComposerBar(Horizontal):
         return (
             draft,
             width,
-            self.has_focus_within,
+            self.draft_has_focus,
             self._segments_initialized,
             self._cursor_index,
             self._cursor_display_index() if self._segments_initialized else None,
@@ -3580,7 +3695,7 @@ class ConsoleComposerBar(Horizontal):
     def _build_visible_draft_renderable(self, draft: str, width: int) -> Text:
         """Build the Text renderable for the current draft/placeholder state."""
         if draft:
-            focused = self.has_focus_within
+            focused = self.draft_has_focus
             return self._draft_renderable(
                 draft,
                 width=width,
@@ -3654,7 +3769,7 @@ class ConsoleComposerBar(Horizontal):
             draft = self._display_draft_text()
             width = self._draft_render_width()
             row_count = self._visible_draft_row_count(
-                draft, width, reserve_trailing_cell=self.has_focus_within
+                draft, width, reserve_trailing_cell=self.draft_has_focus
             )
             renderable = self._current_visible_draft_renderable(draft, width)
             self.query_one("#console-command-visible-text", Static).update(renderable)
@@ -3666,7 +3781,8 @@ class ConsoleComposerBar(Horizontal):
         """Flip the cursor blink phase and refresh only the visible draft.
 
         TASK-22218: `_sync_cursor_blink_state`'s resume gate is
-        `has_focus_within`, which reads this widget's OWN screen's focus
+        `draft_has_focus` (TASK-33622.2; `has_focus_within` before), which
+        reads this widget's OWN screen's focus
         memory -- it survives `push_screen`, so the timer keeps firing under
         every modal. Rather than pause/resume bookkeeping across cover and
         uncover (Textual's ScreenSuspend/ScreenResume are posted to the
@@ -3697,7 +3813,7 @@ class ConsoleComposerBar(Horizontal):
         self._cursor_visible = True
         if timer is None:
             return
-        if self.has_focus_within and not self._collapsed:
+        if self.draft_has_focus and not self._collapsed:
             timer.resume()
         else:
             timer.pause()
@@ -3748,6 +3864,10 @@ class ConsoleComposerBar(Horizontal):
             event: Textual resize event (unused beyond the handler
                 signature; the layout has already settled when it fires).
         """
+        if self._redirect_fits() != self._redirect_budgeted:
+            # TASK-33625.1: whether the row reserves Redirect's cells is a
+            # function of the live row width; re-derive it before the strips.
+            self._sync_current_action_state()
         self._sync_send_disabled_reason(
             self._send_disabled_reason, muted=not self._send_blocked
         )
@@ -3788,6 +3908,21 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
+
+    @on(Button.Pressed, "#console-stop-generation")
+    def _return_focus_from_pressed_stop(self, event: Button.Pressed) -> None:
+        """Move focus from a pressed Stop to the draft, synchronously.
+
+        TASK-33625.1: the screen's Stop handler disables the button to
+        acknowledge the press ("Stopping…"), and Textual then blurs it and
+        hands focus to a NEIGHBOUR -- live, that was Dictate, so the next
+        prompt the user typed was swallowed and its Enter started dictation.
+        This handler runs before the Pressed message bubbles to the screen,
+        so focus is already on the draft when Stop disables itself. Not
+        stopped: the screen still owns what the press does.
+        """
+        if self.can_focus and self.screen.focused is event.button:
+            self.screen.set_focus(self)
 
     @on(Button.Pressed, "#console-send-message")
     def _stash_visible_send_draft(self, event: Button.Pressed) -> None:
@@ -5534,7 +5669,7 @@ class ConsoleComposerBar(Horizontal):
         click_y = max(0, click_y)
         display_text = self._display_draft_text()
         caret_position: int | None = None
-        if self.has_focus_within and self._segments_initialized and display_text:
+        if self.draft_has_focus and self._segments_initialized and display_text:
             caret_position = max(
                 0, min(self._cursor_display_index(), len(display_text))
             )
@@ -5970,6 +6105,12 @@ class ConsoleComposerBar(Horizontal):
     #: a draft two cells under its floor when both advisory strips show.
     ADVISORY_MARGIN_ALLOWANCE = 2
 
+    #: TASK-33625.1: whether the action row reserves Redirect's cells (see
+    #: `_redirect_fits`); Redirect SHOWS only while a run is also active. A
+    #: CLASS attribute for the same hand-built-fixture reason as
+    #: `_voice_status_last` below.
+    _redirect_budgeted: bool = False
+
     #: TASK-24620: last `set_voice_status` inputs, replayed from
     #: `on_resize` so the chip's row-width budget is re-derived on resize. A
     #: CLASS attribute, deliberately, so hand-built `__new__` fixtures never
@@ -6239,7 +6380,8 @@ class ConsoleComposerBar(Horizontal):
         hidden compatibility/status companions and the display-toggled Send
         disabled-reason strip), then the fixed-width action row holding
         ``Send``, the ``MIC_SEND_GAP`` buffer, ``Mic``, and the
-        display-toggled ``Stop``/``✕`` controls. The collapsed presentation
+        display-toggled ``Redirect``/``Stop``/``✕`` controls (Redirect only
+        where its cells fit, TASK-33625.1). The collapsed presentation
         is a one-row line with ``Expand ▴``, status, and ``Stop`` (while a
         run is active). Both presentations are always mounted;
         ``set_collapsed`` display-toggles between them so editor state
@@ -6475,7 +6617,8 @@ class ConsoleComposerBar(Horizontal):
                     classes="destination-action-button console-redirect-button",
                     # TASK-28227: conditional like Stop -- costs nothing at
                     # rest, time-critical when a run is going wrong. Takes
-                    # the composer draft as the correction.
+                    # the composer draft as the correction. TASK-33625.1:
+                    # its cells are budgeted only while it is shown.
                     tooltip=(
                         "Cut off the current response and re-run this turn "
                         "with your typed correction. Completed tool results "

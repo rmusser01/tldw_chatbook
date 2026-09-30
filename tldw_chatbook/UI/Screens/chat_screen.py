@@ -167,6 +167,7 @@ from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules import console_spend_projection as spend
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules import raw_cli as raw_cli_ui
+from ..Console_Modules import composer_run_controls as run_controls
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
@@ -301,6 +302,8 @@ from ...Chat.console_command_grammar import (
     REDIRECT_COMMAND_NAME,
     STEER_COMMAND_HANDLER_ID,
     STEER_COMMAND_NAME,
+    STOP_COMMAND_HANDLER_ID,
+    STOP_COMMAND_NAME,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
@@ -1291,6 +1294,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
         "Composer",
         (
             ("Enter", "send now or queue after an accepted turn"),
+            ("Ctrl+G", "stop this tab's run (shown while one is running)"),
             ("Queue shelf", "manage, pause, resume, and recover queued prompts"),
             ("Ctrl+J", "insert a newline (works in any terminal)"),
             ("Shift+Enter", "insert a newline (where the terminal delivers it)"),
@@ -2009,6 +2013,8 @@ class ChatScreen(BaseAppScreen):
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
         Binding("ctrl+t", "new_console_tab", "New tab", show=True),
+        # TASK-33625.1: shown and live only while this tab's run is stoppable.
+        Binding(run_controls.STOP_RUN_KEY, "stop_console_run", "Stop run", show=True),
         Binding("alt+1", "jump_console_tab(1)", "Tab 1", show=False),
         Binding("alt+2", "jump_console_tab(2)", "Tab 2", show=False),
         Binding("alt+3", "jump_console_tab(3)", "Tab 3", show=False),
@@ -2040,6 +2046,8 @@ class ChatScreen(BaseAppScreen):
                 self._console_composer_collapsed
                 and not self._console_setup_modal_blocking()
             )
+        if action == "stop_console_run":
+            return run_controls.stop_available(self)
         if action == "exit_console_hands_free":
             # One-line delegation (wave-2 console decomposition, task 1).
             # See `ConsoleHandsFreeController.console_hands_free_exit_
@@ -2051,6 +2059,10 @@ class ChatScreen(BaseAppScreen):
                 and not self._console_row_action_menu_open()
             )
         return super().check_action(action, parameters)
+
+    async def action_stop_console_run(self) -> None:
+        """Stop this tab's run: the stop key, palette and /stop (TASK-33625.1)."""
+        await run_controls.stop_this_tab_run(self)
 
     def action_abandon_console_tool_call(self) -> None:
         """task-31386: the activity line's "abandon call" click.
@@ -5209,6 +5221,7 @@ class ChatScreen(BaseAppScreen):
         # hints from the END).
         if self._console_rail_focus_active():
             shortcuts = (("Esc", "composer · F6 panes"), *shortcuts)
+        shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
     def _console_rail_focus_active(self) -> bool:
@@ -10889,21 +10902,8 @@ class ChatScreen(BaseAppScreen):
 
     async def _open_console_composer_menu(self) -> None:
         """Open the composer overflow menu (task-1680)."""
-        composer = self._console_composer_or_none()
         self.app.push_screen(
-            ConsoleComposerMenuModal(
-                attachment_kind=self._console_pending_attachment_kind(),
-                ephemeral=self._console_active_session_is_ephemeral(),
-                # Same input the action-row button read before it moved here,
-                # so Save Chatbook's available/unavailable copy is unchanged.
-                can_save_chatbook=self._console_chatbook_action_available(),
-                draft_available=bool(
-                    composer is not None and composer.draft_text().strip()
-                ),
-                improvement_undo_available=bool(
-                    composer is not None and composer.improvement_undo_available
-                ),
-            ),
+            ConsoleComposerMenuModal(**run_controls.composer_menu_state(self)),
             callback=self._handle_console_composer_menu_choice,
         )
 
@@ -19356,6 +19356,7 @@ class ChatScreen(BaseAppScreen):
         STEER_COMMAND_NAME: STEER_COMMAND_HANDLER_ID,
         REDIRECT_COMMAND_NAME: REDIRECT_COMMAND_HANDLER_ID,
         EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
+        STOP_COMMAND_NAME: STOP_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
         HELP_COMMAND_NAME: HELP_COMMAND_HANDLER_ID,
         DOCTOR_COMMAND_NAME: DOCTOR_COMMAND_HANDLER_ID,
@@ -19424,6 +19425,7 @@ class ChatScreen(BaseAppScreen):
             STEER_COMMAND_HANDLER_ID: self._console_command_steer,
             REDIRECT_COMMAND_HANDLER_ID: self._console_command_redirect,
             EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
+            STOP_COMMAND_HANDLER_ID: partial(run_controls.stop_command, self),
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             HELP_COMMAND_HANDLER_ID: self._console_command_help,
             DOCTOR_COMMAND_HANDLER_ID: self._console_command_doctor,
@@ -19977,28 +19979,6 @@ class ChatScreen(BaseAppScreen):
             severity="warning",
         )
         return True
-
-    async def handle_console_redirect_generation(self, event: Button.Pressed) -> None:
-        """The Redirect button next to Stop: sends the composer draft as the
-        correction. An empty draft is a prompt to type one, not a no-op."""
-        event.stop()
-        if self._console_setup_modal_blocking():
-            return
-        composer = self._console_composer_or_none()
-        text = composer.draft_text().strip() if composer is not None else ""
-        if not text:
-            self.app_instance.notify(
-                "Type your correction in the composer, then press Redirect.",
-                severity="warning",
-            )
-            return
-        controller = self._ensure_console_chat_controller()
-        refusal = controller.redirect_active_run(text)
-        if refusal is not None:
-            self.app_instance.notify(f"Not redirected: {refusal}", severity="warning")
-            return
-        self._clear_console_composer_draft()
-        self.app_instance.notify("Redirect sent — correcting the running turn.")
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
         """Open the `/rewind` menu over the active session's prior USER prompts.
@@ -22408,6 +22388,7 @@ class ChatScreen(BaseAppScreen):
             # makes the composer name the wake instead.
             wake_turn_active=self._fleet._console_wake_turn_active(active_session_id),
         )
+        run_controls.sync_stop_affordances(self, composer)
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy
         # (console_composer_bar.py L303); apply the pending-attachment label
@@ -22754,6 +22735,8 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         if not self._should_capture_console_input(composer):
+            return
+        if run_controls.route_composer_control_key(self, composer, event):
             return
         self._ensure_console_command_popup_current()
         popup = self._console_command_popup_or_none()
@@ -25182,7 +25165,8 @@ class ChatScreen(BaseAppScreen):
             await self.handle_console_stop_generation(event)
             return
         if button_id == "console-redirect-generation":
-            await self.handle_console_redirect_generation(event)
+            event.stop()
+            await run_controls.redirect_from_draft(self)
             return
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)

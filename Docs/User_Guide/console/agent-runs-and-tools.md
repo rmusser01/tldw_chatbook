@@ -2346,7 +2346,8 @@ briefing content remains Console-only.
 
 ### Stopping & leaving
 
-- **Stop** (appears next to Send while a run is active) stops **this tab's
+- **Stop** (appears at the right end of the composer row while a run is
+  active; **Ctrl+G** or `/stop` do the same) stops **this tab's
   run only** — other tabs keep going, and (with the shipped
   `[agents] subagents_outlive_turn = true`) so do this run's own
   sub-agents: Stop cancels the supervisor's turn, not its fleet — see

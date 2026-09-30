@@ -39,7 +39,9 @@ task...".
   focused), and the bar is exactly as tall as your draft. Left to right:
   the "Composer ▾" collapse button, the **Menu** button (Improve, Save draft,
   Prompts, Attach, Save as Chatbook, Generate Image/Caption, Impersonate), the draft area,
-  and the Send / Mic buttons.
+  and the Send / Dictate buttons. While a run is active, Send reads **Queue**
+  and **Stop** appears at the right end of the row; at widths that leave the
+  draft room (roughly 100 columns and up) **Redirect** sits just before it.
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
@@ -187,6 +189,16 @@ tool, code, and link styling keeps priority over immersive coloring.
   **Ctrl+W** deletes the word left of the caret.
 - **PageUp / PageDown** scroll the transcript — the composer never uses
   paging keys.
+- **Tab** moves from the draft onto the composer's buttons (Composer ▾, Menu,
+  Send or Queue, Dictate, Redirect, Stop). A focused button owns its keys:
+  **Enter** or **Space** presses it — Enter on **Menu** opens the Composer
+  actions menu with its first item focused — and typing does nothing until
+  focus is back in the draft (**Esc**, or click the draft). Only the draft
+  shows a caret, so a focused button is the one focus mark on screen.
+- The Composer menu and its menu-only actions are also in the command palette
+  (**Ctrl+P**): **Console: Open composer menu**, **Attach file…**, **Save as
+  Chatbook**, **Impersonate**, and **Improve current draft…**. An entry the
+  menu would disable says why instead of running.
 - **"Composer ▾"** collapses the composer to a one-row strip for more
   transcript space. The strip reads "Composer hidden", joined with " · " to
   whichever of "Generating", "Draft retained", "Attachment retained",
@@ -322,10 +334,18 @@ statistics tools.
 - Enter sends the draft. The reply row appears immediately with a dim
   "Generating…" placeholder, then streams in with a "[streaming]" suffix
   until it completes.
-- While a run is active a **Stop** button appears between Send and Mic
-  ("Stop this tab's run."); the collapsed composer strip gets its own Stop.
-  Stopping keeps the partial reply, tagged "[stopped]", and adds a System
-  row: "Response stopped by user."
+- While a run is active a **Stop** button (warning-tinted, "Stop this tab's
+  run.") appears at the right end of the composer row, after Dictate and
+  Redirect; the collapsed composer strip gets its own Stop. The keyboard
+  routes stop the same run: **Ctrl+G** (advertised in the footer only while a
+  run is active), **Tab** to Stop then **Enter** or **Space**, `/stop`, or
+  **Ctrl+P → Console: Stop this tab's run**. Stopping keeps the partial
+  reply, tagged "[stopped]", and adds a System row: "Response stopped by
+  user."
+- **Redirect** shows beside Stop only where the row has room for it whole;
+  at narrower widths use `/redirect <correction>` or **Ctrl+P → Console:
+  Redirect this tab's run** (both take the correction from the composer the
+  same way the button does).
 - A reply that errors out is tagged "[failed]", and its action row is a
   single **Try** button that retries it.
 - If you scroll up during or after a run, a pill docks at the bottom of the
@@ -402,7 +422,9 @@ of the next prompt, and **Manage** plus a state-specific action such as
 **Pause**, **Retry**, **Resume next**, **Review**, or **Try again**.
 
 - **Preparing...** means the turn has not crossed the accepted boundary yet;
-  the draft stays in the composer.
+  the draft stays in the composer and the strip beside the button reads
+  "Queue opens once this turn is accepted". With an empty draft after
+  acceptance it reads "Type to queue".
 - **Queue full** preserves the draft and asks you to manage the existing 10.
 - Attachments and staged evidence are never captured by a queued text turn.
   Remove them or wait and send the complete message normally.
@@ -464,8 +486,8 @@ fifteen characters, which is why the last two read short.
    the text of your first message.
 
 ### Stop a reply mid-stream
-1. While the reply shows "[streaming]", click **Stop** (between Send and
-   Mic).
+1. While the reply shows "[streaming]", click **Stop** (the right end of the
+   composer row) or press **Ctrl+G**.
 2. The partial reply stays, tagged "[stopped]", and a System row reads
    "Response stopped by user." Send again to keep the conversation going.
 

@@ -146,6 +146,7 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "sessions",
         "settings",
         "steer",
+        "stop",
         "temp",
         "workspace",
     )

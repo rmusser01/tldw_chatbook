@@ -334,14 +334,15 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run(request):
 
         try:
             # An empty draft stays disabled, but the action truthfully names
-            # the now-available queue path.
+            # the now-available queue path -- and so does the reason beside
+            # it (TASK-33625.1: no "Send disabled" next to a Queue button).
             await _wait_for_condition(
                 pilot,
                 lambda: send_button.disabled and send_button.label.plain == "Queue",
             )
             assert send_button.label.plain == "Queue"
             assert reason.styles.display == "block"
-            assert reason.renderable.plain == "Send disabled: type a message"
+            assert reason.renderable.plain == "Type to queue"
 
             # A real draft enables Queue; Enter admits the exact text behind
             # the accepted turn through the same dispatcher as the button.
