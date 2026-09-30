@@ -770,6 +770,7 @@ This is a guardrail, not a security boundary: it stops accidents and naive
 injected payloads, not a determined ``python -c``. The sandbox/workspace-root
 track is the real answer for shell execution.
 """
+import os
 import threading
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
@@ -1053,11 +1054,12 @@ def _raw_inputs() -> tuple:
     """Return the unresolved sensitive paths, memoized on the config and data dir.
 
     The key is the config cache object (by identity) and its generation, the
-    effective config path, and the user data directory -- itself re-verified
-    on every call by ``config.get_user_data_dir``. So a config reload or
-    write, a ``TLDW_CONFIG_PATH`` swap, or a moved data directory is observed
-    on the very next call. A snapshot built while any accessor failed is
-    never kept: it would carry a gap in the deny list.
+    effective config path, the user data directory -- itself re-verified on
+    every call by ``config.get_user_data_dir`` -- and the whole environment,
+    since accessors read overrides such as ``RAG_PERSIST_DIR`` that outrank
+    config. So a config reload or write, any environment change, or a moved
+    data directory is observed on the very next call. A snapshot built while
+    any accessor failed is never kept: it would carry a gap in the deny list.
 
     Returns:
         ``(user_data_dir, single_files, skill_trust_dir, db_paths,
@@ -1074,7 +1076,7 @@ def _raw_inputs() -> tuple:
         config_path = str(_config._get_effective_config_path())
     except Exception:
         config_path = None
-    key = (_config._CONFIG_CACHE, _config._CONFIG_GENERATION, _config._CONFIG_CACHE_SOURCE, config_path, str(user_data_dir))
+    key = (_config._CONFIG_CACHE, _config._CONFIG_GENERATION, _config._CONFIG_CACHE_SOURCE, config_path, str(user_data_dir), os.environ.copy())
     with _RAW_INPUTS_LOCK:
         memo = _RAW_INPUTS_MEMO
     if memo is not None and memo[0][0] is key[0] and (memo[0][1:] == key[1:]):
@@ -5279,4 +5281,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("13d68b24138ba317f0b169cf03e84156efb6a468107ab58c5e3b5ed1f527fdfb")
+BUNDLE_SHA256 = _enter_worker_exchange("c9db480fb1351c3636892b42b7e43b3bfc949c9f7797b87a624752b3ac5baafc")

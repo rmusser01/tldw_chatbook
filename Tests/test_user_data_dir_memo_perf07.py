@@ -118,3 +118,20 @@ def test_a_config_reload_resolves_again(request, monkeypatch):
 
     assert config.get_user_data_dir() == user_dir
     assert calls[0] >= 1
+
+
+@private_profile_test
+def test_an_environment_override_is_seen_by_the_next_sensitive_context(request, monkeypatch, tmp_path):
+    """``RAG_PERSIST_DIR`` outranks config, so the memo must not hide a change
+    to it while the config and data directory stay the same (Qodo, #2924)."""
+    from tldw_chatbook.Utils import sensitive_paths
+
+    _warm(monkeypatch)
+    sensitive_paths.resolve_sensitive_context()
+    moved = tmp_path / "moved-chroma"
+    moved.mkdir()
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(moved))
+
+    context = sensitive_paths.resolve_sensitive_context()
+    assert moved.resolve() in context.direct_child_denied_dirs
+    assert sensitive_paths.is_sensitive_path(moved / "chroma.sqlite3", context)

@@ -203,6 +203,7 @@ track is the real answer for shell execution.
 
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
@@ -624,11 +625,12 @@ def _raw_inputs() -> tuple:
     """Return the unresolved sensitive paths, memoized on the config and data dir.
 
     The key is the config cache object (by identity) and its generation, the
-    effective config path, and the user data directory -- itself re-verified
-    on every call by ``config.get_user_data_dir``. So a config reload or
-    write, a ``TLDW_CONFIG_PATH`` swap, or a moved data directory is observed
-    on the very next call. A snapshot built while any accessor failed is
-    never kept: it would carry a gap in the deny list.
+    effective config path, the user data directory -- itself re-verified on
+    every call by ``config.get_user_data_dir`` -- and the whole environment,
+    since accessors read overrides such as ``RAG_PERSIST_DIR`` that outrank
+    config. So a config reload or write, any environment change, or a moved
+    data directory is observed on the very next call. A snapshot built while
+    any accessor failed is never kept: it would carry a gap in the deny list.
 
     Returns:
         ``(user_data_dir, single_files, skill_trust_dir, db_paths,
@@ -652,6 +654,7 @@ def _raw_inputs() -> tuple:
         _config._CONFIG_CACHE_SOURCE,
         config_path,
         str(user_data_dir),
+        os.environ.copy(),
     )
     with _RAW_INPUTS_LOCK:
         memo = _RAW_INPUTS_MEMO

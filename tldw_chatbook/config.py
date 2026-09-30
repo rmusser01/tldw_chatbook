@@ -10120,6 +10120,14 @@ def get_user_data_dir() -> Path:
     unmodified resolution, the only place that creates, hardens or refuses.
     A result is kept only when stamps taken before and after that resolution
     are identical, so it describes exactly the state that was verified.
+
+    Returns:
+        The lexical (unresolved) user data directory, created if absent and
+        hardened to owner-only permissions.
+
+    Raises:
+        PrivatePathError: A component of the path is unsafe (for example a
+            group-writable ancestor); the resolution refuses it.
     """
     global _USER_DATA_DIR_MEMO
     verified = _config_participants.verified_user_data_directory(sys.modules[__name__])
