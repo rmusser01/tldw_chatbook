@@ -9,14 +9,19 @@
 #
 # These rows are a BASELINE, not an endorsement: they were captured
 # mechanically, reachability is resolved by NAME (so some rows are two
-# unrelated functions sharing a name), and none has been individually
-# reviewed. Any of them may be a real freeze.
+# unrelated functions sharing a name), and a row without a note (see
+# below) has not been individually reviewed. Any of them may be a real
+# freeze.
 #
 # Removing a row is always fine. Adding one is a deliberate act: run the
 # flow in a worker (`run_worker(coro)` / `@work`) or push with a
 # `callback=` instead of awaiting the dismissal.
 #
-# path::[Class.]entry point[->scheduled callable]	occurrences
+# A third column is a REVIEWED row's note -- its verdict, evidence and
+# follow-up. --write carries a note forward for as long as its row
+# survives, so a re-pin never erases a review.
+#
+# path::[Class.]entry point[->scheduled callable]	occurrences[	note]
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::ChatbookExportManagementWindow.on_button_pressed	1
 tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.action_browse_templates	1
 tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.action_create_chatbook	1
@@ -26,7 +31,10 @@ tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.action_im
 tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.action_manage_exports	1
 tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.on_button_pressed	1
 tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.on_container_click	1
+tldw_chatbook/UI/Screens/chat_screen.py::ChatScreen.on_button_pressed	2	Send button: requester is the ChatScreen, so after Escape the Send never settles and the Console pump never runs again; count 2 because ChatScreen defines on_button_pressed twice (the earlier def is shadowed). reviewed 2026-09-30 (TASK-33621.13 triage): REAL freeze, NOT via NoActiveWorker -- a Send needing hook consent awaits request_hook_review, which pushes with callback= and awaits a future that callback resolves, but Textual queues the callback on the requester pump via call_next and the requester is the pump doing the awaiting (PR #2922, 2bce8ffa0f+aed1b13501). W003 reaches this root only through a name collision (ConsoleHooksController self._review -> BuddyManagementModal._review). Proof: Tests/UI/test_console_hook_review_send_freeze.py (strict xfail). Not fixed here: the fix must also move the Enter send off the app pump, whose app.call_later scheduling tests pin. Follow-up: 'Console Send hook review deadlocks its dispatching pump'.
 tldw_chatbook/UI/Screens/chat_screen.py::ChatScreen.on_console_terminal_action_requested	1
+tldw_chatbook/UI/Screens/chat_screen.py::ChatScreen.on_console_workbench_action_requested	1	Workbench 'send' action: same ChatScreen-pump deadlock as the Send button. reviewed 2026-09-30 (TASK-33621.13 triage): REAL freeze, NOT via NoActiveWorker -- a Send needing hook consent awaits request_hook_review, which pushes with callback= and awaits a future that callback resolves, but Textual queues the callback on the requester pump via call_next and the requester is the pump doing the awaiting (PR #2922, 2bce8ffa0f+aed1b13501). W003 reaches this root only through a name collision (ConsoleHooksController self._review -> BuddyManagementModal._review). Proof: Tests/UI/test_console_hook_review_send_freeze.py (strict xfail). Not fixed here: the fix must also move the Enter send off the app pump, whose app.call_later scheduling tests pin. Follow-up: 'Console Send hook review deadlocks its dispatching pump'.
+tldw_chatbook/UI/Screens/chat_screen.py::ChatScreen.on_key->_send_console_message_from_visible_action	1	Enter: scheduled with app.call_later, so the requester is the APP pump -- the one that reads keys -- and the review modal can never be answered; Escape and Ctrl+Q are both ignored (GAP4-01 class). reviewed 2026-09-30 (TASK-33621.13 triage): REAL freeze, NOT via NoActiveWorker -- a Send needing hook consent awaits request_hook_review, which pushes with callback= and awaits a future that callback resolves, but Textual queues the callback on the requester pump via call_next and the requester is the pump doing the awaiting (PR #2922, 2bce8ffa0f+aed1b13501). W003 reaches this root only through a name collision (ConsoleHooksController self._review -> BuddyManagementModal._review). Proof: Tests/UI/test_console_hook_review_send_freeze.py (strict xfail). Not fixed here: the fix must also move the Enter send off the app pump, whose app.call_later scheduling tests pin. Follow-up: 'Console Send hook review deadlocks its dispatching pump'.
 tldw_chatbook/UI/Screens/library_screen.py::LibraryScreen._continue_library_landing	1
 tldw_chatbook/UI/Screens/library_screen.py::LibraryScreen._recover_library_landing_attention	1
 tldw_chatbook/UI/Screens/library_screen.py::LibraryScreen.action_library_handoff_back	1

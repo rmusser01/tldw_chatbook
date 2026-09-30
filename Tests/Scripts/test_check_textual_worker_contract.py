@@ -620,3 +620,61 @@ def test_main_exits_nonzero_on_an_uncensused_w003_root(monkeypatch, tmp_path, ca
 def test_main_exits_zero_when_that_w003_root_is_pinned(monkeypatch, tmp_path):
     census = "# header\ntldw_chatbook/UI/sample.py::S.action_pick\t1\n"
     assert _run_main_w003(monkeypatch, tmp_path, _W003_HANDLER, census) == 0
+
+
+_W003_TWO_ROOTS = """
+class S:
+    async def action_pick(self):
+        await self.app.push_screen_wait(Picker())
+
+class T:
+    async def action_pick(self):
+        await self.app.push_screen_wait(Picker())
+
+    async def action_pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+
+_NOTE = "REAL freeze, reviewed: proof in Tests/UI/x.py; follow-up: fix the pump"
+
+
+def test_main_reads_the_count_of_a_row_that_carries_a_review_note(
+    monkeypatch, tmp_path
+):
+    """A reviewed row's third column is its note. Reading ``2\\t<note>`` as a
+    malformed count collapsed it to 1, so pinning a noted row with two
+    occurrences still failed as "1 in census, 2 now"."""
+    census = (
+        "# header\n"
+        "tldw_chatbook/UI/sample.py::S.action_pick\t1\n"
+        f"tldw_chatbook/UI/sample.py::T.action_pick\t2\t{_NOTE}\n"
+    )
+    assert _run_main_w003(monkeypatch, tmp_path, _W003_TWO_ROOTS, census) == 0
+
+
+def test_write_carries_a_review_note_forward_and_drops_a_resolved_rows(
+    monkeypatch, tmp_path
+):
+    """``--write`` regenerates the census from the tree; a review note must
+    survive that for as long as its row does, or every re-pin silently erases
+    the verdict and the follow-up it names."""
+    resolved = "tldw_chatbook/UI/gone.py::G.action_gone"
+    census = (
+        "# stale header\n"
+        f"tldw_chatbook/UI/sample.py::T.action_pick\t2\t{_NOTE}\n"
+        f"{resolved}\t1\tREAL freeze, since fixed\n"
+    )
+    _run_main_w003(monkeypatch, tmp_path, _W003_TWO_ROOTS, census)
+    monkeypatch.setattr("sys.argv", ["check_textual_worker_contract.py", "--write"])
+    assert _mod.main() == 0
+    rows = [
+        line
+        for line in (tmp_path / "wait_census.tsv").read_text().splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert rows == [
+        "tldw_chatbook/UI/sample.py::S.action_pick\t1",
+        f"tldw_chatbook/UI/sample.py::T.action_pick\t2\t{_NOTE}",
+    ]
+    monkeypatch.setattr("sys.argv", ["check_textual_worker_contract.py"])
+    assert _mod.main() == 0

@@ -93,7 +93,9 @@ W003 (census ratchet, TASK-33621.13)
     like W002 rather than a zero-tolerance gate: the pre-existing roots are
     pinned in ``scripts/textual_wait_push_census.tsv`` and only a NEW root
     fails. Those rows are an unreviewed baseline -- each may be a real freeze
-    of the GAP4-01 kind -- not an endorsement.
+    of the GAP4-01 kind -- not an endorsement. A row that HAS been reviewed
+    carries a third, tab-separated column: its verdict, evidence and
+    follow-up, which ``--write`` preserves while the row survives.
 
 Stdlib-only, like the other derived-artifact checkers, so it runs with no
 dependency install.
@@ -816,9 +818,25 @@ def _read_census(census: Path | None = None) -> dict[str, int]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        key, _, count = line.partition("\t")
-        rows[key] = int(count) if count.strip().isdigit() else 1
+        key, _, rest = line.partition("\t")
+        # A reviewed W003 row carries a third column, its note.
+        count = rest.partition("\t")[0].strip()
+        rows[key] = int(count) if count.isdigit() else 1
     return rows
+
+
+def _read_census_notes(census: Path) -> dict[str, str]:
+    """Each reviewed row's note: the third column, verdict and follow-up."""
+    if not census.exists():
+        return {}
+    notes: dict[str, str] = {}
+    for line in census.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = line.split("\t", 2)
+        if len(fields) == 3 and fields[2].strip():
+            notes[fields[0].strip()] = fields[2].strip()
+    return notes
 
 
 def _tally(sites: list[str]) -> dict[str, int]:
@@ -868,17 +886,26 @@ def _write_wait_push_census(sites: list[str]) -> None:
         "#\n"
         "# These rows are a BASELINE, not an endorsement: they were captured\n"
         "# mechanically, reachability is resolved by NAME (so some rows are two\n"
-        "# unrelated functions sharing a name), and none has been individually\n"
-        "# reviewed. Any of them may be a real freeze.\n"
+        "# unrelated functions sharing a name), and a row without a note (see\n"
+        "# below) has not been individually reviewed. Any of them may be a real\n"
+        "# freeze.\n"
         "#\n"
         "# Removing a row is always fine. Adding one is a deliberate act: run the\n"
         "# flow in a worker (`run_worker(coro)` / `@work`) or push with a\n"
         "# `callback=` instead of awaiting the dismissal.\n"
         "#\n"
-        "# path::[Class.]entry point[->scheduled callable]\toccurrences\n"
+        "# A third column is a REVIEWED row's note -- its verdict, evidence and\n"
+        "# follow-up. --write carries a note forward for as long as its row\n"
+        "# survives, so a re-pin never erases a review.\n"
+        "#\n"
+        "# path::[Class.]entry point[->scheduled callable]\toccurrences[\tnote]\n"
     )
+    notes = _read_census_notes(WAIT_PUSH_CENSUS)
     counts = _tally(sites)
-    body = "\n".join(f"{key}\t{counts[key]}" for key in sorted(counts))
+    body = "\n".join(
+        f"{key}\t{counts[key]}" + (f"\t{notes[key]}" if key in notes else "")
+        for key in sorted(counts)
+    )
     WAIT_PUSH_CENSUS.write_text(header + body + "\n", encoding="utf-8")
 
 
