@@ -2077,6 +2077,13 @@ shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
 "Approval required" card as everything else.
 
+Some servers describe a tool's arguments with a rule at the top of the schema,
+such as "give either `id` or `name`" (`anyOf`, `oneOf`, `allOf`, `enum`,
+`const` or `not`). OpenAI and Anthropic reject any request containing such a
+schema, so Console removes those top-level rules before it sends the tool to
+the model. The tool is still offered, and the server still checks every call
+it receives.
+
 ### Web research tools
 
 Console's standard web tools are `web_search` (find links), `web_fetch`
@@ -2577,6 +2584,16 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   session); it then reads "Tools: N ready".
 - Tab status markers clear as soon as you visit the tab — a missing `✓` just
   means you already looked.
+- **"The provider rejected the tool definition for <tool>…"** The provider
+  checked the tools sent with your message and refused one of them before the
+  model ran, so the reply fails the same way on every model. Choosing another
+  model will not help. Turn off the tool's group on the [MCP screen](../mcp.md)
+  (for built-in local tools, **Local workspace, web, and Watchlists tools**)
+  or the MCP server that provides the tool, then send again. If the provider
+  blames a tool without naming it, the message says "one of the tool
+  definitions sent with this request". Chatbook's own tools are tested
+  against these provider rules, so the tool at fault is usually from a
+  third-party MCP server.
 
 —
 *Verified against dev @ ff435772c — 2026-07-31. Named agents section added

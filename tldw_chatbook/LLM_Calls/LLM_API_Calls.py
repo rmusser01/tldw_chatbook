@@ -77,6 +77,7 @@ from tldw_chatbook.model_capabilities import (
     openai_model_requires_max_completion_tokens,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     llm_content_byte_count,
@@ -1234,6 +1235,29 @@ def _contains_extended_ttl(obj: Any) -> bool:
     return False
 
 
+def _credential_redacted_detail(detail: object, *known_credentials: object) -> str:
+    """Return provider error detail that is safe to write to a log.
+
+    TASK-33621.1: the Anthropic 400 path logged only the exception class, so a
+    request the provider refused (e.g. a tool schema) left no provider message
+    anywhere. The credential this request used is masked literally -- a
+    provider may echo it back -- and every recognized credential shape is
+    masked by the same redactor the log sinks use.
+
+    Args:
+        detail: Provider error body or message (already sensitive-mode safe).
+        *known_credentials: The API key / subscription token this request sent.
+
+    Returns:
+        The detail with known and recognizable credentials masked.
+    """
+    text = str(detail or "")
+    for credential in known_credentials:
+        if isinstance(credential, str) and len(credential.strip()) >= 8:
+            text = text.replace(credential, REDACTION_MARKER)
+    return redact_log_line(text)
+
+
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
@@ -2164,6 +2188,14 @@ def chat_with_anthropic(
             "anthropic_api_error_response_time",
             duration,
             labels={"model": current_model, "status_code": str(status_code)},
+        )
+        # TASK-33621.1: parity with the OpenAI path, which logs the provider
+        # body. Without this a refused request (a rejected tool schema) left
+        # only "Handler for anthropic directly raised" in the log.
+        logger.error(
+            "Anthropic request failed; status={}; detail={}",
+            status_code,
+            _credential_redacted_detail(error_text, final_api_key, subscription_token),
         )
 
         if status_code == 401:

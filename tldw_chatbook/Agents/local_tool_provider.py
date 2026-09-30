@@ -3699,6 +3699,17 @@ def _make_todo_create_handler(
     return _handler
 
 
+#: TASK-33621.1: ``todo_update``'s two either/or rules. They used to be a
+#: top-level ``anyOf``/``allOf`` in its parameter schema, which OpenAI and
+#: Anthropic both refuse (every Console send failed with HTTP 400), so they
+#: are stated in the tool description and enforced by the handler instead --
+#: one wording for both, so the model reads the rule it is refused with.
+TODO_UPDATE_CHANGE_RULE = "provide at least one of content, status, or activeForm"
+TODO_UPDATE_DELETE_RULE = (
+    'status "deleted" must be the only change, so omit content and activeForm'
+)
+
+
 def _make_todo_update_handler(
     store: SessionTodoStore,
     on_todo_change: TodoChangeCallback | None,
@@ -3713,6 +3724,12 @@ def _make_todo_update_handler(
         )
         task_id = _validate_task_id(values["id"])
         expected_version = _validate_expected_version(values["expected_version"])
+        changes = {"content", "status", "activeForm"} & set(values)
+        if not changes:
+            raise TodoStoreError(f"rule: {TODO_UPDATE_CHANGE_RULE}")
+        status = values.get("status")
+        if type(status) is str and status == "deleted" and changes != {"status"}:
+            raise TodoStoreError(f"rule: {TODO_UPDATE_DELETE_RULE}")
         kwargs: _TodoUpdateKwargs = {
             "task_id": task_id,
             "expected_version": expected_version,
@@ -4770,7 +4787,9 @@ def _default_specs(
             name="watchlists_update_collection_sources",
             description=(
                 "Atomically add or remove up to 100 canonical source memberships "
-                "from one local Watchlists collection."
+                "from one local Watchlists collection. Rule: provide at least one "
+                "of add_source_ids or remove_source_ids, non-empty; a source "
+                "cannot be in both."
             ),
             parameters={
                 "type": "object",
@@ -4801,11 +4820,11 @@ def _default_specs(
                         "uniqueItems": True,
                     },
                 },
+                # TASK-33621.1: no top-level anyOf -- OpenAI and Anthropic
+                # both refuse a top-level combinator, which failed EVERY
+                # Console send. The either/or rule lives in the description
+                # above and is enforced by the handler.
                 "required": ["collection_id"],
-                "anyOf": [
-                    {"required": ["add_source_ids"]},
-                    {"required": ["remove_source_ids"]},
-                ],
                 "additionalProperties": False,
             },
             handler=watchlists_command_service.update_collection_sources,
@@ -4819,7 +4838,9 @@ def _default_specs(
             description=(
                 "Accept durable checks for 1-50 local Watchlists sources or one "
                 "collection, contact their configured network destinations with "
-                "at most four checks in flight, and return exact polling receipts."
+                "at most four checks in flight, and return exact polling receipts. "
+                "Rule: provide exactly one of source_ids or collection_id, never "
+                "both."
             ),
             parameters={
                 "type": "object",
@@ -4841,10 +4862,8 @@ def _default_specs(
                         "maxLength": 36,
                     },
                 },
-                "oneOf": [
-                    {"required": ["source_ids"]},
-                    {"required": ["collection_id"]},
-                ],
+                # TASK-33621.1: no top-level oneOf (providers refuse it); the
+                # exactly-one rule is in the description and the handler.
                 "additionalProperties": False,
             },
             handler=watchlists_command_service.check_sources,
@@ -4984,7 +5003,8 @@ def _default_specs(
                     name="todo_update",
                     description=(
                         "Update or delete one session task using its stable ID "
-                        "and expected version."
+                        f"and expected version. Rule: {TODO_UPDATE_CHANGE_RULE}; "
+                        f"{TODO_UPDATE_DELETE_RULE}."
                     ),
                     parameters={
                         "type": "object",
@@ -5002,28 +5022,11 @@ def _default_specs(
                             },
                             "activeForm": update_active_form_schema,
                         },
+                        # TASK-33621.1: the change and delete rules used to be
+                        # a top-level anyOf + allOf, which OpenAI and Anthropic
+                        # both refuse -- every Console send failed. They now
+                        # live in the description and the handler.
                         "required": ["id", "expected_version"],
-                        "anyOf": [
-                            {"required": ["content"]},
-                            {"required": ["status"]},
-                            {"required": ["activeForm"]},
-                        ],
-                        "allOf": [
-                            {
-                                "if": {
-                                    "properties": {"status": {"const": "deleted"}},
-                                    "required": ["status"],
-                                },
-                                "then": {
-                                    "not": {
-                                        "anyOf": [
-                                            {"required": ["content"]},
-                                            {"required": ["activeForm"]},
-                                        ]
-                                    }
-                                },
-                            }
-                        ],
                         "additionalProperties": False,
                     },
                     handler=_make_todo_update_handler(todo_store, on_todo_change),

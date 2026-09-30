@@ -21,12 +21,30 @@ Pure module: no I/O, no provider imports.
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
 from .agent_models import ToolCall, ToolSchema
+
+#: TASK-33621.1: JSON-Schema keywords a provider refuses at the TOP level of a
+#: function's parameters, before the model ever runs. OpenAI: "schema must
+#: have type 'object' and not have 'oneOf'/'anyOf'/'allOf'/'enum'/'const'/
+#: 'not' at the top level"; Anthropic: "input_schema does not support oneOf,
+#: allOf, or anyOf at the top level". One such schema fails the WHOLE request,
+#: whatever the prompt or model. Nested use inside ``properties`` is accepted
+#: by both and is never touched.
+PROVIDER_FORBIDDEN_TOP_LEVEL_SCHEMA_KEYS = (
+    "anyOf",
+    "oneOf",
+    "allOf",
+    "enum",
+    "const",
+    "not",
+)
 
 NATIVE_TOOLS_PROVIDERS = frozenset(
     {
@@ -144,6 +162,44 @@ def provider_supports_native_tools(
     return provider in NATIVE_TOOLS_PROVIDERS
 
 
+def provider_conformant_parameters(parameters: object) -> object:
+    """Return a function parameter schema every native provider accepts.
+
+    A conformant schema is returned as the same object. Otherwise a shallow
+    copy is returned with the top-level keywords in
+    ``PROVIDER_FORBIDDEN_TOP_LEVEL_SCHEMA_KEYS`` removed and ``type`` set to
+    ``"object"``; ``properties`` (nested combinators included), ``required``
+    and ``additionalProperties`` are kept verbatim, and the input is never
+    mutated. This is the single projection seam for EVERY tool source, so a
+    third-party MCP server's schema cannot fail every send (TASK-33621.1).
+    A removed rule is not lost for enforcement: the tool's own handler (or
+    MCP server) still validates the call it receives.
+
+    Args:
+        parameters: The disclosed ``ToolSchema.parameters`` value.
+
+    Returns:
+        The parameters to send; an empty or non-mapping value becomes the
+        minimal valid object schema (providers reject ``{}``).
+    """
+    if not isinstance(parameters, Mapping) or not parameters:
+        # A fresh literal per call: a shared module-level default would leak
+        # downstream mutations across conversions through its nested
+        # "properties" dict (PR #648 review).
+        return {"type": "object", "properties": {}}
+    if parameters.get("type") == "object" and not any(
+        key in parameters for key in PROVIDER_FORBIDDEN_TOP_LEVEL_SCHEMA_KEYS
+    ):
+        return parameters
+    conformant = {
+        key: value
+        for key, value in parameters.items()
+        if key not in PROVIDER_FORBIDDEN_TOP_LEVEL_SCHEMA_KEYS
+    }
+    conformant["type"] = "object"
+    return conformant
+
+
 def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:
     """Convert ``ToolSchema`` entries to the OpenAI ``tools=`` wire format.
 
@@ -151,9 +207,9 @@ def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:
         schemas: Disclosed tool schemas (runtime + active), in order.
 
     Returns:
-        One ``{"type": "function", "function": {...}}`` entry per schema;
-        an empty ``parameters`` dict is replaced with the minimal valid
-        object schema (providers reject ``{}``).
+        One ``{"type": "function", "function": {...}}`` entry per schema,
+        its ``parameters`` made provider-conformant by
+        ``provider_conformant_parameters``.
     """
     tools = []
     for schema in schemas:
@@ -163,15 +219,85 @@ def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:
                 "function": {
                     "name": schema.name,
                     "description": schema.description,
-                    # A fresh literal per schema: a shared module-level default
-                    # would leak downstream mutations across conversions through
-                    # its nested "properties" dict (PR #648 review).
-                    "parameters": schema.parameters
-                    or {"type": "object", "properties": {}},
+                    "parameters": provider_conformant_parameters(schema.parameters),
                 },
             }
         )
     return tools
+
+
+#: A provider 400 that names a tool by NAME (OpenAI: "Invalid schema for
+#: function 'todo_update': ..."). Only a name that exactly matches a tool the
+#: request actually sent is ever reported, so provider text never reaches copy.
+_REJECTED_TOOL_NAME = re.compile(
+    r"\b(?:function|tool)\s+['\"`]([^'\"`\s]{1,256})['\"`]"
+)
+#: ...or by its POSITION in the request's tools list, most specific first:
+#: Gemini "tools[0].function_declarations[3]", OpenAI "tools[34].function",
+#: Anthropic "tools.34.custom.input_schema".
+_REJECTED_TOOL_INDEX = (
+    re.compile(r"function_declarations\[(\d{1,4})\]"),
+    re.compile(r"\btools\[(\d{1,4})\]"),
+    re.compile(r"\btools\.(\d{1,4})\."),
+)
+
+
+def rejected_tool_name(
+    provider_message: str, tools: Sequence[Mapping[str, object]] | None
+) -> str | None:
+    """Name the sent tool a provider's bad-request message blames, if any.
+
+    Args:
+        provider_message: The provider's error text (untrusted).
+        tools: The OpenAI-shape ``tools`` list the request actually sent.
+
+    Returns:
+        The rejected tool's name exactly as sent, or None when the message
+        names no tool from ``tools`` (a position is honoured only when every
+        entry is a named function tool, so it maps to the same index the
+        provider adapter sent).
+    """
+    names: list[str] = []
+    for tool in tools or ():
+        function = tool.get("function") if isinstance(tool, Mapping) else None
+        name = function.get("name") if isinstance(function, Mapping) else None
+        if not isinstance(name, str) or not name:
+            names = []
+            break
+        names.append(name)
+    if not names:
+        return None
+    text = str(provider_message or "")
+    for match in _REJECTED_TOOL_NAME.finditer(text):
+        if match.group(1) in names:
+            return match.group(1)
+    for pattern in _REJECTED_TOOL_INDEX:
+        match = pattern.search(text)
+        if match is not None:
+            index = int(match.group(1))
+            return names[index] if index < len(names) else None
+    return None
+
+
+#: Provider phrasing that pins a bad request on a tool DEFINITION even when no
+#: sent tool can be named (OpenAI's error code, Anthropic's schema field, a
+#: positional tools path).
+_TOOL_DEFINITION_MARKERS = re.compile(
+    r"invalid_function_parameters|input_schema|function_declarations"
+    r"|\btools(?:\[\d{1,4}\]|\.\d{1,4}\.)"
+)
+
+
+def blames_tool_definition(provider_message: str) -> bool:
+    """Return whether a provider bad-request message blames a tool definition.
+
+    Args:
+        provider_message: The provider's error text (untrusted; only tested).
+
+    Returns:
+        True when the text carries a tool-definition marker.
+    """
+    return bool(_TOOL_DEFINITION_MARKERS.search(str(provider_message or "")))
 
 
 def ensure_tool_call_ids(raw_calls: list | None) -> list:

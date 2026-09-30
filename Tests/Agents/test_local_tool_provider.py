@@ -867,6 +867,7 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_operational_watchlists_commands_are_console_only_and_definitive_on_accept(
     tmp_path,
 ):
@@ -898,10 +899,12 @@ def test_operational_watchlists_commands_are_console_only_and_definitive_on_acce
     assert check.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
     assert briefing.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
     assert schedule.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
-    assert check.parameters["oneOf"] == [
-        {"required": ["source_ids"]},
-        {"required": ["collection_id"]},
-    ]
+    # TASK-33621.1: the exactly-one rule is NOT a top-level oneOf (OpenAI and
+    # Anthropic refuse one, failing every Console send); it is stated in the
+    # description and enforced by the handler.
+    assert "oneOf" not in check.parameters
+    assert set(check.parameters["properties"]) == {"source_ids", "collection_id"}
+    assert "exactly one of source_ids or collection_id" in check.description
     assert briefing.parameters["required"] == ["collection_id"]
     assert schedule.parameters["required"] == ["collection_id", "cadence"]
     assert schedule.parameters["properties"]["cadence"]["oneOf"] == [
@@ -2951,6 +2954,7 @@ def test_todo_tools_are_conditional_ordered_and_todo_write_is_removed(tmp_path):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
     for schema in schemas.values():
@@ -2990,11 +2994,10 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     assert update_props["activeForm"]["type"] == ["string", "null"]
     assert update_props["activeForm"]["maxLength"] == MAX_TODO_CONTENT_CHARS
     assert update_props["status"]["enum"] == [*TODO_STATUSES, "deleted"]
-    assert update["anyOf"] == [
-        {"required": ["content"]},
-        {"required": ["status"]},
-        {"required": ["activeForm"]},
-    ]
+    # TASK-33621.1: the change/delete rules are not top-level combinators
+    # (OpenAI and Anthropic refuse those, failing every Console send); the
+    # handler enforces them -- see test_todo_raw_boundary_failures_*.
+    assert not {"anyOf", "oneOf", "allOf", "not", "if"} & set(update)
 
     version_schema = update_props["expected_version"]
     assert version_schema == {
@@ -3033,9 +3036,6 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     )
     assert not Draft202012Validator(schemas["todo_update"]).is_valid(
         {"id": "1", "expected_version": MAX_TODO_NUMBER + 1, "content": "x"}
-    )
-    assert not Draft202012Validator(schemas["todo_update"]).is_valid(
-        {"id": "1", "expected_version": 1}
     )
 
 
@@ -3253,13 +3253,13 @@ def test_todo_update_schema_requires_deleted_to_be_the_only_mutation(tmp_path):
         pytest.param(
             "todo_update",
             {"id": "1", "expected_version": 1},
-            "at least one mutation field is required",
+            "rule: provide at least one of content, status, or activeForm",
             id="update-empty",
         ),
         pytest.param(
             "todo_update",
             {"id": "1", "expected_version": 1, "status": "deleted", "content": "x"},
-            "delete must be the only mutation field",
+            'rule: status "deleted" must be the only change, so omit content and activeForm',
             id="update-delete-plus-content",
         ),
         pytest.param(
@@ -3309,6 +3309,7 @@ def test_todo_update_schema_requires_deleted_to_be_the_only_mutation(tmp_path):
         ],
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_todo_raw_boundary_failures_are_fixed_private_and_atomic(
     tmp_path, tool_name, args, expected_error
 ):
