@@ -3429,3 +3429,26 @@ that redirects stderr is a harness artefact, not an app symptom.
 working directory**. One review agent's export landed a 2.3 MB `trace-export.json` in
 the reviewed worktree's root, which then showed up as an untracked file in the review
 branch. Launch the app from a scratch cwd whenever the checkout must stay clean.
+
+## A pytest file outside `Tests/` gets none of `Tests/conftest.py`'s isolation (Console UX review, 2026-09-29)
+
+**Incident.** Two review verifiers wrote scratch probes in the session scratchpad:
+`test_probe_fork_g1_09.py`, run with `pytest --rootdir=<worktree>`, and
+`probe_scroll_persist.py`, run with bare `python`. Both imported `Tests.UI` helpers and
+app modules, so neither sat under `Tests/`. Pytest collects a conftest only from the
+test file's own directory and its parents, and `--rootdir` does not change that, so the
+HOME/XDG/`TLDW_CONFIG_PATH` redirect never ran. The first built a real app against the
+owner's live profile. It appended two lines ("first user message", "second turn") to
+`~/.local/share/tldw_cli/default_user/prompt_history.jsonl`, rewrote `config.toml` with
+identical bytes, and ticked the scheduler heartbeat. The second loaded the real config
+and created `~/.config/tldw_cli/recovery-bootstrap/`. Attribution was proven by
+matching each agent's command timestamps (22:05:55Z and 21:10:02Z) to the files' mtimes
+and to the probe's own log line "Successfully loaded and merged CLI config from
+/Users/…/.config/tldw_cli/config.toml".
+
+**What to do.** Put a probe under `Tests/` (for example `Tests/UI/test_zz_probe_*.py`)
+and delete it afterwards, or build its environment exactly as `Tests/conftest.py` does:
+a scratch HOME, XDG dirs, `TLDW_CONFIG_PATH` and `[paths].data_dir`, all set **before**
+the first `tldw_chatbook` import. A `--rootdir` flag or a `sys.path` insert gives no
+isolation. Check afterwards: the real `config.toml` sha256 and the mtimes under
+`~/.local/share/tldw_cli/default_user` must be unchanged.
