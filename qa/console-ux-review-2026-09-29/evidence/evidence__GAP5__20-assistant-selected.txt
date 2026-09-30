@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Using my Library sources: h...                                                                         │
+                  Context ◂  │   Using my Library s…  ✕    New tab     Temporary                                                                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Workspaces             ▸    │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Conversations          ▾    │                                                                                                                       │
+   New conversation          │                                                                                                                       │
+     Archive this chat       │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+      Archived chats         │   User                                                                                                                │
+     Search all chats…       │   Using my Library sources: how many litres does each tomato plant get under the Zephyr protocol, and when is         │
+   Using my Library          │   watering forbidden? Cite sources.                                                                                   │
+   sources: h...             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                             │  ▊ Assistant                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊                                                                                                                    │◂ Inspect
+  ▊  Filter      ▎           │  ▊  Based on your Library sources:                                                                                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊                                                                                                                    │
+                             │  ▊  Water volume per tomato plant: Each tomato plant receives exactly 1.7 litres per cycle under the Zephyr           │
+  Chats                 ▾    │  ▊  Irrigation Protocol. [S1]                                                                                         │
+   Using my Library …  💬    │  ▊                                                                                                                    │
+                             │  ▊  When watering is forbidden: Watering is forbidden when greenhouse humidity exceeds 82 percent. [S1]               │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Character · No chats   ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ▊   Copy  🔊  Edit  Fork  ♻   --->  More…                                                                            │
+ Model                  ▸    │  ▊                                                                                                                    │
+ ──────────────────────────▆ │  ▊  Guide: j/k select · c Copy · 🔊 Speak · e Edit · f Fork · r ♻ Regenerate · ---> Continue · Esc clear              │
+ Agent                  ▸    │  ▊                                                                                                                    │
+ ▼ Details                   │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 3 sources                                                                                                                    Un-stage
+ zephyr-irrigation — media
+ copper-lantern — media
+ quillmere-battery — media
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                            Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

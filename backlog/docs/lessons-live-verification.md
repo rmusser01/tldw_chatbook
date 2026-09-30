@@ -3409,3 +3409,23 @@ command. A feedback loop is invisible to single-sided profiling -- each end
 looks "busy rendering" on its own. When patching minified bundle hooks,
 check whether the hook site is once-per-connection or per-message; appending
 a resize/sendSize call to a per-message hook is how this loop was born.
+
+## Textual paints its UI to STDERR, so `2>log` in a live launch blanks the pane (Console UX review, 2026-09-29)
+
+**Incident.** The first isolated launch for the 2026-09-29 Console UX review wrapped
+the app as `tmux new-session '… -m tldw_chatbook.app 2>$P/stderr.log'` to keep boot
+noise out of the pane. `tmux capture-pane` came back **empty** after 16 s, which read
+as "the app crashed or hangs at boot". The "log" file held the full screen instead:
+256 KB of SGR-positioned cells (`[33;1H…Details…Status ▾…`) — Textual's driver writes
+the rendered UI to `sys.__stderr__`, not stdout. Dropping the redirect gave a normal
+pane at once.
+
+**What to do.** Never redirect stderr for a live Textual launch you intend to look at.
+Read diagnostics from the app log in the profile's data dir
+(`<data_dir>/<user>/tldw_cli_app.log`) instead. An empty capture right after a launch
+that redirects stderr is a harness artefact, not an app symptom.
+
+**A related trap from the same run.** The app writes trace exports to its **current
+working directory**. One review agent's export landed a 2.3 MB `trace-export.json` in
+the reviewed worktree's root, which then showed up as an untracked file in the review
+branch. Launch the app from a scratch cwd whenever the checkout must stay clean.

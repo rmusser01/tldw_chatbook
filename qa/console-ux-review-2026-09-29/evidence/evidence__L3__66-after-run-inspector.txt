@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meet
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly these tw...                                                  │
+                  Context ◂  │   Say hi in three wo…  ✕  Reply with one wor…  ✕       ◌ Chat 3        ✕  Reply with exactly…▸ │  ▸ Inspect
+   Terminal                  │                                                                                                │     Choose folder · Project
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).  ✕  │ ┏What happens if I send now?  ┓
+ Workspaces             ▸    │                                                                                                │ ┃Where: Default › Reply with …┃
+ ──────────────────────────  │  ────────────────────────────────────────────────────────────────────────────────────────────  │ ┃Scope: Everything available  ┃
+ Conversations          ▾    │   User                                                                                         │ ┃Run: Ready                   ┃
+   New conversation          │   Reply with exactly these two words: build failed                                             │ ┃Sources: None staged         ┃
+     Archive this chat       │  ────────────────────────────────────────────────────────────────────────────────────────────  │ ┗Approvals: None pending      ┛
+      Archived chats         │  ▊ Assistant                                                                                   │
+     Search all chats…       │  ▊                                                                                             │ Run
+   Reply with exactly        │  ▊  build failed                                                                               │ Run recipe: Anthropic /
+   these tw...               │  ▊                                                                                             │ claude-haiku-4-5 / sources
+                             │  ▊                                                                                             │ not staged / tools 6 /        ▁
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ────────────────────────────────────────────────────────────────────────────────────────────  │ approvals 0
+  ▊  Filter      ▎           │   User                                                                                         │ Live work: No active work
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │   Name a river.                                                                                │ Provider: ready
+                             │  ────────────────────────────────────────────────────────────────────────────────────────────  │
+  Chats                 ▾    │  ▊ Assistant                                                                                   │ Source Readiness
+   Reply with exactl…  💬    │  ▊                                                                                             │ Retrieval: not staged         ▅
+   Chat 3              💬    │  ▊  The Amazon River.                                                                          │
+   Reply with one wo…  💬    │  ▊                                                                                             │ Tools
+   Say hi in three w…  💬    │  ▊                                                                                             │ Tools: 6 ready
+                             │  ────────────────────────────────────────────────────────────────────────────────────────────  │ MCP: 6 tools ready
+ ──────────────────────────  │   User                                                                                         │
+ Character · No chats   ▸    │   Name a lake.                                                                                 │              More
+ ──────────────────────────  │  ────────────────────────────────────────────────────────────────────────────────────────────  │
+ Model                  ▸    │  ▊ Assistant                                                                                   │ Selected Conversation
+ ──────────────────────────  │  ▊                                                                                             │ Conversation source: saved
+ Agent                  ▸    │  ▊  Lake Superior.                                                                             │ conversation
+ ──────────────────────────  │  ▊                                                                                             │ Resume state: restored from
+ Details                ▸    │  ▊                                                                                             │ ▼ more sections — scroll
+                             │  ────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                            Send disabled: type a message       Send         Dictate
+
+  Esc composer · F6 panes | n/p Sections | Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Ctrl+P · Ctrl+Q

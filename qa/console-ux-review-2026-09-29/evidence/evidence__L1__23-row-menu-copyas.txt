@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly: hello t...                                                                         │
+                  Context ◂  │   Reply with exactly…  ✕    New tab     Temporary                                                                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Workspaces             ▸    │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Conversations          ▾    │                                                                                                                       │
+     Archive this chat       │                                                                                                                       │
+      Archived chats         │                                                                                                                       │
+     Search all chats…       │                                                                                                                       │
+   Reply with exactly:       │                                                                                                                       │
+   hello t...                │                                                                                                                       │
+                             │                                                                                                                       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                       │
+  ▊  Filter      ▎           │                                                                                                                       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                       │
+                             │                                                                                                                       │◂ Inspect
+  Chats                 ▾    │                                                                                                                       │
+   Reply with exactl…  💬    │                                                                                                                       │
+                      ╭────────────────────────────╮                                                                                                 │
+ ─────────────────────│ Reply with exactly: hello… │                                                                                                 │
+ Character · No chats │ Conversation actions       │                                                                                                 │
+ ─────────────────────│           ‹ Back           │                                                                                                 │
+ Model                │       Clean markdown       │───────────────────────────────────────────────────────────────────────────────────────────────  │
+ ─────────────────────│      Full transcript       │                                                                                                 │
+ Agent                │         Save .md…          │ hello there                                                                                     │
+ ─────────────────────╰────────────────────────────╯───────────────────────────────────────────────────────────────────────────────────────────────  │
+ Details                ▸    │  ▊ Assistant                                                                                                          │
+                             │  ▊                                                                                                                    │
+                             │  ▊  hello there                                                                                                       │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                            Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

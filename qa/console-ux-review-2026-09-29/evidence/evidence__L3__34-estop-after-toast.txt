@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meet
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with one word: ok                                                                                │
+                  Context ◂  │   Say hi in three wo…  ✕  Reply with one wor…  ✕    New tab     Temporary                                             │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ Conversations          ▾    │   User                                                                                                                │
+     Archive this chat       │   Write a haiku about rain.                                                                                           │
+      Archived chats         │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+     Search all chats…       │  ▊ Assistant                                                                                                          │
+   Reply with one word:      │  ▊                                                                                                                 ▆  │
+   ok                        │  ▊  Soft drops fall and dance, Puddles mirror the gray sky, Earth drinks deep and sighs.                              │
+                             │  ▊                                                                                                                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊                                                                                                                    │
+  ▊  Filter      ▎           │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │   User                                                                                                                │
+                             │   Write a haiku about snow.                                                                                           │◂ Inspect
+  Chats                 ▾    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+   Reply with one wo…  💬    │  ▊ Assistant                                                                                                          │
+   Say hi in three w…  💬    │  ▊                                                                                                                    │
+                             │  ▊  White flakes drift and fall, Silent blanket covers all, Winter's hush descends.                                   │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Character · No chats   ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ Model                  ▸    │   User                                                                                                                │
+ ──────────────────────────  │   Write a haiku about wind.                                                                                           │
+ Agent                  ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ ──────────────────────────  │  ▊ Assistant                                                                                                          │
+ Details                ▸    │  ▊                                                                                                                    │
+                             │  ▊  Invisible breath, Bending trees and rustling leaves, Whispers through the world.                                  │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                           Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

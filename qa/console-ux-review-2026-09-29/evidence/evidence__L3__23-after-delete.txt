@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M╭──────────────────────────────────────────────────────────╮
+──────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+ Console — Chat, source handoffs, live runs, and control actions.                                 │ Message deleted; recovered-media reference cleanup is    │
+   New tab     Settings     Context rail     Search Library     Help                              │ pending.                                                 │
+──────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+                             │ Conversation | Say hi in three words.                              ╰──────────────────────────────────────────────────────────╯
+                  Context ◂  │   Say hi in three wo…  ✕    New tab     Temporary                                                                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │                                                                    ╭──────────────────────────────────────────────────────────╮
+ Workspaces             ▸    │                                                                    │                                                          │
+ ──────────────────────────  │                                                                    │ Deleted message from transcript.                         │
+ Conversations          ▾    │                                                                    │                                                          │
+     Archive this chat       │                                                                    ╰──────────────────────────────────────────────────────────╯
+      Archived chats         │                                                                                                                       │
+     Search all chats…       │                                                                                                                       │
+   Say hi in three words.    │                                                                                                                       │
+                             │                                                                                                                       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                       │
+  ▊  Filter      ▎           │                                                                                                                       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                       │
+                             │                                                                                                                       │◂ Inspect
+   New conversation          │                                                                                                                       │
+  Chats                 ▾    │                                                                                                                       │
+   Say hi in three w…  💬    │                                                                                                                       │
+                             │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Character · No chats   ▸    │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Model                  ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │   User                                                                                                                │
+ Agent                  ▸    │   Say hi in three words.                                                                                              │
+ ──────────────────────────  │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ Details                ▸    │  ▊ Assistant                                                                                                          │
+                             │  ▊                                                                                                                    │
+                             │  ▊  Hi there friend.                                                                                                  │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  failed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                            Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

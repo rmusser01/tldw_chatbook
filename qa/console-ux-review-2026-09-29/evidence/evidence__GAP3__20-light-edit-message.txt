@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly this mar...                                                                         │
+                  Context ◂  │   Reply with exactly…  ✕    New tab     Temporary                                                                     │
+   Terminal ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+ ───────────▊                                                                                                                                      ▎ │
+ Workspaces ▊   Edit Message                                                                                                                       ▎ │
+ ───────────▊                                                                                                                                      ▎ │
+ Conversatio▊  Editing existing transcript message. Save keeps the edit in place; Edit & resend creates a new response branch in this chat and     ▎ │
+     Archive▊  gets a fresh reply.                                                                                                                 ▎ │
+      Archiv▊                                                                                                                                      ▎ │
+     Search ▊  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  ▎ │
+   Reply wit▊  │ Say ok again.                                                                                                                  │  ▎ │
+   this mar.▊  │                                                                                                                                │  ▎ │
+            ▊  │                                                                                                                                │  ▎ │
+  ▊▔▔▔▔▔▔▔▔▔▊  │                                                                                                                                │  ▎ │
+  ▊  Filter ▊  │                                                                                                                                │  ▎ │
+  ▊▁▁▁▁▁▁▁▁▁▊  │                                                                                                                                │  ▎ │◂ Inspect
+            ▊  │                                                                                                                                │  ▎ │
+  Chats     ▊  │                                                                                                                                │  ▎ │
+   Reply wit▊  │                                                                                                                                │  ▎ │
+            ▊  │                                                                                                                                │  ▎ │
+ ───────────▊  │                                                                                                                                │  ▎ │
+ Character ·▊  │                                                                                                                                │  ▎ │
+ ───────────▊  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  ▎ │
+ Model      ▊                                                                                                                                      ▎ │
+ ───────────▊                                                                                                                                      ▎ │
+ Agent      ▊                                                                                                                                      ▎ │
+ ───────────▊                                                                                                Cancel     Save     Edit & resend     ▎ │
+ Details    ▊                                                                                                                                      ▎ │
+            ▊                                                                                                                                      ▎ │
+            ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+                             │   Agent run failed: provider returned HTTP 401 (Provider error from anthropic: authentication failed. Status:         │
+                             │   401.).                                                                                                              │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  failed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0
+
+│  Composer ▾  Menu  Ask, command, or paste task...   📎 diagram.png · 16 KB Send blocked — choose a model to continue ›       Send         Dictate    ✕
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

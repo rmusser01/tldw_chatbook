@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐rc  More ▾
+────────────│ Conversation Inspector · Using my Library sources: h...                                                                              │────────────
+ Console — C│ “Using my Library sources: h...” · Capture On · Fidelity Safe · Creds filtered                                                       │     Ready
+   New tab  │ PII Off · Viewer Safe · No active run is frozen                                                                                      │
+────────────│  Context  Usage & cost  Exchange history                                                                                             │────────────
+            │ Total -- 14320 tokens -- ~$0.0027 (includes estimated rows) (2 rows)                                                                 │ │
+            │ Transcript usage · captured call costs below are details, not additional spend                                                       │ │
+   Terminal │ ┌──────────────────────────────────────────────────────────┐Capture unavailable                                                      │ │
+ ───────────│ │Estimated                                                 │┌──────────────────────────────────────────────────────────────────────┐ │ │
+ Workspaces │ │Turn ·   2 assistant   14208 in     77 out  $0.0027 ·     ││ Model: claude-haiku-4-5                                              │ │ │
+ ───────────│ │Reported                                                  ││ Basis: Reported                                                      │ │ │
+ Conversatio│ │                                                          ││ Cost: $0.0027                                                        │ │ │
+     Archive│ │                                                          ││                                                                      │ │ │
+      Archiv│ │                                                          ││ Uncached input: 3                                                    │ │ │
+     Search │ │                                                          ││ Cache read: 13,443                                                   │ │ │
+   Using my │ │                                                          ││ Cache write: 762                                                     │ │ │
+   sources: │ │                                                          ││ Output: 77                                                           │ │ │
+            │ │                                                          ││ Audio input (subset of input): 0                                     │ │ │
+  ▊▔▔▔▔▔▔▔▔▔│ │                                                          ││ Audio output: 0                                                      │ │ │
+  ▊  Filter │ │                                                          ││ Transcription: 0 seconds                                             │ │ │◂ Inspect
+  ▊▁▁▁▁▁▁▁▁▁│ │                                                          ││                                                                      │ │ │
+            │ │                                                          ││ Could not load captures. Select this turn again to retry.            │ │ │
+  Chats     │ │                                                          ││                                                                      │ │ │
+   Using my │ │                                                          ││                                                                      │ │ │
+            │ │                                                          ││                                                                      │ │ │
+ ───────────│ │                                                          ││                                                                      │ │ │
+ Character ·│ │                                                          ││                                                                      │ │ │
+ ───────────│ │                                                          ││                                                                      │ │ │
+ Model      │ │                                                          ││                                                                      │ │ │
+ ───────────│ │                                                          ││                                                                      │ │ │
+ Agent      │ │                                                          ││                                                                      │ │ │
+ ───────────│ │                                                          ││                                                                      │ │ │
+ Details    │ │                                                          ││                                                                      │ │ │
+            │ │                                                          ││                                                                      │ │ │
+────────────│ │                                                          ││                                                                      │ │────────────
+ Staged for │ │                                                          ││                                                                      │ │ Un-stage
+ zephyr-irri│ │                                                          ││                                                                      │ │
+ copper-lant│ │                                                          ││                                                                      │ │
+ quillmere-b│ └──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────┘ │
+ Status ▾   │   Inspect calls in Exchange history                                                                                                  │ Sources: 0
+            │   View: Safe    Capture settings…       Close                                                                                        │
+█  Composer └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

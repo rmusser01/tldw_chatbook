@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+    ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  🔎│stop                                                                                                                                                                                                                                │
+    └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Tab Navigation: Switch to MCP
+  Open MCP for MCP servers, tools, permissions, auth, and audit.
+  Tab Navigation: Switch to Roleplay
+  Open Roleplay for Characters, user profiles, dictionaries, and behavior profiles.
+  Tab Navigation: Switch to ACP
+  Open ACP for Agent Client Protocol agents, sessions, runtimes, diffs, and terminals.
+  Settings & Preferences: Open Config File
+  Open the configuration file for editing
+  Settings & Preferences: Open Settings Tab
+  Navigate to the Settings tab
+  Tab Navigation: Switch to Settings
+  Open Settings for Global app preferences, appearance, accounts, and storage.
+  Character/Persona Management: Open Character Tab
+  Navigate to Character Chat tab
+  Console: Toggle Inspector rail
+  Open or close the right Inspect rail (Alt+I)
+  Console: Switch workspace…
+  Change the active Console workspace (Alt+W)
+  Console: Edit system prompt
+  Edit this session's system prompt (/system)
+  Console: Paste image from clipboard
+  Paste the clipboard image into the composer (Alt+V)
+  Tab Navigation: Switch to Console
+  Open Console for Live agent conversations, approvals, tools, RAG, and runs.
+  Console: Insert prompt…
+  Browse saved prompts and insert one (/prompt)
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+  System: none ▸                         │  ▊                                                                                                                                                                                   │
+   Configure                             │  ▊                                                                                                                                                                                   │
+ ──────────────────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ Agent                              ▸    │   User                                                                                                                                                                               │
+ ──────────────────────────────────────  │   Say OK.                                                                                                                                                                            │
+ Details                            ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                         │  ▊ Assistant  Generating…                                                                                                                                                            │
+                                         │  ▊                                                                                                                                                                                   │
+                                         │  ▊                                                                                                                                                                                   │
+                                         │  ▊                                                                                                                                                                                   │
+                                         │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  setup
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Co
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                                                      Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

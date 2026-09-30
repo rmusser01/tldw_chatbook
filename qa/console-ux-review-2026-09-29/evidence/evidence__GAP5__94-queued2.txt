@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                               Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Use your todo tool to add a...                                                  │
+                  Context ◂  │ ◂Using my Library s…  ✕  Give me two tiny c…  ✕  Chat with Captain…   ✕ Q2 ● Use your todo to▸ │  ▸ Inspect
+   Terminal                  │                                                                                                │     Choose folder · Project
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).  ✕  │  What happens if I send now?
+  ▊  Filter      ▎           │ ────────────────────────────────────────────────────────────────────────────────────────────── │  Where: Default › Use your to…
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▾ Tasks · 0 of 1 done                                                                         │  Scope: Everything available
+                             │  [ ] buy milk                                                                                  │  Run: Blocked
+  Chats                 ▾    │                                                                                                │  Sources: None staged
+   Use your todo too…  ⟳     │ ────────────────────────────────────────────────────────────────────────────────────────────── │  Approvals: None pending
+   Queue 2                 ▅ │  ▊  Perfect! I've added "buy milk" to your todo list. Here's your current todo list:           │ Environment                 ▾
+   Give me two tiny …  💬    │  ▊                                                                                             │   Changes aren't tracked for…
+   Using my Library …  💬    │  ▊  Current Todo List:                                                                         │   Bind a folder and enable C…
+                             │  ▊                                                                                             │            Refresh
+ ──────────────────────────  │  ▊   1. buy milk (ID: 1) - Status: pending                                                     │
+ Character · Chats with ▾    │  ▊                                                                                             │ Agents          Run history ▸
+  No current character ·     │  ▊  You have one pending task. If you'd like to update it (mark as in progress, completed,     │         View all runs
+  Local · No open chat       │  ▊  or delete it), just let me know!                                                        ▇  │
+  Reaction: Automatic        │  ▊                                                                                             │  Sources — next send        3
+   Reaction…                 │  ▊                                                                                             │  zephyr-irrigation (Library
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   │  ───────────────────────────────────────────────────────────────────────────────────────────   │   Ready · zephyr-irrigation
+  ▊  Search chats        ▎   │   User                                                                                         │   Ready · copper-lantern ·
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   │   Say hi in 3 words.                                                                           │   Ready · quillmere-battery
+   ▾ Chats with              │  ───────────────────────────────────────────────────────────────────────────────────────────   │  Review citations before sen
+   Chat with Captain         │  ▊ Assistant  Thinking… · <1s                                                                  │
+   View all 1 in Library     │  ▊                                                                                             │  Sources: Notes, Media,
+ ──────────────────────────  │  ▊                                                                                             │  Conversations (Prompts off)
+ ▼ Agent · Details           │  ▊                                                                                             │ ▼ more sections — scroll
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────▄  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 3 sources                                                                                                                    Un-stage
+ zephyr-irrigation — media
+ copper-lantern — media
+ quillmere-battery — media
+Queue 2/10 · Draining · Next: "Now say bye in 3 words."                                                                                    Mana       Pause
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                           Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q
