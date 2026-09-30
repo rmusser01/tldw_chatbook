@@ -53,7 +53,10 @@ class RemoteSessionRegistry:
         self._restarted: set[tuple[str, str]] = set()
         #: Last transport-class start failure per key, with the monotonic
         #: time it happened: callers that queued behind that start share it
-        #: instead of each paying another connect timeout (TASK-33400).
+        #: instead of each paying another connect timeout (TASK-33400). A
+        #: post-answer budget ``OP_TIMEOUT`` start failure (TASK-33420) is
+        #: raised to its own caller but never recorded here, so waiters (who
+        #: have their own budgets) do not share it.
         self._start_failures: dict[tuple[str, str], tuple[float, SessionStartError]] = {}
         #: Keys whose session start already hit a mux failure this run: the
         #: first costs one one-shot call, a second disables the key (TASK-33402).
@@ -75,7 +78,11 @@ class RemoteSessionRegistry:
         completes after it is closed rather than kept.
 
         Raises:
-            SessionStartError: transport-class start failure (caller records it).
+            SessionStartError: ``transport=True`` start failure (caller
+                records it). A transport-class one is shared with callers
+                queued behind that start; a post-answer budget
+                ``OP_TIMEOUT`` is raised only to its own caller (not recorded,
+                so not shared with waiters).
         """
         entered = time.monotonic()
         with self._lock:
@@ -147,8 +154,14 @@ class RemoteSessionRegistry:
                     return None
                 kind = error.failure.kind.value if error.failure else "unknown"
                 logger.debug(f"ssh session worker start failed (transport): {kind}")
+                budget_expired = (
+                    error.failure is not None
+                    and error.failure.kind is TransportFailureKind.OP_TIMEOUT
+                )
                 with self._lock:
-                    if not (self._shutdown or key[0] in self._closed_keys):
+                    # OP_TIMEOUT is this caller's budget running out on a live
+                    # host: waiters have their own budgets, so it is not shared.
+                    if not budget_expired and not (self._shutdown or key[0] in self._closed_keys):
                         self._start_failures[key] = (time.monotonic(), error)
                 raise
             with self._lock:

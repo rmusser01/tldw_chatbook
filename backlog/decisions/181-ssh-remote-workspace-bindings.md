@@ -198,7 +198,10 @@ target is a warm call of about one round trip.
   - A call whose session the laptop closed while it was healthy (idle reap,
     run end, app exit) **before the call's request was sent** is not failed:
     nothing ran, so it asks the registry again and gets a fresh session, or
-    the one-shot path once the run or the app has ended.
+    the one-shot path once the run or the app has ended. This covers a close
+    that lands before the call registered (TASK-33401) and one that lands
+    after it registered but before any REQUEST byte was written
+    (TASK-33421); a request that was written is never retried.
   - A natural death with ssh exit code 0 (host idle-exit, clean EOF) is a
     benign session end, never a transport failure: its unadmitted calls get
     `REMOTE_OP_FAILED` and the next call starts a fresh session without
@@ -233,9 +236,29 @@ target is a warm call of about one round trip.
     get that failure; nobody starts again against the same dead host. A
     later call still tries a fresh session.
   - A session handshake is part of its call: it gives up at the call's
-    budget + grace (capped at 30 s) and is classified like a one-shot
-    handshake -- except when the budget runs out mid bundle upload on a
-    cache miss, which is protocol-class (see Known limits).
+    remaining budget + grace, capped at 30 s. Both Console callers build
+    their executors with the default 300 s tool budget, so in practice the
+    30 s cap is the deadline. Before the host answers, a silent host is
+    classified like a one-shot handshake (transport-class). Once the host
+    has answered (NEED or READY), the deadline is never transport-class
+    (TASK-33420). At the 30 s cap the start is protocol-class: the binding
+    status is unchanged and the run falls back to one-shot calls. That
+    catches a stuck loader, and equally a cache-miss bundle upload still
+    making progress slower than about 2.5 KB/s (74,233 B against the 30 s):
+    the write deadline is absolute, not an inactivity window. Only when the
+    call's budget + grace is under the 30 s cap (a short budget, not the
+    default) does running out of it (mid-upload, or waiting for a READY
+    that never comes) fail just that call as `OP_TIMEOUT`
+    (status-preserving); that failure is not shared with callers queued
+    behind the start, and the next call tries a session again. An ssh exit
+    after the answer is still classified by its exit code, like any natural
+    death. Trade-off (the budget case only; at the cap the run is one-shot
+    and waiters go one-shot too): callers queued behind a start that ran
+    out of budget each run their own start in turn with their full budget,
+    so the k-th waits up to about (k+1) × (budget + grace), and that queue
+    is bounded by `max_concurrent_calls`; handing a waiter only its
+    remaining budget would push a nearly spent one into a pre-answer stall
+    (UNREACHABLE, so BLOCKED), which is worse.
   - A mux failure (`MUX_ERROR`) at session start runs that call one-shot
     over the restarted master and fails nothing; the next call tries a
     session again. A second one in the same run switches the binding to
@@ -253,9 +276,3 @@ target is a warm call of about one round trip.
   - A fast operation's admitted marker, result and STATUS leave the host
     in one write; the parent holds a running child's output at most 10 ms
     before writing it. Measured: live host over Wi-Fi, 2026-09-28: warm median 11.5-13.8 ms coalesced vs 16.6-17.2 ms without (3.3, 4.7, 5.1 ms lower in three interleaved pairs).
-  - Known limits (follow-ups TASK-33420, TASK-33421): (a) a budget that
-    expires during a cache-miss bundle upload fails the session start
-    protocol-class, so the binding goes one-shot for the run although the
-    host is reachable (TASK-33420); (b) a call whose session the laptop
-    closes after the call registered but before its REQUEST bytes were
-    written gets `REMOTE_OP_FAILED` instead of re-acquiring (TASK-33421).
