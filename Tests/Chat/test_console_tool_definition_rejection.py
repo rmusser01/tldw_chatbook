@@ -679,10 +679,44 @@ def test_anthropic_bad_request_log_masks_a_token_whose_head_the_key_overlaps():
     assert leaked == [], f"subscription token fragments in the log: {leaked}"
 
 
+def test_anthropic_bad_request_log_masks_a_key_that_runs_into_the_token():
+    """Every credential's span is masked, not each credential in turn.
+
+    The echoed key starts before the token and ends inside it. Masking the
+    longer token first and then looking for the key no longer finds the key,
+    because its tail went with the token, so the key's head reaches the log.
+    The union of the spans found in the original text masks both.
+    """
+    token = _TOKEN_BODY
+    key_head = "Jw9QpLmZ"
+    api_key = key_head + token[:4]
+
+    log = _logged_anthropic_bad_request(
+        api_key,
+        f"the credential {key_head}{token} was not accepted here",
+        subscription_token=token,
+    )
+
+    assert "was not accepted here" in log
+    assert key_head not in log
+    leaked = sorted(
+        {
+            token[start : start + 4]
+            for start in range(len(token) - 3)
+            if token[start : start + 4] in log
+        }
+    )
+    assert leaked == [], f"subscription token fragments in the log: {leaked}"
+
+
 def test_anthropic_bad_request_log_masks_the_stripped_form_of_a_padded_key():
-    """A key read with padding is sent as-is; the provider may echo it trimmed."""
+    """A key read with trailing padding is sent as-is; the provider may echo it trimmed.
+
+    Only trailing padding is realistic: ``requests`` refuses a header value
+    with leading whitespace before anything reaches the provider.
+    """
     core = "Wv3kQ9pLm2"
-    padded_key = f"  {core}\t"
+    padded_key = f"{core}\t "
 
     log = _logged_anthropic_bad_request(
         padded_key, f"invalid x-api-key {core} for this workspace"
@@ -692,7 +726,9 @@ def test_anthropic_bad_request_log_masks_the_stripped_form_of_a_padded_key():
     assert core not in log
 
 
-@pytest.mark.parametrize("api_key", ["o", "top"], ids=["1-char", "3-char"])
+@pytest.mark.parametrize(
+    "api_key", ["o", "top", "top "], ids=["1-char", "3-char", "3-char-padded"]
+)
 def test_anthropic_bad_request_log_keeps_the_message_for_a_too_short_key(api_key):
     """A 1-3 character key is not a usable secret; masking it shreds AC#5.
 

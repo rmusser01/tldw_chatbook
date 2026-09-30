@@ -1255,7 +1255,8 @@ def _credential_redacted_detail(detail: object, *known_credentials: object) -> s
     Each credential is masked as sent and in its stripped form, since a
     provider may echo a padded key trimmed. A short key matches none of the
     redactor's shapes, so any form of ``_MIN_MASKED_CREDENTIAL_CHARS`` or more
-    is masked however short (Qodo #2931); a shorter one is not a secret.
+    is masked however short (Qodo #2931); a credential shorter than that once
+    stripped is not a secret, and none of its forms is masked.
 
     Every occurrence of every form is located in the ORIGINAL text and the
     union of those spans is masked in one pass. Masking one credential at a
@@ -1273,12 +1274,14 @@ def _credential_redacted_detail(detail: object, *known_credentials: object) -> s
         The detail with known and recognizable credentials masked.
     """
     text = str(detail or "")
+    # The floor applies to the credential's substance, not to a padded form:
+    # "top " is still a 3-character dummy key.
     forms = {
         form
         for credential in known_credentials
         if isinstance(credential, str)
+        and len(credential.strip()) >= _MIN_MASKED_CREDENTIAL_CHARS
         for form in (credential, credential.strip())
-        if len(form) >= _MIN_MASKED_CREDENTIAL_CHARS
     }
     spans: list[tuple[int, int]] = []
     for form in forms:
