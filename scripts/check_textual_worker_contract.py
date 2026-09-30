@@ -57,12 +57,47 @@ W002 (census ratchet, not a gate)
     The census rows are a *baseline*, not an endorsement: they were captured
     mechanically and have not been individually reviewed.
 
+W003 (census ratchet, TASK-33621.13)
+    A wait-for-dismiss screen push -- ``push_screen_wait(...)`` or
+    ``push_screen(..., wait_for_dismiss=True)`` -- reachable from a coroutine
+    that is not a worker. Textual APPENDS the screen to the stack and only
+    then raises ``NoActiveWorker``; the exception kills the message loop of
+    whatever pump was dispatching, with the pushed screen already painted on
+    top. GAP4-01 (Console UX review 2026-09-29) was this: the Conversation
+    Inspector's ``@on`` handler awaited a recovery callable that awaited a
+    folder picker, and the whole app froze -- Ctrl+Q included.
+
+    The roots are message handlers (``@on``, ``on_*``/``_on_*``, ``key_*``),
+    actions (``action_*``) and watchers (``watch_*``), none of which Textual
+    runs in a worker, plus a callable handed to ``call_later``/``call_next``/
+    ``call_after_refresh``/``set_timer``/``set_interval`` or a coroutine handed
+    to ``create_task``/``ensure_future``. A root is reported when it pushes
+    directly, or ``await``s -- transitively -- something that does. ``@work``
+    functions, and coroutines handed to ``run_worker``, are workers and stop
+    the propagation.
+
+    "Transitively" is resolved by NAME, deliberately, because the real defect
+    crossed three modules through callables passed as arguments:
+    ``partial(recover, select_binding=controller._select_binding)`` in a dict
+    whose key became the Inspector's ``__init__`` parameter and then its
+    ``self._project_instruction_recovery`` attribute. So a keyword argument,
+    a string-keyed dict entry, or an assignment whose value refers to a
+    waiting callable makes its keyword/key/target name an alias for one; an
+    ``await`` of an alias waits too. ``self.x()`` resolves to the enclosing
+    class's own ``x`` when it defines one; a bare ``x()`` to a nested or
+    module-level ``x`` in scope first. This over-approximates (two unrelated
+    functions sharing a name are one to it), which is why W003 is a census
+    like W002 rather than a zero-tolerance gate: the pre-existing roots are
+    pinned in ``scripts/textual_wait_push_census.tsv`` and only a NEW root
+    fails. Those rows are an unreviewed baseline -- each may be a real freeze
+    of the GAP4-01 kind -- not an endorsement.
+
 Stdlib-only, like the other derived-artifact checkers, so it runs with no
 dependency install.
 
 Usage:
     python scripts/check_textual_worker_contract.py
-    python scripts/check_textual_worker_contract.py --write   # re-pin W002
+    python scripts/check_textual_worker_contract.py --write   # re-pin W002+W003
 """
 
 from __future__ import annotations
@@ -75,6 +110,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = REPO_ROOT / "tldw_chatbook"
 CENSUS = REPO_ROOT / "scripts" / "textual_await_dom_census.tsv"
+WAIT_PUSH_CENSUS = REPO_ROOT / "scripts" / "textual_wait_push_census.tsv"
 
 #: Directories that never ship a Textual widget.
 SKIP_PARTS = {".venv", "Third_Party", "__pycache__", "node_modules"}
@@ -352,11 +388,407 @@ def collect_w002(tree: ast.Module, path: Path) -> list[str]:
     return sites
 
 
-def _read_census() -> dict[str, int]:
-    if not CENSUS.exists():
+#: W003: pump-run entry points, by Textual's naming conventions. ``@on`` is
+#: detected from the decorator.
+HANDLER_PREFIXES = ("on_", "_on_", "action_", "watch_", "_watch_", "key_")
+
+#: W003: schedulers that run a callable (or a coroutine) on a message pump or a
+#: plain task -- never inside a worker.
+PUMP_SCHEDULERS = {
+    "call_later",
+    "call_next",
+    "call_after_refresh",
+    "set_timer",
+    "set_interval",
+    "create_task",
+    "ensure_future",
+}
+
+#: A callable reference: ``("self", name)`` for ``self.name``, ``("name",
+#: name)`` for a bare name, ``("attr", name)`` for ``anything.name``.
+_Ref = tuple[str, str]
+
+
+def _decorator_names(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for decorator in getattr(node, "decorator_list", ()):
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        name = getattr(target, "attr", None) or getattr(target, "id", None)
+        if name:
+            names.add(name)
+    return names
+
+
+def _is_wait_push(call: ast.Call) -> bool:
+    """``push_screen_wait(...)``, or ``push_screen(..., wait_for_dismiss=True)``.
+
+    Matched by the called name alone, so ``getattr(app, "push_screen_wait")``
+    bound to a local of the same name is caught too.
+    """
+    name = getattr(call.func, "attr", None) or getattr(call.func, "id", None)
+    if name == "push_screen_wait":
+        return True
+    if name != "push_screen":
+        return False
+    if any(
+        keyword.arg == "wait_for_dismiss"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+        for keyword in call.keywords
+    ):
+        return True
+    return (
+        len(call.args) >= 3
+        and isinstance(call.args[2], ast.Constant)
+        and call.args[2].value is True
+    )
+
+
+def _ref(node: ast.AST) -> _Ref | None:
+    """The callable ``node`` names, unwrapping ``partial(target, ...)``."""
+    if isinstance(node, ast.Call):
+        func_name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if func_name == "partial" and node.args:
+            return _ref(node.args[0])
+        return None
+    if isinstance(node, ast.Name):
+        return ("name", node.id)
+    if isinstance(node, ast.Attribute):
+        if isinstance(node.value, ast.Name) and node.value.id == "self":
+            return ("self", node.attr)
+        return ("attr", node.attr)
+    return None
+
+
+class _Function:
+    """One ``def``/``async def`` and what W003 needs to know about it."""
+
+    def __init__(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        module: "_Module",
+        cls: str | None,
+        parent: "_Function | None",
+    ) -> None:
+        # The name only, never the node: holding every module's AST alive
+        # until the graph is solved made the cyclic GC rescan them all and
+        # more than doubled the checker's parse time.
+        self.name = node.name
+        self.module = module
+        self.cls = cls
+        self.parent = parent
+        self.nested: dict[str, _Function] = {}
+        # `local = <callable>` inside this function: scoped, never global.
+        self.local_aliases: dict[str, list[_Ref]] = {}
+        decorators = _decorator_names(node)
+        self.is_worker = "work" in decorators
+        self.is_root = not self.is_worker and (
+            "on" in decorators or node.name.startswith(HANDLER_PREFIXES)
+        )
+        self.direct = False
+        self.awaited: list[_Ref] = []
+        self.scheduled: list[_Ref] = []
+        self.waiting = False
+
+    @property
+    def key(self) -> str:
+        owner = f"{self.cls}." if self.cls else ""
+        return f"{self.module.rel}::{owner}{self.name}"
+
+
+class _Module:
+    def __init__(self, rel: str) -> None:
+        self.rel = rel
+        self.functions: dict[str, _Function] = {}  # module-level defs
+        self.classes: dict[str, dict[str, _Function]] = {}
+        # (alias name, value reference, class context, function context)
+        self.aliases: list[tuple[str, _Ref, str | None, _Function | None]] = []
+
+
+_SCHEDULED_COROUTINE = {"create_task", "ensure_future"}
+
+
+def _record_call(sink: _Function, call: ast.Call) -> None:
+    """A direct wait push, or a callable handed to a pump scheduler."""
+    if _is_wait_push(call):
+        sink.direct = True
+    name = getattr(call.func, "attr", None) or getattr(call.func, "id", None)
+    if name not in PUMP_SCHEDULERS:
+        return
+    for arg in call.args:
+        target = (
+            arg.func
+            if isinstance(arg, ast.Call) and name in _SCHEDULED_COROUTINE
+            else arg
+        )
+        ref = _ref(target)
+        if ref is not None:
+            sink.scheduled.append(ref)
+
+
+def _record_await(sink: _Function, node: ast.Await) -> None:
+    """The awaited call, and any coroutine built inline as its argument
+    (``await asyncio.wait_for(self.pick(), 5)`` still runs ``pick`` here --
+    except ``run_worker(self.pick())``, whose argument runs in a worker)."""
+    if not isinstance(node.value, ast.Call):
+        return
+    func = node.value.func
+    inline = (
+        ()
+        if (getattr(func, "attr", None) or getattr(func, "id", None)) == "run_worker"
+        else node.value.args
+    )
+    for call in (node.value, *inline):
+        if isinstance(call, ast.Call):
+            ref = _ref(call.func)
+            if ref is not None:
+                sink.awaited.append(ref)
+
+
+def _alias_pairs(node: ast.AST) -> list[tuple[str, ast.AST, bool]]:
+    """Names a callable is handed on under: keyword, dict key, assignment.
+
+    Returns ``(name, value, is_bare_name_target)``: an assignment to a bare
+    name inside a function is a LOCAL alias, resolved in that function's
+    scope only; everything else can cross into another function's
+    parameter or attribute, so it goes into the package-wide table.
+    """
+    if isinstance(node, ast.Call):
+        return [(kw.arg, kw.value, False) for kw in node.keywords if kw.arg]
+    if isinstance(node, ast.Dict):
+        return [
+            (key.value, value, False)
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        ]
+    if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        pairs = []
+        for target in targets:
+            if isinstance(target, ast.Name):
+                pairs.append((target.id, node.value, True))
+            elif isinstance(target, ast.Attribute):
+                pairs.append((target.attr, node.value, False))
+        return pairs
+    return []
+
+
+_ALIAS_SOURCES = (ast.Call, ast.Dict, ast.Assign, ast.AnnAssign)
+
+
+def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function]]:
+    """One iterative pass: defs, their pushes/awaits/schedules, and aliases.
+
+    Hand-rolled rather than ``ast.walk`` + ``iter_child_nodes`` twice: this
+    runs over the whole package inside ``preflight.sh``, and the two-pass
+    first cut tripled the checker's runtime. ``ctx`` children (``Load``/
+    ``Store``) are skipped for the same reason.
+
+    Each stack entry carries the enclosing class, the enclosing function
+    (the alias context), and the "sink" that owns pushes and awaits -- which
+    is ``None`` inside a ``lambda``: its body runs later, not in the
+    enclosing function's await chain.
+    """
+    module = _Module(rel)
+    functions: list[_Function] = []
+    AST = ast.AST
+    stack: list[tuple[ast.AST, str | None, _Function | None, _Function | None]] = [
+        (tree, None, None, None)
+    ]
+    while stack:
+        node, cls, fn, sink = stack.pop()
+        kind = type(node)
+        if kind is ast.ClassDef:
+            module.classes.setdefault(node.name, {})
+            cls, fn, sink = node.name, None, None
+        elif kind is ast.FunctionDef or kind is ast.AsyncFunctionDef:
+            new = _Function(node, module, cls if fn is None else None, fn)
+            functions.append(new)
+            if fn is not None:
+                fn.nested[node.name] = new
+            elif cls is not None:
+                module.classes[cls][node.name] = new
+            else:
+                module.functions[node.name] = new
+            fn = sink = new
+        elif kind is ast.Lambda:
+            sink = None
+        else:
+            if sink is not None:
+                if kind is ast.Call:
+                    _record_call(sink, node)
+                elif kind is ast.Await:
+                    _record_await(sink, node)
+            if isinstance(node, _ALIAS_SOURCES):
+                local = fn is not None and kind is not ast.Call and kind is not ast.Dict
+                for alias, value, is_name in _alias_pairs(node):
+                    ref = _ref(value)
+                    if ref is None or ref[1] == alias:
+                        continue
+                    if local and is_name:
+                        fn.local_aliases.setdefault(alias, []).append(ref)
+                    else:
+                        module.aliases.append((alias, ref, cls, fn))
+        for field in node._fields:
+            if field == "ctx":
+                continue
+            value = getattr(node, field, None)
+            if value.__class__ is list:
+                for item in value:
+                    if isinstance(item, AST):
+                        stack.append((item, cls, fn, sink))
+            elif isinstance(value, AST):
+                stack.append((value, cls, fn, sink))
+    return module, functions
+
+
+class _WaitGraph:
+    """Name-resolved fixpoint of "awaits a wait-for-dismiss push".
+
+    A function or method name reached through the fallback (``obj.x()``, an
+    inherited ``self.x()``, an imported ``x()``) waits when ANY definition of
+    that name waits -- the real defect's chain ran through
+    ``controller._select_project_instruction_binding``, a name shared with a
+    non-waiting method of the Console runtime. An ALIAS waits only when EVERY
+    place it is bound hands on a waiting callable: with "any" there too, one
+    ``callback=<waiting>`` keyword made every ``await callback()`` in the
+    package wait, and the first cut of this check reported 517 roots,
+    nearly all of them that cascade.
+    """
+
+    def __init__(self, collected: list[tuple[_Module, list[_Function]]]) -> None:
+        self.modules: list[_Module] = []
+        self.functions: list[_Function] = []
+        for module, functions in collected:
+            self.modules.append(module)
+            self.functions.extend(functions)
+        self.defs_by_name: dict[str, list[_Function]] = {}
+        for fn in self.functions:
+            if fn.parent is None:
+                self.defs_by_name.setdefault(fn.name, []).append(fn)
+        self.alias_bindings: dict[
+            str, list[tuple[_Ref, _Module, str | None, _Function | None]]
+        ] = {}
+        for module in self.modules:
+            for alias, ref, cls, fn in module.aliases:
+                self.alias_bindings.setdefault(alias, []).append(
+                    (ref, module, cls, fn)
+                )
+        self.waiting_def_names: set[str] = set()
+        self.waiting_aliases: set[str] = set()
+        self._solve()
+
+    def _name_waits(self, name: str) -> bool:
+        return name in self.waiting_def_names or name in self.waiting_aliases
+
+    def _waits(
+        self,
+        ref: _Ref,
+        module: _Module,
+        cls: str | None,
+        fn: _Function | None,
+        depth: int = 0,
+    ) -> bool:
+        kind, name = ref
+        if kind == "self" and cls is not None:
+            method = module.classes.get(cls, {}).get(name)
+            if method is not None:
+                return method.waiting
+        elif kind == "name":
+            scope = fn
+            while scope is not None:
+                if name in scope.nested:
+                    return scope.nested[name].waiting
+                if name in scope.local_aliases:
+                    # `recovery = self._project_instruction_recovery` then
+                    # `await recovery(...)`: follow the local, bounded so an
+                    # `a = b; b = a` cycle cannot recurse forever.
+                    return depth < 16 and any(
+                        self._waits(local, module, cls, scope, depth + 1)
+                        for local in scope.local_aliases[name]
+                    )
+                scope = scope.parent
+            if name in module.functions:
+                return module.functions[name].waiting
+        return self._name_waits(name)
+
+    @staticmethod
+    def _class_of(fn: _Function) -> str | None:
+        while fn.parent is not None:
+            fn = fn.parent
+        return fn.cls
+
+    def _solve(self) -> None:
+        pending = [
+            fn
+            for fn in self.functions
+            if not fn.is_worker and (fn.direct or fn.awaited)
+        ]
+        changed = True
+        while changed:
+            changed = False
+            still_pending: list[_Function] = []
+            for fn in pending:
+                cls = self._class_of(fn)
+                if fn.direct or any(
+                    self._waits(ref, fn.module, cls, fn) for ref in fn.awaited
+                ):
+                    fn.waiting = True
+                    if fn.parent is None:
+                        self.waiting_def_names.add(fn.name)
+                    changed = True
+                else:
+                    still_pending.append(fn)
+            pending = still_pending
+            for alias, bindings in self.alias_bindings.items():
+                if alias in self.waiting_aliases:
+                    continue
+                if all(
+                    self._waits(ref, module, cls, fn)
+                    for ref, module, cls, fn in bindings
+                ):
+                    self.waiting_aliases.add(alias)
+                    changed = True
+
+    def roots(self) -> list[str]:
+        sites: list[str] = []
+        for fn in self.functions:
+            if fn.is_worker:
+                continue
+            if fn.is_root and fn.waiting:
+                sites.append(fn.key)
+            cls = self._class_of(fn)
+            sites.extend(
+                f"{fn.key}->{ref[1]}"
+                for ref in fn.scheduled
+                if self._waits(ref, fn.module, cls, fn)
+            )
+        return sites
+
+
+def collect_w003(modules: list[tuple[ast.Module, Path]]) -> list[str]:
+    """Non-worker entry points that reach a wait-for-dismiss screen push.
+
+    Args:
+        modules: Every parsed module with its path -- the resolution is
+            cross-module by design.
+
+    Returns:
+        One ``"<path>::<Class.>function"`` census key per offending root (a
+        pump-scheduled callable is keyed ``"<scheduler key>-><callable>"``),
+        repeated when one file holds several same-named roots.
+    """
+    return _WaitGraph(
+        [_collect_module(tree, _rel(path)) for tree, path in modules]
+    ).roots()
+
+
+def _read_census(census: Path | None = None) -> dict[str, int]:
+    census = CENSUS if census is None else census
+    if not census.exists():
         return {}
     rows: dict[str, int] = {}
-    for line in CENSUS.read_text(encoding="utf-8").splitlines():
+    for line in census.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -399,17 +831,45 @@ def _write_census(sites: list[str]) -> None:
     CENSUS.write_text(header + body + "\n", encoding="utf-8")
 
 
+def _write_wait_push_census(sites: list[str]) -> None:
+    header = (
+        "# Baseline census for W003: a non-worker entry point (message handler,\n"
+        "# action, watcher, or a callable handed to call_later/call_next/\n"
+        "# call_after_refresh/set_timer/set_interval/create_task/ensure_future)\n"
+        "# that reaches `push_screen_wait` or `push_screen(..., wait_for_dismiss=\n"
+        "# True)`. Textual pushes the screen and THEN raises NoActiveWorker, which\n"
+        "# kills the dispatching pump under the painted screen -- GAP4-01, the\n"
+        "# Console Inspector 'Choose folder' freeze (TASK-33621.13). Generated by\n"
+        "# scripts/check_textual_worker_contract.py --write\n"
+        "#\n"
+        "# These rows are a BASELINE, not an endorsement: they were captured\n"
+        "# mechanically, reachability is resolved by NAME (so some rows are two\n"
+        "# unrelated functions sharing a name), and none has been individually\n"
+        "# reviewed. Any of them may be a real freeze.\n"
+        "#\n"
+        "# Removing a row is always fine. Adding one is a deliberate act: run the\n"
+        "# flow in a worker (`run_worker(coro)` / `@work`) or push with a\n"
+        "# `callback=` instead of awaiting the dismissal.\n"
+        "#\n"
+        "# path::[Class.]entry point[->scheduled callable]\toccurrences\n"
+    )
+    counts = _tally(sites)
+    body = "\n".join(f"{key}\t{counts[key]}" for key in sorted(counts))
+    WAIT_PUSH_CENSUS.write_text(header + body + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--write",
         action="store_true",
-        help="re-pin the W002 census to what the tree currently contains",
+        help="re-pin the W002 and W003 censuses to what the tree currently contains",
     )
     args = parser.parse_args()
 
     w001: list[str] = []
     w002: list[str] = []
+    collected: list[tuple[_Module, list[_Function]]] = []
     for path in _source_files():
         try:
             with warnings.catch_warnings():
@@ -422,10 +882,16 @@ def main() -> int:
             continue
         w001.extend(collect_w001(tree, path))
         w002.extend(collect_w002(tree, path))
+        collected.append(_collect_module(tree, _rel(path)))
+    w003 = _WaitGraph(collected).roots()
 
     if args.write:
         _write_census(w002)
         print(f"W002 census re-pinned: {len(w002)} site(s) -> {_rel(CENSUS)}")
+        _write_wait_push_census(w003)
+        print(
+            f"W003 census re-pinned: {len(w003)} root(s) -> {_rel(WAIT_PUSH_CENSUS)}"
+        )
         if w001:
             print("W001 violations are NOT allowlistable; fix them:")
             for row in w001:
@@ -476,6 +942,39 @@ def main() -> int:
         )
         print()
 
+    known_waits = _read_census(WAIT_PUSH_CENSUS)
+    current_waits = _tally(w003)
+    added_waits = sorted(
+        key
+        for key, count in current_waits.items()
+        if count > known_waits.get(key, 0)
+    )
+    if added_waits:
+        failed = True
+        print(
+            f"::error::{len(added_waits)} new wait-for-dismiss screen push(es) "
+            "reachable from a non-worker entry point."
+        )
+        print(
+            "`push_screen_wait` / `push_screen(..., wait_for_dismiss=True)` "
+            "appends the screen and THEN raises NoActiveWorker outside a "
+            "worker: the dispatching pump dies under the painted screen and "
+            "the app stops responding (TASK-33621.13, the Inspector 'Choose "
+            "folder' freeze). Run the flow in a worker (`run_worker(coro)` or "
+            "`@work`), or push with a `callback=` instead of awaiting:"
+        )
+        for key in added_waits:
+            print(
+                f"  {key}  ({known_waits.get(key, 0)} in census, "
+                f"{current_waits[key]} now)"
+            )
+        print()
+        print(
+            "If the entry point genuinely always runs inside a worker, re-pin "
+            "with:  python scripts/check_textual_worker_contract.py --write"
+        )
+        print()
+
     if failed:
         return 1
 
@@ -483,10 +982,19 @@ def main() -> int:
         max(0, count - current.get(key, 0)) for key, count in known.items()
     )
     note = f"; {resolved} baseline lookup(s) resolved" if resolved else ""
+    resolved_waits = sum(
+        max(0, count - current_waits.get(key, 0))
+        for key, count in known_waits.items()
+    )
+    wait_note = (
+        f"; {resolved_waits} baseline root(s) resolved" if resolved_waits else ""
+    )
     print(
         f"textual worker contract: no synchronous run_worker targets; "
         f"{sum(current.values())} post-await DOM lookup(s) in "
-        f"{len(current)} function(s), none new{note}."
+        f"{len(current)} function(s), none new{note}; "
+        f"{sum(current_waits.values())} non-worker wait-for-dismiss root(s), "
+        f"none new{wait_note}."
     )
     return 0
 
