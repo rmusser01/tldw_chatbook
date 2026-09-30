@@ -70,3 +70,22 @@ and moved MCP progress into a strict shared Pydantic model. Integer counter prec
 is retained; malformed strings, booleans, nonfinite numbers and overflowing integers
 are quietly rejected without logging validator bodies. The final focused selection
 above passes all 48 checks after these changes.
+
+
+## CI repair and latest-dev qualification — 2026-09-30
+
+Required UI CI passed 840 cases and failed two mixed-submit ownership cases.
+Both failures reproduce: their namespace fixture bypassed widget initialization
+and omitted the new reason input/collector. The repaired fixture binds the real
+collector and asserts that the reason input locks before publishing and that
+approval excludes its text. The derived-artifact job failed only its UI-result
+aggregation step; every artifact/inventory guard passed.
+
+Rebase onto dev `dfee4bf4c6` preserved both implementation patches unchanged
+(`git range-diff`). Approval/denial-flow qualification: **42 passed**. Streaming
+and startup qualification: **34 passed**, with the CSS-byte case initially
+over by 65 B. Removing 71 whitespace bytes from existing approval rules and
+rebuilding preserved every non-whitespace source character; the final UI, token
+and CSS-budget selection then passed **39 checks**. Boot CSS is **608,084 /
+608,090 B** and module census **1031 / 1033**. No budget was raised. Latest-dev
+preflight passed; the rebuilt stylesheet's sync guard is checked before push.

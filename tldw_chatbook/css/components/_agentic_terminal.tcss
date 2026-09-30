@@ -1536,29 +1536,14 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    fr-inside-flex bug this block already documents, and left at the default
    it balloons to the card height and takes the args line off screen. */
 .approval-row, .approval-row-controls {height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
-.approval-row-header,
-.approval-row-args {
-    width: $ds-width-fill;
-}
-.approval-row-full-command {
-    width: $ds-width-fill;
-    height: $ds-size-6;
-    min-height: $ds-size-3;
-}
+.approval-row-header,.approval-row-args{width:$ds-width-fill;}
+.approval-row-full-command{width:$ds-width-fill;height:$ds-size-6;min-height:$ds-size-3;}
 /* task-32278: the row's reason line (why this is asking -- the visible
    replacement for the old header tooltip) and its scope line (what the
    selected decision commits to, and where to undo it). Both carry full
    sentences, so they get the same explicit `1fr` share as the header and
    args lines above rather than a `width: auto` that overflows the row. */
-.approval-row-reason,
-.approval-row-scope,
-.approval-row-raw-label,
-.approval-row-raw-metadata,
-.approval-row-raw-warning,
-.approval-row-raw-scope {
-    width: $ds-width-fill;
-    height: auto;
-}
+.approval-row-reason,.approval-row-scope,.approval-row-raw-label,.approval-row-raw-metadata,.approval-row-raw-warning,.approval-row-raw-scope{width:$ds-width-fill;height:auto;}
 /* task-32278: the label area is this width MINUS 8 cells of Textual chrome
    (`SelectCurrent`: `border: tall` 1+1, `padding: 0 2` 2+2, `.arrow`
    `width: 1` with `padding: 0 0 0 1`). The closed Select does not
@@ -1568,9 +1553,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    The labels are short now (longest: "Always · these args", 19); 27 is
    19 + 8, and `Tests/UI/test_chat_approval_card.py` reads this number back
    out of this file so the two cannot drift apart again. */
-.approval-row-decision {
-    width: $ds-agentic-prompt-vars-pane;
-}
+.approval-row-decision{width:$ds-agentic-prompt-vars-pane;}
 /* Fleet-UX expert review F5 (task-1234): single-row cards additionally
    mount two compact fast-path buttons after the decision Select --
    "Approve once"/"Deny" submit immediately, bypassing Select+Submit for
@@ -1578,11 +1561,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    `single_row` gate; never rendered for a multi-row batch). `compact`
    already keeps these borderless/1-row tall; fixed widths keep them from
    claiming `Button`'s `width: auto` share and squeezing the row. */
-.approval-row-fast-approve,
-.approval-row-fast-deny {
-    width: $ds-size-14;
-    min-width: $ds-size-14;
-}
+.approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
 /* task-5 (Phase-5 follow-up): a bulk "Approve all"/"Deny all" press can't
    legally reach every narrowed row (`ChatApprovalCard._set_all_batch_
    decisions` -- a row whose `options` exclude every bulk candidate is left

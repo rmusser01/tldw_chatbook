@@ -3693,35 +3693,14 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 }
 
 .approval-row, .approval-row-controls {height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
-.approval-row-header,
-.approval-row-args {
-    width: $ds-width-fill;
-}
-.approval-row-full-command {
-    width: $ds-width-fill;
-    height: $ds-size-6;
-    min-height: $ds-size-3;
-}
+.approval-row-header,.approval-row-args{width:$ds-width-fill;}
+.approval-row-full-command{width:$ds-width-fill;height:$ds-size-6;min-height:$ds-size-3;}
 
-.approval-row-reason,
-.approval-row-scope,
-.approval-row-raw-label,
-.approval-row-raw-metadata,
-.approval-row-raw-warning,
-.approval-row-raw-scope {
-    width: $ds-width-fill;
-    height: auto;
-}
+.approval-row-reason,.approval-row-scope,.approval-row-raw-label,.approval-row-raw-metadata,.approval-row-raw-warning,.approval-row-raw-scope{width:$ds-width-fill;height:auto;}
 
-.approval-row-decision {
-    width: $ds-agentic-prompt-vars-pane;
-}
+.approval-row-decision{width:$ds-agentic-prompt-vars-pane;}
 
-.approval-row-fast-approve,
-.approval-row-fast-deny {
-    width: $ds-size-14;
-    min-width: $ds-size-14;
-}
+.approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
 
 .approval-row.needs-decision {
     border: solid $ds-status-approval-required;
