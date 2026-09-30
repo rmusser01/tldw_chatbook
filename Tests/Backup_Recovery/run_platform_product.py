@@ -1044,7 +1044,7 @@ def _publish_native_failures(private_root: Path, artifacts: Path) -> None:
         (private_root / "native-failures" / "child-stacks").glob("*.json")
     ):
         label = re.fullmatch(
-            r"(setup|capture|transfer|negative|read|read-rollback)--(default|retargeted)--[1-9][0-9]{0,9}",
+            r"(setup|capture|transfer|rollback|negative|read|read-rollback)--(default|retargeted)--[1-9][0-9]{0,9}",
             path.stem,
         )
         if path.is_symlink() or label is None:

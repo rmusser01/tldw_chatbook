@@ -731,6 +731,57 @@ def _transfer(source):
         for role in ("default", "retargeted"):
             _child(Path.cwd(), installed, "read", role=role, source=source)
 
+        result = {
+            "source_system": source_system,
+            "destination_system": platform.system(),
+            "archive_sha256": _digest(source),
+            "isolated": True,
+            "original_retained": True,
+            "replacement": True,
+            "rollback": False,
+            "captured": len(records),
+            "manual_required": len(incoming_manual),
+            "unavailable": 0,
+        }
+        _write(
+            Path.cwd() / "transfer-forward.json",
+            {
+                "source": str(source.resolve()),
+                "journal_operation_id": original,
+                "unselected": {
+                    str(path): digest for path, digest in unselected.items()
+                },
+                "result": result,
+            },
+        )
+    finally:
+        service.close()
+
+
+def _rollback(source):
+    """Review the committed copy in a fresh interpreter without ordinary startup."""
+    assert not {"tldw_chatbook.app", "tldw_chatbook.config"}.intersection(sys.modules)
+    handoff = json.loads((Path.cwd() / "transfer-forward.json").read_text())
+    result = handoff["result"]
+    assert handoff["source"] == str(source.resolve())
+    assert result["archive_sha256"] == _digest(source)
+    assert (
+        result["source_system"]
+        == json.loads(source.with_suffix(".json").read_text())["system"]
+    )
+    assert result["destination_system"] == platform.system() and not result["rollback"]
+    unselected = {Path(path): digest for path, digest in handoff["unselected"].items()}
+    assert len(unselected) == 2
+    assert all(_digest(path) == digest for path, digest in unselected.items())
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        RecoveryService,
+        default_control_root,
+    )
+
+    original = handoff["journal_operation_id"]
+    service = _observe_workers(RecoveryService(default_control_root()))
+    try:
+
         def preview_reverse(acknowledged):
             target = service.preview_backup(_selectors(), options={})
             assert target.complete
@@ -748,24 +799,17 @@ def _transfer(source):
                 original, plan, old_password=PASSWORD, new_password=PASSWORD
             ),
         )
+        installed = Path(os.environ["TLDW_TEST_INSTALLED_PACKAGE"])
         for role in ("default", "retargeted"):
             _child(Path.cwd(), installed, "read-rollback", role=role, source=source)
         assert all(_digest(path) == digest for path, digest in unselected.items())
-        result = {
-            "source_system": source_system,
-            "destination_system": platform.system(),
-            "archive_sha256": _digest(source),
-            "isolated": True,
-            "original_retained": True,
-            "replacement": True,
-            "rollback": True,
-            "captured": len(records),
-            "manual_required": len(incoming_manual),
-            "unavailable": 0,
-        }
-        _write(Path.cwd() / "direction.json", result)
+        assert result["archive_sha256"] == _digest(source)
+        _write(Path.cwd() / "direction.json", {**result, "rollback": True})
     finally:
         service.close()
+        assert not {"tldw_chatbook.app", "tldw_chatbook.config"}.intersection(
+            sys.modules
+        )
 
 
 async def _transfer_with_app(source):
@@ -981,6 +1025,7 @@ def test_native_credential_destinations(tmp_path, native_package):
         for role in ("default", "retargeted"):
             _child(root, native_package, "setup", role=role)
         _child(root, native_package, "transfer", source=source)
+        _child(root, native_package, "rollback", source=source)
         results.append(json.loads((root / "direction.json").read_text()))
     negative_root = tmp_path / "negative-checks"
     negative_root.mkdir(mode=0o700)
@@ -1017,6 +1062,7 @@ def _main():
         "setup",
         "capture",
         "transfer",
+        "rollback",
         "negative",
         "read",
         "read-rollback",
@@ -1047,6 +1093,8 @@ def _main():
             asyncio.run(_capture())
         elif route == "transfer":
             asyncio.run(_transfer_with_app(Path(sys.argv[3])))
+        elif route == "rollback":
+            _rollback(Path(sys.argv[3]))
         elif route == "negative":
             _negative_checks(Path(sys.argv[3]))
         else:

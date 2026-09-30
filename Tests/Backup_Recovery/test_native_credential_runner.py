@@ -489,12 +489,18 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
                 }
             )
         )
-    setups = {}
+    setups, completed_forward, reversed_roots = {}, set(), []
 
     def child(root, installed, route, *, role="retargeted", source=None):
         if route == "setup":
             setups.setdefault(root, []).append(role)
         elif route == "transfer":
+            assert not (root / "direction.json").exists()
+            completed_forward.add(root)
+        elif route == "rollback":
+            assert root in completed_forward
+            assert not (root / "direction.json").exists()
+            reversed_roots.append(root)
             (root / "direction.json").write_text("{}")
         else:
             assert route == "negative"
@@ -506,12 +512,77 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
     monkeypatch.setattr(product, "_child", child)
     monkeypatch.setattr(product, "_receipt", lambda installed, **extra: extra)
     product.test_native_credential_destinations(run, tmp_path / "installed")
+    assert reversed_roots == [run / name for name in ("Darwin", "Linux", "Windows")]
     assert (
         json.loads((transfer / "outbound/destination-results.json").read_text())[
             "negative_checks"
         ]
         == 7
     )
+
+
+def test_native_rollback_child_diagnostics_keep_only_safe_frames(tmp_path):
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    stacks = private / "native-failures/child-stacks"
+    stacks.mkdir(parents=True)
+    artifacts.mkdir()
+    (stacks / "rollback--retargeted--123.json").write_text(
+        json.dumps(
+            [
+                [
+                    {
+                        "frames": [
+                            {
+                                "file": "test_native_credential_recovery.py",
+                                "function": "_rollback",
+                                "line": 1,
+                            }
+                        ],
+                        "locals": "positive-native-secret",
+                    }
+                ]
+            ]
+        )
+    )
+    runner._publish_native_failures(private, artifacts)
+    published = (artifacts / "native-failures.json").read_text()
+    assert json.loads(published)["children"][0]["route"] == "rollback"
+    assert "positive-native-secret" not in published and '"locals"' not in published
+
+
+@pytest.mark.parametrize("damage", ("source", "archive_sha256", "source_system"))
+def test_native_rollback_validates_forward_source_before_service_effects(
+    tmp_path, monkeypatch, damage
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery import recovery_service
+
+    monkeypatch.chdir(tmp_path)
+    for name in ("tldw_chatbook.app", "tldw_chatbook.config"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    source = tmp_path / "source.age"
+    source.write_bytes(b"synthetic-encrypted-placeholder")
+    source.with_suffix(".json").write_text('{"system":"Linux"}')
+    handoff = {
+        "source": str(source),
+        "result": {
+            "archive_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "source_system": "Linux",
+        },
+    }
+    if damage == "source":
+        handoff["source"] = str(tmp_path / "unreviewed.age")
+    else:
+        handoff["result"][damage] = "unreviewed"
+    (tmp_path / "transfer-forward.json").write_text(json.dumps(handoff))
+    monkeypatch.setattr(
+        recovery_service,
+        "RecoveryService",
+        lambda root: pytest.fail("rollback_service_before_source_validation"),
+    )
+    with pytest.raises(AssertionError):
+        product._rollback(source)
+    assert not (tmp_path / "direction.json").exists()
 
 
 @pytest.mark.parametrize("role", ("default", "retargeted"))
@@ -884,6 +955,23 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
             ),
         )
         product._transfer(source)
+        assert children == [("read", "default"), ("read", "retargeted")]
+        assert len(rounds) == 1 and not reverse_previews
+        assert not (root / "direction.json").exists()
+        handoff = json.loads((root / "transfer-forward.json").read_text())
+        assert handoff["journal_operation_id"] == "original"
+        assert handoff["source"] == str(source.resolve())
+        assert handoff["result"]["archive_sha256"] == product._digest(source)
+        assert handoff["unselected"] == {
+            str(item.path): product._digest(item.path) for item in stores
+        }
+        for name in ("tldw_chatbook.app", "tldw_chatbook.config"):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+        product._rollback(source)
+        assert json.loads((root / "direction.json").read_text())["rollback"] is True
+        assert not {"tldw_chatbook.app", "tldw_chatbook.config"}.intersection(
+            sys.modules
+        )
     else:
         with pytest.raises(PreviewReached):
             product._transfer(source)
