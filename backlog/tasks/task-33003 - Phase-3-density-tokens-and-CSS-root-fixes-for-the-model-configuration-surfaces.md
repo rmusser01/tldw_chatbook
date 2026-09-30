@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-26 11:47'
-updated_date: '2026-09-30 15:17'
+updated_date: '2026-09-30 16:30'
 labels:
   - model-config-redesign
   - phase-3
@@ -71,7 +71,7 @@ Not in this phase: the inverted select-row height in Settings (css/features/_set
 - [x] #1 At 211x44 and 235x52, under the production stylesheet, every Input, Select and in-form Button in Chat settings is one row tall, and a collapsed section costs at most 2 rows (closes C5(a) and C5(b)). (Met: TASK-33003.2's one-row test at 211x44 and 235x52; TASK-33003.1's collapsed-section test, now at both sizes (final fix wave, M1).)
 - [x] #2 At 211x44, Chat settings numeric fields are sized to their value, not about 125 columns wide. (Met: TASK-33003.3, 12 columns, the same at 211 and 235.)
 - [x] #3 The Chat settings fold hint is hidden once the body is scrolled to the bottom and shows whenever content remains below (closes C5(c)). (Met: TASK-33003.4.)
-- [x] #4 Esc, a backdrop click and Cancel never discard edited Chat settings without asking (closes C8(2)). (Met: TASK-33003.5. The final fix wave made the Esc hint name a pending reset or compaction (I4). The Streaming-Inherit credential crash predates this phase: TASK-33003.10.)
+- [x] #4 Esc, a backdrop click and Cancel never discard edited Chat settings without asking (closes C8(2)). (Met: TASK-33003.5. The final fix wave made the Esc hint name a pending reset or compaction (I4). The Streaming-Inherit credential crash predates this phase; TASK-33003.10 fixed it on this branch.)
 - [x] #5 A focused Settings category row is visible at 3:1 or better, and a focused active row is distinguishable from an unfocused active row (closes C8(4)). (Met: TASK-33003.6. At the final head, the focus edge measures 3.83:1 on the active row and 5.12:1 on an inactive row, at 211x44 and 235x52.)
 - [x] #6 The grid-line and control-edge boundaries reach at least 3:1 against surface and panel on every shipped theme whose colours resolve. (Met: TASK-33003.6's gate over every shipped, built-in and user theme.)
 - [x] #7 On Chat settings and Settings ▸ Providers & Models, focused buttons never get darker and Select highlights are visible at 3:1 or better. (Met: TASK-33003.6.)
@@ -256,4 +256,12 @@ Phase 3 ships as one PR. Chat settings becomes a dense form: one-row controls, f
 - origin/dev 75c06af39a reproduces it too, live, from a scratch `git worktree add --detach` with a scratch profile. The worktree was removed afterwards.
 - Cause: the views share #console-settings-body, and `_show_context_view` focuses the Budget strategy Select without resetting the scroll.
 - Not fixed here, by instruction.
+**Rider fix (2026-09-30): TASK-33003.10, Configure credential no longer exits the app.**
+- Streaming at Inherit is now a valid snapshot value (`None`). It round-trips, so the reopened modal shows Inherit, not Off.
+- Two more crashes in the same round trip are fixed:
+  - The return intent's focus allowlist was missing 13 snapshot focus targets, the provider picker among them. A drift test now covers every snapshot focus target.
+  - A blank context Select raised `InvalidSelectValueError` in the reopened modal.
+- Configure credential now answers a refused snapshot with a notice and keeps the draft.
+- console_settings_modal.py is still 7,764 lines.
+- The repro test fails against origin/dev 75c06af39a. It passes here, as does the live repro at 211x44. The covering run shows 0 branch-only reds against the pre-fix head. `preflight.sh` exits 0. Details are in TASK-33003.10.
 <!-- SECTION:NOTES:END -->

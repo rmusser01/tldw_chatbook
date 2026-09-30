@@ -573,7 +573,7 @@ class ConsoleSettingsDraftSnapshot:
 
     settings: ConsoleSessionSettings
     context_policy_overrides: ConsoleContextPolicyOverrides
-    raw_values: Mapping[str, str | bool]
+    raw_values: Mapping[str, str | bool | None]
     provider_model_drafts: Mapping[str, str | None]
     provider_base_url_drafts: Mapping[str, str]
     active_view: str
@@ -626,12 +626,12 @@ class ConsoleSettingsDraftSnapshot:
             _SNAPSHOT_RAW_VALUE_IDS
         ):
             raise ValueError("raw modal values are invalid")
-        raw_values: dict[str, str | bool] = {}
+        raw_values: dict[str, str | bool | None] = {}
         for key, value in self.raw_values.items():
             if type(key) is not str:
                 raise ValueError("raw modal values are invalid")
-            if key == "console-settings-streaming":
-                if type(value) is not bool:
+            if key == "console-settings-streaming":  # None is Inherit
+                if value is not None and type(value) is not bool:
                     raise ValueError("raw modal values are invalid")
             elif key == "console-settings-provider":
                 if _snapshot_provider(value) is None:
@@ -1325,16 +1325,12 @@ class ConsoleSettingsModal(
             str, tuple[ResolvedProviderModelOption, ...]
         ] = {}
         self._streaming_draft: bool | None = (
-            bool(suspended_draft.raw_values.get("console-settings-streaming"))
+            suspended_draft.raw_values["console-settings-streaming"]  # type: ignore[assignment]
             if suspended_draft is not None
-            and type(suspended_draft.raw_values.get("console-settings-streaming"))
-            is bool
+            and "console-settings-streaming" in suspended_draft.raw_values
             else streaming_field.profile_override
             if streaming_field is not None
-            and (
-                streaming_field.profile_override is None
-                or type(streaming_field.profile_override) is bool
-            )
+            and type(streaming_field.profile_override) in (bool, type(None))
             else bool(self._settings.streaming)
         )
         self._streaming_effective_fallback = bool(self._settings.streaming)
@@ -2733,15 +2729,13 @@ class ConsoleSettingsModal(
                             self._invalid_generation_choice_drafts[control_id] = value
                             control.value = Select.NULL
                         self._sync_generation_choice_validation(control_id)
-                    else:
-                        control.value = value
+                    else:  # A blank Select was captured as "".
+                        control.value = value or Select.NULL
             self._active_provider = self._select_value_text(
                 self.query_one("#console-settings-provider", Select).value
             )
-            self._streaming_draft = bool(
-                snapshot.raw_values.get(
-                    "console-settings-streaming", self._streaming_draft
-                )
+            self._streaming_draft = snapshot.raw_values.get(  # type: ignore[assignment]
+                "console-settings-streaming", self._streaming_draft
             )
             self.query_one("#console-settings-streaming", Button).label = (
                 self._streaming_toggle_label()
@@ -2940,7 +2934,7 @@ class ConsoleSettingsModal(
             self._context_state = self._context_state_with_overrides(
                 context_overrides
             )
-        raw_values: dict[str, str | bool] = {}
+        raw_values: dict[str, str | bool | None] = {}
         for control_id in _SNAPSHOT_RAW_VALUE_IDS:
             if control_id == "console-settings-streaming":
                 raw_values[control_id] = self._streaming_draft
@@ -3846,7 +3840,13 @@ class ConsoleSettingsModal(
         """Dismiss through the typed, secret-free credential recovery result."""
         event.stop()
         if self._missing_credential_recovery_available():
-            self.dismiss(self.credential_request())
+            try:  # A refused draft snapshot keeps the modal; it never exits the app.
+                request = self.credential_request()
+            except ValueError:
+                return self.notify(
+                    "Settings could not open; your edits are kept.", severity="warning"
+                )
+            self.dismiss(request)
 
     # Textual 8 composes same-named sync/async MRO message handlers; this is not
     # an ordinary OO override of the mixin hook.

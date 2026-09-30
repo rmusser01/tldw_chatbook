@@ -822,3 +822,253 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
             unsaved_prompt_copy(labels).split("\n")[0]
         )
         assert store.session_settings(session.id) == committed
+
+
+async def _cycle_streaming_to_inherit(pilot, modal: ConsoleSettingsModal) -> None:
+    """Press Streaming until the draft says Inherit (no per-chat override)."""
+    for _ in range(3):
+        if modal._streaming_draft is None:
+            break
+        modal.query_one("#console-settings-streaming", Button).press()
+        await pilot.pause()
+    assert modal._streaming_draft is None
+
+
+def _streaming_label(modal: ConsoleSettingsModal) -> str:
+    return str(modal.query_one("#console-settings-streaming", Button).label)
+
+
+@pytest.mark.asyncio
+async def test_inherit_streaming_survives_the_suspended_draft_round_trip() -> None:
+    """TASK-33003.10: Inherit is a draft value the snapshot must carry.
+
+    The real capture path wrote ``None`` for Inherit and the snapshot refused
+    it with ``ValueError``; the reopened modal also coerced it to Off.
+    """
+    app = _GuardHarness()
+    first = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, first)
+        await _cycle_streaming_to_inherit(pilot, first)
+        snapshot = first.capture_suspended_draft()
+        assert snapshot.raw_values["console-settings-streaming"] is None
+        restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+        assert restored is not None
+        assert restored.raw_values["console-settings-streaming"] is None
+        app.pop_screen()
+        await pilot.pause()
+
+        modal = _modal(suspended_draft=restored)
+        await _open(app, pilot, modal)
+        assert modal._streaming_draft is None
+        assert _streaming_label(modal) == "Inherit"
+
+
+
+@pytest.mark.parametrize(
+    "control_id",
+    [
+        "console-context-budget-mode",
+        "console-context-compaction-mode",
+        "console-context-failure-behavior",
+        "console-context-carry-forward",
+    ],
+)
+@pytest.mark.asyncio
+async def test_blank_context_choice_survives_the_suspended_draft_round_trip(
+    control_id: str,
+) -> None:
+    """TASK-33003.10 sibling: a blank Select is captured as "" and the
+    reopened modal raised InvalidSelectValueError assigning it back."""
+    app = _GuardHarness()
+    first = _modal()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, first)
+        first.query_one(f"#{control_id}", Select).clear()
+        await pilot.pause()
+        snapshot = first.capture_suspended_draft()
+        assert snapshot.raw_values[control_id] == ""
+        app.pop_screen()
+        await pilot.pause()
+
+        modal = _modal(suspended_draft=snapshot)
+        await _open(app, pilot, modal)
+        assert app.is_running
+        assert modal.query_one(f"#{control_id}", Select).is_blank()
+
+@pytest.mark.parametrize("value", [None, True, False])
+def test_snapshot_carries_each_streaming_state_and_refuses_a_malformed_one(
+    value: bool | None,
+) -> None:
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-streaming": value},
+        provider_model_drafts={},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    mapping = snapshot.to_mapping()
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(mapping)
+    assert restored is not None
+    assert restored.raw_values["console-settings-streaming"] is value
+    for malformed in ("", "inherit", "true", 0, 1):
+        mapping["raw_values"] = {"console-settings-streaming": malformed}
+        assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
+    request, monkeypatch
+):
+    """TASK-33003.10 repro, real router: a llama.cpp chat switched to OpenAI
+    (no key) leaves Streaming at Inherit; Configure credential -> Settings ->
+    Return must not exit the app, and the reopened modal shows Inherit."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "persist_provider_settings_atomic",
+        lambda *_args, **_kwargs: ConfigMutationResult(True, True, None),
+    )
+    app = _build_production_app(configured_default="chat")
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+        "openai": {},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-5"]}
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console = None
+        for _ in range(200):
+            console = app._navigation_outgoing_screen()
+            if isinstance(console, ChatScreen):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(
+            console, pilot, "#console-native-composer", timeout=10.0
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        )
+        assert await console._open_console_settings() is True
+        for _ in range(80):
+            if isinstance(app.screen, ConsoleSettingsModal):
+                break
+            await pilot.pause(0.05)
+        first = app.screen
+        assert isinstance(first, ConsoleSettingsModal)
+        await _settle(pilot, first)
+        first.query_one("#console-settings-provider", Select).value = "openai"
+        for _ in range(20):
+            await pilot.pause()
+            if first._active_provider == "openai":
+                break
+        await pilot.pause()
+        # The provider switch alone lands on Inherit (the task's repro).
+        assert first._streaming_draft is None
+        assert _streaming_label(first) == "Inherit"
+        await pilot.click("#console-settings-configure-credential")
+
+        settings = None
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                settings = app.screen
+                break
+            await pilot.pause(0.05)
+        assert settings is not None, "Configure credential did not reach Settings"
+        await _wait_for_selector(
+            settings, pilot, "#settings-provider-api-key", timeout=10.0
+        )
+        settings.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-ROUND-TRIP-KEY"
+        )
+        await pilot.pause()
+        settings.action_settings_save_category(allow_text_entry_focus=True)
+        for _ in range(80):
+            if settings.query_one("#settings-provider-return", Button).has_focus:
+                break
+            await pilot.pause(0.05)
+        settings.query_one("#settings-provider-return", Button).press()
+
+        returned = None
+        for _ in range(240):
+            top = app.screen_stack[-1]
+            if isinstance(top, ConsoleSettingsModal) and top is not first:
+                returned = top
+                break
+            await pilot.pause(0.05)
+        assert returned is not None
+        await _settle(pilot, returned)
+        for _ in range(4):
+            await pilot.pause()
+        assert app.is_running
+        assert returned._active_provider == "openai"
+        assert returned._streaming_draft is None
+        assert _streaming_label(returned) == "Inherit"
+
+
+@pytest.mark.asyncio
+async def test_configure_credential_keeps_the_draft_when_the_snapshot_refuses_it(
+    monkeypatch,
+):
+    """Guard (TASK-33003.10): any snapshot ValueError degrades to a notice;
+    the modal and its edits stay, and the app keeps running."""
+
+    def refuse(_modal: ConsoleSettingsModal) -> ConsoleSettingsDraftSnapshot:
+        raise ValueError("raw modal values are invalid")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(ConsoleSettingsModal, "capture_suspended_draft", refuse)
+    app = _GuardHarness()
+    app.app_config = {"api_settings": {"openai": {}}}
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        app_config={"api_settings": {"openai": {}}},
+        providers_models={"openai": ["gpt-5"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(app, pilot, modal)
+        await _edit(pilot, modal, "#console-settings-temperature", "0.9")
+        await pilot.click("#console-settings-configure-credential")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.is_running
+        assert app.results == []
+        assert app.screen is modal
+        assert modal.query_one("#console-settings-temperature", Input).value == "0.9"
+        assert any(
+            "Settings could not open" in notice.message
+            for notice in app._notifications
+        )
+
+
+def test_every_snapshot_focus_target_survives_the_credential_handoff() -> None:
+    """TASK-33003.10: the return intent refused 13 focus targets the snapshot
+    accepts (the provider picker among them), so Configure credential exited
+    the app whenever one of them held the last focus."""
+    from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+        ConversationSettingsReturnIntent,
+    )
+
+    for control_id in sorted(settings_modal_module._SNAPSHOT_FOCUS_CONTROL_IDS):
+        intent = ConversationSettingsReturnIntent(
+            session_id="session-1",
+            settings_revision=1,
+            active_view="model",
+            focus_control_id=control_id,
+        )
+        assert intent.focus_control_id == control_id
