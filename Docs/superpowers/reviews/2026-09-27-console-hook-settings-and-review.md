@@ -220,3 +220,23 @@ there are **350 distinct local passing cases** (overlapping named cohorts are
 not summed). Authored Ruff/format remains clean across 52 changed Python files.
 Native auto-merge was held on the hosted failure; fresh hosted gates on the
 published test fix must pass before it is enabled again.
+
+
+## Latest server-boundary dev rebase
+
+Dev advanced again to `5980da9c12` before the repaired head's CI started.
+Its per-session MCP character-write refusal was read at the provider and
+Console composition seams, including TASK-33106's accepted ADR-183 policy.
+The rebase is clean and range-diff preserves all ten hook/qualification patches.
+On this base, **417 distinct named cases pass**: 195 hook runtime/config,
+123 exact CI admission cases (one existing xfail), 96 MCP provider/character
+composition cases, and 21 complete boot-budget cases. Overlapping viewless
+cases are counted once. No new xfail or skip was added.
+
+Authored Ruff/format is clean across 52 changed Python files against this base;
+all QA scripts pass full checks. Diagnostic and profile-path inventories and
+generated stylesheets reproduce. Prior mounted Hooks UI/latency recordings and
+native captures retain their explicitly recorded bases; the UI/style patches
+are unchanged. The actual dev ref is checked alongside PR state because
+GitHub's baseRefOid can retain the old comparison base while dev advances.
+The published rebase still requires fresh hosted gates before native merge.

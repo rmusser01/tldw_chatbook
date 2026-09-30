@@ -769,3 +769,12 @@ remain intact. Four regressions and the exact 123-pass admission invocation
 (with one existing xfail) pass locally; current-base unique local passes total
 350. Authored static checks are clean across 52 changed Python files. Production
 is unchanged, and hosted merge gates must rerun on the published test fix.
+
+
+Latest server-boundary rebase: carried all ten patches unchanged onto
+5980da9c12 after dev's per-session MCP character-write refusal landed.
+Read TASK-33106 and preserve accepted ADR-183 alongside ADR-197. This base
+passes 417 distinct cases: runtime/config, exact repaired CI admission,
+MCP/character composition and complete boot budgets (one existing xfail).
+Authored static checks and derived artifacts pass. Check the actual dev ref
+with the PR state; baseRefOid may lag. Hosted gates and merge remain pending.

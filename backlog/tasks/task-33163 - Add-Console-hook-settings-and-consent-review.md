@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-28 03:03'
-updated_date: '2026-09-30 05:12'
+updated_date: '2026-09-30 05:37'
 labels:
   - hooks
   - console
@@ -62,4 +62,6 @@ Latest-dev qualification: clean rebase onto 2a74675eea preserved all eight patch
 Hosted PR Fast Lane passed the 1171-case main contract but its admission step has four ownership-harness failures: three constructor-bypassing screen fakes omit the new Hooks controller, and one resume backoff assertion counts the additional hook indicator callback. Reproduce the four cases, update test seams without weakening detach/backoff assertions, then rerun the exact admission group and static checks before publishing.
 
 Hosted CI follow-up: main PR contract passed 1171 cases; UI Fast Lane and Perf Guard passed. Reproduced all four admission ownership-harness failures locally, supplied the new Hooks child to constructor-bypassing teardown fakes and isolated the reconciliation callback count. Original detach, settings-claim and bounded-backoff assertions remain. Four regressions and the exact 123-pass CI admission group pass; its one pre-existing xfail is retained, with no new skips. Combined distinct current-base local passes: 350. Production is unchanged; authored Ruff/format is clean across 52 changed Python files. Added the evidence-backed shared lifecycle testing lesson and updated named QA/report/plan results. Auto-merge is held until the new head passes hosted gates.
+
+Latest integration base is now 5980da9c12 after dev advanced with TASK-33106 per-session MCP character-write refusal. Read its task/provider/Console seams; preserve ADR-183 alongside ADR-197/126. The clean rebase leaves all ten patches unchanged. This base passes 417 distinct named cases: 195 hook runtime/config, 123 exact repaired CI admission (one existing xfail), 96 MCP/character composition, and 21 boot-budget cases; overlapping viewless cases counted once. Authored Ruff/format across 52 changed Python files, QA scripts and derived diagnostic/profile/CSS artifacts pass. Earlier mounted UI/latency and native evidence retain recorded base provenance. Actual dev ref is checked because PR baseRefOid can lag. Feature remains complete; the rebased head hosted gates and authorized merge remain pending.
 <!-- SECTION:NOTES:END -->
