@@ -156,6 +156,10 @@ class ConsoleSessionTabButton(Button):
     async def _on_click(self, event) -> None:
         if getattr(event, "button", 1) == 2:
             event.stop()
+            # TASK-33621.15: Textual also runs `Button._on_click` (it calls
+            # every class's handler along the MRO until the default is
+            # prevented), which pressed -- activated -- the tab it closes.
+            event.prevent_default()
             try:
                 close_button = self.screen.query_one(
                     f"#console-close-session-tab-{self._session_id}", Button

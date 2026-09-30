@@ -109,8 +109,8 @@ On a local-only setup the server lines collapse into one line:
 |---|---|
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
 | Click a tab | Switches to it; a second click on the active tab opens "Rename Chat Tab" |
-| Middle-click a tab | Closes it |
-| "✕" on a tab | Closes it; if the tab has messages, a "Close Tab" confirmation warns "This tab has messages that will be lost." and asks "Close it anyway?" — "Close" / "Keep" |
+| Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, queued prompts), the "Close Console session?" dialog lists it first: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
@@ -485,8 +485,12 @@ in a full accent box.
 - On a fresh profile only Default exists, so workspace switching is
   unavailable — the "Switch" button is disabled and hover shows why
   ("Add another workspace before switching."). Click "New" first.
-- Closing a tab that has messages always asks the "Close Tab" confirmation;
-  there is no way to close a non-empty tab silently.
+- Closing a tab asks for confirmation only when something would be lost;
+  saved history always stays in Library, so a saved, idle chat closes at
+  once.
+- If a tab cannot be closed, it stays open and an error toast names it and
+  gives the reason — for example `Couldn't close tab "Weekly notes": it did
+  not finish closing. Try again in a moment.`
 - Tab titles truncate at about 19 characters. Hover the tab for the full
   title.
 - With more tabs than fit the strip's width, the strip scrolls horizontally
