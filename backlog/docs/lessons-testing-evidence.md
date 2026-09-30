@@ -1521,6 +1521,18 @@ a stale object. If mouse behavior is the contract, capture before/after regions
 and the widget at the old coordinate first so a compositor race is distinguished
 from a product interaction failure.
 
+**Same trap, scroll variant (TASK-33211, 2026-09-28).** The only failing test in
+84 PR Fast Lane runs was an MCP Workbench test that clicked Run with a bare
+`await pilot.click(run_button)` right after a focus scroll. Under load the
+scroll was still animating, the button moved (`y=8 -> y=5`), and the click missed
+(`pilot.click` returned False, service never called). The failure surfaced three
+steps later as "expected an error toast, got []", which pointed at the product.
+Commit 86efdced97 had already moved 20 sibling tests onto a settle-then-click
+helper that asserts `await pilot.click(...)`, but the sweep missed this one call
+inside a `try/finally`. When a harness wraps a flaky call, grep for every raw
+call site, not just the obvious ones. Always assert a pilot click's return value,
+so a miss fails at the click.
+
 ---
 
 ## A restored bounded reader needs a mount-time request re-kick
@@ -16944,3 +16956,9 @@ the exact isolated admission group then passed 123 cases with its existing xfail
 When changing shared mount/resume/unmount paths, include their ownership tests
 in the targeted run. Count callbacks by the owner contract being tested, rather
 than assuming every scheduled background callback is its retry.
+
+## Private-profile children need an explicit coverage handoff
+
+**PR #2910, 2026-09-30.** Qodo found that the Buddy qualification file passed in private pytest children while parent coverage omitted their application execution. The helper disables plugin autoload, so parent --cov flags alone did not measure the child. A real child-only probe produced zero hits in serial and xdist parent XML reports. Conditional child pytest-cov plus unique parallel files consumed by native parent combination repaired it; both complementary child branches now reach the serial/two-worker report and standalone/--no-cov controls remain unchanged. Keep the child's output private and the parent's report threshold authoritative.
+
+Directly updating an active worker CoverageData also failed the xdist probe on coverage 7.16.0: the worker contained the child lines, but its filename hash still described its empty original collection and native combination deduplicated it. Use native parallel-file combination rather than mutating that active worker dataset. Fixed source b007dd43cf70408d88093ec983bf9702a800cb08 passed four coverage probes and all 16 Buddy cases under coverage; each real profile contributed 987 app run-context lines. Raw probes/data/XML remain local; the sanitized receipt is Docs/Reviews/artifacts/buddy-v1-32108/qodo-coverage-20260930/verification.json.

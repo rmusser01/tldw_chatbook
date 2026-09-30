@@ -1,0 +1,58 @@
+{
+  "profile": "fresh",
+  "headless": true,
+  "frames": {
+    "static": {
+      "frame_count": 1,
+      "observed_indices": [
+        0
+      ],
+      "sequence": [
+        0
+      ],
+      "animate": false,
+      "loop": true,
+      "buddy_owner": "e5c401b3-a29c-441a-9e96-e4783a97323f",
+      "persona_owner": null
+    },
+    "dynamic": {
+      "frame_count": 4,
+      "observed_indices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "sequence": [
+        0,
+        1,
+        2,
+        3,
+        0
+      ],
+      "animate": true,
+      "loop": true,
+      "buddy_owner": "e5c401b3-a29c-441a-9e96-e4783a97323f",
+      "persona_owner": null
+    }
+  },
+  "workspace_explicit_none": true,
+  "workspace_persona_before_clear": "qualification-workspace-persona",
+  "workspace_persona_after_clear": null,
+  "workspace_explicit_none_before": false,
+  "workspace_explicit_none_after": true,
+  "conversation_id": "950c90a6-b3f8-4ae6-9381-ae0911d0a0bb",
+  "schema_version": 73,
+  "persona_count_unchanged_during_artwork_selection": true,
+  "source_commit": "64579cce2c8dc64053fb50c00eb4f59b56716b01",
+  "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+  "captures": {
+    "fresh-static-management.svg": "b08e89215fa4ef54ad26572a93a1177ef0386541c8857802a3b38ed0a909fdbd",
+    "fresh-static-home.svg": "37d7d673d76f86b40c5cabb71fc67243f63eae135919524d3bb84db7e50ca957",
+    "fresh-dynamic-management.svg": "319da7262c44e6554fd66c7b4d590b6692ae7210945f822660c7a5eb2d516e33",
+    "fresh-dynamic-home.svg": "37d7d673d76f86b40c5cabb71fc67243f63eae135919524d3bb84db7e50ca957",
+    "fresh-conversation.svg": "d742184e75b3673d6965b9784ec3c151ac16b4901c3e2005a5becae03d55a375",
+    "fresh-workspace-management.svg": "e19dea269b437681fc979e0b58b5c2b92ecc9f280bde236c695c2f7375f79263",
+    "fresh-workspace-inbox.svg": "4c7ee28e461fcaec0b0150ac0b7b708d4462a89d8338803dc36d7eab49af5192"
+  }
+}

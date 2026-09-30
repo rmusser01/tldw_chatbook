@@ -1,0 +1,21 @@
+{
+  "production_base": "64e140bb30b476546f561fae0d61f2697fc91325",
+  "tested_rebased_head": "22baff81bbb7ef642ba1ac08ffde6c1cd474484a",
+  "reviewed_patch_preserved": true,
+  "tests": "16 passed in191.58s",
+  "raw_log_sha256": "118e827c707cbb3dcc447bab415c588f553e11a3479d37f6923b249ca717c3c0",
+  "receipts": {
+    "upgrade-evidence.json": "39975e9f2dda0978b2f4803d910fa993ae97c67b07a50a569b993f5426f3ee09",
+    "fresh-evidence.json": "1201ea67ce74f51b667d2eab2fb34e5952b1f30b9b126241ff8dd8db0716d247"
+  },
+  "limits": [
+    "Headless Textual and real SQLite only",
+    "No full local suite",
+    "No physical terminal, microphone, playback or real provider",
+    "SVG captures remain local; receipt hashes do not imply repository retention"
+  ],
+  "preflight": {
+    "result": "all11 derived-artifact checks passed",
+    "raw_log_sha256": "9d7cdfba8c1b93e1ee3266009dfc5c9c361e925436cce3777fe38374401cdbf1"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "profile": "fresh",
+  "headless": true,
+  "frames": {
+    "static": {
+      "frame_count": 1,
+      "observed_indices": [
+        0
+      ],
+      "sequence": [
+        0
+      ],
+      "animate": false,
+      "loop": true,
+      "buddy_owner": "df7047da-4d66-413b-bf3f-636812fb358d",
+      "persona_owner": null
+    },
+    "dynamic": {
+      "frame_count": 4,
+      "observed_indices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "sequence": [
+        0,
+        1,
+        2,
+        3,
+        0
+      ],
+      "animate": true,
+      "loop": true,
+      "buddy_owner": "df7047da-4d66-413b-bf3f-636812fb358d",
+      "persona_owner": null
+    }
+  },
+  "workspace_explicit_none": true,
+  "workspace_persona_before_clear": "qualification-workspace-persona",
+  "workspace_persona_after_clear": null,
+  "workspace_explicit_none_before": false,
+  "workspace_explicit_none_after": true,
+  "conversation_id": "0ad02fc1-8e9a-43cb-8728-c87d01a0e614",
+  "schema_version": 73,
+  "persona_count_unchanged_during_artwork_selection": true,
+  "source_commit": "22baff81bbb7ef642ba1ac08ffde6c1cd474484a",
+  "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+  "captures": {
+    "fresh-static-management.svg": "38093d32753cf47084345cac7a5245a4a1634ee354d404b58002e8464d96e3c4",
+    "fresh-static-home.svg": "37d7d673d76f86b40c5cabb71fc67243f63eae135919524d3bb84db7e50ca957",
+    "fresh-dynamic-management.svg": "8410f7eda3b2760462a27092c3a42b1417155b2554a48c01374557be4d7c7c50",
+    "fresh-dynamic-home.svg": "37d7d673d76f86b40c5cabb71fc67243f63eae135919524d3bb84db7e50ca957",
+    "fresh-conversation.svg": "d742184e75b3673d6965b9784ec3c151ac16b4901c3e2005a5becae03d55a375",
+    "fresh-workspace-management.svg": "e19dea269b437681fc979e0b58b5c2b92ecc9f280bde236c695c2f7375f79263",
+    "fresh-workspace-inbox.svg": "4c7ee28e461fcaec0b0150ac0b7b708d4462a89d8338803dc36d7eab49af5192"
+  }
+}

@@ -9,6 +9,7 @@ import sys
 import xml.etree.ElementTree as ET  # nosec B405
 from functools import wraps
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import pytest
 from pytest_timeout import get_env_settings
@@ -18,14 +19,14 @@ _CHILD_NODE = "TLDW_TEST_PRIVATE_PROFILE_NODE"
 
 def is_private_profile_child(request: pytest.FixtureRequest) -> bool:
     """Recognize only the exact opted-in case selected by its parent test."""
-    return (
-        os.environ.get(_CHILD_NODE) == request.node.nodeid
-        and getattr(request.function, "_private_profile_test", False)
+    return os.environ.get(_CHILD_NODE) == request.node.nodeid and getattr(
+        request.function, "_private_profile_test", False
     )
 
 
 def private_profile_test(function):
     """Run the original case under pytest after selecting a fresh profile."""
+
     @wraps(function)
     async def wrapped(*args, **kwargs):
         request = kwargs["request"]
@@ -50,8 +51,10 @@ def private_profile_test(function):
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
         )
         for name in (
-            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
-            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
         ):
             environment.pop(name, None)
         marker = request.node.get_closest_marker("timeout")
@@ -63,12 +66,50 @@ def private_profile_test(function):
         timeout = float(timeout or 0)
         report = work / "pytest.xml"
         log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
         with log.open("w") as output:
             process = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "pytest", request.node.nodeid,
-                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
-                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
                 f"--junitxml={report}",
+                *coverage_args,
                 cwd=Path(__file__).resolve().parents[1],
                 env=environment,
                 stdout=output,
@@ -80,14 +121,29 @@ def private_profile_test(function):
                 if process.returncode is None:
                     process.kill()
                     await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
         if process.returncode:
             pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+        if coverage_controller is not None and not coverage_file.is_file():
+            pytest.fail(f"private profile child did not produce coverage: {log}")
         # Parse our child's local pytest output, never externally supplied XML.
         cases = list(ET.parse(report).iter("testcase"))  # nosec B314
         if len(cases) != 1 or cases[0].get("name") != request.node.name:
-            pytest.fail(f"private profile child did not execute its exact case: {report}")
+            pytest.fail(
+                f"private profile child did not execute its exact case: {report}"
+            )
         if any(cases[0].find(kind) is not None for kind in ("failure", "error")):
-            pytest.fail(f"private profile child did not pass its original case: {report}")
+            pytest.fail(
+                f"private profile child did not pass its original case: {report}"
+            )
         skipped = cases[0].find("skipped")
         if skipped is not None:
             pytest.skip(skipped.get("message", "original private-profile case skipped"))
