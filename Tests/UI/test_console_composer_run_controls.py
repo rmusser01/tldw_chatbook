@@ -728,7 +728,10 @@ async def test_keys_on_a_focused_button_never_edit_the_draft_or_show_its_caret(
             "the draft still paints its caret while Menu holds focus"
         )
 
-        for key in ("x", "backspace", "ctrl+w"):
+        # Editing keys are not typing: they neither edit the draft nor move
+        # focus (a printable key moves focus to the draft first -- see
+        # `test_typing_on_a_focused_button_moves_to_the_draft_and_types_there`).
+        for key in ("backspace", "ctrl+w"):
             await pilot.press(key)
             await pilot.pause()
             assert composer.draft_text() == "hello", key
@@ -757,9 +760,62 @@ async def test_keys_on_a_focused_button_never_edit_the_draft_or_show_its_caret(
         gateway.release.set()
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_typing_on_a_focused_button_moves_to_the_draft_and_types_there(
+    request,
+):
+    """Type-to-compose (umbrella TASK-33622 AC#2): Enter and Space belong to
+    a focused composer button, but any other printable key moves focus to
+    the draft and is typed there. It never edits a draft that shows no
+    caret, and it is never lost either (PR #2934 checkpoint review: the
+    branch had made every printable on a composer button a no-op)."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        composer.load_draft("hello")
+        menu = composer.query_one("#console-composer-menu", Button)
+        menu.focus()
+        await pilot.pause()
+        assert console.app.focused is menu
+
+        # Space is the button's own key: it opens the menu and types nothing.
+        await pilot.press("space")
+        await _wait_for(
+            pilot,
+            lambda: isinstance(host.screen_stack[-1], ConsoleComposerMenuModal),
+            "Space on the focused Menu did not open the menu",
+        )
+        assert composer.draft_text() == "hello"
+        await pilot.press("escape")
+        await _wait_for(
+            pilot, lambda: host.screen_stack[-1] is console, "menu did not close"
+        )
+        menu.focus()
+        await pilot.pause()
+        assert console.app.focused is menu
+
+        await pilot.press("k")
+        await pilot.pause()
+        assert console.app.focused is composer, (
+            f"typing on Menu left focus on {console.app.focused!r}"
+        )
+        assert composer.draft_text().endswith("k")
+        assert composer.draft_text() == "hellok"
+        await _wait_for(
+            pilot,
+            lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
+            "the draft the key was typed into never painted its caret",
+        )
+        # The draft now owns the keys, Space included.
+        await _type(pilot, " ok")
+        assert composer.draft_text() == "hellok ok"
+        gateway.release.set()
+
+
 # ---------------------------------------------------------------------------
 # Review blocker: pressing or clicking a composer button never strands focus
-# on a button, where typing is (rightly) swallowed
+# on a button, where Space or Enter would press it instead of typing
 # ---------------------------------------------------------------------------
 
 
@@ -807,6 +863,12 @@ async def test_after_send_the_next_prompt_is_typed_into_the_draft(
         )
         await pilot.pause()
 
+        # Asserted before typing: type-to-compose would carry letters typed
+        # on a stranded Dictate into the draft anyway, but a prompt starting
+        # with Space (or an Enter) would still press Dictate.
+        assert console.app.focused is composer, (
+            f"focus stranded on {console.app.focused!r} after the send"
+        )
         await _type(pilot, "second prompt")
         assert composer.draft_text() == "second prompt", (
             f"the next prompt was swallowed (focus {console.app.focused!r})"
@@ -844,6 +906,9 @@ async def test_clicking_composer_buttons_keeps_typing_in_the_draft(
         await _wait_for(
             pilot, lambda: host.screen_stack[-1] is console, "menu did not close"
         )
+        # Asserted, not inferred from the typing below: type-to-compose
+        # would carry "ab" into the draft from a focused Menu as well.
+        assert console.app.focused is composer, console.app.focused
         await _type(pilot, "ab")
         assert composer.draft_text() == "helloab", (
             f"typing after the menu was lost (focus {console.app.focused!r})"
@@ -892,8 +957,9 @@ async def test_enter_on_clear_attachment_returns_focus_to_the_draft(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_undo_chord_still_reaches_the_draft_from_a_focused_button(request):
-    """Typing is swallowed on a focused button, but the draft-wide chords
-    (undo/redo, paging) keep their route (TASK-33622.2's passthrough)."""
+    """Typing on a focused button moves focus to the draft; the draft-wide
+    chords (undo/redo, paging) instead keep their route and leave focus on
+    the button (TASK-33622.2's passthrough)."""
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)

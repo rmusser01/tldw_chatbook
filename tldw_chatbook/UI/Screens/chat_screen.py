@@ -22450,10 +22450,10 @@ class ChatScreen(BaseAppScreen):
         if composer.collapsed:
             return False
         # TASK-33622.2: a focused composer BUTTON is captured too, and
-        # `route_composer_control_key` lets it own Enter/Space and swallows
-        # typing -- one rule for every button (TASK-15704's id exemptions
-        # swallowed Space on "Composer ▾"; its collapsed-strip ids are
-        # covered by the early return above).
+        # `route_composer_control_key` lets it own Enter/Space and moves
+        # other typing to the draft -- one rule for every button (TASK-15704's
+        # id exemptions swallowed Space on "Composer ▾"; its collapsed-strip
+        # ids are covered by the early return above).
         focused = self.app.focused
         return focused is None or self._is_descendant_or_self(focused, composer)
 

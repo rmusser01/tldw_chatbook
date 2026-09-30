@@ -6,7 +6,8 @@ share one cause, so their fix shares this module:
 * ``ChatScreen.on_key`` treated every composer descendant as the draft, so
   Enter on a keyboard-focused Menu, Dictate or Stop button went down the send
   path (a paid request) and Space typed into a draft that did not have focus.
-  `route_composer_control_key` hands those keys back to the focused control.
+  `route_composer_control_key` hands those keys back to the focused control,
+  and moves focus to the draft before any other printable key is typed.
 * Stop had no route but its button, and the action row clipped that button
   out entirely while a run was active. The stop key, the ``/stop`` command and
   the palette entries below give the viewed tab's run keyboard routes that do
@@ -84,10 +85,16 @@ def route_composer_control_key(
 
     The draft surface is the composer itself; its Buttons are descendants.
     Only the draft (or nothing) is a text target. While a Button has focus:
-    Enter and Space fall through unconsumed to the Button's own bindings
-    (`ComposerControlButton` binds Space, the web/ARIA convention), plain
-    typing is swallowed so it can never edit a draft that lacks focus, and
-    every other key -- Tab, Escape, bindings -- keeps its normal route.
+
+    * Enter and Space fall through unconsumed to the Button's own bindings
+      (`ComposerControlButton` binds Space, the web/ARIA convention): they
+      press it and never type.
+    * Any other printable key is type-to-compose (umbrella TASK-33622 AC#2):
+      the draft takes focus first, then the screen types the key there, so
+      it lands where the caret now shows it -- never in a caretless draft.
+    * Every other key -- Tab, Escape, editing keys, bindings -- keeps its
+      normal route and leaves the draft untouched; the draft-wide chords in
+      `_CONTROL_PASSTHROUGH_KEYS` still reach the draft.
 
     Args:
         screen: The Console screen routing the key.
@@ -96,7 +103,7 @@ def route_composer_control_key(
 
     Returns:
         True when the screen must not treat this key as draft input; False
-        when the draft (or a passthrough chord) should keep handling it.
+        when the draft (focused now, or a passthrough chord) should handle it.
     """
 
     focused = screen.app.focused
@@ -107,6 +114,11 @@ def route_composer_control_key(
     if event.key == "space" and isinstance(focused, Button):
         return True
     if ConsoleComposerBar.is_text_entry_key(event):
+        composer.focus_draft_from(focused)
+        if composer.draft_has_focus:
+            return False
+        # The draft could not take focus: drop the key rather than edit a
+        # draft that shows no caret.
         event.stop()
         event.prevent_default()
     return True

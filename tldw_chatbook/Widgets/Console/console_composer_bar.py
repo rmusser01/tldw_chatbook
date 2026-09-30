@@ -416,8 +416,10 @@ class ComposerControlButton(Button):
     """A composer-bar button that never keeps text focus by accident.
 
     TASK-33622.2 lets a focused composer button own its keys: Enter and Space
-    press it, and typing is swallowed so it never edits a draft that lacks
-    focus. That makes where focus rests after a press load-bearing. Textual
+    press it, and any other printable key moves focus to the draft before it
+    is typed, so it never edits a draft that lacks focus. That makes where
+    focus rests after a press load-bearing -- a prompt that starts with Space
+    or Enter would press the button instead. Textual
     focuses a Button on mouse-down, and hands a disabled or hidden focused
     Button's focus to a visible sibling -- live, a click on Send left focus
     on Dictate, the next prompt vanished and its first Space started

@@ -192,9 +192,11 @@ tool, code, and link styling keeps priority over immersive coloring.
 - **Tab** moves from the draft onto the composer's buttons (Composer ▾, Menu,
   Send or Queue, Dictate, Redirect, Stop). A focused button owns its keys:
   **Enter** or **Space** presses it — Enter on **Menu** opens the Composer
-  actions menu with its first item focused — and typing does nothing until
-  focus is back in the draft (**Esc**, or click the draft). Only the draft
-  shows a caret, so a focused button is the one focus mark on screen.
+  actions menu with its first item focused. Any other character you type
+  moves focus back to the draft and lands there, as does a paste; editing
+  keys such as Backspace leave the draft alone until it has focus again
+  (type, press **Esc**, or click the draft). Only the draft shows a caret,
+  so a focused button is the one focus mark on screen.
   Pressing **Send**, **Queue**, **Redirect**, **Stop** or **✕** puts focus
   back in the draft, ready for your next message, and clicking any composer
   button with the mouse presses it without taking focus from the draft.
