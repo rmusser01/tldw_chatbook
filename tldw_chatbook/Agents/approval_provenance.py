@@ -100,7 +100,7 @@ def approval_stamp(
     return ApprovalStamp(decision, fact)
 
 
-def append_denial_reason(refusal: str, decisions: Mapping, key: str) -> str:
+def append_denial_reason(refusal: str, decisions: Mapping[str, str], key: str) -> str:
     """Append quoted user text only to the selected, explicitly denied row.
 
     Args:

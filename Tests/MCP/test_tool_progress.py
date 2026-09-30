@@ -16,7 +16,13 @@ async def test_progress_is_scoped_to_active_call_and_final_only_requests_stay_id
     connection._producer_lifetime = ProducerLifetime()
     seen = []
     requests = []
+    arrived = asyncio.Event()
+    loop = asyncio.get_running_loop()
     release = asyncio.Event()
+
+    def observe(text):
+        seen.append(text)
+        loop.call_soon_threadsafe(arrived.set)
 
     async def request(method, params):
         requests.append(params)
@@ -31,10 +37,15 @@ async def test_progress_is_scoped_to_active_call_and_final_only_requests_stay_id
                     }
                 )
 
+            await notify(progress=True, message="boolean")
             await notify(progress=1, total=2, message="first")
             await notify(progress=0, message="backwards")
-            await notify(progress=True, message="boolean")
             await notify(progress=float("nan"), message="nonfinite")
+            await notify(progress="2", message="numeric string")
+            await notify(progress=2, total=True, message="boolean total")
+            await notify(progress=2, total=float("inf"), message="infinite total")
+            await notify(progress=2, message=False)
+            await notify(progress=10**1000, message="overflow")
             await connection._handle_incoming_payload(
                 {
                     "method": "notifications/progress",
@@ -46,18 +57,21 @@ async def test_progress_is_scoped_to_active_call_and_final_only_requests_stay_id
                 }
             )
             await release.wait()
+            await notify(progress=2, total=3, message="last valid")
         return {"content": [{"type": "text", "text": "final"}], "isError": False}
 
     connection.request = request
-    with tool_output_scope(seen.append):
+    with tool_output_scope(observe):
         task = asyncio.create_task(connection.call_tool("echo", {}))
-        await asyncio.sleep(0.15)
+        await asyncio.wait_for(arrived.wait(), 2)
         assert seen and "first" in seen[-1]
         assert not task.done()
         release.set()
         result = await task
     assert result.content[0]["text"] == "final"
     assert "backwards" not in str(seen) and "nonfinite" not in str(seen)
+    assert "last valid" in str(seen)
+    assert "numeric string" not in str(seen) and "overflow" not in str(seen)
     count = len(seen)
     token = requests[0]["_meta"]["progressToken"]
     await connection._handle_incoming_payload(
@@ -124,3 +138,14 @@ async def test_real_stdio_concurrent_calls_receive_only_their_own_progress(tmp_p
         (tmp_path / "release").touch()
         await connection.close()
         await asyncio.gather(*calls, return_exceptions=True)
+
+
+def test_progress_model_preserves_finite_integer_counter_precision():
+    from tldw_chatbook.Utils.input_validation import MCPProgressInput
+
+    counter = 2**53 + 1
+    progress = MCPProgressInput.model_validate(
+        {"progressToken": "active", "progress": counter, "total": counter + 1}
+    )
+    assert type(progress.progress) is int and progress.progress == counter
+    assert progress.total == counter + 1

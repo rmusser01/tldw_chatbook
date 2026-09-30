@@ -463,6 +463,31 @@ class MCPToolResultInput(BaseModel):
     content: Any = Field(default_factory=list)
 
 
+class MCPProgressInput(BaseModel):
+    """Strict optional progress metadata; integer counters retain precision."""
+
+    model_config = ConfigDict(
+        extra="ignore", frozen=True, strict=True, allow_inf_nan=False
+    )
+
+    progress_token: str = Field(alias="progressToken")
+    progress: int | float
+    total: int | float | None = None
+    message: str = ""
+
+    @field_validator("progress", "total")
+    @classmethod
+    def _finite_number(cls, value: float | None) -> float | None:
+        if value is not None:
+            try:
+                finite = math.isfinite(value)
+            except OverflowError:
+                raise ValueError("MCP progress must be finite") from None
+            if not finite:
+                raise ValueError("MCP progress must be finite")
+        return value
+
+
 class ToolArgumentsInput(BaseModel):
     """Strict shared boundary for an externally supplied tool argument object."""
 

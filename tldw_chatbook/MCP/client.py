@@ -892,33 +892,28 @@ class _StdioJSONRPCConnection:
 
     def _handle_progress(self, params: object) -> None:
         """Deliver valid progress only to its still-active request observer."""
-        if not isinstance(params, dict):
-            return
-        token = params.get("progressToken")
-        if not isinstance(token, str):
-            return
         observers = getattr(self, "_progress_observers", {})
-        observer = observers.get(token)
-        progress = params.get("progress")
-        total = params.get("total")
-        if observer is None or type(progress) not in (int, float):
+        if not observers:
             return
+        from pydantic import ValidationError
+
+        from tldw_chatbook.Agents.tool_output import MAX_TOOL_OUTPUT_CHARS
+        from tldw_chatbook.Utils.input_validation import MCPProgressInput
+
         try:
-            if not math.isfinite(progress) or progress <= observer[1]:
-                return
-            if total is not None and (
-                type(total) not in (int, float) or not math.isfinite(total)
-            ):
-                return
-        except (OverflowError, ValueError):
+            progress_input = MCPProgressInput.model_validate(params)
+        except ValidationError:
+            # Validator errors can contain server text; silently ignore them.
             return
-        message = params.get("message", "")
-        if not isinstance(message, str):
+        token = progress_input.progress_token
+        observer = observers.get(token)
+        progress, total = progress_input.progress, progress_input.total
+        if observer is None or progress <= observer[1]:
             return
         observers[token] = (observer[0], progress)
         text = f"{progress:g}" + (f" / {total:g}" if total is not None else "")
-        if message:
-            text += " — " + message[:16_000]
+        if progress_input.message:
+            text += " — " + progress_input.message[:MAX_TOOL_OUTPUT_CHARS]
         try:
             observer[0]("progress", text)
         except Exception:  # noqa: BLE001, S110 — best-effort display, no body logging

@@ -30,4 +30,6 @@ Reason: introduces an optional runtime/producer observation contract with a priv
 - [x] Handle exact-token MCP progress notifications in MCP/client.py; verify isolation, malformed/late messages, and unchanged final results.
 - [x] Update console_tool_activity.py to correlate partial events and retain interruption text; verify mounted disclosure identity and final replacement.
 - [x] Run affected producer/runtime/Console tests, lint, native walkthrough, and fresh read-only review. Update guide and task notes.
-- [ ] Create a PR against dev, address review, and merge after required checks.
+- [x] Publish the verified PR against dev and address review feedback.
+
+Integration is tracked by [PR #2923](https://github.com/rmusser01/tldw_chatbook/pull/2923); merge requires its final checks and review to pass.

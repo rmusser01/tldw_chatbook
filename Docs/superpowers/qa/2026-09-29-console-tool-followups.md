@@ -6,7 +6,7 @@ passed separately (11 passed).
 
 ## Automated evidence
 
-- Final focused run: **47 passed**. Covers normalized/quoted reasons, real
+- Final focused run: **48 passed**. Covers normalized/quoted reasons, real
   controller/model/provider denial flow, two simultaneous rounds with reused
   call IDs, all mounted Deny paths, held skill stdout/stderr and UTF-8 decoding,
   real concurrent native MCP progress, bounded observation and worker timeout,
@@ -64,3 +64,9 @@ Read-only reviews found and verified fixes for denial propagation through virtua
 owners, interrupted-output retention, blocking observer cleanup, and final-only
 fallback when the dispatcher cannot start. ADR-067/195 govern denial scoping;
 ADR-205 records the new session-only producer/observer contract.
+
+Qodo review remediation: explicitly typed the verdict map, reused the named output cap,
+and moved MCP progress into a strict shared Pydantic model. Integer counter precision
+is retained; malformed strings, booleans, nonfinite numbers and overflowing integers
+are quietly rejected without logging validator bodies. The final focused selection
+above passes all 48 checks after these changes.
