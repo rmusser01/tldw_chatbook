@@ -195,6 +195,10 @@ def consume_trace_maintenance_work_signal() -> bool:
     A signal raised between the check and the clear is not lost in practice:
     its rows were committed before it was raised, so the maintenance pass the
     caller is about to run reads them.
+
+    Returns:
+        True when an exchange append signalled since the previous call; the
+        caller should run a maintenance pass.
     """
 
     if _TRACE_MAINTENANCE_WORK.is_set():

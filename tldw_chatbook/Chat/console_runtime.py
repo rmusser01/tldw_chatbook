@@ -3291,22 +3291,18 @@ class ConsoleRuntime:
             last_collected_epoch: int | None = None
             pending_gc_result: Any | None = None
             # PERF-10 (TASK-33269): once a pass finds nothing to normalize and
-            # no GC pass is due, park. Parked, the loop does no database work
-            # (each run_batch was a write transaction, an admission and a
-            # helper-spawning connection, once a second forever). It wakes
-            # when an exchange row is written, or when a GC pass that new
-            # work made due reaches its interval.
+            # the GC interval has not elapsed, park. Parked, the loop does no
+            # database work (each run_batch was a write transaction, an
+            # admission and a helper-spawning connection, once a second
+            # forever). It wakes when an exchange row is written, and once per
+            # GC interval regardless: trace-call state, retention roots,
+            # semantic revisions and other processes advance the graph epoch
+            # without signalling, and a failed GC attempt must be retried.
             parked = False
-            gc_due = True
             while not self._disposed:
                 if parked:
                     await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS)
-                    if consume_trace_maintenance_work_signal():
-                        parked = False
-                        gc_due = True
-                    elif (
-                        gc_due or pending_gc_result is not None
-                    ) and (
+                    if consume_trace_maintenance_work_signal() or (
                         time.monotonic() - last_physical_attempt
                         >= TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
                     ):
@@ -3327,14 +3323,13 @@ class ConsoleRuntime:
                         last_provider_activity = now
                         await asyncio.sleep(1.0)
                         continue
-                    if not (gc_due or pending_gc_result is not None) or (
+                    if (
                         now - last_physical_attempt
                         < TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
                     ):
                         parked = True
                         continue
                     last_physical_attempt = now
-                    gc_due = False
                     try:
                         from tldw_chatbook.Chat.console_trace_maintenance import (
                             PhysicalTraceCompactor,
