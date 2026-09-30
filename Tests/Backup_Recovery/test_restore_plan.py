@@ -1,6 +1,8 @@
 """Restore preparation uses explicit local targets and private candidates."""
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 
 def test_replace_requires_independent_target_inventory(tmp_path):
@@ -17,6 +19,7 @@ import json
 import zipfile
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
@@ -599,6 +602,101 @@ def test_metadata_normalization_and_legacy_omission_are_explicit(tmp_path):
     assert row["desired_metadata"]["mode"] == 0o644
     assert row["applied_metadata"]["mode"] == 0o600
     assert Path(row["candidate"]).stat().st_mtime_ns == 1234000000
+
+
+@pytest.mark.parametrize("platform_name", ["nt", "posix"])
+@pytest.mark.parametrize(
+    "kind,mtime_ns",
+    [
+        ("file", 1_234_000_099),
+        ("directory", 1_234_000_099),
+        ("file", 1_234_000_000),
+        ("directory", 1_234_000_000),
+        ("file", None),
+    ],
+)
+def test_applied_metadata_matches_target_platform_without_changing_desired(
+    tmp_path, monkeypatch, platform_name, kind, mtime_ns
+):
+    from tldw_chatbook.Backup_Recovery import restore_plan
+
+    desired = {"version": 1, "mode": 0o700, "mtime_ns": mtime_ns}
+
+    def metadata(doc):
+        row = doc["files" if kind == "file" else "directories"][0]
+        row["metadata"] = None if mtime_ns is None else desired
+
+    archive = sealed(tmp_path, mutate=metadata)
+    manifest_bytes = archive.manifest_bytes
+    monkeypatch.setattr(
+        restore_plan,
+        "os",
+        SimpleNamespace(
+            name=platform_name,
+            stat=restore_plan.os.stat,
+            listdir=restore_plan.os.listdir,
+        ),
+    )
+    plan = restore_plan.plan_restore(
+        archive, mode="isolated", destinations={"root": tmp_path / "new"}, target=None
+    )
+    key = "file" if kind == "file" else "root"
+    original, applied = next(
+        (old, new) for item, old, new in plan.metadata if item == key
+    )
+    private_mode = 0o600 if kind == "file" else 0o700
+    if mtime_ns is None:
+        assert original is None
+        assert applied.model_dump() == {
+            "version": 1,
+            "mode": private_mode,
+            "mtime_ns": 0,
+        }
+        assert "metadata_unavailable:" + key in plan.issues
+    else:
+        assert original.model_dump() == desired
+        assert applied.mode == (private_mode if platform_name == "nt" else 0o700)
+        assert applied.mtime_ns == (
+            mtime_ns // 100 * 100 if platform_name == "nt" else mtime_ns
+        )
+        assert ("metadata_normalized:" + key in plan.issues) == (applied != original)
+    assert archive.manifest_bytes == manifest_bytes
+
+
+@settings(max_examples=20, deadline=None)
+@given(
+    mtime_ns=st.integers(min_value=0, max_value=2**63 - 1),
+    mode=st.integers(min_value=0, max_value=0o777),
+)
+def test_windows_applied_metadata_is_private_and_representable(
+    tmp_path_factory, mtime_ns, mode
+):
+    from tldw_chatbook.Backup_Recovery import restore_plan
+
+    root = tmp_path_factory.mktemp("windows-metadata")
+    desired = {"version": 1, "mode": mode, "mtime_ns": mtime_ns}
+
+    def metadata(doc):
+        for row in (*doc["directories"], *doc["files"]):
+            row["metadata"] = desired
+
+    archive = sealed(root, mutate=metadata)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            restore_plan,
+            "os",
+            SimpleNamespace(
+                name="nt", stat=restore_plan.os.stat, listdir=restore_plan.os.listdir
+            ),
+        )
+        plan = restore_plan.plan_restore(
+            archive, mode="isolated", destinations={"root": root / "new"}, target=None
+        )
+    for key, original, applied in plan.metadata:
+        assert original.model_dump() == desired
+        assert applied.mode == (0o700 if key == "root" else 0o600)
+        assert applied.mtime_ns % 100 == 0
+        assert 0 <= original.mtime_ns - applied.mtime_ns < 100
 
 
 def test_credential_material_is_validated_privately_without_profile_destination(

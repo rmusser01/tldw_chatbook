@@ -1314,8 +1314,12 @@ def plan_restore(
         else:
             applied = Metadata(
                 version=1,
-                mode=(desired.mode & 0o700) | private_mode,
-                mtime_ns=desired.mtime_ns,
+                mode=private_mode
+                if os.name == "nt"
+                else (desired.mode & 0o700) | private_mode,
+                mtime_ns=desired.mtime_ns // 100 * 100
+                if os.name == "nt"
+                else desired.mtime_ns,
             )
             if applied != desired:
                 issues.append("metadata_normalized:" + record.logical_id)
