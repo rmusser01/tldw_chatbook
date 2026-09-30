@@ -546,10 +546,17 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if chain is not None and chain.current_entry_id not in {None, entry_id}:
             return False
+        # TASK-33621.19: the ordinary durable post-commit path acknowledges
+        # EVERY queued turn while its live chain is still draining. That
+        # chain advances the queue after the turn ends, so only a detached
+        # acknowledgement (no exact live owner) may pause later work.
         result = self.registry.settle_durable_acceptance(
             session_id,
             entry_id=entry_id,
             preparation_id=preparation_id,
+            live_chain_owns_claim=(
+                chain is not None and chain.current_entry_id == entry_id
+            ),
         )
         if result.status not in {
             QueueMutationStatus.APPLIED,

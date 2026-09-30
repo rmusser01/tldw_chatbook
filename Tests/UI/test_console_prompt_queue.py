@@ -145,18 +145,38 @@ def test_background_session_label_exposes_count_only() -> None:
 
 
 @pytest.mark.parametrize(
-    ("reason", "state", "label", "action"),
+    ("reason", "failed_turn_preview", "state", "label", "action"),
     [
-        (PromptQueuePauseReason.FAILED, "Turn failed", "Retry", "retry-failed"),
-        (PromptQueuePauseReason.STOPPED, "Turn stopped", "Resume next", "resume-next"),
+        # TASK-33621.19 AC#2: "Turn failed" only for a real failed turn,
+        # and it names that turn.
+        (
+            PromptQueuePauseReason.FAILED,
+            "Answer with the word BRAVO.",
+            'Turn failed: "Answer with the word BRAVO."',
+            "Retry",
+            "retry-failed",
+        ),
+        # AC#3: a FAILED pause with no failed message offers Resume, never
+        # a Retry that can only refuse.
+        (PromptQueuePauseReason.FAILED, None, "Paused", "Resume", "toggle-pause"),
+        (PromptQueuePauseReason.MANUAL, None, "Paused", "Resume", "toggle-pause"),
+        (
+            PromptQueuePauseReason.STOPPED,
+            None,
+            "Turn stopped",
+            "Resume next",
+            "resume-next",
+        ),
         (
             PromptQueuePauseReason.CONTEXT_CHANGED,
+            None,
             "Context changed",
             "Review",
             "review",
         ),
         (
             PromptQueuePauseReason.DISPATCH_REFUSED,
+            None,
             "Start refused",
             "Try again",
             "toggle-pause",
@@ -165,6 +185,7 @@ def test_background_session_label_exposes_count_only() -> None:
 )
 def test_paused_shelf_exposes_state_specific_primary_action(
     reason: PromptQueuePauseReason,
+    failed_turn_preview: str | None,
     state: str,
     label: str,
     action: str,
@@ -180,7 +201,9 @@ def test_paused_shelf_exposes_state_specific_primary_action(
     ).snapshot
 
     presentation = derive_prompt_queue_presentation(
-        snapshot, _activity(count=1, paused=True)
+        snapshot,
+        _activity(count=1, paused=True),
+        failed_turn_preview=failed_turn_preview,
     )
 
     assert presentation.state_label == state
@@ -1293,3 +1316,161 @@ def test_flush_pending_work_unit_stack_walk() -> None:
     screen._stub_app = _App([plain, clean, dirty])
     assert ChatScreen.flush_pending_work(screen) is False
     assert len(notes) == 1 and "Unsaved queue edit" in notes[0]
+
+
+# ---------------------------------------------------------------------------
+# TASK-33621.19 (GAP1-04 / GAP5-09): the paused shelf offered Retry for a
+# FAILED pause that had no failed turn behind it, and that Retry refused with
+# "No matching stopped or failed turn is available." The retry target is now
+# the exact turn that paused the queue -- the newest assistant turn, because a
+# paused queue gates every other generation in its session -- and the shelf
+# names it. With no such turn the shelf offers Resume instead.
+# ---------------------------------------------------------------------------
+
+
+def _store_with_turns(*turns: tuple[str, str]) -> tuple[ConsoleChatStore, list[str]]:
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    store = ConsoleChatStore()
+    store.create_session(session_id="session-a", title="Queue owner", ephemeral=True)
+    assistant_ids: list[str] = []
+    for prompt, outcome in turns:
+        store.append_message("session-a", role=ConsoleMessageRole.USER, content=prompt)
+        # An empty assistant row is a pending generation; content is final.
+        reply = store.append_message(
+            "session-a",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="reply" if outcome == "complete" else "",
+        )
+        if outcome == "failed":
+            store.mark_message_failed(reply.id)
+        elif outcome == "stopped":
+            store.mark_message_stopped(reply.id)
+        assistant_ids.append(reply.id)
+    return store, assistant_ids
+
+
+def _paused_fake(store: ConsoleChatStore, reason: PromptQueuePauseReason):
+    fake = _FakeChatController(accepted=True)
+    fake.store = store
+    registry = fake.prompt_queue_registry
+    snapshot = registry.snapshot("session-a")
+    for text in ("CHARLIE", "DELTA"):
+        snapshot = registry.admit(
+            "session-a", text=text, expected_revision=snapshot.revision
+        ).snapshot
+    registry.pause("session-a", reason=reason, expected_revision=snapshot.revision)
+    fake.retried: list[tuple[str, str]] = []
+
+    async def retry_failed_queue_turn(message_id: str):
+        fake.retried.append(("failed", message_id))
+        return QueueMutationResultStub.applied(registry.snapshot("session-a"))
+
+    async def retry_stopped_queue_turn(message_id: str):
+        fake.retried.append(("stopped", message_id))
+        return QueueMutationResultStub.applied(registry.snapshot("session-a"))
+
+    fake.retry_failed_queue_turn = retry_failed_queue_turn
+    fake.retry_stopped_queue_turn = retry_stopped_queue_turn
+    return fake
+
+
+class QueueMutationResultStub:
+    @staticmethod
+    def applied(snapshot):
+        from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMutationResult
+
+        return PromptQueueMutationResult(QueueMutationStatus.APPLIED, snapshot)
+
+
+def test_failed_pause_names_the_failed_turn_and_retry_targets_it() -> None:
+    store, assistant_ids = _store_with_turns(
+        ("Answer with the word ALPHA.", "complete"),
+        ("Answer with the word BRAVO.", "failed"),
+    )
+    fake = _paused_fake(store, PromptQueuePauseReason.FAILED)
+    controller = _ui_controller(fake, _calls())
+
+    turn = controller.recovery_turn("session-a", action="retry-failed")
+    presentation = controller.presentation_for("session-a")
+
+    assert turn is not None
+    assert turn.message_id == assistant_ids[-1]
+    assert turn.preview == "Answer with the word BRAVO."
+    assert presentation.state_label == 'Turn failed: "Answer with the word BRAVO."'
+    assert presentation.pause_label == "Retry"
+    assert presentation.primary_action == "retry-failed"
+    assert presentation.next_preview == "CHARLIE"
+
+
+@pytest.mark.asyncio
+async def test_retry_reruns_exactly_the_named_failed_turn() -> None:
+    store, assistant_ids = _store_with_turns(
+        ("Answer with the word ALPHA.", "failed"),
+        ("Answer with the word BRAVO.", "failed"),
+    )
+    fake = _paused_fake(store, PromptQueuePauseReason.FAILED)
+    calls = _calls()
+    controller = _ui_controller(fake, calls)
+    presentation = controller.presentation_for("session-a")
+
+    await controller.handle_primary_intent(
+        "session-a",
+        action=presentation.primary_action,
+        expected_revision=presentation.revision,
+    )
+
+    assert fake.retried == [("failed", assistant_ids[-1])]
+    assert calls["notified"] == []
+
+
+@pytest.mark.asyncio
+async def test_failed_pause_without_a_failed_turn_offers_a_working_resume() -> None:
+    # The false pause from the report: every turn succeeded, and an OLDER
+    # failure elsewhere in the conversation is not what paused this queue.
+    store, _assistant_ids = _store_with_turns(
+        ("An older question.", "failed"),
+        ("Answer with the word ALPHA.", "complete"),
+        ("Answer with the word BRAVO.", "complete"),
+    )
+    fake = _paused_fake(store, PromptQueuePauseReason.FAILED)
+    resumed: list[str] = []
+
+    async def resume_prompt_queue(session_id: str):
+        resumed.append(session_id)
+        return QueueMutationResultStub.applied(
+            fake.prompt_queue_registry.snapshot(session_id)
+        )
+
+    fake.resume_prompt_queue = resume_prompt_queue
+    calls = _calls()
+    controller = _ui_controller(fake, calls)
+
+    assert controller.recovery_turn("session-a", action="retry-failed") is None
+    presentation = controller.presentation_for("session-a")
+    assert "failed" not in presentation.state_label.lower()
+    assert presentation.state_label == "Paused"
+    assert presentation.pause_label == "Resume"
+    assert presentation.primary_action == "toggle-pause"
+
+    await controller.handle_primary_intent(
+        "session-a",
+        action=presentation.primary_action,
+        expected_revision=presentation.revision,
+    )
+
+    assert resumed == ["session-a"]
+    assert calls["notified"] == []
+    assert fake.retried == []
+
+
+def test_stopped_pause_retry_target_is_the_stopped_turn_only() -> None:
+    store, assistant_ids = _store_with_turns(
+        ("Answer with the word ALPHA.", "stopped"),
+    )
+    fake = _paused_fake(store, PromptQueuePauseReason.STOPPED)
+    controller = _ui_controller(fake, _calls())
+
+    stopped = controller.recovery_turn("session-a", action="retry-stopped")
+    assert stopped is not None and stopped.message_id == assistant_ids[-1]
+    assert controller.recovery_turn("session-a", action="retry-failed") is None

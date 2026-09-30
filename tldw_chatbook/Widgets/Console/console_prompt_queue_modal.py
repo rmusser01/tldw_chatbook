@@ -30,6 +30,29 @@ from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
+def _queue_state_text(
+    snapshot: PromptQueueSnapshot, failed_turn_preview: str | None
+) -> str:
+    """Name the queue's state in words (TASK-33621.19: never as a button)."""
+
+    if snapshot.mode is PromptQueueMode.PAUSE_AFTER_TURN:
+        return "Pausing after this turn"
+    if snapshot.mode is not PromptQueueMode.PAUSED:
+        return "Draining"
+    reason = snapshot.pause_reason
+    if reason is PromptQueuePauseReason.FAILED and failed_turn_preview is not None:
+        return (
+            f'Paused · Turn failed: "{failed_turn_preview}"'
+            if failed_turn_preview
+            else "Paused · Turn failed"
+        )
+    return {
+        PromptQueuePauseReason.STOPPED: "Paused · Turn stopped",
+        PromptQueuePauseReason.CONTEXT_CHANGED: "Paused · Context changed",
+        PromptQueuePauseReason.DISPATCH_REFUSED: "Paused · Start refused",
+    }.get(reason, "Paused")
+
+
 class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
     """Manage one queue without ever retargeting to the viewed Console tab."""
 
@@ -162,10 +185,15 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="console-prompt-queue-dialog"):
             yield Static("Prompt queue", id="console-prompt-queue-manager-title")
-            yield Static("", id="console-prompt-queue-manager-state")
+            yield Static(
+                "", id="console-prompt-queue-manager-state", markup=False
+            )
             yield Static("", id="console-prompt-queue-manager-feedback")
             yield VerticalScroll(id="console-prompt-queue-manager-list")
             yield TextArea(id="console-prompt-queue-edit-input")
+            # Item actions / queue actions / recovery (TASK-33621.19): an
+            # action that does not apply to the current state is hidden; a
+            # disabled one carries its reason as a tooltip.
             with Horizontal(classes="console-prompt-queue-actions"):
                 yield Button("Edit", id="console-prompt-queue-edit")
                 yield Button("Save", id="console-prompt-queue-save")
@@ -179,7 +207,10 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield Button("Review", id="console-prompt-queue-review-context")
                 yield Button("Use current", id="console-prompt-queue-use-context")
                 yield Button("Close", id="console-prompt-queue-close")
-            with Horizontal(classes="console-prompt-queue-actions"):
+            with Horizontal(
+                id="console-prompt-queue-recovery-actions",
+                classes="console-prompt-queue-actions",
+            ):
                 yield Button("Retry failed", id="console-prompt-queue-retry-failed")
                 yield Button("Retry stopped", id="console-prompt-queue-retry-stopped")
 
@@ -235,39 +266,76 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             use_current = self.query_one(
                 "#console-prompt-queue-use-context", Button
             )
+            recovery_row = self.query_one(
+                "#console-prompt-queue-recovery-actions", Horizontal
+            )
         except NoMatches:
             return
-        reason = snapshot.pause_reason.value.replace("_", " ") if snapshot.pause_reason else ""
+        paused = snapshot.mode is PromptQueueMode.PAUSED
+        reason = snapshot.pause_reason if paused else None
+        # TASK-33621.19: Retry is offered only for the exact turn that
+        # paused the queue; a FAILED pause with no failed turn is a plain
+        # pause whose action is Resume.
+        failed_turn = (
+            self._queue_controller.recovery_turn(
+                self.session_id, action="retry-failed"
+            )
+            if reason is PromptQueuePauseReason.FAILED
+            else None
+        )
+        stopped_turn = (
+            self._queue_controller.recovery_turn(
+                self.session_id, action="retry-stopped"
+            )
+            if reason is PromptQueuePauseReason.STOPPED
+            else None
+        )
         state.update(
             f"Queue {snapshot.total_count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
-            f"{snapshot.mode.value.replace('_', ' ')}"
-            + (f" · {reason}" if reason else "")
+            + _queue_state_text(
+                snapshot, failed_turn.preview if failed_turn is not None else None
+            )
         )
+        # A recovery pause is resolved by its own actions below; the
+        # generic toggle would only restate the state as a dead button.
         recovery_pause = (
-            snapshot.mode is PromptQueueMode.PAUSED
-            and snapshot.pause_reason
-            not in {
-                PromptQueuePauseReason.MANUAL,
-                PromptQueuePauseReason.DISPATCH_REFUSED,
+            failed_turn is not None
+            or reason
+            in {
+                PromptQueuePauseReason.STOPPED,
+                PromptQueuePauseReason.CONTEXT_CHANGED,
             }
         )
+        pause.display = snapshot.total_count > 0 and not recovery_pause
         pause.label = (
-            "Paused"
-            if recovery_pause
-            else "Try again"
-            if snapshot.pause_reason is PromptQueuePauseReason.DISPATCH_REFUSED
+            "Try again"
+            if reason is PromptQueuePauseReason.DISPATCH_REFUSED
             else "Resume"
-            if snapshot.mode is PromptQueueMode.PAUSED
+            if paused
             else "Keep draining"
             if snapshot.mode is PromptQueueMode.PAUSE_AFTER_TURN
             else "Pause"
         )
-        pause.disabled = snapshot.total_count == 0 or recovery_pause
-        resume_next.label = (
-            "Skip & resume"
-            if snapshot.pause_reason is PromptQueuePauseReason.FAILED
-            else "Resume next"
+        pause.tooltip = (
+            "Send the next waiting prompt now."
+            if paused
+            else "Continue draining after this turn."
+            if snapshot.mode is PromptQueueMode.PAUSE_AFTER_TURN
+            else "Pause the queue after the current turn."
         )
+        resume_next.display = failed_turn is not None or (
+            reason is PromptQueuePauseReason.STOPPED
+        )
+        resume_next.tooltip = (
+            "Leave that turn as it is and send the next waiting prompt."
+        )
+        retry_failed.display = failed_turn is not None
+        retry_failed.tooltip = "Run the failed turn again, then keep draining."
+        retry_stopped.display = stopped_turn is not None
+        retry_stopped.tooltip = "Regenerate the stopped turn, then keep draining."
+        recovery_row.display = failed_turn is not None or stopped_turn is not None
+        review.display = reason is PromptQueuePauseReason.CONTEXT_CHANGED
+        use_current.display = review.display
         selected = next(
             (
                 entry
@@ -281,26 +349,45 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             and selected.phase is PromptQueueEntryPhase.WAITING
         )
         selected_index = self._selected_index()
+        locked = "Select a waiting prompt; a Starting prompt is locked."
         edit_button.disabled = not selected_waiting
-        save_button.disabled = self._editing_entry_id is None
+        edit_button.tooltip = (
+            "Edit the selected prompt." if selected_waiting else locked
+        )
+        save_button.display = self._editing_entry_id is not None
         up_button.disabled = not selected_waiting or selected_index == 0
-        down_button.disabled = (
-            not selected_waiting
-            or selected_index is None
-            or selected_index >= snapshot.waiting_count - 1
+        up_button.tooltip = (
+            locked
+            if not selected_waiting
+            else "Already first in line."
+            if selected_index == 0
+            else "Move the selected prompt earlier."
+        )
+        last = selected_index is None or selected_index >= snapshot.waiting_count - 1
+        down_button.disabled = not selected_waiting or last
+        down_button.tooltip = (
+            locked
+            if not selected_waiting
+            else "Already last in line."
+            if last
+            else "Move the selected prompt later."
         )
         remove_button.disabled = not selected_waiting
-        clear_button.disabled = snapshot.waiting_count == 0
-        retry_failed.disabled = snapshot.pause_reason is not PromptQueuePauseReason.FAILED
-        retry_stopped.disabled = snapshot.pause_reason is not PromptQueuePauseReason.STOPPED
-        resume_next.disabled = snapshot.pause_reason not in {
-            PromptQueuePauseReason.FAILED,
-            PromptQueuePauseReason.STOPPED,
-        }
-        review.disabled = (
-            snapshot.pause_reason is not PromptQueuePauseReason.CONTEXT_CHANGED
+        remove_button.tooltip = (
+            "Discard the selected prompt." if selected_waiting else locked
         )
-        use_current.disabled = review.disabled or self._reviewed_context_epoch is None
+        clear_button.disabled = snapshot.waiting_count == 0
+        clear_button.tooltip = (
+            "Discard every waiting prompt."
+            if snapshot.waiting_count
+            else "No waiting prompts to clear."
+        )
+        use_current.disabled = self._reviewed_context_epoch is None
+        use_current.tooltip = (
+            "Review the current context first."
+            if use_current.disabled
+            else "Adopt the reviewed context and resume."
+        )
         listing.remove_children()
         for entry in snapshot.entries:
             row = Horizontal(
@@ -308,7 +395,8 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                     # TASK-32802.4: the preview is literal text now, and
                     # Button.label markup-parses on Textual 8 whatever the
                     # widget's markup flag says, so the escape belongs here.
-                    f"{entry.position}. {escape_markup(entry.preview)}",
+                    # TASK-33621.19: people count from 1.
+                    f"{entry.position + 1}. {escape_markup(entry.preview)}",
                     id=f"console-prompt-queue-entry-{entry.entry_id}",
                     classes="console-prompt-queue-entry-select",
                 ),
@@ -363,6 +451,13 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         feedback.set_class(warning, "-warning")
 
     def _accept_mutation(self, result: PromptQueueMutationResult) -> bool:
+        if not self.is_attached:
+            # A queue action (a resume drains whole turns) can finish after
+            # the manager closed; its widgets are gone (TASK-33621.19).
+            return result.status in {
+                QueueMutationStatus.APPLIED,
+                QueueMutationStatus.UNCHANGED,
+            }
         if result.status in {QueueMutationStatus.APPLIED, QueueMutationStatus.UNCHANGED}:
             self._show_feedback("")
             self._apply_snapshot(result.snapshot, force=True)
@@ -462,7 +557,12 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         elif button_id == "console-prompt-queue-toggle-pause":
             event.stop()
-            self.run_worker(self._toggle_pause(), group="console-prompt-queue-modal")
+            # TASK-33621.19: Resume/Retry drain whole turns. An app-owned
+            # worker outlives the manager, so closing it no longer cancels
+            # the queued turn in flight; ``_accept_mutation`` then no-ops.
+            self.app.run_worker(
+                self._toggle_pause(), group="console-prompt-queue-modal"
+            )
         elif button_id in {
             "console-prompt-queue-resume-next",
             "console-prompt-queue-retry-failed",
@@ -476,7 +576,7 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 "console-prompt-queue-retry-stopped": "retry-stopped",
                 "console-prompt-queue-use-context": "use-current-context",
             }[button_id]
-            self.run_worker(
+            self.app.run_worker(
                 self._recover(action), group="console-prompt-queue-modal"
             )
         elif button_id == "console-prompt-queue-review-context":
@@ -485,9 +585,9 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 self.session_id
             )
             self._reviewed_context_epoch = current
-            self.query_one(
-                "#console-prompt-queue-use-context", Button
-            ).disabled = False
+            use_current = self.query_one("#console-prompt-queue-use-context", Button)
+            use_current.disabled = False
+            use_current.tooltip = "Adopt the reviewed context and resume."
             self._show_feedback(
                 f"Context review: queued baseline {baseline}; current {current}. "
                 "Use current now adopts that reviewed version."
@@ -553,7 +653,7 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         self._editing_baseline_text = result.text
         edit.text = result.text
         edit.add_class("-visible")
-        self.query_one("#console-prompt-queue-save", Button).disabled = False
+        self.query_one("#console-prompt-queue-save", Button).display = True
         edit.focus()
 
     def _save_edit(self) -> None:

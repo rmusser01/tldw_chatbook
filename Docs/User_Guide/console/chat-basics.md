@@ -430,7 +430,7 @@ After the current turn is accepted, **Send** changes to **Queue**. Each Console
 tab can hold up to 10 text-only follow-up prompts. The one-row shelf at the
 top of the control deck (above the status row) shows `Queue N/10`, whether it is draining or paused, a safe preview
 of the next prompt, and **Manage** plus a state-specific action such as
-**Pause**, **Retry**, **Resume next**, **Review**, or **Try again**.
+**Pause**, **Resume**, **Retry**, **Resume next**, **Review**, or **Try again**.
 
 - **Preparing...** means the turn has not crossed the accepted boundary yet;
   the draft stays in the composer and the strip beside the button reads
@@ -447,13 +447,23 @@ of the next prompt, and **Manage** plus a state-specific action such as
 - Attachments and staged evidence are never captured by a queued text turn.
   Remove them or wait and send the complete message normally.
 - Recognized slash commands still run immediately and are never queued.
-- **Manage** opens a modal pinned to this tab. You can edit, move, remove, or
-  clear waiting prompts; a prompt marked **Starting...** is already locked.
-  Remove and Clear ask for confirmation. Only the prompt actively opened for
-  editing has its full body loaded.
-- A failed or stopped turn pauses the queue. Use **Retry failed**, **Retry
-  stopped**, or **Resume next**. Context changes require **Review** followed by
-  **Use current** before draining resumes.
+- Queued prompts are sent one after another, in order, for as long as each
+  turn succeeds.
+- **Manage** opens a modal pinned to this tab. Prompts are numbered from 1
+  and the queue's state is written at the top, for example
+  `Queue 2/10 · Draining`. You can edit, move, remove, or clear waiting prompts; a prompt
+  marked **Starting...** is already locked. Remove and Clear ask for
+  confirmation. Only the prompt actively opened for editing has its full body
+  loaded. Actions that do not apply to the current state are hidden, and a
+  disabled action explains why when you hover it.
+- A failed turn pauses the queue and the shelf names it, for example
+  `Turn failed: "Summarize the draft"`. **Retry** (or **Retry failed** in
+  Manage) runs that turn again and then keeps draining; **Resume next** leaves
+  it as it is and sends the next prompt. A stopped turn offers **Resume next**
+  and **Retry stopped**. A queue you paused, or one paused without a failed
+  turn behind it, shows `Paused` with **Resume**. A prompt that could not
+  start shows `Start refused` with **Try again**. Context changes require
+  **Review** followed by **Use current** before draining resumes.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.

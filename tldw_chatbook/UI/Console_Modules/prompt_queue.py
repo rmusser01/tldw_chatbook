@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleControllerActivity,
     ConsoleDispatchRecoveryAction,
     ConsoleDispatchRecoveryState,
+    ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_display_state import (
     QUEUE_REASON_FULL,
@@ -44,6 +45,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueuePauseReason,
     PromptQueueSnapshot,
     QueueMutationStatus,
+    make_prompt_preview,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -73,6 +75,23 @@ def commit_queued_draft_transaction(
         store.set_session_draft(session_id, remaining)
     except KeyError:
         pass
+
+
+#: Assistant-message statuses each typed queue retry action can re-run.
+_RECOVERY_TURN_STATUSES: dict[str, frozenset[str]] = {
+    "retry-failed": frozenset({"failed"}),
+    "retry-stopped": frozenset({"stopped", "interrupted"}),
+}
+#: Cells of the failed turn's prompt the one-row shelf names it by.
+RECOVERY_TURN_PREVIEW_CELLS = 32
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleQueueRecoveryTurn:
+    """The exact paused-queue turn a typed retry action re-runs."""
+
+    message_id: str
+    preview: str = field(repr=False)
 
 
 class ConsolePromptDispatchStatus(str, Enum):
@@ -126,8 +145,15 @@ def derive_prompt_queue_presentation(
     dispatch_recovery: ConsoleDispatchRecoveryState | None = None,
     dispatch_recovery_blocked: bool = False,
     turn_recovery_id: str | None = None,
+    failed_turn_preview: str | None = None,
 ) -> ConsolePromptQueuePresentation:
-    """Derive exact visible queue vocabulary without reading a prompt body."""
+    """Derive exact visible queue vocabulary without reading a prompt body.
+
+    ``failed_turn_preview`` is the one-line preview of the prompt whose turn
+    failed and paused the queue, or ``None`` when no failed turn exists. A
+    FAILED pause without one (every turn succeeded) offers Resume: a Retry
+    there could only refuse (TASK-33621.19).
+    """
 
     count = snapshot.total_count
     queue_owned = activity.accepted_live_turn or count > 0
@@ -158,8 +184,15 @@ def derive_prompt_queue_presentation(
         send_tooltip = "Send the active Console session draft."
 
     if snapshot.mode is PromptQueueMode.PAUSED:
-        if snapshot.pause_reason is PromptQueuePauseReason.FAILED:
-            state_label = "Turn failed"
+        if (
+            snapshot.pause_reason is PromptQueuePauseReason.FAILED
+            and failed_turn_preview is not None
+        ):
+            state_label = (
+                f'Turn failed: "{failed_turn_preview}"'
+                if failed_turn_preview
+                else "Turn failed"
+            )
             pause_label = "Retry"
             primary_action = "retry-failed"
         elif snapshot.pause_reason is PromptQueuePauseReason.STOPPED:
@@ -677,6 +710,12 @@ class ConsolePromptQueueUIController:
         activity = controller.activity_for(session_id)
         recovery_ids = self._turn_recovery_ids(session_id)
         turn_recovery_id = recovery_ids[0] if recovery_ids else None
+        failed_turn = (
+            self.recovery_turn(session_id, action="retry-failed")
+            if snapshot.mode is PromptQueueMode.PAUSED
+            and snapshot.pause_reason is PromptQueuePauseReason.FAILED
+            else None
+        )
         return derive_prompt_queue_presentation(
             snapshot,
             activity,
@@ -687,7 +726,58 @@ class ConsolePromptQueueUIController:
                 )
             ),
             turn_recovery_id=turn_recovery_id,
+            failed_turn_preview=(
+                failed_turn.preview if failed_turn is not None else None
+            ),
         )
+
+    def recovery_turn(
+        self, session_id: str, *, action: str
+    ) -> ConsoleQueueRecoveryTurn | None:
+        """Return the exact turn a paused queue's retry ``action`` re-runs.
+
+        A paused queue gates every other generation in its session, so the
+        turn that paused it is the transcript's newest assistant message.
+        Only that message is a retry target: an older failure elsewhere in
+        the conversation did not pause this queue. TASK-33621.19: a FAILED
+        pause with no failed turn used to offer Retry, which then refused
+        with "No matching stopped or failed turn is available."
+
+        Args:
+            session_id: Session owning the paused queue.
+            action: ``"retry-failed"`` or ``"retry-stopped"``.
+
+        Returns:
+            The newest assistant message and a one-line preview of the
+            prompt it answered, or ``None`` when that message is not in a
+            status ``action`` can retry.
+        """
+
+        statuses = _RECOVERY_TURN_STATUSES.get(action)
+        if statuses is None:
+            return None
+        target = None
+        try:
+            messages = self._chat_controller_accessor().store.iter_messages_newest_first(
+                session_id
+            )
+            for item in messages:
+                if target is None:
+                    if item.role is not ConsoleMessageRole.ASSISTANT:
+                        continue
+                    if str(item.status) not in statuses:
+                        return None
+                    target = item
+                elif item.role is ConsoleMessageRole.USER:
+                    return ConsoleQueueRecoveryTurn(
+                        target.id,
+                        make_prompt_preview(
+                            item.content, cell_budget=RECOVERY_TURN_PREVIEW_CELLS
+                        ),
+                    )
+        except KeyError:
+            return None
+        return None if target is None else ConsoleQueueRecoveryTurn(target.id, "")
 
     def snapshot(self, session_id: str) -> PromptQueueSnapshot:
         """Return the immutable body-free snapshot for a pinned session."""
@@ -859,29 +949,19 @@ class ConsolePromptQueueUIController:
                 reviewed_context_epoch=reviewed_context_epoch,
             )
             return self._latest_result(session_id, result)
-        wanted_statuses = (
-            {"failed"} if action == "retry-failed" else {"stopped", "interrupted"}
-        )
-        message = next(
-            (
-                item
-                # TASK-24300: lazy newest-first walk (see console_chat_store).
-                for item in controller.store.iter_messages_newest_first(session_id)
-                if str(item.status) in wanted_statuses
-            ),
-            None,
-        )
-        if message is None:
+        # TASK-33621.19: retry exactly the turn the shelf/manager named.
+        turn = self.recovery_turn(session_id, action=action)
+        if action in _RECOVERY_TURN_STATUSES and turn is None:
             return PromptQueueMutationResult(
                 QueueMutationStatus.INVALID,
                 snapshot,
                 detail="No matching stopped or failed turn is available.",
             )
-        if action == "retry-failed":
-            result = await controller.retry_failed_queue_turn(message.id)
+        if action == "retry-failed" and turn is not None:
+            result = await controller.retry_failed_queue_turn(turn.message_id)
             return self._latest_result(session_id, result)
-        if action == "retry-stopped":
-            result = await controller.retry_stopped_queue_turn(message.id)
+        if action == "retry-stopped" and turn is not None:
+            result = await controller.retry_stopped_queue_turn(turn.message_id)
             return self._latest_result(session_id, result)
         return PromptQueueMutationResult(
             QueueMutationStatus.INVALID,
@@ -1051,6 +1131,7 @@ __all__ = [
     "ConsolePromptQueuePresentation",
     "ConsolePromptQueueRegion",
     "ConsolePromptQueueUIController",
+    "ConsoleQueueRecoveryTurn",
     "commit_queued_draft_transaction",
     "derive_prompt_queue_presentation",
 ]
