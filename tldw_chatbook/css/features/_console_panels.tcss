@@ -55,6 +55,13 @@ ConsoleSettingsModal Collapsible {
     background: $ds-surface-panel;
 }
 
+/* TASK-33003.3: the body too. The global `Collapsible > Contents` $surface
+   is the fields' own fill, so a 12-column field inside a disclosure read as
+   a full row; on the panel it shows its width, as in the Context view. */
+ConsoleSettingsModal Collapsible > Contents {
+    background: $ds-surface-panel;
+}
+
 #console-settings-provider-model-section,
 #console-settings-connection {
     width: $ds-width-full;

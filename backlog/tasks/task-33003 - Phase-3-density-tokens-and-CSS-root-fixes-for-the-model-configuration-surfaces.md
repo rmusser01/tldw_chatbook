@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-26 11:47'
-updated_date: '2026-09-30 14:17'
+updated_date: '2026-09-30 15:17'
 labels:
   - model-config-redesign
   - phase-3
@@ -231,4 +231,29 @@ Phase 3 ships as one PR. Chat settings becomes a dense form: one-row controls, f
   - Rail focus edge, measured with final/measure_rail.py: 3.83:1 on the active row and 5.12:1 on the inactive row, at both sizes.
   - The reset and compaction hint states need an active memory and a provider, so they are proven by the pilot test only.
 - Real profile: 0 files in ~/.config/tldw_cli or ~/.local/share/tldw_cli are newer than the wave's start marker. No test or live run pointed at it.
+
+**Post-close fix (2026-09-30): number fields read as sized inside Advanced generation (AC#2).**
+- Defect: with Advanced generation expanded, the disclosure body and the fields both painted (30,30,30) in textual-dark. The 12-column fields therefore read as full-row fields behind a one-column edge. The shipped captures showed it, measured at field/body 1.00:1.
+- Cause: not the `ConsoleSettingsModal Collapsible` rule (_console_panels.tcss:51). That rule does paint $ds-surface-panel, but only under the title row. The body is Textual's `Contents` child, which the global `Collapsible > Contents { background: $surface }` (components/_widgets.tcss:95) painted with the fields' own fill.
+- Fix: `ConsoleSettingsModal Collapsible > Contents { background: $ds-surface-panel; }`. The body now paints the modal panel the Context view's fields sit on. Fields keep $ds-surface-raised and the $ds-control-edge edge. The rule also covers the Conversation identity and Request estimate disclosures. It adds 85 bytes to the boot CSS, which passes the budget: headroom goes from 164 to 79 bytes against 608,090.
+- Test: test_console_settings_disclosure_fields_read_as_sized, over textual-dark (the default), agentic_terminal and textual-light. For each shown field it asserts three things: the cell past the field's right end differs from the field's fill; the edge or the fill reaches 3:1 against that cell; and that cell equals the surface beside a Context view field. It was red on all three themes before the fix and is green after.
+- Live check with `capture-pane -e`: a scratch HOME/XDG/TLDW_CONFIG_PATH profile, users_name p3fix_verify_*, tmux socket p3fix. The Temperature and Max tokens rows measured as follows:
+  - textual-dark, at 211x44 and 235x52: field (30,30,30) on body (36,47,56). Fill 1.22:1, edge 3.05:1.
+  - agentic_terminal, at 211x44: fill 1.04:1, edge 3.33:1.
+  - textual-light, at 211x44: fill 1.08:1, edge 3.12:1.
+  - These are the Context view's numbers in each theme. The 3:1 comes from the edge. None of the existing surface tokens gives a 3:1 fill against the panel.
+  - The app log has 0 unhandled_exception or app_stopping lines.
+- Captures: qa/model-config-33003-captures/chat-settings-model-expanded-{211x44,235x52} were re-taken. Only the colours changed; the text is identical.
+- Lesson: lessons-textual.md, "A Collapsible's background paints only its title row".
+- Covering run: 36 files, `-n 6`, plain local run (no bootstrap_profile marker). The branch had 814 failed and 2175 passed. origin/dev, over the 34 of those files it has, had 815 failed and 1654 passed.
+  - 2 reds are on the branch only. Both are test_credential_round_trip_keeps_the_restored_edit_unsaved, in a file dev does not have. Both raise ADR-126 RecoveryRequired, and they fail the same way at the pre-fix head c8a015d370.
+  - The other reds are shared with dev: the environmental RecoveryRequired and the inherited reds listed above.
+  - The module-size ratchet has 9 red rows, the same set as dev. console_settings_modal.py is unchanged at 7,764 lines.
+- `PYTHON=<venv> ./scripts/preflight.sh` exits 0.
+
+**Triage (2026-09-30): a view switch keeps the other view's scroll. Pre-existing, filed as TASK-33006.7.**
+- Symptom: at 211x44, scroll the Model view down (Advanced generation expanded), then choose Context and memory. The Context view opens at Conversation budget, and Model capacity is hidden above it. The branch reproduces this live.
+- origin/dev 75c06af39a reproduces it too, live, from a scratch `git worktree add --detach` with a scratch profile. The worktree was removed afterwards.
+- Cause: the views share #console-settings-body, and `_show_context_view` focuses the Budget strategy Select without resetting the scroll.
+- Not fixed here, by instruction.
 <!-- SECTION:NOTES:END -->

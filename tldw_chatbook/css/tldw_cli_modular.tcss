@@ -8531,6 +8531,11 @@ ConsoleSettingsModal Collapsible {
     background: $ds-surface-panel;
 }
 
+
+ConsoleSettingsModal Collapsible > Contents {
+    background: $ds-surface-panel;
+}
+
 #console-settings-provider-model-section,
 #console-settings-connection {
     width: $ds-width-full;

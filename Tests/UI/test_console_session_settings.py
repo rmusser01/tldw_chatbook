@@ -5051,6 +5051,62 @@ async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
     assert widths_by_size[(211, 44)] == widths_by_size[(235, 52)]
 
 
+def _field_paint(screen, field) -> tuple:
+    """(edge ink, field surface, surface just past the field's right end)."""
+    y = field.region.y
+    glyph, edge, _ = _painted_cell(screen, field.region.x, y)
+    assert glyph == "│", (field.id, glyph)
+    _, _, surface = _painted_cell(screen, field.region.x + 1, y)
+    _, _, beside = _painted_cell(screen, field.region.right, y)
+    return edge, surface, beside
+
+
+@pytest.mark.parametrize("theme", ["textual-dark", "agentic_terminal", "textual-light"])
+@pytest.mark.asyncio
+async def test_console_settings_disclosure_fields_read_as_sized(theme) -> None:
+    """TASK-33003.3: a number field inside Advanced generation shows its width.
+
+    The global `Collapsible > Contents` rule painted the disclosure $surface,
+    the fields' own fill, so a 12-column field read as a full row behind a
+    one-column edge. The surface past each field's right end must differ from
+    the field, its edge or fill must reach 3:1 against it, and it must be the
+    surface the Context view's fields sit on (the reference that reads right).
+    """
+    app = _themed_modal_harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one(
+            "#console-settings-generation-advanced CollapsibleTitle"
+        ).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        body = screen.query_one("#console-settings-body")
+        fields = [
+            field
+            for field in screen.query("#console-settings-generation-advanced Input")
+            if field.region.area and body.region.contains_region(field.region)
+        ]
+        assert len(fields) >= 5, [field.id for field in fields]
+        disclosure = set()
+        for field in fields:
+            edge, surface, beside = _field_paint(screen, field)
+            assert surface != beside, (theme, field.id, surface)
+            assert max(
+                _painted_ratio(surface, beside), _painted_ratio(edge, beside)
+            ) >= 3.0, (theme, field.id, edge, surface, beside)
+            disclosure.add(beside)
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        reference = screen.query_one("#console-context-trigger-percent", Input)
+        _, _, context_surface = _field_paint(screen, reference)
+        assert disclosure == {context_surface}, (theme, disclosure, context_surface)
+
+
 _CHOICE_IDS = (
     "console-settings-reasoning-effort",
     "console-settings-reasoning-summary",

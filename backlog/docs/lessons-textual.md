@@ -1341,3 +1341,23 @@ value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
 `action_first()`. Reproduced in a pilot probe on the modal's own Select
 construction; see the task-33003.8 Implementation Notes and the live captures
 in qa/model-config-p3-2026-09-28/task-8/.)
+
+## A Collapsible's background paints only its title row: the body is `Contents`
+
+**TASK-33003.3 follow-up, Chat settings Advanced generation, 2026-09-30.**
+TASK-33003.1 set `ConsoleSettingsModal Collapsible { background:
+$ds-surface-panel }` to drop the global $surface band. The expanded body still
+painted $surface, because the app-wide `Collapsible > Contents { background:
+$surface }` (components/_widgets.tcss) styles the `Contents` child, and the
+child's own background covers the parent's. $surface is also the Chat settings
+field fill, so TASK-33003.3's 12-column number fields read as full-row fields
+behind a one-column edge (painted field and body both (30,30,30),
+1.00:1). The width test stayed green: it measured `region.width`, which was 12.
+The shipped captures showed the defect, and nobody measured their colours.
+
+**What to do.** To restyle a disclosure's body, style `<scope> Collapsible >
+Contents` as well as the Collapsible. Prove that a sized field reads as sized
+by painted colour, not by region width: compare the compositor cell just past
+the field's right end with the field's own fill
+(`test_console_settings_disclosure_fields_read_as_sized`, red on three themes
+before the fix).
