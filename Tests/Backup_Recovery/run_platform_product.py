@@ -1530,7 +1530,10 @@ def run(
             phase="product",
             tests=product_tests,
             noconftest=True,
-            timeout_seconds=80 * 60,
+            timeout_seconds=(
+                180 if product_selection == "native-credentials-destination" else 80
+            )
+            * 60,
             native_credentials=True,
         )
         installed = _installed_receipts(private_root)

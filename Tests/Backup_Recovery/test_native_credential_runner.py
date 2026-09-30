@@ -2013,6 +2013,57 @@ def test_destination_publication_projects_three_direction_results(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "selection,expected_timeout",
+    [
+        ("native-credentials-source", 80 * 60),
+        ("native-credentials-destination", 180 * 60),
+    ],
+)
+def test_native_lane_deadline_refuses_publication_after_partial_progress(
+    tmp_path, monkeypatch, selection, expected_timeout
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    transfer = tmp_path / "transfer"
+    outbound, _, receipt = _source_archive(transfer)
+    (outbound / "source-linux.json").write_text(json.dumps(receipt))
+    monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", str(transfer))
+    monkeypatch.setattr(runner, "validate_native_credential_environment", lambda: None)
+    monkeypatch.setattr(
+        runner, "_copy_tracked_source", lambda *_: (workspace, "a" * 64)
+    )
+    monkeypatch.setattr(runner, "_run_git", lambda *_: "b" * 40)
+    monkeypatch.setattr(runner, "_installed_receipts", lambda *_: [receipt])
+    deadlines = []
+
+    def timed_out(**arguments):
+        deadlines.append(arguments["timeout_seconds"])
+        # Even a completed test receipt cannot override the outer deadline.
+        return {
+            "pytest_returncode": 124,
+            "junit": {"collected": 1, "skipped": [], "failed": [], "parse_error": None},
+        }
+
+    def publish(*_):
+        raise AssertionError("timed_out_native_phase_must_not_publish")
+
+    monkeypatch.setattr(runner, "_run_pytest_phase", timed_out)
+    monkeypatch.setattr(runner, "_publish_native_credential_artifacts", publish)
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    assert runner.run(workspace, evidence, product_selection=selection) == 1
+    assert deadlines == [expected_timeout]
+    summary = json.loads((evidence / "artifacts" / "summary.json").read_text())
+    assert summary["status"] == "failed" and summary["pytest_returncode"] == 124
+    assert summary["installed_package_receipts"] == 1
+    assert summary["published_directions"] == 0
+    assert {path.name for path in (evidence / "artifacts").iterdir()} == {
+        "summary.json",
+        "artifact-sha256.json",
+    }
+
+
+@pytest.mark.parametrize(
     "native_credentials,timeout_expired", [(True, False), (False, False), (True, True)]
 )
 def test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs(
