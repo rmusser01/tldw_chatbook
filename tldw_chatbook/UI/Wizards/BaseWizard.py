@@ -181,15 +181,6 @@ class WizardNavigation(Horizontal):
         )
         self.update_button_states()
 
-    def watch_can_go_back(self) -> None:
-        """React to can_go_back changes (TASK-33621.14).
-
-        Without it, Back only caught up when ``current_step`` or
-        ``can_go_forward`` changed after ``can_go_back``, so a wizard that set
-        them in the other order showed a disabled Back on a later step.
-        """
-        self.update_button_states()
-
     current_step = reactive(1)
     total_steps = reactive(1)
 

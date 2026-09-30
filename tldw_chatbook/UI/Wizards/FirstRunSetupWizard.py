@@ -2924,12 +2924,12 @@ class ProviderStep(SetupStep):
 
     def _select_provider_option(self, option: Option) -> None:
         provider_key = getattr(option, "provider_key", None)
-        if (
-            provider_key is not None
-            and not option.disabled
-            and provider_key != self.selected_provider_key
-        ):
-            self.select_provider(provider_key)
+        if provider_key is None or option.disabled:
+            return
+        # TASK-33621.14: a failed pick is reported with the provider that stays.
+        with step_guard.provider_switch(self, provider_key):
+            if provider_key != self.selected_provider_key:
+                self.select_provider(provider_key)
 
     @on(OptionList.OptionHighlighted, "#setup-provider-choice")
     def _on_provider_highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -9866,6 +9866,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         self._sync_action_controls()
 
     async def _advance(self) -> None:
+        started_at = self.current_step  # TASK-33621.14: did a failed Next move?
         try:
             step = self.steps[self.current_step]
             if isinstance(step, SetupStep):
@@ -9901,7 +9902,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             else:
                 self.show_step(next_index)
         except Exception as error:  # TASK-33621.14: Next must not exit the app.
-            if not step_guard.contain_advance_error(self, error):
+            if not step_guard.contain_advance_error(self, error, started_at):
                 raise
         finally:
             self._set_advancing(False)

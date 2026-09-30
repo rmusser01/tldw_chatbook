@@ -17,11 +17,14 @@ grow:
   derivation, TASK-33510), and the tests sweep it, so a listed row can always
   be selected and saved.
 * ``WizardErrorGuard`` and ``contain_advance_error`` handle any other error.
-  A step handler that raises, or a Next whose commit raises, leaves the step
-  on screen with an error line above the navigation. Keyboard focus stays
-  alive, and Back and Exit setup keep working.
+  A step handler that raises, a key binding (Ctrl+B, Ctrl+N, Enter, Esc)
+  whose action raises, or a Next whose commit raises, leaves the step on
+  screen with an error line above the navigation. The nav bar is re-synced
+  to the step on screen, keyboard focus stays alive, and Back and Exit setup
+  keep working. ``provider_switch`` names the provider that stays selected
+  when picking another one fails, and clears that line once a pick succeeds.
 
-Both error guards follow the production app's policy
+The error guards follow the production app's policy
 (``app_lifecycle._handle_exception``). They act only when the UI would
 otherwise be kept alive, which excludes headless ``run_test`` unless a test
 opts in, so the suite keeps its exception signal.
@@ -29,16 +32,28 @@ opts in, so the suite keeps its exception signal.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import logging
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Callable, Iterator
 
 from loguru import logger
+from textual.actions import SkipAction
 
 #: The ``persist_event`` component for first-run setup's contained errors.
 _DIAGNOSTICS_COMPONENT = "first_run"
 #: Container attribute holding each ``(step, category, type, site)`` already
 #: reported, so a failure that repeats (a 250 ms interval) logs once.
 _REPORTED_ATTR = "_first_run_contained_error_sites"
+#: Container attribute holding the error line a contained error put up, so a
+#: later success clears that line and never a different step message.
+_SHOWN_ATTR = "_first_run_contained_error_copy"
+#: Marks an action method ``WizardErrorGuard`` already wrapped.
+_CONTAINED_ACTION_ATTR = "_first_run_contained_action"
+#: A key-bound action whose failure is reported as a Next that stayed put:
+#: ``action_next`` only launches the advance worker, so nothing moved yet.
+_ADVANCE_ACTIONS = frozenset({"action_next"})
 _NO_FRAME = ("", "", 0)
 
 
@@ -66,6 +81,33 @@ def error_copy(category: str, *, back: bool) -> str:
     return (
         "Something went wrong on this step. Try again or choose something "
         f"else; {keys}. The error was logged."
+    )
+
+
+def switch_error_copy(target: str, kept: str, *, back: bool) -> str:
+    """Return the pinned-line copy for a provider switch that failed.
+
+    The list's highlight has already moved to ``target`` (arrow keys move it
+    before the switch runs), so the line must say which provider is really
+    selected: that is the one Next saves, with the key typed for it.
+
+    Args:
+        target: Display name of the provider the user tried to pick.
+        kept: Display name of the provider still selected, or ``""``.
+        back: Whether the step has a ← Back.
+
+    Returns:
+        User-facing copy that names the selected provider and working keys.
+    """
+    keys = (
+        "Back and Esc (exit setup) still work"
+        if back
+        else "Esc (exit setup) still works"
+    )
+    stays = f" — {kept} is still selected" if kept else ""
+    return (
+        f"Couldn't switch to {target}{stays}. Choose another provider or try "
+        f"again; {keys}. The error was logged."
     )
 
 
@@ -180,7 +222,35 @@ def _persist(
         pass
 
 
-def report_contained_error(node: Any, category: str, error: Exception) -> None:
+def _release_hidden_focus(step: Any) -> None:
+    """Drop focus that sits inside a hidden subtree, so the heal re-anchors it.
+
+    A failure part-way through ``show_step`` (the entered step's ``on_show``)
+    hides the old step before the step-change focus fix runs. The focused
+    widget is still attached and its own ``display`` is still on, so the
+    step's heal sees nothing wrong until Textual drops the focus at the next
+    layout, and from then on no wizard binding resolves.
+    """
+    try:
+        app = step.app
+        focused = app.focused
+        if focused is None or step.screen is not app.screen:
+            return
+        if all(getattr(node, "display", True) for node in focused.ancestors_with_self):
+            return
+        app.screen.set_focus(None)
+    except Exception:  # noqa: BLE001 - no app or screen: nothing to release.
+        return
+
+
+def report_contained_error(
+    node: Any,
+    category: str,
+    error: Exception,
+    *,
+    copy: str | None = None,
+    step: Any = None,
+) -> None:
     """Log a contained error and put its step back in the user's hands.
 
     Records the error type and the raising frames only. The message and
@@ -188,14 +258,23 @@ def report_contained_error(node: Any, category: str, error: Exception) -> None:
     never logged. The log names the step whose work raised; only the step on
     screen shows the pinned error line (a hidden step's timer must not put
     "went wrong" over a healthy step). A repeat of the same failure logs once.
-    Keyboard focus is re-anchored if the error orphaned it.
+    The nav bar is re-synced to the step on screen (a failure part-way
+    through a step change leaves it counting the old one), and keyboard focus
+    is re-anchored if the error orphaned it.
 
     Args:
         node: The step or container whose work raised.
         category: ``"handler"`` or ``"advance"``, for the log and the copy.
         error: The contained exception.
+        copy: The error line to show instead of the category's own.
+        step: The step whose work raised when the wizard has since moved off
+            it (a Next that failed after changing step). The log names it;
+            the step on screen shows the handler copy, never "stayed here".
     """
     container, raising, current = _wizard_steps(node)
+    moved = step is not None and step is not current
+    if step is not None:
+        raising = step
     step_id = getattr(getattr(raising, "config", None), "id", "") or "unknown"
     sites = _raise_sites(error)
     key = (step_id, category, type(error).__name__, sites)
@@ -230,19 +309,136 @@ def report_contained_error(node: Any, category: str, error: Exception) -> None:
             site_line,
         )
         _persist(node, category, step_id, error, sites)
-    recovery: list[tuple[Any, str, tuple[Any, ...]]] = []
-    if raising is current:
-        copy = error_copy(category, back=_back_available(container))
-        recovery.append((current, "show_step_error", (copy,)))
-    recovery.append((current, "_heal_orphaned_focus", ()))
-    for step, name, args in recovery:
-        action = getattr(step, name, None)
-        if not callable(action):
+    recovery: list[tuple[str, Callable[[], Any] | None]] = []
+    if raising is current or moved:
+        shown = copy or error_copy(
+            "handler" if moved else category, back=_back_available(container)
+        )
+        if container is not None:
+            setattr(container, _SHOWN_ATTR, shown)
+        recovery.append(("show_step_error", _bound(current, "show_step_error", shown)))
+    # What ``show_step`` runs after the step change, in its order.
+    for name in ("validate_step", "_sync_exit_controls", "_sync_action_controls"):
+        recovery.append((name, _bound(container, name)))
+    recovery.append(("release_hidden_focus", lambda: _release_hidden_focus(current)))
+    recovery.append(("_heal_orphaned_focus", _bound(current, "_heal_orphaned_focus")))
+    for name, action in recovery:
+        if action is None:
             continue
         try:
-            action(*args)
+            action()
         except Exception:  # noqa: BLE001 - recovery must not raise again.
             logger.warning("First-run setup error recovery skipped (action={})", name)
+
+
+def _bound(target: Any, name: str, *args: Any) -> Callable[[], Any] | None:
+    """Return ``target.name(*args)`` as a thunk, or None if it has no such method."""
+    method = getattr(target, name, None) if target is not None else None
+    return functools.partial(method, *args) if callable(method) else None
+
+
+def _display_name(provider_key: str) -> str:
+    """Return a provider's display name, or the key if the catalog has none."""
+    try:
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+        return provider_display_name(provider_key) or provider_key
+    except Exception:  # noqa: BLE001 - a missing name must not fail the report.
+        return provider_key
+
+
+def clear_contained_error(node: Any) -> None:
+    """Take down the error line a contained error put up, now that work succeeded.
+
+    Only that line: a probe failure or a refused Next shown since stays up.
+
+    Args:
+        node: A mounted wizard step or the container.
+    """
+    container, _raising, _current = _wizard_steps(node)
+    shown = getattr(container, _SHOWN_ATTR, "") if container is not None else ""
+    if not shown:
+        return
+    setattr(container, _SHOWN_ATTR, "")
+    try:
+        strip = container.screen.query_one("#setup-step-error-pinned")
+        if getattr(strip, "content", None) == shown:
+            container._clear_pinned_step_error()
+    except Exception:  # noqa: BLE001 - no strip: nothing to clear.
+        return
+
+
+@contextmanager
+def provider_switch(step: Any, provider_key: str) -> Iterator[None]:
+    """Contain a provider pick that fails, and say which provider stays selected.
+
+    Arrow keys move the list's highlight before the pick runs, so after a
+    failure the highlighted row is not the selected provider. The highlight
+    stays where the user put it (snapping it back would trap the arrow keys
+    above a failing row); the error line names the provider Next will save
+    instead. A pick that succeeds, or a return to the selected row, takes
+    that line down again.
+
+    Args:
+        step: The Provider step.
+        provider_key: The provider being picked.
+
+    Yields:
+        None; the ``with`` body runs the pick.
+    """
+    kept = getattr(step, "selected_provider_key", "") or ""
+    try:
+        yield
+    except Exception as error:
+        if not contains_wizard_errors(step):
+            raise
+        container, _raising, _current = _wizard_steps(step)
+        copy = switch_error_copy(
+            _display_name(provider_key),
+            _display_name(kept) if kept else "",
+            back=_back_available(container),
+        )
+        report_contained_error(step, "handler", error, copy=copy)
+        return
+    clear_contained_error(step)
+
+
+def _contained_action(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a key-bound action so its failure is reported, not fatal."""
+    category = "advance" if method.__name__ in _ADVANCE_ACTIONS else "handler"
+
+    def _contains(node: Any, error: Exception) -> bool:
+        # SkipAction is Textual's "not handled here" signal, not a failure.
+        return not isinstance(error, SkipAction) and contains_wizard_errors(node)
+
+    if inspect.iscoroutinefunction(method):
+
+        @functools.wraps(method)
+        async def run_async(self: Any, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return await method(self, *args, **kwargs)
+            except Exception as error:
+                if not _contains(self, error):
+                    raise
+                report_contained_error(self, category, error)
+                return None
+
+        wrapper: Callable[..., Any] = run_async
+    else:
+
+        @functools.wraps(method)
+        def run(self: Any, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return method(self, *args, **kwargs)
+            except Exception as error:
+                if not _contains(self, error):
+                    raise
+                report_contained_error(self, category, error)
+                return None
+
+        wrapper = run
+    setattr(wrapper, _CONTAINED_ACTION_ATTR, True)
+    return wrapper
 
 
 class WizardErrorGuard:
@@ -251,7 +447,25 @@ class WizardErrorGuard:
     Textual breaks a widget's message loop after one of its handlers raises,
     and the widget then drops out of the DOM. Catching the error inside the
     widget's own dispatch keeps the loop, the widget and its focus alive.
+
+    Key bindings need their own cover. Textual runs a non-priority binding's
+    action (the container's Ctrl+B, Ctrl+N, Enter and Esc) from the App's
+    message loop, which never passes through this widget's ``_on_message``,
+    and the app refuses to keep its own loop alive: a failure a click on
+    Back survives would quit the app from the keyboard. So every
+    ``action_*`` / ``_action_*`` method a guarded class defines is wrapped
+    when the class is created, and reports its failure the same way.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for name, member in list(vars(cls).items()):
+            if (
+                name.startswith(("action_", "_action_"))
+                and inspect.isfunction(member)
+                and not getattr(member, _CONTAINED_ACTION_ATTR, False)
+            ):
+                setattr(cls, name, _contained_action(member))
 
     async def _on_message(self, message: Any) -> None:
         try:
@@ -262,17 +476,23 @@ class WizardErrorGuard:
             report_contained_error(self, "handler", error)
 
 
-def contain_advance_error(container: Any, error: Exception) -> bool:
+def contain_advance_error(
+    container: Any, error: Exception, started_at: int | None = None
+) -> bool:
     """Report a Next that raised, if the app keeps its UI alive.
 
     ``_advance`` runs as an ``exit_on_error`` worker, so an exception that
     escapes it exits the whole app. Its ``finally`` then re-syncs the nav bar
     (``_set_advancing(False)`` runs ``update_progress``), so a Next that
     failed part-way through a step change still shows the right position.
+    Only a Next that failed before leaving its step says "setup stayed here";
+    one that failed after (the next step's ``on_show``) is logged against the
+    step it committed and shows neutral copy on the step now on screen.
 
     Args:
         container: The ``SetupWizardContainer`` whose advance raised.
         error: The exception.
+        started_at: ``current_step`` when the advance began.
 
     Returns:
         True when the error was contained and reported; False when the caller
@@ -280,5 +500,11 @@ def contain_advance_error(container: Any, error: Exception) -> bool:
     """
     if not contains_wizard_errors(container):
         return False
-    report_contained_error(container, "advance", error)
+    committing = None
+    if started_at is not None and started_at != container.current_step:
+        try:
+            committing = container.steps[started_at]
+        except Exception:  # noqa: BLE001 - unknown step: attribute to the container.
+            committing = None
+    report_contained_error(container, "advance", error, step=committing)
     return True

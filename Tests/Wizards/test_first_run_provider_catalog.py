@@ -210,7 +210,7 @@ async def test_wizard_provider_list_is_the_settings_picker_set():
     # ... and the picker really is what Settings ▸ Providers & Models shows.
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
-    settings_entries = SettingsScreen._provider_catalog_entries(None)
+    settings_entries = SettingsScreen(_app_instance())._provider_catalog_entries()
     assert settings_entries == settings_provider_catalog()
 
 
@@ -319,7 +319,7 @@ async def test_a_raising_step_handler_keeps_the_step_and_the_keyboard(monkeypatc
         assert app.is_running and app._exception is None
         _assert_step_is_live(app, wizard, step)
         assert app.focused is choices
-        assert "went wrong" in _pinned_error(wizard)
+        assert "Couldn't switch to" in _pinned_error(wizard)
 
         # Tab still moves focus.
         await pilot.press("tab")
@@ -350,7 +350,13 @@ async def test_a_raising_step_handler_keeps_the_step_and_the_keyboard(monkeypatc
 
 @pytest.mark.asyncio
 async def test_resumed_provider_step_keeps_back_and_exit_available():
-    """AC#4: a session resumed from "Continue setup?" can still go Back."""
+    """AC#4: a session resumed from "Continue setup?" can still go Back.
+
+    ``BaseWizard``'s nav bar refreshes Back only when ``current_step`` or
+    ``can_go_forward`` changes, so setup's ``update_progress`` must set
+    ``can_go_back`` first. It set it after, and a resume that jumped straight
+    to Provider showed a disabled Back.
+    """
     wizard = _resumed_on_provider()
     app = _WizardHost(wizard)
     async with app.run_test(size=_SIZE) as pilot:
@@ -468,8 +474,11 @@ async def test_a_failed_provider_switch_keeps_the_typed_key_with_its_provider(
         await pilot.press("down")  # onto Anthropic: its switch raises
         await pilot.pause()
         assert choices.highlighted_option.provider_key == "anthropic"
-        assert "went wrong" in _pinned_error(wizard)
-        # The failed switch moved nothing: OpenAI is still selected, with its key.
+        # The failed switch moved nothing: OpenAI is still selected, with its key,
+        # and the line says so, since the highlight sits on Anthropic.
+        message = _pinned_error(wizard)
+        assert "Couldn't switch to Anthropic" in message
+        assert "OpenAI is still selected" in message
         assert step.selected_provider_key == "openai"
         assert key_input.value == typed
 
@@ -483,6 +492,115 @@ async def test_a_failed_provider_switch_keeps_the_typed_key_with_its_provider(
         assert staged.provider == "openai"
         value = first_run_setup_state._credential_value_for_boundary(staged.credential)
         assert value == typed
+
+
+@pytest.mark.asyncio
+async def test_a_provider_pick_that_succeeds_clears_the_failed_switch_line(
+    monkeypatch,
+):
+    """Review (minor): the error line goes once the user recovers.
+
+    After a failed switch, the next pick that works must take the "couldn't
+    switch" line down (it described a failure the step no longer has), and
+    only that line: a message another part of the step wrote stays.
+    """
+    from tldw_chatbook.UI.Wizards import first_run_setup_state
+
+    real_presence = first_run_setup_state.read_provider_secret_presence
+
+    def _fail_for_anthropic(*args, provider_key, **kwargs):
+        if provider_key == "anthropic":
+            raise ValueError("Provider is not supported.")
+        return real_presence(*args, provider_key=provider_key, **kwargs)
+
+    monkeypatch.setattr(
+        first_run_setup_state, "read_provider_secret_presence", _fail_for_anthropic
+    )
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, step = _current_step(wizard)
+        choices = _provider_list(step)
+        choices.focus()
+        await pilot.pause()
+        await _arrow_to(pilot, choices, "openai")
+        listed = _listed_provider_keys(step)
+        after = listed[listed.index("anthropic") + 1]
+
+        await pilot.press("down")  # onto Anthropic: its switch raises
+        await pilot.pause()
+        assert choices.highlighted_option.provider_key == "anthropic"
+        assert "Couldn't switch to Anthropic" in _pinned_error(wizard)
+        assert step.selected_provider_key == "openai"
+
+        await pilot.press("down")  # the next row works
+        await pilot.pause()
+        assert step.selected_provider_key == after
+        assert _pinned_error(wizard) == ""
+
+        # Only the guard's own line goes: a line written over it stays.
+        await pilot.press("up")  # Anthropic again: fails
+        await pilot.pause()
+        assert "Couldn't switch to Anthropic" in _pinned_error(wizard)
+        step.show_step_error("A refused Next says why here.")
+        await pilot.press("up")  # OpenAI works
+        await pilot.pause()
+        assert step.selected_provider_key == "openai"
+        assert _pinned_error(wizard) == "A refused Next says why here."
+        assert app.is_running and app._exception is None
+
+
+@pytest.mark.asyncio
+async def test_a_next_that_fails_after_changing_step_does_not_claim_it_stayed(
+    monkeypatch,
+):
+    """Review (nit): "setup stayed here" only when setup did stay.
+
+    Next from Welcome commits it, then shows Provider. When Provider's
+    ``on_show`` raises, the wizard is already on Provider: the line there
+    must not say setup stayed, and the log names the step Next committed.
+    """
+    records: list[dict] = []
+    sink = logger.add(
+        lambda message: records.append(message.record),
+        level="ERROR",
+        filter=lambda record: "First-run setup error contained" in record["message"],
+    )
+    calls: list[str] = []
+    real_on_show = ProviderStep.on_show
+
+    def _raise_once(self):  # no event parameter: Textual's Show also calls it
+        calls.append("on_show")
+        if len(calls) == 1:
+            raise RuntimeError("step show failure")
+        real_on_show(self)
+
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    try:
+        async with app.run_test(size=_SIZE) as pilot:
+            await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+            await pilot.press("ctrl+b")
+            await _wait_for_step(pilot, wizard, STEP_WELCOME)
+            monkeypatch.setattr(ProviderStep, "on_show", _raise_once)
+
+            await pilot.press("ctrl+n")
+            await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+            await pilot.pause(0.3)
+
+            assert calls, "Provider was never shown"
+            assert app.is_running and app._exception is None
+            message = _pinned_error(wizard)
+            assert "went wrong" in message
+            assert "stayed here" not in message
+            assert wizard.query_one("#wizard-back", Button).disabled is False
+    finally:
+        logger.remove(sink)
+
+    assert len(records) == 1, [record["message"] for record in records]
+    assert "category=advance" in records[0]["message"]
+    assert f"step={STEP_WELCOME}," in records[0]["message"]
 
 
 @pytest.mark.asyncio
@@ -523,6 +641,146 @@ async def test_a_raising_wizard_container_handler_keeps_the_wizard(monkeypatch):
         assert len(calls) == 2
 
 
+def _raise_on_first_call(monkeypatch, owner: type, name: str) -> list[str]:
+    """Make ``owner.name`` raise the first time it runs, then behave."""
+    calls: list[str] = []
+    real = getattr(owner, name)
+
+    def _patched(self, *args, **kwargs):
+        calls.append(name)
+        if len(calls) == 1:
+            raise RuntimeError("keyboard action failure")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(owner, name, _patched)
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "owner", "name"),
+    [
+        ("ctrl+b", SetupWizardContainer, "_previous_active_index"),
+        ("ctrl+n", ProviderStep, "confirm_before_advance"),
+        ("escape", SetupWizardContainer, "hold_provider_save_settlement"),
+    ],
+)
+async def test_a_raising_keyboard_navigation_action_keeps_the_wizard(
+    monkeypatch, key, owner, name
+):
+    """AC#3/AC#4, review (major): a key binding is contained like a click.
+
+    Ctrl+B, Ctrl+N and Esc are the wizard container's key bindings. Textual
+    runs a binding's action in the App's own message loop, not the
+    container's, so the container's handler guard never saw it, and the app
+    refuses to keep its own loop alive: the failure a click on Back survives
+    (the case above) quit the app from the keyboard.
+    """
+    calls = _raise_on_first_call(monkeypatch, owner, name)
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        container, step = _current_step(wizard)
+        _provider_list(step).focus()
+        await pilot.pause()
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert calls == [name]
+        assert app.is_running and app._exception is None
+        assert app.screen is wizard
+        _assert_step_is_live(app, wizard, step)
+        assert "went wrong" in _pinned_error(wizard)
+        assert container._advancing is False
+        for button in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+            assert wizard.query_one(button, Button).disabled is False, button
+
+        # The same key works once the failure has passed.
+        await pilot.press(key)
+        await pilot.pause()
+        assert len(calls) >= 2  # Esc's container and screen both ask
+        if key == "ctrl+b":
+            await _wait_for_step(pilot, wizard, STEP_WELCOME)
+        elif key == "escape":
+            assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        assert app.is_running and app._exception is None
+
+
+def test_every_wizard_container_key_binding_runs_a_contained_action():
+    """Review (major): each key the container binds reaches a guarded action.
+
+    Pins the structural half of the case above: a binding added later, or
+    one whose action still lives in the unguarded ``BaseWizard`` class, would
+    quit the app from the keyboard again.
+    """
+    actions: set[str] = set()
+    for cls in SetupWizardContainer.__mro__:
+        for binding in vars(cls).get("BINDINGS", ()):
+            actions.add(getattr(binding, "action", None) or binding[1])
+    assert {"next", "back", "cancel"} <= actions
+    for action in sorted(actions):
+        method = getattr(SetupWizardContainer, f"action_{action}")
+        assert getattr(method, "_first_run_contained_action", False), action
+
+
+@pytest.mark.asyncio
+async def test_back_into_a_step_whose_show_raises_keeps_the_keyboard(monkeypatch):
+    """AC#3/AC#4, review (major): re-entering a step that fails to show.
+
+    Ctrl+B runs ``show_step``, whose ``on_show`` for the step being entered
+    is where the finding's ``NoMatches`` came from. A failure there leaves
+    the new step half shown: the nav bar still counts the old step, and focus
+    sits in the step just hidden, which Textual then drops, so no binding
+    resolves. The wizard must land on the entered step with its error line,
+    a nav bar that matches it, and a keyboard that still works.
+    """
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import WelcomeStep
+
+    calls: list[str] = []
+    real_on_show = WelcomeStep.on_show
+
+    def _raise_once(self):  # no event parameter: Textual's Show also calls it
+        calls.append("on_show")
+        if len(calls) == 1:
+            raise RuntimeError("step show failure")
+        real_on_show(self)
+
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, provider = _current_step(wizard)
+        _provider_list(provider).focus()
+        await pilot.pause()
+        monkeypatch.setattr(WelcomeStep, "on_show", _raise_once)
+
+        await pilot.press("ctrl+b")
+        await _wait_for_step(pilot, wizard, STEP_WELCOME)
+        await pilot.pause(0.2)
+
+        assert calls, "Welcome was never shown"  # Textual's Show event re-runs it
+        assert app.is_running and app._exception is None
+        _container, welcome = _current_step(wizard)
+        assert welcome.display and not provider.display
+        message = _pinned_error(wizard)
+        assert "went wrong" in message and "Back" not in message
+        # The nav bar follows the step that is on screen: Welcome has no Back.
+        assert wizard.query_one("#wizard-back", Button).disabled
+        focused = app.focused
+        assert focused is not None and focused.is_attached
+        assert welcome in focused.ancestors_with_self or (
+            focused in wizard.query("#wizard-next, #wizard-cancel")
+        ), f"focus stayed in a hidden step: {focused!r}"
+
+        # Esc resolves (it needs a live focus chain) and asks before leaving.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        assert app.is_running and app._exception is None
+
+
 @pytest.mark.asyncio
 async def test_a_contained_error_that_dropped_focus_puts_the_keyboard_back(
     monkeypatch,
@@ -560,35 +818,6 @@ async def test_a_contained_error_that_dropped_focus_puts_the_keyboard_back(
         assert app.focused is choices, "focus was not re-anchored on the step"
         await pilot.press("ctrl+b")
         await _wait_for_step(pilot, wizard, STEP_WELCOME)
-
-
-@pytest.mark.asyncio
-async def test_wizard_navigation_back_follows_can_go_back_on_its_own():
-    """Review (minor): Back tracks ``can_go_back`` even when it changes last.
-
-    ``WizardNavigation`` used to refresh its buttons only when ``current_step``
-    or ``can_go_forward`` changed, so every ``BaseWizard`` that set
-    ``can_go_back`` after ``current_step`` showed a disabled Back on step 2.
-    """
-    from tldw_chatbook.UI.Wizards.BaseWizard import WizardNavigation
-
-    class _NavHost(App):
-        def compose(self) -> ComposeResult:
-            yield WizardNavigation()
-
-    app = _NavHost()
-    async with app.run_test() as pilot:
-        nav = app.query_one(WizardNavigation)
-        nav.can_go_back = False
-        nav.total_steps = 3
-        nav.current_step = 2
-        await pilot.pause()
-        back = nav.query_one("#wizard-back", Button)
-        assert back.disabled
-
-        nav.can_go_back = True  # nothing else changes: only a watcher can react
-        await pilot.pause()
-        assert back.disabled is False
 
 
 def _raised(error: Exception) -> Exception:
@@ -706,7 +935,6 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         assert step.selected_provider_key == first_cloud
         _assert_step_is_live(app, wizard, step)
         assert _pinned_error(wizard) == ""
-
 
         await pilot.press("ctrl+b")
         await _wait_for_step(pilot, wizard, STEP_WELCOME)

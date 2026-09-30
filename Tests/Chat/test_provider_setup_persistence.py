@@ -2231,6 +2231,7 @@ def test_engine_preset_bare_hosts_and_pasted_chat_urls_save_the_api_base(
     chat-completions URL saves as its base."""
     assert _saved_engine_endpoint(provider, key, entered)["api_base_url"] == saved
 
+
 # --- TASK-33621.14: Settings and first-run setup offer only what setup owns ---
 #
 # Both surfaces list ``settings_provider_catalog()`` and save through this

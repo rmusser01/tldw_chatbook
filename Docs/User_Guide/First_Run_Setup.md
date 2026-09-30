@@ -14,10 +14,15 @@ If a step can't save what you entered, the reason appears just above the
 navigation buttons — fix it and press Next again, or go Back. The same line
 reports an unexpected error on a step: the step stays on screen, the keyboard
 keeps working, and **Esc** (exit setup) and, after the first step, **← Back**
-stay available. That includes a run you resumed from "Continue setup?". If
-picking a provider fails this way, the provider you had picked before stays
-selected, together with any key you typed for it; a key is never carried over
-to a different provider.
+stay available, from the keys (**Ctrl+B**, **Ctrl+N**, **Enter**, **Esc**)
+as well as the buttons. That includes a run you resumed from "Continue
+setup?", and a step that fails while it opens: setup lands on that step with
+the error line. If picking a provider fails this way, the provider you had
+picked before stays selected, together with any key you typed for it; a key
+is never carried over to a different provider. The highlight stays on the row
+you tried, so the line names the provider that is still selected ("Couldn't
+switch to Anthropic — OpenAI is still selected"), and it goes away once you
+pick a provider that works.
 
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the
