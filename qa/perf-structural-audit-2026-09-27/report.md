@@ -12,7 +12,8 @@
     - boot plus idle tax;
     - an 8-destination screen-switch tour.
 - **Result:**
-  - **1,043 raw findings → 920 confirmed**, 22 refuted, 11 already fully tracked, 90 unverified. Dedup gives **905 unique issues**: **42 P0, 194 P1, 335 P2, 334 P3**.
+  - **1,043 raw findings → 1,001 confirmed**, 23 refuted, 19 already fully tracked, **0 unverified**. Dedup gives **904 unique issues**: **43 P0, 166 P1, 358 P2, 337 P3**.
+  - Verification completed on 2026-09-29, after the original run lost 123 agents to the account usage limit (§7). A second-lens pass rechecked 281 confirmed P0/P1 findings by micro-benchmark or exhaustive caller trace: it kept 251, downgraded 30, and refuted none.
   - They group into **30 PRs in 7 waves** (§4).
   - Every issue, by PR: [`appendix-issues-by-pr.md`](appendix-issues-by-pr.md).
   - Raw data and tooling: [`data/`](data/).
@@ -100,7 +101,7 @@ Measured on this pin. The machine carried load averages of 10–50 from other se
   Each finder traced at least one real caller per finding.
 - **Verification.** Every finding then went to an independent verifier told to refute it. The verifier re-read the cited line, traced callers across the repo (no truncated greps), looked for missed offloads and caches, matched open tasks, and re-rated severity. Verifiers downgraded ~100 severities, upgraded ~15, refuted 22 and marked 11 as fully tracked.
 - **Measurement.** The five probes and most pattern sweeps ran safe micro-benchmarks under a scratch `HOME` / `XDG_*` / `TLDW_CONFIG_PATH` with `TLDW_TEST_MODE=1`. The user's real profile was verified untouched afterwards: `config.toml` hash `fd1f1351…` and mtime Sep 26 are unchanged.
-- **Dedup.** Findings in the same PR group were clustered by location and title similarity: 1,021 live findings → 905 issues. The keystone problems were reported independently by 5–10 agents with consistent numbers. The `n` column in the appendix is that corroboration count.
+- **Dedup.** Findings in the same PR group were clustered by location and title similarity: 1,020 live findings → 904 issues. The keystone problems were reported independently by 5–10 agents with consistent numbers. The `n` column in the appendix is that corroboration count.
 
 ---
 
@@ -225,31 +226,31 @@ Per-PR issue counts (unique issues after dedup):
 | PERF-03 | TASK-33262 | Logging pipeline | 0 | 0 | 4 | 9 |
 | PERF-04 | TASK-33263 | Trace-callback BLOB expansion | 0 | 1 | 0 | 0 |
 | PERF-05 | TASK-33264 | Screen leaks | 1 | 2 | 0 | 0 |
-| PERF-06 | TASK-33265 | Config warm-hit fast paths + derivation scopes | 6 | 3 | 4 | 2 |
+| PERF-06 | TASK-33265 | Config warm-hit fast paths + derivation scopes | 4 | 4 | 5 | 2 |
 | PERF-07 | TASK-33266 | Memoize user-data dir / DB paths / sensitive paths | 4 | 7 | 3 | 0 |
-| PERF-08 | TASK-33267 | Amortize storage admission (ADR-126 amendment) | 5 | 19 | 12 | 5 |
-| PERF-09 | TASK-33268 | Private-SQLite connection lifecycle | 5 | 9 | 3 | 3 |
+| PERF-08 | TASK-33267 | Amortize storage admission (ADR-126 amendment) | 6 | 14 | 16 | 5 |
+| PERF-09 | TASK-33268 | Private-SQLite connection lifecycle | 6 | 8 | 3 | 3 |
 | PERF-10 | TASK-33269 | Legacy trace maintenance | 4 | 1 | 0 | 0 |
 | PERF-11 | TASK-33270 | GC policy | 1 | 3 | 0 | 0 |
-| PERF-12 | TASK-33271 | Console send path | 2 | 15 | 17 | 12 |
-| PERF-13 | TASK-33272 | Console idle / tick / render | 2 | 11 | 36 | 40 |
+| PERF-12 | TASK-33271 | Console send path | 2 | 11 | 20 | 13 |
+| PERF-13 | TASK-33272 | Console idle / tick / render | 2 | 8 | 39 | 40 |
 | PERF-14 | TASK-33273 | Console typing / first paint / resume | 1 | 7 | 10 | 6 |
-| PERF-15 | TASK-33274 | Agent runtime | 3 | 14 | 13 | 13 |
-| PERF-16 | TASK-33275 | `TldwCli.__init__` diet + dead boot work | 0 | 12 | 6 | 8 |
-| PERF-17 | TASK-33276 | Boot import diet + pre-import paydown | 0 | 5 | 18 | 21 |
+| PERF-15 | TASK-33274 | Agent runtime | 3 | 13 | 14 | 13 |
+| PERF-16 | TASK-33275 | `TldwCli.__init__` diet + dead boot work | 0 | 11 | 7 | 9 |
+| PERF-17 | TASK-33276 | Boot import diet + pre-import paydown | 0 | 4 | 17 | 23 |
 | PERF-18 | TASK-33277 | Server-mode client off the loop | 1 | 1 | 4 | 2 |
-| PERF-19 | TASK-33278 | Boot CSS paydown | 0 | 2 | 0 | 0 |
+| PERF-19 | TASK-33278 | Boot CSS paydown | 0 | 1 | 1 | 0 |
 | PERF-20 | TASK-33279 | HTTP client reuse | 0 | 3 | 5 | 12 |
-| PERF-21 | TASK-33280 | Library screen | 3 | 22 | 24 | 29 |
+| PERF-21 | TASK-33280 | Library screen | 3 | 21 | 25 | 29 |
 | PERF-22 | TASK-33281 | Settings + Personas | 0 | 4 | 27 | 10 |
-| PERF-23 | TASK-33282 | MCP workbench | 0 | 7 | 2 | 5 |
+| PERF-23 | TASK-33282 | MCP workbench | 0 | 6 | 3 | 5 |
 | PERF-24 | TASK-33283 | Watchlists + Schedules | 2 | 7 | 9 | 23 |
-| PERF-25 | TASK-33284 | Other screens | 1 | 14 | 39 | 45 |
+| PERF-25 | TASK-33284 | Other screens | 2 | 12 | 38 | 47 |
 | PERF-26 | TASK-33285 | Terminal | 0 | 2 | 3 | 0 |
-| PERF-27 | TASK-33286 | Notes sync + Personal Context | 0 | 11 | 23 | 10 |
+| PERF-27 | TASK-33286 | Notes sync + Personal Context | 0 | 8 | 26 | 10 |
 | PERF-28 | TASK-33287 | DB query hygiene | 0 | 0 | 13 | 11 |
-| PERF-29 | TASK-33288 | Memory growth + data-scaled algorithms | 0 | 4 | 24 | 20 |
-| PERF-30 | TASK-33289 | Cold-feature / hygiene sweep | 0 | 8 | 30 | 43 |
+| PERF-29 | TASK-33288 | Memory growth + data-scaled algorithms | 0 | 2 | 26 | 20 |
+| PERF-30 | TASK-33289 | Cold-feature / hygiene sweep | 0 | 5 | 34 | 40 |
 
 ---
 
@@ -303,7 +304,7 @@ Per-PR issue counts (unique issues after dedup):
 
 ### Wave 1: keystones (owner decisions flagged)
 
-#### PERF-06 (TASK-33265): Config warm-hit fast paths + Console derivation scopes (P0 ×6)
+#### PERF-06 (TASK-33265): Config warm-hit fast paths + Console derivation scopes (P0 ×4)
 - **Changes:**
   - extend TASK-32804.1's `_warm_config_cache_hit` precedent: an unguarded warm-hit path for `load_settings`, `get_runtime_config_snapshot` (which also deep-copies the whole config on every call) and `get_model_cache_dir`;
   - remove the explicit `operation(config)` wrapper from the 5 Hz run tick;
@@ -333,7 +334,7 @@ Per-PR issue counts (unique issues after dedup):
 - **Tasks:** TASK-1320.
 - **Size:** M.
 
-#### PERF-08 (TASK-33267): Amortize Backup_Recovery storage admission (ADR-126 amendment) (P0 ×5, P1 ×19)
+#### PERF-08 (TASK-33267): Amortize Backup_Recovery storage admission (ADR-126 amendment) (P0 ×6, P1 ×14)
 - **The biggest lever and the riskiest change:**
   - reuse verified directory pins and admission evidence within a generation, re-checking identity through held descriptors (`fstat` of pinned dir fds) instead of re-walking `/` with fresh `openat`s per component;
   - take admission per connection or per generation for DB owners instead of per outermost `transaction()` (~245 opens each on ChaChaNotes, AgentRuns, Prompts, Evals, Subscriptions, Workspace registry, Notes device state);
@@ -352,7 +353,7 @@ Per-PR issue counts (unique issues after dedup):
 - **Gate:** `open()`s to `_ui_ready` (today ~190–207k); `open()`/s at idle (today ~3,400); per-transaction cost (today 4–15 ms, raw 1.4 µs).
 - **Size:** L. Split into 08a (evidence reuse in `storage_admission`/`bootstrap`) and 08b (per-owner call-site changes) if review needs it.
 
-#### PERF-09 (TASK-33268): Private-SQLite connection lifecycle (P0 ×5)
+#### PERF-09 (TASK-33268): Private-SQLite connection lifecycle (P0 ×6)
 - **Principle:** keep ADR-125's helper exactly as designed, but **open far fewer connections**.
 - **Changes:**
   - replace close-per-call wrappers with long-lived per-thread handles on a small dedicated DB executor per owner, following the TASK-23027 Notes-sync executor template. The wrappers are `run_owned_db_call`, `operation_owned_connection`, `run_finite_local_worker`, the scope services' `list_and_close`, the `Media` seam, `NotesScopeService`, `run_db_off_loop`, `SyncStateRepository`, receipts ledger reads, and `ScheduledTasksDB`'s per-operation connections (**P0: every scheduling call ~45–50 ms**);
@@ -385,7 +386,7 @@ Per-PR issue counts (unique issues after dedup):
 
 ### Wave 2: Console (after re-measuring)
 
-#### PERF-12 (TASK-33271): Console send path: one off-loop turn snapshot (P0 ×2, P1 ×15)
+#### PERF-12 (TASK-33271): Console send path: one off-loop turn snapshot (P0 ×2, P1 ×11)
 - **Consolidate** the two per-send turn-snapshot builders (`console_chat_controller.py:1300`/`:1335`, `session.py:3499`) into one, computed off the loop. It covers:
   - **skill trust and fingerprint:** cache by manifest stat identity, 40–90 ms per installed skill today;
   - **MCP catalog + permissions:** once per send, not twice (~210 ms), with `compose_catalog`'s two permission-store loads merged;
@@ -402,7 +403,7 @@ Per-PR issue counts (unique issues after dedup):
 - **Gate:** Enter → provider dispatch, today 6.5–11.8 s.
 - **Size:** L.
 
-#### PERF-13 (TASK-33272): Console idle, tick and streaming render (P0 ×2, P1 ×11)
+#### PERF-13 (TASK-33272): Console idle, tick and streaming render (P0 ×2, P1 ×8)
 - **Changes:**
   - **Credential/readiness polls:** make the 4 Hz poll event-driven, with the subscription cache publishing an expiry signal. The same poll pattern is duplicated on 5 surfaces.
   - **0.2 s tick:** stop re-running `context_control_inputs` (durable snapshots, branch-memory SQL, a recovery config scope) every tick; memoize on transcript revision.
@@ -417,7 +418,7 @@ Per-PR issue counts (unique issues after dedup):
 
 #### PERF-14 (TASK-33273): Console typing, first paint and resume (P0, P1 ×7)
 - **Changes:**
-  - **typing pause (P0):** the debounced spend refresh stalls the loop 250–415 ms; move it inside a derivation scope and off the loop;
+  - **typing pause (P1 after the second-lens pass):** the debounced spend refresh stalls the loop 250–415 ms; move it inside a derivation scope and off the loop;
   - **composer layout:** the per-keystroke whole-screen layout has three removable triggers (TASK-21120);
   - **class dance:** the ADR-161 class-dance does synchronous stylesheet applies on unmounted widgets (composer mount 29 → 95 `update_node` calls);
   - **Character search:** debounce it and stop the double recompose; it makes 5 private-SQLite round trips per key;
@@ -428,7 +429,7 @@ Per-PR issue counts (unique issues after dedup):
 - **Stale standing finding:** TASK-24452 ("Console re-mints 559 widgets per visit") is **stale**. Console is a reused route since TASK-31520; update or close it.
 - **Size:** M.
 
-#### PERF-15 (TASK-33274): Agent runtime (P0 ×3, P1 ×14)
+#### PERF-15 (TASK-33274): Agent runtime (P0 ×3, P1 ×13)
 - **Changes:**
   - **worker model:** use a persistent agent worker thread or executor with one event loop and one pooled `AsyncClient`, instead of a new `_ModelCallLifeline` thread, a new loop and a new client per send (33.7 ms SSL plus a cold handshake). Tool calls today run on a **new bare thread each, leaking the DB handles they open** (P0).
   - **trace writes:** run them on a connected thread; they open and close a fresh connection per operation today (P0).
@@ -441,7 +442,7 @@ Per-PR issue counts (unique issues after dedup):
 
 ### Wave 3: boot and first paint
 
-#### PERF-16 (TASK-33275): `TldwCli.__init__` diet + dead boot work (P1 ×12)
+#### PERF-16 (TASK-33275): `TldwCli.__init__` diet + dead boot work (P1 ×11)
 - **Defer to lazy properties or the post-`_ui_ready` tier** (`Utils/boot_worker_policy.py`):
   - the 5 feature DBs (~340 ms);
   - `EvaluationOrchestrator` (Evals DB, YAML, TaskLoader);
@@ -464,7 +465,7 @@ Per-PR issue counts (unique issues after dedup):
 - **Gate:** `TldwCli()` construct time (today 2.4–3.1 s at load 10); main-thread helper spawns before first paint (today 12).
 - **Size:** M.
 
-#### PERF-17 (TASK-33276): Boot import diet + pre-import ratchet paydown (P1 ×5)
+#### PERF-17 (TASK-33276): Boot import diet + pre-import ratchet paydown (P1 ×4)
 - **Import fixes:**
   - TTS/STTS stack (43 modules, ~97 ms), forced by `@on` Message classes;
   - `tldw_profile_core` for one constant (~23–27 ms);
@@ -511,7 +512,7 @@ Per-PR issue counts (unique issues after dedup):
 
 ### Wave 5: screens (parallelizable)
 
-- **PERF-21 (TASK-33280) Library** (P0 ×3, P1 ×22). The largest screen PR; split by canvas if needed.
+- **PERF-21 (TASK-33280) Library** (P0 ×3, P1 ×21). The largest screen PR; split by canvas if needed.
   - Most destination switches still `await self.recompose()` on the whole screen (TASK-281).
   - The ingest registry listener does O(queue) work and remounts the whole queue panel per notification, so a folder submit is O(N²), with deep-copies 3× per mutation (TASK-32804.5, TASK-31583).
   - The workspace-depth build issues ~170 admission-wrapped full-scan registry reads on the loop (P0).
@@ -527,7 +528,7 @@ Per-PR issue counts (unique issues after dedup):
   - The Settings category switch re-mints both panes (215–900 ms) plus a mount-echo `Changed` storm; mount the category pane targeted instead.
   - Personas and Roleplay lists remount every row per debounced keystroke, page or sort. Use `OptionList` virtualization.
   - Debounce the inspector search, which runs a `BEGIN IMMEDIATE` per key.
-- **PERF-23 (TASK-33282) MCP workbench** (P1 ×7).
+- **PERF-23 (TASK-33282) MCP workbench** (P1 ×6).
   - Split the monolithic `_sync_children`, which re-reads stores and rebuilds 5 DataTables per interaction (TASK-32804.7).
   - Stop running two full passes per warm visit.
   - Arrow keys do guarded store reads plus an inspector remount.
@@ -545,7 +546,7 @@ Per-PR issue counts (unique issues after dedup):
     - the tree remounts per count refresh (one Button per node);
     - the inspector and content panes recompose per selection, including j/k;
     - the notifications pane rebuilds per cursor key.
-- **PERF-25 (TASK-33284) Other screens** (P0, P1 ×14).
+- **PERF-25 (TASK-33284) Other screens** (P0 ×2, P1 ×12).
   - Evals re-pivots all runs and full-scans `eval_results` on the loop per visit, and the SnippetEditor has no cap.
   - Change Review runs git subprocesses and step-log reads on the loop, and re-lays out a 2,000-line diff per arrow key.
   - Speech Playground re-mints 161 widgets per visit and deep-copies the whole settings tree on mount.
@@ -562,7 +563,7 @@ Per-PR issue counts (unique issues after dedup):
   - The output parse caps at 0.19 MB/s under the GIL.
   - Per-session polls run at 200 Hz (runtime) and 100 Hz (input flush), on top of the 50 Hz ownership scan (TASK-31503).
   - Fix: dirty-line tracking and event-driven wakeups.
-- **PERF-27 (TASK-33286) Notes sync + Personal Context** (P1 ×11).
+- **PERF-27 (TASK-33286) Notes sync + Personal Context** (P1 ×8).
   - **Notes sync:**
     - the identity fallback does O(bindings × files) sha256 work on the loop (229 ms at 200/3k, 2 s at 500/10k);
     - `observe_root` and planning run on the loop;
@@ -581,7 +582,7 @@ Per-PR issue counts (unique issues after dedup):
   - The media `sync_log`, which is never pruned and logs full content twice per ingest.
   - The review-set 2N+1 listing (TASK-31508).
   - Follow the CLAUDE.md plan-pin rule for any new index.
-- **PERF-29 (TASK-33288) Memory growth + data-scaled algorithms** (P1 ×4).
+- **PERF-29 (TASK-33288) Memory growth + data-scaled algorithms** (P1 ×2).
   - **Unbounded growth:**
     - the realtime mic tap keeps every frame (~173 MB/h, unbounded);
     - the dictionary version-history sidecar rewrites the whole file per edit.
@@ -600,13 +601,13 @@ Per-PR issue counts (unique issues after dedup):
     - web_fetch cache (bounded by count, not bytes);
     - chunking SecurityLogger;
     - reranker cache (TASK-32810.11).
-- **PERF-30 (TASK-33289) Cold-feature and hygiene sweep** (P1 ×8, P2 ×30, P3 ×43; 24 of these unverified). TTS, Audio, STT, Evals, Chunking, Backup_Recovery and interop P2/P3 items, including:
+- **PERF-30 (TASK-33289) Cold-feature and hygiene sweep** (P1 ×5, P2 ×34, P3 ×40). TTS, Audio, STT, Evals, Chunking, Backup_Recovery and interop P2/P3 items, including:
   - the legacy TTS request importing all 7 backends on the loop (torch via higgs);
   - `AudioService.convert_audio` doing sync decode/encode inside `async def`;
   - the model-catalog refresh fsyncing on the loop every launch;
   - the Environment tier spawning ~10 git processes every 10 s (TASK-31628);
   - the web-search relevance loop being serial with deliberate sleeps.
-  - Lowest priority. Re-verify the unverified items first (§7).
+  - Lowest priority.
 
 ---
 
@@ -668,13 +669,15 @@ Backlog: PERF-01..PERF-30 are filed as **TASK-33260..TASK-33289** (PERF-NN = TAS
 
 - **Coverage:**
   - all 95 finder items completed: 76 slices covering 100% of files, 14 sweeps, 5 probes;
-  - 953 of 1,043 findings were adversarially verified;
-  - **90 remain unverified**, almost all in cold slices: Audio 13, COLD-MISC-3 11, Chunking/TTS/Backup_Recovery/COLD-MISC-1/-2/HOT-MISC-2 8 each, Evals 7, TTS#2 6, COLD-MISC-4 5. The verifier hit the account usage limit twice, and the resume ended with the session. They are marked `unverified` in the appendix. Most land in PERF-29/30. Re-verify before implementing.
-- **Second-lens pass did not complete.** The planned second measure/trace pass on confirmed P0/P1s never finished (usage limit). Mitigations:
-  - most P0s already carry **measured** costs from the finder or probe that found them;
-  - the keystones (R1, R2, GC) were measured **independently by 5–10 agents** with consistent numbers;
-  - still, every PR's first step should re-measure its items against the PERF-01 guards before changing code.
-- **Refute rate is low:** 22 of 1,043 (2%), while severity changes were common (~115). Treat P2/P3 severities as approximate.
+  - all 1,043 findings were adversarially verified;
+  - **All findings are now verified.** 90 were left unverified when the original run lost 123 agents to the account usage limit (2026-09-28, 07:22 PT). On 2026-09-29 the same workflow was resumed from its journal: the finders replayed from cache, and only the missing verification and second-lens measurement agents ran, against the same pinned tree (840ed2ca58). A second usage-limit stop was resumed the same way. Final result: 0 unverified, 23 refuted, and 30 P0/P1 findings downgraded by the second-lens pass.
+- **Second-lens pass (completed 2026-09-29).** Every confirmed P0/P1 was rechecked by an independent agent, with a micro-benchmark where it could be measured safely and an exhaustive caller trace where it could not:
+  - 281 findings rechecked: **251 kept, 30 downgraded, 0 refuted**;
+  - 5 went from P0 to P1: the first-send and typing-pause stalls, the `TldwCli.__init__` feature-DB opens, boot scheduling maintenance, and the Evals visit re-pivot;
+  - 25 went from P1 to P2;
+  - the keystones (R1, R2, GC) were measured independently by 5–10 agents with consistent numbers;
+  - every PR's first step should still re-measure its items against the PERF-01 guards before changing code.
+- **Refute rate is low:** 23 of 1,043 (2%), while severity changes were common: ~115 at first verification, plus the 30 second-lens downgrades. Treat P2/P3 severities as approximate.
 - **Load inflation.** Every probe ran with load averages of 10–50 from other sessions, so absolute ms are inflated ~1.5–3×. Syscall, spawn and call counts are load-independent.
 - **Path depth.** The probe profiles sat at path depth 12–14 against ~4–5 for a real `~/.config`, so **admission milliseconds scale by ~0.3–0.46 for a real profile**; the fit is ~2.0 ms + 0.71 ms per component. Call counts do not scale. Even at real depth, a warm `load_settings` is ~5–8 ms and `get_user_data_dir` ~20–30 ms per call.
 - **TTI comparison.** 7.5–9.9 s against the 09-04 review's 2.84 s is **not a paired comparison**: different load and different path depth. The regression direction is certain; its exact size is not.
@@ -684,7 +687,7 @@ Backlog: PERF-01..PERF-30 are filed as **TASK-33260..TASK-33289** (PERF-NN = TAS
 ## 8. Files
 
 - `report.md`: this report.
-- `appendix-issues-by-pr.md`: all 905 unique issues by PR (severity, status, location, tasks, corroboration, measured).
+- `appendix-issues-by-pr.md`: all 904 unique issues by PR (severity, status, location, tasks, corroboration, measured).
 - `data/findings.json`: all 1,043 findings with verifier verdicts, reasons, costs and fix sketches.
 - `data/issues.json` (generated, not committed): the deduplicated issues with their PR assignment. Recreate it with `classify.py` → `dedupe.py` → `plan_map.py`; the full rebuild order is in `data/extract_journal.py`.
 - `data/items.md`: every agent's summary, clean-areas list and census tables (the timer census, recompose census, DB index-coverage census, HTTP-client census, import-time top-40 and so on).
