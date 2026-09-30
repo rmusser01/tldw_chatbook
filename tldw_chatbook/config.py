@@ -10059,12 +10059,102 @@ def get_user_folder_name() -> str:
     return profile_paths.user_folder_name(user_name)
 
 
+#: PERF-07 (TASK-33266; ADR-126 amendment D2, 2026-09-29): the verified user
+#: data directory, reused while its inputs and every stamped path component are
+#: unchanged. ``(key, stamps, path)`` or None; guarded by the lock below.
+_USER_DATA_DIR_MEMO: tuple | None = None
+_USER_DATA_DIR_MEMO_LOCK = _threading.Lock()
+
+
+def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
+    """The memo key and every path whose posture the resolution depends on.
+
+    Returns:
+        ``(key, stamped_paths)``. The key starts with the config cache object
+        (compared by identity) and its generation, so any reload or write
+        invalidates the memo; then the settings the resolution reads and the
+        default data base, which follows HOME. The stamped paths are every
+        component of each candidate user directory's chain plus the entries
+        the default-root selection reads (conventional root, fallback root,
+        root lock file).
+    """
+    from tldw_chatbook.Backup_Recovery.storage_admission import _chain
+
+    user_folder = get_user_folder_name()
+    configured_data_dir = get_cli_setting("paths", "data_dir", None)
+    if configured_data_dir is None:
+        configured_data_dir = get_cli_setting("Paths", "data_dir", None)
+    if configured_data_dir:
+        candidates = (lexical_path(configured_data_dir) / user_folder,)
+        entries: tuple[Path, ...] = ()
+        base = str(configured_data_dir)
+    else:
+        conventional = _default_base_data_dir()
+        fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
+        candidates = (conventional / user_folder, fallback / user_folder)
+        entries = (
+            conventional,
+            fallback,
+            conventional.parents[2] / ".tldw_cli-data-root.lock",
+        )
+        base = str(conventional)
+    key = (_CONFIG_CACHE, _CONFIG_GENERATION, _CONFIG_CACHE_SOURCE, user_folder, base)
+    paths = (*(p for c in candidates for p in _chain(c)), *entries)
+    return key, tuple(dict.fromkeys(paths))
+
+
+def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple:
+    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+
+    return tuple(_posture(path) for path in paths)
+
+
 @_config_participants.guarded
 def get_user_data_dir() -> Path:
-    """Return the secured lexical user-specific data directory."""
+    """Return the secured lexical user-specific data directory.
+
+    PERF-07: after the guarded handshake, a resolution is reused while the
+    config generation, the settings it reads and the posture (identity, type,
+    mode, owner) of every component from ``/`` to each candidate directory
+    are unchanged, re-observed on every call. Anything else runs the
+    unmodified resolution, the only place that creates, hardens or refuses.
+    A result is kept only when stamps taken before and after that resolution
+    are identical, so it describes exactly the state that was verified.
+    """
+    global _USER_DATA_DIR_MEMO
     verified = _config_participants.verified_user_data_directory(sys.modules[__name__])
     if verified is not None:
         return verified
+    key, stamped = _user_data_dir_inputs()
+    with _USER_DATA_DIR_MEMO_LOCK:
+        memo = _USER_DATA_DIR_MEMO
+    if (
+        memo is not None
+        and memo[0][0] is key[0]
+        and memo[0][1:] == key[1:]
+        and memo[1] == _user_data_dir_stamps(stamped)
+    ):
+        return memo[2]
+    before = _user_data_dir_stamps(stamped)
+    result = _resolve_user_data_dir()
+    after = _user_data_dir_stamps(stamped)
+    import stat
+
+    from tldw_chatbook.Backup_Recovery.storage_admission import _chain
+
+    walked = set(_chain(result))
+    if before == after and all(
+        stamp is not None and not stat.S_ISLNK(stamp[2])
+        for path, stamp in zip(stamped, after)
+        if path in walked
+    ):
+        with _USER_DATA_DIR_MEMO_LOCK:
+            _USER_DATA_DIR_MEMO = (key, after, result)
+    return result
+
+
+def _resolve_user_data_dir() -> Path:
+    """The unmodified resolution: select, create, harden or refuse."""
     user_folder = get_user_folder_name()
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:

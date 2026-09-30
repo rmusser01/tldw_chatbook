@@ -446,6 +446,9 @@ _STUB_RAISE_ALLOWED = frozenset(
         "_sensitive_skill_trust_dir",
         "_direct_child_rule_container_dirs",
         "resolve_sensitive_context",
+        # PERF-07: resolve_sensitive_context's memoized raw inputs; reached
+        # only through it, so it raises (fails closed) exactly where it did.
+        "_raw_inputs",
     }
 )
 
