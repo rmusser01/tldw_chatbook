@@ -16,8 +16,7 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook import config
-import tldw_chatbook.UI.Tools_Settings_Window as tools_settings_module
-from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
+import tldw_chatbook.Backup_Recovery.settings_backup_helpers as settings_backup_helpers
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -179,11 +178,11 @@ def test_manifest_worker_returns_immutable_unpublished_stage(
 ) -> None:
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
-    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
+    publication = settings_backup_helpers.build_backup_manifest_publication(backup_dir)
     assert not publication.stage_path.exists()
     assert not publication.final_path.exists()
 
-    result = ToolsSettingsWindow._write_backup_manifest(
+    result = settings_backup_helpers.write_backup_manifest(
         "20260727_010203",
         (),
         publication,
@@ -203,11 +202,11 @@ def test_manifest_worker_exclusively_creates_stage_without_overwrite(
 ) -> None:
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
-    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
+    publication = settings_backup_helpers.build_backup_manifest_publication(backup_dir)
     publication.stage_path.write_text("sentinel", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="backup_manifest_write_failed"):
-        ToolsSettingsWindow._write_backup_manifest(
+        settings_backup_helpers.write_backup_manifest(
             "20260727_010203",
             (),
             publication,
@@ -227,10 +226,10 @@ def test_backup_cleanup_propagates_fresh_base_exception(
     def interrupt_cleanup(*args: Any, **kwargs: Any) -> None:
         raise KeyboardInterrupt("fresh cleanup interruption")
 
-    monkeypatch.setattr(tools_settings_module.Path, "unlink", interrupt_cleanup)
+    monkeypatch.setattr(settings_backup_helpers.Path, "unlink", interrupt_cleanup)
 
     with pytest.raises(KeyboardInterrupt, match="fresh cleanup interruption"):
-        ToolsSettingsWindow._unlink_backup_artifact(stage_path, "manifest")
+        settings_backup_helpers.unlink_backup_artifact(stage_path, "manifest")
 
 
 def test_backup_cleanup_preserves_active_control_flow_without_exposing_values(
@@ -243,11 +242,11 @@ def test_backup_cleanup_preserves_active_control_flow_without_exposing_values(
     def interrupt_cleanup(*args: Any, **kwargs: Any) -> None:
         raise KeyboardInterrupt(private_error)
 
-    monkeypatch.setattr(tools_settings_module.Path, "unlink", interrupt_cleanup)
+    monkeypatch.setattr(settings_backup_helpers.Path, "unlink", interrupt_cleanup)
     messages: list[str] = []
     sink_id = logger.add(messages.append, level="WARNING", format="{message}")
     try:
-        ToolsSettingsWindow._unlink_backup_artifact(
+        settings_backup_helpers.unlink_backup_artifact(
             stage_path,
             "manifest",
             preserve_control_flow=True,
@@ -270,7 +269,7 @@ def test_manifest_serialization_failure_preserves_previous_file_and_creates_no_s
     manifest_path = backup_dir / "backup_info.json"
     previous_manifest = {"timestamp": "previous", "databases": []}
     manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
-    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
+    publication = settings_backup_helpers.build_backup_manifest_publication(backup_dir)
 
     def fail_mid_dump(
         value: Any,
@@ -282,10 +281,10 @@ def test_manifest_serialization_failure_preserves_previous_file_and_creates_no_s
         stream.flush()
         raise RuntimeError("private manifest serialization failure")
 
-    monkeypatch.setattr(tools_settings_module.json, "dump", fail_mid_dump)
+    monkeypatch.setattr(settings_backup_helpers.json, "dump", fail_mid_dump)
 
     with pytest.raises(RuntimeError, match="backup_manifest_write_failed"):
-        ToolsSettingsWindow._write_backup_manifest(
+        settings_backup_helpers.write_backup_manifest(
             "20260727_010203",
             (),
             publication,

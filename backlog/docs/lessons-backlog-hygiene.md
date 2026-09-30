@@ -1161,3 +1161,22 @@ would have renumbered the task in response to its own checkpoint.
 blob identity, creation metadata and ref object type before renumbering.
 A checkpoint of the same uncommitted task is not another owner. Do not exclude
 all Codex snapshots: they can also expose another session's uncommitted claim.
+
+---
+
+## A grep-verified premise can still be wrong — read the pinning tests before deleting
+
+**What happened.** 2026-09-27, simplification-cascade filings TASK-33128/33084/33082. The audit (run
+against a branch 1,872 commits behind dev) called `pipeline_loader.py` dead weight and the video
+registry's `stable_diffusion_cpp` entry phantom drift. Both claims had been **grep-verified against
+dev** — the reference counts matched. Execution still refuted them: dev's registry docstring plus two
+pinning tests document the "phantom" entry as a deliberate ADR-176 skeleton, and TASK-32628's fresh
+backup tests had adopted `PipelineLoader` as their storage-admission subject, alongside a middleware
+guard whose own docstring calls it "the deliverable, more than any single deletion". The counts were
+right; the *intent* behind them was invisible to grep. Two tasks closed refuted and one rescoped
+before any production code was touched — cheap, but only because closing happened before implementing.
+
+**What to do.** For any deletion/consolidation filing, before writing code: (1) `git log --oneline -5
+-- <module>` against dev for recent adoption; (2) read the module/class docstring; (3) read the tests
+that reference the target — a test that *pins* a structure is design intent, not dead weight.
+Reference counts verify reachability, not purpose.

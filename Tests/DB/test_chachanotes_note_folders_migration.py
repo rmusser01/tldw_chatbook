@@ -286,7 +286,7 @@ def test_v35_to_v36_failure_rolls_back_schema_and_version(
 def test_chachanotes_backup_preserves_owned_folders_and_supports_restore_review(
     tmp_path: Path,
 ) -> None:
-    from tldw_chatbook.UI.Tools_Settings_Window import SETTINGS_DATABASES
+    from tldw_chatbook.Backup_Recovery.settings_backup_helpers import SETTINGS_DATABASES
 
     source_path = tmp_path / "source.db"
     backup_path = tmp_path / "backup.db"
