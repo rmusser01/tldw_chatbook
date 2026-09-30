@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import io
+import shutil
+import subprocess
+import tarfile
+import warnings
 from pathlib import Path
 
 import pytest
@@ -302,8 +307,11 @@ class S:
 # W003: a wait-for-dismiss screen push reachable from a non-worker coroutine
 # (TASK-33621.13). Textual appends the screen and only then raises
 # NoActiveWorker, killing the dispatching pump under the painted screen --
-# the Console Inspector 'Choose folder' freeze (GAP4-01).
+# the Console Inspector 'Choose folder' freeze (GAP4-01). A row is
+# "<entry point> => <function holding the push>".
 # --------------------------------------------------------------------------
+
+_M0 = "tldw_chatbook/UI/m0.py"
 
 
 def _w003(*sources: str) -> list[str]:
@@ -315,6 +323,36 @@ def _w003(*sources: str) -> list[str]:
     return sorted(_mod.collect_w003(modules))
 
 
+def _row(root: str, site: str | None = None, module: str = _M0) -> str:
+    """A census key in ``module``; a root that pushes itself is its own site."""
+    return f"{module}::{root} => {module}::{site or root}"
+
+
+def _parse_file(path: Path) -> ast.Module | None:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            return ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return None
+
+
+@pytest.fixture(scope="module")
+def real_tree() -> dict[str, tuple]:
+    """The real package, collected once: ``{relative path: (module, functions)}``.
+
+    ``_WaitGraph`` resets the solved state it keeps on the functions, so
+    tests may build several graphs from this one collection.
+    """
+    collected = {}
+    for path in _mod._source_files():
+        tree = _parse_file(path)
+        if tree is not None:
+            rel = _mod._rel(path)
+            collected[rel] = _mod._collect_module(tree, rel)
+    return collected
+
+
 def test_w003_flags_a_handler_that_awaits_push_screen_wait_directly():
     source = """
 class S:
@@ -322,7 +360,7 @@ class S:
     async def _go(self, event):
         await self.app.push_screen_wait(Picker())
 """
-    assert _w003(source) == ["tldw_chatbook/UI/m0.py::S._go"]
+    assert _w003(source) == [_row("S._go")]
 
 
 @pytest.mark.parametrize(
@@ -338,7 +376,7 @@ class S:
     async def action_pick(self):
         {push}
 """
-    assert _w003(source) == ["tldw_chatbook/UI/m0.py::S.action_pick"]
+    assert _w003(source) == [_row("S.action_pick")]
 
 
 def test_w003_follows_awaited_helpers_to_the_handler():
@@ -353,7 +391,7 @@ class S:
     async def _ask(self):
         return await self.app.push_screen_wait(Picker())
 """
-    assert _w003(source) == ["tldw_chatbook/UI/m0.py::S.on_button_pressed"]
+    assert _w003(source) == [_row("S.on_button_pressed", "S._ask")]
 
 
 def test_w003_follows_the_gap4_callable_chain_across_modules():
@@ -388,7 +426,8 @@ class Inspector(ModalScreen):
         state = await self._project_recovery(event.session_id)
 """
     assert _w003(session, panel, inspector) == [
-        "tldw_chatbook/UI/m2.py::Inspector._recover"
+        "tldw_chatbook/UI/m2.py::Inspector._recover => "
+        "tldw_chatbook/UI/m0.py::SessionController._select_binding"
     ]
 
 
@@ -420,7 +459,7 @@ def unrelated(items):
     recovery = len
     return recovery(items)
 """
-    assert _w003(source) == ["tldw_chatbook/UI/m0.py::Inspector._recover"]
+    assert _w003(source) == [_row("Inspector._recover", "_pick")]
 
 
 def test_w003_accepts_the_fixed_shape_a_handler_that_starts_a_worker():
@@ -443,7 +482,7 @@ class Inspector(ModalScreen):
         # A `@work` coroutine is a worker.
         "@work(exclusive=True, group='g')\n    async def action_pick(self):\n"
         "        await self.app.push_screen_wait(Picker())",
-        # Pushing with a callback never waits.
+        # Pushing with a callback, and returning, never waits.
         "def action_pick(self):\n"
         "        self.app.push_screen(Picker(), callback=self._picked)",
         # `await run_worker(coro)` runs the coroutine in the worker.
@@ -483,12 +522,14 @@ class S:
     [
         "self.app.push_screen(Picker(), callback=self._after)",
         "self.app.push_screen(Picker(), self._after)",
+        "self.app.push_screen(Picker(), lambda result: self._after(result))",
     ],
-    ids=["keyword", "positional"],
+    ids=["keyword", "positional", "lambda"],
 )
 def test_w003_flags_a_waiting_push_screen_result_callback(push):
     """Textual runs a ``push_screen`` result callback through the requester's
-    ``call_next`` -- on a pump, never in a worker."""
+    ``call_next`` -- on a pump, never in a worker -- and ``invoke`` awaits the
+    coroutine a one-call ``lambda`` returns."""
     source = f"""
 class S:
     def action_pick(self):
@@ -497,19 +538,31 @@ class S:
     async def _after(self, result):
         await self.app.push_screen_wait(Confirm())
 """
-    assert _w003(source) == ["tldw_chatbook/UI/m0.py::S.action_pick->_after"]
+    assert _w003(source) == [_row("S.action_pick->_after", "S._after")]
 
 
-def test_w003_flags_a_waiting_callable_handed_to_a_pump_scheduler():
-    source = """
+@pytest.mark.parametrize(
+    "schedule, flagged",
+    [
+        ("self.call_after_refresh(self._ask)", True),
+        ("self.set_timer(0.5, self._ask)", True),
+        ("self.set_timer(0.5, callback=self._ask)", True),
+        # `_ask` is run_worker's argument here: it runs in a worker. Scanning
+        # every argument flagged ChunkingLabScreen.on_mount->_load this way.
+        ("self.call_after_refresh(self.run_worker, self._ask)", False),
+    ],
+)
+def test_w003_flags_a_waiting_callable_handed_to_a_pump_scheduler(schedule, flagged):
+    source = f"""
 class S:
     def on_mount(self):
-        self.call_after_refresh(self._ask)
+        {schedule}
 
     async def _ask(self):
         await self.app.push_screen_wait(Picker())
 """
-    assert _w003(source) == ["tldw_chatbook/UI/m0.py::S.on_mount->_ask"]
+    expected = [_row("S.on_mount->_ask", "S._ask")] if flagged else []
+    assert _w003(source) == expected
 
 
 def test_w003_a_generic_alias_bound_to_one_waiting_callable_does_not_cascade():
@@ -552,23 +605,315 @@ class S:
     assert _w003(other, source) == []
 
 
-def test_w003_real_inspector_recovery_still_resolves_as_waiting():
+# The shape of PR #2922's ConsoleHooksController: a constructor-injected
+# `request_review` callable stored as `self._review`, awaited from a Send
+# dispatcher. BuddyManagementModal happens to own an unrelated, waiting
+# `_review` method.
+_BUDDY = """
+class BuddyManagementModal(ModalScreen):
+    async def _review(self):
+        await self.app.push_screen_wait(Confirm())
+"""
+
+_HOOKS = """
+class HooksController:
+    def __init__(self, *, request_review):
+        self._review = request_review
+
+    async def dispatch(self, draft):
+        return await self._review(draft)
+
+
+class Console(Screen):
+    async def on_button_pressed(self, event):
+        await self._hooks.dispatch("draft")
+"""
+
+
+def test_w003_a_self_attribute_never_resolves_to_an_unrelated_class_method():
+    """TASK-33621.13 review: `self._review` resolved by NAME to
+    BuddyManagementModal._review, so the Console's Send dispatchers were
+    censused through a collision -- and, keyed by entry point alone, that one
+    row exempted every later push reachable from them."""
+    wiring = """
+def wire(screen):
+    screen._hooks = HooksController(request_review=lambda draft: len(draft))
+"""
+    assert _w003(_BUDDY, _HOOKS, wiring) == []
+
+
+def test_w003_follows_the_injected_callable_to_its_real_push_site():
+    """...while the REAL chain -- a one-call `lambda` bound to the keyword the
+    constructor stores on `self` -- still resolves, to the real push site."""
+    wiring = """
+def wire(screen):
+    screen._hooks = HooksController(
+        request_review=lambda draft: screen._request_review(draft)
+    )
+
+
+class Screen2:
+    async def _request_review(self, draft):
+        return await self.app.push_screen_wait(Review(draft))
+"""
+    assert _w003(_BUDDY, _HOOKS, wiring) == [
+        "tldw_chatbook/UI/m1.py::Console.on_button_pressed => "
+        "tldw_chatbook/UI/m2.py::Screen2._request_review"
+    ]
+
+
+def test_w003_self_call_resolves_through_a_package_base_class():
+    """An inherited `self._pick()` is the base class's `_pick`, found by the
+    class's own bases -- not by every `_pick` in the package."""
+    base = """
+class PickerBase(Screen):
+    async def _pick(self):
+        return await self.app.push_screen_wait(Picker())
+"""
+    source = """
+class Child(PickerBase):
+    async def action_pick(self):
+        await self._pick()
+
+
+class Unrelated(Screen):
+    async def action_pick(self):
+        await self._pick()
+"""
+    assert _w003(base, source) == [
+        "tldw_chatbook/UI/m1.py::Child.action_pick => "
+        "tldw_chatbook/UI/m0.py::PickerBase._pick"
+    ]
+
+
+# `push_screen_wait` by hand -- PR #2922's request_hook_review.
+_HAND_ROLLED = """
+async def request_review(screen):
+    answer = asyncio.get_running_loop().create_future()
+
+    def done(result):
+        if not answer.done():
+            answer.set_result(result)
+
+    screen.app.push_screen(Review(), callback=done)
+    return await answer
+
+
+async def confirm_by_event(screen):
+    decided = asyncio.Event()
+    screen.app.push_screen(Review(), lambda _: decided.set())
+    await decided.wait()
+"""
+
+
+@pytest.mark.parametrize("helper", ["request_review", "confirm_by_event"])
+def test_w003_flags_a_hand_rolled_wait_from_a_handler(helper):
+    """No NoActiveWorker here -- but Textual queues `done` on the requester
+    pump via `call_next`, and from a handler that pump is the one blocked on
+    `await answer`. The Console's Send froze exactly this way."""
+    source = f"""
+class S:
+    async def on_button_pressed(self, event):
+        await {helper}(self)
+"""
+    assert _w003(_HAND_ROLLED + source) == [_row("S.on_button_pressed", helper)]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # A separate task: the scheduling pump is free to run the callback.
+        "def on_mount(self):\n        asyncio.create_task(request_review(self))",
+        # A worker: likewise.
+        "@work\n    async def action_review(self):\n        await request_review(self)",
+    ],
+    ids=["create-task", "worker"],
+)
+def test_w003_a_hand_rolled_wait_off_the_pump_is_not_flagged(body):
+    source = f"""
+class S:
+    {body}
+"""
+    assert _w003(_HAND_ROLLED + source) == []
+
+
+def test_w003_a_callback_push_that_does_not_await_its_future_is_not_a_wait():
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        answer = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=answer.set_result)
+        self._pending = answer
+"""
+    assert _w003(source) == []
+
+
+# --------------------------------------------------------------------------
+# Rows are keyed by entry point AND push site (TASK-33621.13 review): keyed
+# by entry point alone, a censused ChatScreen.on_button_pressed let a brand
+# new inline push_screen_wait in that handler pass W003 silently.
+# --------------------------------------------------------------------------
+
+_SEND = """
+class S:
+    async def on_button_pressed(self, event):
+        await self._send()
+
+    async def _send(self):
+        await self._review()
+
+    async def _review(self):
+        await self.app.push_screen_wait(Review())
+"""
+
+_NEW_INLINE_PUSH = _SEND.replace(
+    "        await self._send()\n",
+    "        await self._send()\n        await self.app.push_screen_wait(Picker())\n",
+)
+
+_SECOND_PUSH_IN_THE_SITE = _SEND.replace(
+    "        await self.app.push_screen_wait(Review())\n",
+    "        await self.app.push_screen_wait(Review())\n"
+    "        await self.app.push_screen_wait(Again())\n",
+)
+
+
+def test_w003_a_new_push_in_a_reaching_entry_point_is_a_new_key():
+    assert _w003(_SEND) == [_row("S.on_button_pressed", "S._review")]
+    assert _w003(_NEW_INLINE_PUSH) == sorted(
+        [_row("S.on_button_pressed"), _row("S.on_button_pressed", "S._review")]
+    )
+    assert (
+        _w003(_SECOND_PUSH_IN_THE_SITE)
+        == [_row("S.on_button_pressed", "S._review")] * 2
+    )
+
+
+_SAMPLE_M = "tldw_chatbook/UI/sample.py"
+_PINNED_SEND = (
+    "# header\n"
+    f"{_SAMPLE_M}::S.on_button_pressed => {_SAMPLE_M}::S._review\t1\t"
+    "REAL freeze, reviewed: TASK-1; proof: Tests/UI/x.py\n"
+)
+
+
+@pytest.mark.parametrize(
+    "source, new_key",
+    [
+        (
+            _NEW_INLINE_PUSH,
+            f"{_SAMPLE_M}::S.on_button_pressed => {_SAMPLE_M}::S.on_button_pressed",
+        ),
+        (
+            _SECOND_PUSH_IN_THE_SITE,
+            f"{_SAMPLE_M}::S.on_button_pressed => {_SAMPLE_M}::S._review",
+        ),
+    ],
+    ids=["inline-in-the-entry-point", "second-push-in-the-site"],
+)
+def test_main_flags_a_new_push_reachable_from_an_already_censused_entry_point(
+    monkeypatch, tmp_path, capsys, source, new_key
+):
+    assert _run_main_w003(monkeypatch, tmp_path, _SEND, _PINNED_SEND) == 0
+    capsys.readouterr()
+    (tmp_path / "tldw_chatbook" / "UI" / "sample.py").write_text(source)
+    assert _mod.main() == 1
+    out = capsys.readouterr().out
+    assert "new wait-for-dismiss screen push" in out
+    assert new_key in out
+
+
+_CHAT = "tldw_chatbook/UI/Screens/chat_screen.py"
+
+
+def _with_inline_push(tree: ast.Module, cls: str, method: str) -> ast.Module:
+    """``tree`` with ``await self.app.push_screen_wait(Picker())`` prepended to
+    the LIVE (last) definition of ``cls.method``."""
+    push = (
+        ast.parse("async def _():\n    await self.app.push_screen_wait(Picker())\n")
+        .body[0]
+        .body[0]
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == cls
+    )
+    live = [
+        node
+        for node in owner.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == method
+    ][-1]
+    live.body.insert(0, push)
+    return tree
+
+
+@pytest.mark.parametrize(
+    "method, new_key",
+    [
+        (
+            "on_button_pressed",
+            f"{_CHAT}::ChatScreen.on_button_pressed => "
+            f"{_CHAT}::ChatScreen.on_button_pressed",
+        ),
+        (
+            "on_console_workbench_action_requested",
+            f"{_CHAT}::ChatScreen.on_console_workbench_action_requested => "
+            f"{_CHAT}::ChatScreen.on_console_workbench_action_requested",
+        ),
+        (
+            "_send_console_message_from_visible_action",
+            f"{_CHAT}::ChatScreen.on_key->_send_console_message_from_visible_action"
+            f" => {_CHAT}::ChatScreen._send_console_message_from_visible_action",
+        ),
+    ],
+)
+def test_a_new_push_in_a_censused_console_dispatcher_is_flagged_on_the_real_tree(
+    real_tree, method, new_key
+):
+    """The reviewer's reproduction, on the real tree against the real census:
+    every one of these entry points already has a (noted) row, and a new
+    push in it must still fail W003."""
+    known = _mod._read_census(_mod.WAIT_PUSH_CENSUS)
+    clean = _mod._WaitGraph(list(real_tree.values())).roots()
+    assert _mod._added(known, _mod._tally(clean)) == [], "real tree drifted"
+    root = new_key.partition(" => ")[0]
+    assert any(key.startswith(f"{root} => ") for key in known), (
+        f"precondition: {root} has a census row. True until TASK-33621.28 "
+        "fixes the Send freeze -- then delete this assert, not the test."
+    )
+
+    mutated = dict(real_tree)
+    tree = _with_inline_push(_parse_file(_mod.REPO_ROOT / _CHAT), "ChatScreen", method)
+    mutated[_CHAT] = _mod._collect_module(tree, _CHAT)
+    rows = _mod._WaitGraph(list(mutated.values())).roots()
+    assert new_key in _mod._added(known, _mod._tally(rows))
+
+
+def test_w003_sees_the_hook_review_send_freeze_at_its_real_push_site(real_tree):
+    """TASK-33621.28's three freezes stay visible to W003, keyed to
+    ``request_hook_review`` -- the hand-rolled wait itself -- not to a
+    name-collision push in BuddyManagementModal. The fix for TASK-33621.28
+    removes these rows; it retires this test together with the strict
+    xfails in Tests/UI/test_console_hook_review_send_freeze.py."""
+    rows = set(_mod._WaitGraph(list(real_tree.values())).roots())
+    site = "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py::request_hook_review"
+    for root in (
+        "ChatScreen.on_button_pressed",
+        "ChatScreen.on_console_workbench_action_requested",
+        "ChatScreen.on_key->_send_console_message_from_visible_action",
+    ):
+        assert f"{_CHAT}::{root} => {site}" in rows
+    assert not [row for row in rows if "BuddyManagementModal" in row]
+
+
+def test_w003_real_inspector_recovery_still_resolves_as_waiting(real_tree):
     """Regression pin on the REAL tree: the chain from the Inspector's worker
     coroutine through `project_instruction_context_kwargs`'s `partial` to the
     session controller's `push_screen_wait` still resolves -- so if anyone
     awaits that coroutine from the handler again, W003 fails."""
-    import warnings
-
-    collected = []
-    for path in _mod._source_files():
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        collected.append(_mod._collect_module(tree, _mod._rel(path)))
-    graph = _mod._WaitGraph(collected)
+    graph = _mod._WaitGraph(list(real_tree.values()))
     by_key = {fn.key: fn for fn in graph.functions}
     inspector = "tldw_chatbook/Widgets/Console/console_conversation_inspector.py"
     worker = by_key[
@@ -579,10 +924,67 @@ def test_w003_real_inspector_recovery_still_resolves_as_waiting():
     ]
     assert worker.waiting and not worker.is_root
     assert handler.is_root and not handler.waiting
-    assert (
-        f"{inspector}::ConsoleConversationInspector._recover_project_instructions"
-        not in (graph.roots())
+    assert not [
+        row
+        for row in graph.roots()
+        if row.startswith(
+            f"{inspector}::ConsoleConversationInspector._recover_project_instructions"
+        )
+    ]
+
+
+#: dev immediately before TASK-33621.13: the Inspector's RecoveryRequested
+#: handler still awaited the folder picker (GAP4-01).
+_GAP4_BASE = "dfee4bf4c66ec2656a6c4ea2667edb63cc38a445"
+
+
+def test_w003_flags_the_original_inspector_freeze_on_the_merge_base_tree():
+    """Negative control on the tree that actually froze: whatever W003's
+    resolution rules become, the GAP4-01 chain -- handler, `partial`, dict
+    key, constructor parameter, `self.` attribute, session controller -- must
+    still be reported, at its real push site."""
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not available")
+    present = subprocess.run(
+        [git, "-C", str(_mod.REPO_ROOT), "cat-file", "-e", f"{_GAP4_BASE}^{{commit}}"],
+        capture_output=True,
     )
+    if present.returncode != 0:
+        pytest.skip(f"{_GAP4_BASE[:10]} is not in this clone (shallow checkout?)")
+    archive = subprocess.run(
+        [
+            git,
+            "-C",
+            str(_mod.REPO_ROOT),
+            "archive",
+            "--format=tar",
+            _GAP4_BASE,
+            "--",
+            ":(glob)tldw_chatbook/**/*.py",
+        ],
+        capture_output=True,
+        check=True,
+    ).stdout
+    collected = []
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        for member in tar:
+            if not member.isfile() or _mod.SKIP_PARTS & set(member.name.split("/")):
+                continue
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    tree = ast.parse(tar.extractfile(member).read().decode("utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            collected.append(_mod._collect_module(tree, member.name))
+    rows = _mod._WaitGraph(collected).roots()
+    assert (
+        "tldw_chatbook/Widgets/Console/console_conversation_inspector.py::"
+        "ConsoleConversationInspector._recover_project_instructions => "
+        "tldw_chatbook/UI/Console_Modules/session.py::"
+        "ConsoleSessionController._select_project_instruction_binding"
+    ) in rows
 
 
 def _run_main_w003(monkeypatch, tmp_path, source: str, census: str) -> int:
@@ -608,17 +1010,20 @@ class S:
         await self.app.push_screen_wait(Picker())
 """
 
+_S_PICK = f"{_SAMPLE_M}::S.action_pick => {_SAMPLE_M}::S.action_pick"
+_T_PICK = f"{_SAMPLE_M}::T.action_pick => {_SAMPLE_M}::T.action_pick"
+
 
 def test_main_exits_nonzero_on_an_uncensused_w003_root(monkeypatch, tmp_path, capsys):
     """End-to-end negative control: the whole script, bad input, exit 1."""
     assert _run_main_w003(monkeypatch, tmp_path, _W003_HANDLER, "# empty\n") == 1
     out = capsys.readouterr().out
     assert "wait-for-dismiss screen push" in out
-    assert "tldw_chatbook/UI/sample.py::S.action_pick" in out
+    assert _S_PICK in out
 
 
 def test_main_exits_zero_when_that_w003_root_is_pinned(monkeypatch, tmp_path):
-    census = "# header\ntldw_chatbook/UI/sample.py::S.action_pick\t1\n"
+    census = f"# header\n{_S_PICK}\t1\n"
     assert _run_main_w003(monkeypatch, tmp_path, _W003_HANDLER, census) == 0
 
 
@@ -644,11 +1049,7 @@ def test_main_reads_the_count_of_a_row_that_carries_a_review_note(
     """A reviewed row's third column is its note. Reading ``2\\t<note>`` as a
     malformed count collapsed it to 1, so pinning a noted row with two
     occurrences still failed as "1 in census, 2 now"."""
-    census = (
-        "# header\n"
-        "tldw_chatbook/UI/sample.py::S.action_pick\t1\n"
-        f"tldw_chatbook/UI/sample.py::T.action_pick\t2\t{_NOTE}\n"
-    )
+    census = f"# header\n{_S_PICK}\t1\n{_T_PICK}\t2\t{_NOTE}\n"
     assert _run_main_w003(monkeypatch, tmp_path, _W003_TWO_ROOTS, census) == 0
 
 
@@ -658,10 +1059,12 @@ def test_write_carries_a_review_note_forward_and_drops_a_resolved_rows(
     """``--write`` regenerates the census from the tree; a review note must
     survive that for as long as its row does, or every re-pin silently erases
     the verdict and the follow-up it names."""
-    resolved = "tldw_chatbook/UI/gone.py::G.action_gone"
+    resolved = (
+        "tldw_chatbook/UI/gone.py::G.action_gone => tldw_chatbook/UI/gone.py::G.x"
+    )
     census = (
         "# stale header\n"
-        f"tldw_chatbook/UI/sample.py::T.action_pick\t2\t{_NOTE}\n"
+        f"{_T_PICK}\t2\t{_NOTE}\n"
         f"{resolved}\t1\tREAL freeze, since fixed\n"
     )
     _run_main_w003(monkeypatch, tmp_path, _W003_TWO_ROOTS, census)
@@ -672,9 +1075,25 @@ def test_write_carries_a_review_note_forward_and_drops_a_resolved_rows(
         for line in (tmp_path / "wait_census.tsv").read_text().splitlines()
         if line and not line.startswith("#")
     ]
-    assert rows == [
-        "tldw_chatbook/UI/sample.py::S.action_pick\t1",
-        f"tldw_chatbook/UI/sample.py::T.action_pick\t2\t{_NOTE}",
+    assert rows == [f"{_S_PICK}\t1", f"{_T_PICK}\t2\t{_NOTE}"]
+    monkeypatch.setattr("sys.argv", ["check_textual_worker_contract.py"])
+    assert _mod.main() == 0
+
+
+def test_write_carries_a_w002_review_note_forward_too(monkeypatch, tmp_path):
+    """Both censuses share one reader, which accepts a third (note) column --
+    so W002's ``--write`` must carry it as W003's does, not drop it."""
+    note = "reviewed: the await cannot remove #target; TASK-2"
+    census = f"# header\n{_SAMPLE_M}::run\t1\t{note}\n"
+    assert _run_main(monkeypatch, tmp_path, _IN_FINALLY, census) == 0
+    monkeypatch.setattr(_mod, "WAIT_PUSH_CENSUS", tmp_path / "wait_census.tsv")
+    monkeypatch.setattr("sys.argv", ["check_textual_worker_contract.py", "--write"])
+    assert _mod.main() == 0
+    rows = [
+        line
+        for line in (tmp_path / "census.tsv").read_text().splitlines()
+        if line and not line.startswith("#")
     ]
+    assert rows == [f"{_SAMPLE_M}::run\t1\t{note}"]
     monkeypatch.setattr("sys.argv", ["check_textual_worker_contract.py"])
     assert _mod.main() == 0

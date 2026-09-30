@@ -18,11 +18,16 @@ on a pump that can never flush it:
   requester is the APP. Its pump is the one that reads keys, so Escape never
   reaches the modal and Ctrl+Q is ignored -- the GAP4-01 total freeze.
 
-W003 reports these roots only through an unrelated name collision
-(``self._review`` resolves by name to ``BuddyManagementModal._review``); its
-model has no "callback-resolved future" shape. These tests are the real
-evidence, and they are strict xfails: the follow-up that fixes the freeze
-makes them XPASS, which fails until the marker comes off.
+W003 now models this "hand-rolled wait" and censuses all three roots at
+their real push site, ``request_hook_review``. These tests are the runtime
+evidence, and they are strict xfails (TASK-33621.28): the fix makes them
+XPASS, which fails until the marker comes off.
+
+Only the freeze itself may satisfy the xfail. The freeze assertions raise
+:class:`FreezeObserved` and the marker accepts nothing else, so a broken
+precondition -- the review never opening, the wrong requester, Escape not
+dismissing it where the app pump is alive -- FAILS instead of passing as the
+expected XFAIL (``raises=AssertionError`` let exactly that go green).
 
 Every test releases the stranded result callback in a ``finally`` so a red
 run still tears down instead of hanging the suite.
@@ -56,13 +61,25 @@ pytestmark = pytest.mark.bootstrap_profile
 
 hook_file = _hook_file
 
+
+class FreezeObserved(Exception):
+    """The known hook-review freeze, observed. Deliberately NOT an
+    ``AssertionError``: the xfail accepts only this, so every other failure
+    in these tests is a real failure."""
+
+
+def _freeze_unless(condition: bool, message: str) -> None:
+    if not condition:
+        raise FreezeObserved(message)
+
+
 _FREEZE = pytest.mark.xfail(
     strict=True,
-    raises=AssertionError,
+    raises=FreezeObserved,
     reason=(
-        "Known freeze: request_hook_review awaits a push_screen callback that "
-        "Textual queues on the awaiting pump (follow-up: Console Send hook "
-        "review deadlocks its dispatching pump)."
+        "TASK-33621.28: request_hook_review awaits a push_screen callback that "
+        "Textual queues on the awaiting pump, so Send with an unconsented hook "
+        "freezes the app (Enter) or deadlocks the Console."
     ),
 )
 
@@ -119,9 +136,14 @@ async def _open_review_from(route: str, host, pilot):
         composer.focus()
         await pilot.pause()
         _key(host, "enter", "\r")
-    assert await _until(lambda: isinstance(host.screen, ConsoleHooksReviewModal), 10), (
-        f"{route}: the hook review never opened"
-    )
+    # Mounted, not merely pushed: dismissing it before its on_mount ran
+    # raised NoMatches there and buried the real failure under it.
+    assert await _until(
+        lambda: (
+            isinstance(host.screen, ConsoleHooksReviewModal) and host.screen.is_mounted
+        ),
+        10,
+    ), f"{route}: the hook review never opened"
     modal = host.screen
     return console, modal, modal._result_callbacks[-1].requester
 
@@ -146,18 +168,22 @@ async def test_console_pump_runs_again_after_the_send_review_is_dismissed(
     host = ConsoleHarness(app)
     async with host.run_test(size=(120, 40)) as pilot:
         console, modal, requester = await _open_review_from(route, host, pilot)
-        assert requester is console
         try:
+            assert requester is console, f"{route}: requester is {requester!r}"
             _key(host, "escape")
+            # The app pump is alive on these routes, so Escape reaching the
+            # modal is a precondition, not the freeze.
             assert await _until(lambda: host.screen is console, 5), (
                 f"{route}: Escape did not dismiss the review"
             )
-            assert await _until(lambda: not console._hooks._busy, 3), (
+            _freeze_unless(
+                await _until(lambda: not console._hooks._busy, 3),
                 f"{route}: the cancelled Send never settled -- its review "
-                "callback is stranded on the ChatScreen pump that awaits it"
+                "callback is stranded on the ChatScreen pump that awaits it",
             )
-            assert await _pump_runs(console), (
-                f"{route}: the Console message pump is dead after the review"
+            _freeze_unless(
+                await _pump_runs(console),
+                f"{route}: the Console message pump is dead after the review",
             )
         finally:
             await _release(host, modal, requester)
@@ -170,15 +196,17 @@ async def test_enter_send_review_still_receives_keys(hook_file):
     host = ConsoleHarness(app)
     async with host.run_test(size=(120, 40)) as pilot:
         console, modal, requester = await _open_review_from("enter", host, pilot)
-        assert requester is host
         try:
-            assert await _pump_runs(host), (
+            assert requester is host, f"enter: requester is {requester!r}"
+            _freeze_unless(
+                await _pump_runs(host),
                 "Enter: the app pump -- the one that reads every key, Ctrl+Q "
-                "included -- is blocked awaiting the review it just opened"
+                "included -- is blocked awaiting the review it just opened",
             )
             _key(host, "escape")
-            assert await _until(lambda: host.screen is console, 3), (
-                "Enter: Escape never reached the hook review"
+            _freeze_unless(
+                await _until(lambda: host.screen is console, 3),
+                "Enter: Escape never reached the hook review",
             )
         finally:
             await _release(host, modal, requester)
