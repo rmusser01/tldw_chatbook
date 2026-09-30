@@ -41,7 +41,7 @@ Legacy trace maintenance now **parks** once a pass reports normalization logical
 
 **Wake-up.** The parked loop (`console_runtime.py`) wakes on either:
 - the work signal: `chat_persistence_service.signal_trace_maintenance_work()`, a `threading.Event` set by `append_message_exchanges`, the only writer of exchange rows;
-- a due physical GC pass, still every `TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS`.
+- every `TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS` (60 s), unconditionally, for the GC check the loop always did: compare graph epochs, collect if changed. Qodo review on #2914 found the first version woke for GC only after a signal, so graph changes from every other writer (trace-call state via a SQL trigger, retention roots, semantic revisions, other processes) were never collected, and a failed collection was never retried. Cost of the interval wake: one read-only batch and one epoch read per minute.
 
 It polls the event every `LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS` (1 s) in memory only.
 
@@ -53,7 +53,8 @@ It polls the event every `LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS` (1 s) in m
 - `Tests/Chat/test_console_trace_maintenance_parking.py`:
   - parks: 1-2 `run_batch` calls in 0.3 s, where it used to be one per tick;
   - wakes on the exchange signal;
-  - the append raises the signal.
+  - the append raises the signal;
+  - real database, real worker/collector/writer: an append wakes parked maintenance and normalizes the row; an unsignalled graph-epoch advance and a failed collection are both collected at the next interval (both fail against the signal-only loop).
 - `test_complete_check_without_new_rows_takes_no_write_transaction` in `Tests/Chat/test_console_trace_legacy_migration.py`.
 - **Idle probe** (AC #4): real app on a scratch profile with Console open, 15 s idle after the first pass, counting audit events.
   - Base (c174e30f6b): 13 `run_batch` calls, 15 `sqlite3.connect`, 15 `subprocess.Popen`.
