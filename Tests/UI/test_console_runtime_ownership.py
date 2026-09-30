@@ -306,38 +306,42 @@ async def test_runtime_owns_one_receipt_service_and_coalesces_hydration(
         conversation_local_marks_service=None,
     )
     runtime = ConsoleRuntime(app)
-    bridge = runtime.ensure_agent_bridge(
-        store_factory=ConsoleChatStore,
-        provider_gateway_factory=object,
-    )
-
-    assert bridge is not None
-    assert runtime.activity_receipts is not None
-    assert bridge.runs_db is runtime._agent_runs_db
-    assert runtime.profile_authority == str((tmp_path / "chat.db").resolve())
-    assert runtime.authority_token
-
     entered = threading.Event()
     release = threading.Event()
-    calls = {"count": 0}
+    try:
+        bridge = runtime.ensure_agent_bridge(
+            store_factory=ConsoleChatStore,
+            provider_gateway_factory=object,
+        )
 
-    def blocked_hydration():
-        calls["count"] += 1
-        entered.set()
-        assert release.wait(5)
-        return 0
+        assert bridge is not None
+        assert runtime.activity_receipts is not None
+        assert bridge.runs_db is runtime._agent_runs_db
+        assert runtime.profile_authority == str((tmp_path / "chat.db").resolve())
+        assert runtime.authority_token
 
-    monkeypatch.setattr(
-        runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
-    )
-    first = runtime.ensure_activity_hydration()
-    second = runtime.ensure_activity_hydration()
+        calls = {"count": 0}
 
-    assert first is second
-    assert await asyncio.to_thread(entered.wait, 5)
-    release.set()
-    assert await first == 0
-    assert calls["count"] == 1
+        def blocked_hydration():
+            calls["count"] += 1
+            entered.set()
+            assert release.wait(5)
+            return 0
+
+        monkeypatch.setattr(
+            runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
+        )
+        first = runtime.ensure_activity_hydration()
+        second = runtime.ensure_activity_hydration()
+
+        assert first is second
+        assert await asyncio.to_thread(entered.wait, 5)
+        release.set()
+        assert await first == 0
+        assert calls["count"] == 1
+    finally:
+        release.set()
+        await runtime.dispose()
 
 
 @pytest.mark.asyncio

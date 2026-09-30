@@ -181,3 +181,263 @@ async def test_owned_offload_retires_reopened_raw_closed_cache(tmp_path, local_r
         finally:
             await dispatch(db.close)
             db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("initially_none", [False, True])
+async def test_ui_fleet_seed_keeps_captured_owner_when_bridge_changes(
+    tmp_path, monkeypatch, initially_none
+) -> None:
+    from Tests.UI.test_console_controller_wiring import _unmounted_console
+    from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    screen = _unmounted_console()
+    original_store = screen._console_chat_store
+    original_controller = screen._console_chat_controller
+    original = AgentRunsDB(tmp_path / "original.db")
+    replacement = AgentRunsDB(tmp_path / "replacement.db")
+    bridge = SimpleNamespace(runs_db=None if initially_none else original)
+    reads = []
+
+    def seed(*, database):
+        reads.append(database)
+        with database.connection() as connection:
+            assert connection.execute("SELECT 42").fetchone()[0] == 42
+        return 0
+
+    wake = ConsoleFleetWakeCoordinator(SimpleNamespace(_agent_bridge=bridge))
+    monkeypatch.setattr(wake, "seed_from_marks", seed)
+    monkeypatch.setattr(
+        screen, "_console_chat_controller", SimpleNamespace(fleet_wake=wake)
+    )
+    monkeypatch.setattr(
+        screen,
+        "_console_chat_store",
+        SimpleNamespace(
+            sessions=lambda: (SimpleNamespace(persisted_conversation_id="saved"),)
+        ),
+    )
+    workers = []
+    screen.run_worker = lambda callback, **kwargs: workers.append(callback)
+    dispatch = asyncio.to_thread
+
+    async def queued(callback, *args, **kwargs):
+        bridge.runs_db = replacement
+        return await dispatch(callback, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", queued)
+    captured_seed = ConsoleFleetWakeCoordinator._seed_owned_history
+    receivers = []
+
+    async def replacement_seed(receiver):
+        receivers.append(receiver)
+        return await captured_seed(receiver)
+
+    try:
+        monkeypatch.setattr(
+            ConsoleFleetWakeCoordinator, "_seed_owned_history", replacement_seed
+        )
+        assert screen._fleet._seed_wake_from_marks() is False
+        await workers.pop()()
+        assert receivers == [wake]
+        assert reads == ([] if initially_none else [original])
+        assert bridge.runs_db is (None if initially_none else replacement)
+        assert not worker_leases(original)
+        assert not worker_leases(replacement)
+    finally:
+        screen._console_chat_store = original_store
+        screen._console_chat_controller = original_controller
+        original.close()
+        replacement.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_scope_twins_retire_exact_worker_connection(
+    tmp_path, local_root
+):
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    db = WorkspaceDB(tmp_path / "workspaces.db")
+    registry = LocalWorkspaceRegistryService(db)
+    workspace = registry.ensure_default_workspace()
+    try:
+        await ConsoleWorkspaceController._write_console_workspace_scope(
+            registry, workspace.workspace_id, None
+        )
+        assert not worker_leases(db)
+        assert (
+            await ConsoleWorkspaceController._read_console_workspace_scope(
+                registry, workspace.workspace_id
+            )
+            is None
+        )
+        assert not worker_leases(db)
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("memory", [False, True])
+async def test_workspace_scope_twins_preserve_custom_owner_and_live_methods(memory):
+    from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+
+    calls = []
+    registry = SimpleNamespace(
+        db=SimpleNamespace(is_memory_db=memory),
+        set_workspace_scope=lambda *args: calls.append(args),
+        get_workspace_scope=lambda workspace_id: workspace_id,
+    )
+    await ConsoleWorkspaceController._write_console_workspace_scope(
+        registry, "scope", None
+    )
+    assert calls == [("scope", None)]
+    assert (
+        await ConsoleWorkspaceController._read_console_workspace_scope(
+            registry, "scope"
+        )
+        == "scope"
+    )
+    registry.get_workspace_scope = lambda workspace_id: "replacement"
+    assert (
+        await ConsoleWorkspaceController._read_console_workspace_scope(
+            registry, "scope"
+        )
+        == "replacement"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_cache", [True, False])
+async def test_scope_resolution_retires_worker_and_preserves_main_owner(
+    tmp_path, local_root, use_cache
+) -> None:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+        resolve_scope_for_session,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    db = WorkspaceDB(tmp_path / "workspaces.db")
+    registry = LocalWorkspaceRegistryService(db)
+    workspace = registry.ensure_default_workspace()
+    borrowed = db._held_connection()
+    try:
+        result = await resolve_scope_for_session(
+            SimpleNamespace(workspace_registry_service=registry),
+            SimpleNamespace(workspace_id=workspace.workspace_id),
+            use_cache=use_cache,
+        )
+        assert result.effective.state == "unscoped"
+        assert db._held_connection() is borrowed
+        assert borrowed.execute("SELECT 42").fetchone()[0] == 42
+        assert not worker_leases(db)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_finite_history_read_retires_reopened_cache_and_preserves_borrowed_owner(
+    tmp_path, local_root, monkeypatch, borrowed
+) -> None:
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "runs.db")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    connection = db._held_connection() if borrowed else None
+    if borrowed:
+        connection.execute("BEGIN")
+    else:
+        db.close()
+    try:
+        result = bridge.historical_snapshot("never-ran")
+        assert result.status == "idle"
+        assert result.steps == ()
+        assert result.subagents == ()
+        if borrowed:
+            assert db._held_connection() is connection
+            assert connection.in_transaction is True
+        else:
+            assert not db._maintenance_participant.connections
+        monkeypatch.setattr(
+            bridge,
+            "_derive_historical_snapshot",
+            lambda _: pytest.fail("cached hit must not read"),
+        )
+        assert bridge.historical_snapshot("never-ran") is result
+    finally:
+        if borrowed:
+            connection.rollback()
+        bridge.close_all_progress()
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_ui_history_seed_runs_and_cancels_as_native_async_worker(
+    tmp_path, monkeypatch
+) -> None:
+    from textual.worker import WorkerCancelled, WorkerState
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    receivers = []
+    settled = []
+
+    async def seeded(receiver):
+        receivers.append(receiver)
+        entered.set()
+        try:
+            await release.wait()
+            return 0
+        finally:
+            settled.append(receiver)
+
+    async with ConsoleHarness(app).run_test(size=(160, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        controller = screen._ensure_console_chat_controller()
+        store = screen._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Saved", persist=True
+        )
+        assert session.persisted_conversation_id
+        monkeypatch.setattr(ConsoleFleetWakeCoordinator, "_seed_owned_history", seeded)
+
+        assert screen._fleet._seed_wake_from_marks() is False
+        worker = next(w for w in screen.workers if w.group == "console-fleet-seed")
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
+        worker.cancel()
+        with pytest.raises(WorkerCancelled):
+            await worker.wait()
+        assert worker.state is WorkerState.CANCELLED
+        assert receivers == [controller.fleet_wake]
+        assert settled == receivers
+
+        assert screen._fleet._seed_wake_from_marks() is False
+        queued = next(
+            w
+            for w in screen.workers
+            if w.group == "console-fleet-seed" and w is not worker
+        )
+        queued.cancel()
+        with pytest.raises(WorkerCancelled):
+            await queued.wait()
+        await pilot.pause()
+        assert queued.state is WorkerState.CANCELLED
+        assert receivers == [controller.fleet_wake]
+        assert settled == receivers

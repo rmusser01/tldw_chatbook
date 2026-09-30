@@ -1253,24 +1253,18 @@ def build_console_controllers(
         ),
     )
 
-    async def _seed_console_fleet_history(wake) -> None:
-        import asyncio
-        try:
-            if await asyncio.to_thread(wake.seed_from_marks):
-                wake.retry_soon()
-        except Exception as exc:
-            from loguru import logger
-            logger.warning("console fleet history seed failed (exception_type={})", type(exc).__name__)
-
     def _schedule_console_fleet_history_seed() -> bool:
         from functools import partial
+
+        from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+
         wake = getattr(screen._console_chat_controller, "fleet_wake", None)
         store = screen._console_chat_store
         if wake is not None and store is not None and any(
             session.persisted_conversation_id for session in store.sessions()
         ):
             screen.run_worker(
-                partial(_seed_console_fleet_history, wake),
+                partial(ConsoleFleetWakeCoordinator._seed_owned_history, wake),
                 exclusive=True,
                 group="console-fleet-seed",
             )

@@ -1899,68 +1899,78 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
         ]
     )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    store = ConsoleChatStore()
-    session = store.ensure_session()
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
-    )
-    dispatched = []
+    bridge = None
+    try:
+        store = ConsoleChatStore()
+        session = store.ensure_session()
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        dispatched = []
 
-    def execute(operation, arguments, *, intent):
-        dispatched.append(operation)
-        return "clean working tree"
+        def execute(operation, arguments, *, intent):
+            dispatched.append(operation)
+            return "clean working tree"
 
-    local = LocalToolProvider(
-        workspace_root=tmp_path,
-        specs=[
-            spec
-            for spec in _default_specs(
-                tmp_path, workspace_executor=SimpleNamespace(execute=execute)
-            )
-            if spec.name in {"fs_read", "git_status"}
-        ],
-        resolve_state=lambda _hub: ASK,
-    )
-    rounds = []
+        local = LocalToolProvider(
+            workspace_root=tmp_path,
+            specs=[
+                spec
+                for spec in _default_specs(
+                    tmp_path, workspace_executor=SimpleNamespace(execute=execute)
+                )
+                if spec.name in {"fs_read", "git_status"}
+            ],
+            resolve_state=lambda _hub: ASK,
+        )
+        rounds = []
 
-    def approvals(pending):
-        rounds.append([call.tool_name for call in pending])
-        return {call.tool_name: "approve_once" for call in pending}
+        def approvals(pending):
+            rounds.append([call.tool_name for call in pending])
+            return {call.tool_name: "approve_once" for call in pending}
 
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db,
-        store=store,
-        provider_gateway=gateway,
-        ensure_run_hooks=lambda: engine,
-    )
-    _run_id, outcome = bridge.run_reply(
-        conversation_id="conv-1",
-        session_id=session.id,
-        resolution=ConsoleProviderResolution(
-            provider="Groq", execution_key="groq", base_url="", model=None, ready=True
-        ),
-        assistant_message_id=assistant.id,
-        model="test-model",
-        session_system_prompt="",
-        agent_messages=[{"role": "user", "content": "hi"}],
-        should_cancel=lambda: False,
-        local_provider=local,
-        review_tool_calls=build_local_review_hook(local, approvals),
-    )
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=db,
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+        _run_id, outcome = bridge.run_reply(
+            conversation_id="conv-1",
+            session_id=session.id,
+            resolution=ConsoleProviderResolution(
+                provider="Groq",
+                execution_key="groq",
+                base_url="",
+                model=None,
+                ready=True,
+            ),
+            assistant_message_id=assistant.id,
+            model="test-model",
+            session_system_prompt="",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+            local_provider=local,
+            review_tool_calls=build_local_review_hook(local, approvals),
+        )
 
-    assert outcome.status == "done", outcome.steps
-    # The hook denied fs_read BEFORE the review chain: the one approval
-    # round carried only the non-matching call.
-    assert rounds == [["git_status"]]
-    results = {
-        step.tool_name: step.result
-        for step in outcome.steps
-        if step.kind == STEP_TOOL_RESULT
-    }
-    assert results["fs_read"].startswith("hook: ")
-    assert "git_status" in results  # ran the normal chain and dispatched
-    assert dispatched == ["git_status"]
+        assert outcome.status == "done", outcome.steps
+        # The hook denied fs_read BEFORE the review chain: the one approval
+        # round carried only the non-matching call.
+        assert rounds == [["git_status"]]
+        results = {
+            step.tool_name: step.result
+            for step in outcome.steps
+            if step.kind == STEP_TOOL_RESULT
+        }
+        assert results["fs_read"].startswith("hook: ")
+        assert "git_status" in results  # ran the normal chain and dispatched
+        assert dispatched == ["git_status"]
+    finally:
+        if bridge is not None:
+            bridge.close_all_progress()
+        db.close()
 
 
 # -- ApprovalRequested at the approval-round registration (run hooks Task 8) --

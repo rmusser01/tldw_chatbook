@@ -42,6 +42,10 @@ _created_dirs: list[Path] = []
 # by the caller that supplied them.
 _created_databases: list[Any] = []
 
+# Exact constructor apps and lock handles; replacements remain caller-owned.
+_created_apps: list[TldwCli] = []
+_created_instance_locks: list[Any] = []
+
 # Every still-running `get_subscriptions_db_path` patch started by
 # `_build_test_app` (task-1631); stopped by the root conftest's autouse
 # cleanup after each test. See `_build_test_app`'s own comment for why this
@@ -211,6 +215,14 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     return db
 
 
+async def drain_created_runtimes() -> None:
+    """Retire factory-app Console workers before their owned DBs and locks."""
+    from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
+
+    for app in _created_apps:
+        await dispose_console_runtime(app)
+
+
 def drain_created_dirs() -> int:
     """Remove every user-data dir created since the last drain.
 
@@ -227,6 +239,13 @@ def drain_created_dirs() -> int:
         database = _created_databases[-1]
         database.close()
         _created_databases.pop()
+
+    while _created_instance_locks:
+        handle = _created_instance_locks[-1]
+        # acquire_profile_instance_lock documents close as native OS release.
+        handle.close()
+        _created_instance_locks.pop()
+    _created_apps.clear()
 
     drained = 0
     while _created_dirs:
@@ -466,6 +485,10 @@ def _build_test_app(
         ):
             stack.enter_context(ctx)
         app = TldwCli()
+        _created_apps.append(app)
+        handle = app._instance_lock_status.handle
+        if handle is not None:
+            _created_instance_locks.append(handle)
         for database in (
             app.local_library_collections_db,
             app.local_workspace_db,

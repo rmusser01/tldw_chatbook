@@ -347,7 +347,7 @@ def install_css_parse_cache() -> "Iterator[None]":
 
 
 @pytest.fixture(autouse=True)
-def drain_test_app_user_data_dirs() -> "Iterator[None]":
+def drain_test_app_user_data_dirs(request) -> "Iterator[None]":
     """Remove the user-data dirs and stop the service patches the shared app
     factory created during a test.
 
@@ -364,8 +364,53 @@ def drain_test_app_user_data_dirs() -> "Iterator[None]":
     Yields:
         None. Draining happens in teardown.
     """
+    delegate = (
+        request.node.get_closest_marker("asyncio") is not None
+        or "retire_test_app_owners" in request.fixturenames
+    )
+    if delegate:
+        # Request before yield: this outer finalizer delegates all owner cleanup
+        # to the async fixture, which must dispose runtime workers before DBs.
+        request.getfixturevalue("retire_test_app_owners")
+    yield
+    if not delegate:
+        attached = sys.modules.get("Tests.UI.test_console_fleet_wake_wiring")
+        if attached is not None:
+            attached.drain_attached_real_databases()
+        factory = sys.modules.get("Tests.UI.app_factory")
+        if factory is not None:
+            factory.drain_active_service_patches()
+            factory.drain_created_dirs()
+
+
+@pytest_asyncio.fixture
+async def retire_test_app_owners(isolate_test_environment, request) -> None:
+    """Opt-in async owner retirement, without loops for unrelated sync tests."""
     yield
     factory = sys.modules.get("Tests.UI.app_factory")
+    attached = sys.modules.get("Tests.UI.test_console_fleet_wake_wiring")
+    owns_apps = bool(factory is not None and factory._created_apps) or bool(
+        attached is not None and attached._attached_real_databases
+    )
+    if owns_apps:
+        request.node._test_app_native_workers_uncertain = True
+    if factory is not None:
+        await factory.drain_created_runtimes()
+    if attached is not None:
+        await attached.drain_attached_real_runtimes()
+    if owns_apps:
+        from tldw_chatbook.app_lifecycle import WORKER_CANCELLATION_GRACE_SECONDS
+
+        # Canceled Textual tasks may leave native callbacks running. Join them
+        # before config reset or any DB drain; timeout is uncertain custody.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            await asyncio.get_running_loop().shutdown_default_executor(
+                timeout=WORKER_CANCELLATION_GRACE_SECONDS
+            )
+        request.node._test_app_native_workers_uncertain = False
+    if attached is not None:
+        attached.drain_attached_real_databases()
     if factory is not None:
         factory.drain_active_service_patches()
         factory.drain_created_dirs()
@@ -1283,6 +1328,10 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
 
     yield test_data_dir
 
+    if getattr(request.node, "_test_app_native_workers_uncertain", False):
+        raise RuntimeError(
+            "Native app workers remain uncertain; config retirement refused"
+        )
     if config is not None:
         _shutdown_prompts_interop_if_loaded()
         _reset_config_database_instances(config)

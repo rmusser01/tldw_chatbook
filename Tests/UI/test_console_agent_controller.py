@@ -42,6 +42,7 @@ What was NOT covered, and is pinned here:
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -77,33 +78,38 @@ def _bridge_over(db_path) -> ConsoleAgentBridge:
 def _seed_done_primary_with_subagents(db_path, *, conversation_id="conv-A", tasks=()):
     """Persist one finished primary run plus a sub-agent run per ``tasks``."""
     db = AgentRunsDB(db_path, client_id="t")
-    primary_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
-    db.append_steps(
-        primary_id,
-        [
-            {
-                "index": 0,
-                "kind": "model",
-                "summary": "final answer",
-                "tool_name": "",
-                "args": None,
-                "result": "",
-                "created_at": "",
-            },
-        ],
-    )
-    db.set_status(primary_id, "done", result="final answer")
-    sub_ids = []
-    for task in tasks:
-        sub_id = db.create_run(
-            conversation_id=conversation_id,
-            agent_kind="subagent",
-            task=task,
-            parent_run_id=primary_id,
+    try:
+        primary_id = db.create_run(
+            conversation_id=conversation_id, agent_kind="primary"
         )
-        db.set_status(sub_id, "done", result=f"done {task}")
-        sub_ids.append(sub_id)
-    return primary_id, sub_ids
+        db.append_steps(
+            primary_id,
+            [
+                {
+                    "index": 0,
+                    "kind": "model",
+                    "summary": "final answer",
+                    "tool_name": "",
+                    "args": None,
+                    "result": "",
+                    "created_at": "",
+                },
+            ],
+        )
+        db.set_status(primary_id, "done", result="final answer")
+        sub_ids = []
+        for task in tasks:
+            sub_id = db.create_run(
+                conversation_id=conversation_id,
+                agent_kind="subagent",
+                task=task,
+                parent_run_id=primary_id,
+            )
+            db.set_status(sub_id, "done", result=f"done {task}")
+            sub_ids.append(sub_id)
+        return primary_id, sub_ids
+    finally:
+        db.close()
 
 
 def _static_text(console, widget_id: str) -> str:
@@ -354,12 +360,19 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
         assert len(calls) == 2
 
 
-def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(tmp_path):
+@pytest.mark.bootstrap_profile
+def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(
+    tmp_path, retire_test_app_owners
+):
     """``_ensure_console_agent_bridge`` keys the run store off the durable
     ChaChaNotes path, sees rows another handle persisted there, and hands
     back the same instance on every later call."""
     db_path = tmp_path / "agent_runs.db"
     _, sub_ids = _seed_done_primary_with_subagents(db_path, tasks=("research",))
+
+    # Async teardown owns retirement; the construction body remains sync.
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        asyncio.get_running_loop()
 
     screen = ChatScreen(_build_test_app())
     from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
@@ -374,7 +387,10 @@ def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(tmp_path)
     assert screen._ensure_console_agent_bridge() is bridge
 
 
-def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
+@pytest.mark.bootstrap_profile
+def test_agent_bridge_is_absent_without_a_durable_run_store(
+    tmp_path, retire_test_app_owners
+):
     """An in-memory harness has nowhere to key the sibling run store off, so
     there is no agent runtime.
 
@@ -384,6 +400,10 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
     "tidy" rewrite of that guard into a sentinel-based memo would silently
     strand every such screen without an agent runtime for its whole life.
     """
+    # Async teardown owns retirement; the construction body remains sync.
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        asyncio.get_running_loop()
+
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = SimpleNamespace(db_path=":memory:")
 

@@ -9502,7 +9502,10 @@ class ConsoleAgentBridge:
         cached = self._historical_cache.get(conversation_id)
         if cached is not None:
             return cached
-        snapshot = self._derive_historical_snapshot(conversation_id)
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(self._db):
+            snapshot = self._derive_historical_snapshot(conversation_id)
         self._historical_cache[conversation_id] = snapshot
         return snapshot
 

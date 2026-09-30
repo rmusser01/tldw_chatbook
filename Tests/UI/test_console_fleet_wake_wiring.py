@@ -38,11 +38,34 @@ from tldw_chatbook.UI.Console_Modules.fleet import (
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
+# The helper owns precisely the on-disk DB it injects, including worker handles.
+_attached_real_databases = []
+
+
+async def drain_attached_real_runtimes() -> None:
+    """Retire the runtimes borrowing the helper's injected databases."""
+    from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
+
+    for app, _database in _attached_real_databases:
+        await dispose_console_runtime(app)
+
+
+def drain_attached_real_databases() -> None:
+    """Quiesce precisely the helper-owned DBs, after any runtime retirement."""
+    from Tests.conftest import _close_database_instance
+
+    while _attached_real_databases:
+        _app, database = _attached_real_databases[-1]
+        _close_database_instance(database)
+        _attached_real_databases.pop()
+
+
 def _attach_real_dbs(app, tmp_path):
     """Real marks service AND a real on-disk ChaChaNotes DB handle, so the
     screen's lazy agent-bridge construction (which keys the sibling
     ``agent_runs.db`` off ``chachanotes_db.db_path``) actually builds."""
     db = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="ui-test")
+    _attached_real_databases.append((app, db))
     app.conversation_local_marks_service = ConversationLocalMarksService(db)
     app.chachanotes_db = db
     # ConsoleHarness bypasses application startup and mounts its ready screen.
@@ -57,6 +80,7 @@ def _attach_real_dbs(app, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
     """The ordering the whole staged-wake design leans on: the first tab
     sync view-clears the ACTIVE conversation's mark, so a claim running
@@ -100,6 +124,7 @@ async def test_mount_claims_wake_marks_before_the_first_tab_sync(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_the_mount_claim_seeds_pending_from_mark_and_runs_db(tmp_path):
     """The claim seam, driven with the exact durable state a
     settled-while-unmounted survivor leaves behind: the FLEET_UNSEEN mark

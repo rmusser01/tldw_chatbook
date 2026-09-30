@@ -460,3 +460,58 @@ async def test_queued_sidebar_snapshot_cannot_switch_config_profiles(
             occupied.result(5)
             executor.shutdown(wait=True)
             loop._default_executor = old_executor
+
+
+@pytest.mark.bootstrap_profile
+def test_saved_sidebar_state_sync_construction_defers_timer_without_losing_state():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    saved = {"notes": True, "chat": False}
+    _ui_state_path().write_text(
+        toml.dumps(
+            {
+                "sidebar": {
+                    "collapsible_states": saved,
+                    "search_query": "saved search",
+                    "last_active_section": "notes",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        asyncio.get_running_loop()
+
+    screen = ChatScreen(_build_test_app())
+
+    assert screen.sidebar_state == saved
+    assert screen.ui_state.collapsible_states == saved
+    assert screen.ui_state.sidebar_search_query == "saved search"
+    assert screen.ui_state.last_active_section == "notes"
+    assert screen._sidebar_state_persistence_error is None
+    assert screen._sidebar_state_dirty is True
+    assert screen._sidebar_state_revision > 0
+    assert screen._sidebar_state_save_timer is None
+    assert toml.load(_ui_state_path())["sidebar"]["collapsible_states"] == saved
+
+
+@pytest.mark.bootstrap_profile
+async def test_saved_sidebar_state_async_unmounted_construction_defers_timer():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    saved = {"notes": True}
+    _ui_state_path().write_text(
+        toml.dumps({"sidebar": {"collapsible_states": saved}}), encoding="utf-8"
+    )
+    assert asyncio.get_running_loop().is_running()
+
+    screen = ChatScreen(_build_test_app())
+
+    assert not screen.is_mounted
+    assert screen.sidebar_state == saved
+    assert screen.ui_state.collapsible_states == saved
+    assert screen._sidebar_state_persistence_error is None
+    assert screen._sidebar_state_dirty is True
+    assert screen._sidebar_state_revision > 0
+    assert screen._sidebar_state_save_timer is None
+    assert toml.load(_ui_state_path())["sidebar"]["collapsible_states"] == saved

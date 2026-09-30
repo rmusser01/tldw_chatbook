@@ -47,36 +47,19 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 @pytest.fixture(autouse=True)
 def _real_fleet_recovery_database(monkeypatch, tmp_path, request):
     """Mount with the real recovery owner; a DB-less mount correctly pauses."""
-    from Tests.conftest import _close_database_instance
     from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
     from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 
     build = request.module._build_test_app
-    owned_resources = []
 
     def build_with_db(*args, **kwargs):
         app = build(*args, **kwargs)
         _attach_real_dbs(app, tmp_path)
         _configure_native_ready_console(app)
-        owned_resources.append(
-            (
-                app.chachanotes_db,
-                app.local_library_collections_db,
-                app.evaluation_orchestrator.db,
-                app.local_workspace_db,
-                app.subscriptions_db,
-                app._instance_lock_status.handle,
-            )
-        )
         return app
 
     monkeypatch.setattr(request.module, "_build_test_app", build_with_db)
     yield
-    for chacha, collections, evals, workspaces, subscriptions, lock in owned_resources:
-        for database in (chacha, collections, evals, workspaces, subscriptions):
-            _close_database_instance(database)
-        if lock is not None:
-            lock.close()
 
 
 _AGENT_SECTION_SIZE = (180, 48)

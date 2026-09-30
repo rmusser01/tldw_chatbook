@@ -21,6 +21,7 @@ def held(operation,source,destination):
 raw._replace=held
 async def main():
  screen=object.__new__(ChatScreen)
+ screen._is_mounted=True
  screen.ui_state=SimpleNamespace(collapsible_states={'one':True},sidebar_search_query='',last_active_section='one')
  screen._sidebar_state_persist_lock=asyncio.Lock()
  screen._sidebar_state_revision=0

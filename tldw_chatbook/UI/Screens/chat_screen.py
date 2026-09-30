@@ -24672,6 +24672,13 @@ class ChatScreen(BaseAppScreen):
         """
         self._sidebar_state_dirty = True
         self._sidebar_state_revision += 1
+        # Unmounted construction leaves dirty state for lifecycle flush.
+        if not self.is_mounted:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
         if self._sidebar_state_save_timer is not None:
             self._sidebar_state_save_timer.stop()
         self._sidebar_state_save_timer = self.set_timer(
