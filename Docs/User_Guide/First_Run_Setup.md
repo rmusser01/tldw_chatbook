@@ -11,7 +11,18 @@ asks before closing, and anything you configure (or
 don't) can be changed later in Settings.
 
 If a step can't save what you entered, the reason appears just above the
-navigation buttons — fix it and press Next again, or go Back.
+navigation buttons — fix it and press Next again, or go Back. The same line
+reports an unexpected error on a step: the step stays on screen, the keyboard
+keeps working, and **← Back** and **Esc** (exit setup) stay available. That
+includes a run you resumed from "Continue setup?".
+
+The Provider step lists the same providers as Settings ▸ Providers & Models:
+Popular first, then Cloud, Local and Other. Every row can be picked and set
+up here, including hosted presets such as Together, Fireworks and NVIDIA NIM.
+Four presets are not listed yet (BytePlus, Baidu Qianfan, Kilo Gateway and
+DeepInfra), because setup cannot save their API address. See
+[Settings ▸ Inference clouds](settings.md#inference-clouds) for how to use
+them.
 
 ## Keyboard
 

@@ -103,6 +103,7 @@ from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
@@ -442,7 +443,7 @@ class SetupStepFailure:
             raise ValueError("unsupported setup step failure reason")
 
 
-class SetupStep(WizardStep):
+class SetupStep(step_guard.WizardErrorGuard, WizardStep):
     """Base step: adds an awaitable commit hook and an inline error line.
 
     TASK-1495: also tags every setup step with its own ``setup-step`` CSS
@@ -1282,11 +1283,7 @@ class ProviderStep(SetupStep):
             setattr(wizard, "_first_run_provider_discovery_owner", self)
 
     def compose_step(self) -> ComposeResult:
-        from tldw_chatbook.Chat.console_provider_support import (
-            supported_console_provider_catalog,
-        )
-
-        entries = supported_console_provider_catalog()
+        entries = step_guard.first_run_provider_catalog()  # TASK-33621.14
         with Vertical(classes="setup-provider"):
             yield Static("Connect a provider", classes="setup-title")
             yield Static(
@@ -8024,7 +8021,7 @@ class SetupWizardNavigation(WizardNavigation):
         yield Button("Cancel", id="wizard-cancel", variant="error")
 
 
-class SetupWizardContainer(WizardContainer):
+class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     """Navigates over the active-step subset; commits on Next via one worker."""
 
     # TASK-21142 (UAT N-1): Enter advances whenever the focused widget does
@@ -9359,8 +9356,8 @@ class SetupWizardContainer(WizardContainer):
             position = self._active_position(self.current_step or 0)
             nav = self.query_one(".wizard-navigation", WizardNavigation)
             nav.total_steps = len(self.active_ids)
+            nav.can_go_back = position > 0  # before current_step: its watcher reads it
             nav.current_step = position + 1
-            nav.can_go_back = position > 0
             nav.can_go_forward = self.can_proceed
             self._rebuild_progress()
         except Exception:
@@ -9904,6 +9901,9 @@ class SetupWizardContainer(WizardContainer):
                 self.complete_wizard()
             else:
                 self.show_step(next_index)
+        except Exception as error:  # TASK-33621.14: Next must not exit the app.
+            if not step_guard.contain_advance_error(self, error):
+                raise
         finally:
             self._set_advancing(False)
 

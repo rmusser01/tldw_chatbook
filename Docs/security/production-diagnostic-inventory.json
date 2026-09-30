@@ -3550,6 +3550,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "315ff72dafc00e64ce6c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Wizards/first_run_step_guard.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "5e4abbacb06a7839e4c2",
       "owner": "TASK-494",
