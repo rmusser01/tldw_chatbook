@@ -117,6 +117,27 @@ control (`.approval-row-decision` widened to full width) failed it. Before you
 call a guard "environmental", check whether any runner runs it, and make it
 reach its assertions once.
 
+
+## A marker "inside the pane" can still sit under the fold hint (TASK-33003.7, 2026-09-29)
+
+`_assert_marker_inside_container` (Tests/UI/test_destination_visual_parity_correction.py)
+checks that a marker's top-left cell falls inside the pane's rectangle. For a child
+of a scroll body, `widget.region` is its unclipped placement at the current scroll
+offset. The pane rectangle also contains its pinned header, the reserved
+"▼ more" fold-hint row and its padding rows. So a marker whose top row lands on the
+hint row passes while none of it is painted.
+
+The incident: while fixing TASK-25890, a trial `min-width: $ds-size-34` on
+`#settings-impact-pane` put `#settings-boundary-note` at y 37..40. The body window
+was 18..37 and the pane 5..40, so the strict xfail's contract would have gone
+green (37 < 40) with the note hidden behind the hint. Only `$ds-size-36` together
+with dropping the blank-row margin made the note visible (35..38 in a 18..38 window).
+
+**What to do.** When a geometry check means "the user can see it", compare the
+widget's region with the scroll body's `scrollable_content_region` (the painted
+window), not with the outer pane. `test_settings_boundary_note_is_fully_visible_at_rest`
+does that next to the contract.
+
 ## Executable QA documentation can retain removed production imports
 
 **TASK-32882, 2026-09-21.** A native MCP launch stopped before app startup because
@@ -17053,3 +17074,4 @@ with dropping the blank-row margin made the note visible (35..38 in a 18..38 win
 widget's region with the scroll body's `scrollable_content_region` (the painted
 window), not with the outer pane. `test_settings_boundary_note_is_fully_visible_at_rest`
 does that next to the contract.
+
