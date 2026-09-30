@@ -75,7 +75,7 @@ layout, database, cadence, and embedded instructions are not requirements.
 - [x] Complete all nine original tasks while retaining implementation/design-only boundaries.
 - [x] Create and attach [PR #2862](https://github.com/rmusser01/tldw_chatbook/pull/2862) against dev.
 - [x] Complete TASK-33165: reserve Canvas context through the shared request schema plan and reject stale preview publication after asynchronous work.
-- [ ] Close TASK-25907.23 integration qualification after resolving or explicitly accepting the recorded upstream guard debt.
+- [x] Complete TASK-25907.23: resolve reported qualification failures under unchanged limits and publish the approved integration and PR description.
 
 This is a program plan and status index. Task files are the source of truth
 for status and acceptance criteria. Design-only tasks do not represent shipped
@@ -539,10 +539,15 @@ All production V2 permit paths remain closed. Retirement/publication, disclosure
 
 [TASK-25907.23](../tasks/task-25907.23%20-%20Integrate-Personal-Context-memory-improvements-onto-current-dev.md)
 tracks [PR #2862](https://github.com/rmusser01/tldw_chatbook/pull/2862) against dev.
-The current qualification pins dev `64579cce2c8dc64053fb50c00eb4f59b56716b01`
-and retains native Python 3.12.11 execution in the isolated PR checkout. Task
-notes distinguish current candidate receipts from historical runs and carry
-remaining size/style debt without raising guards or claiming release readiness.
+The completed qualification pins dev `64579cce2c8dc64053fb50c00eb4f59b56716b01`
+and native Python 3.12.11 execution in the isolated PR checkout. The approved
+repair candidate `75c6fad0a20f247c4b2fda4de73cd6830d2d633c` and refreshed PR
+description are published; TASK-25907.23 is Done. Reported native qualification
+failures are resolved without raising size, method, style, CSS, descriptor,
+import or deadline limits. Task notes preserve failed historical receipts,
+exact child/source attribution and one skipped unavailable-history comparison.
+The final tracker update changes documentation only. This milestone completes
+integration review preparation; it does not merge dev or open activation gates.
 
 [TASK-33165](../tasks/task-33165%20-%20Reserve-Canvas-context-in-the-Personal-Context-Next-Send-preview.md)
 is Done in `6e1bf2a6dd`. The disposable preview reuses the live request's ordered,
