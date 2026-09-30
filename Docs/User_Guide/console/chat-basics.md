@@ -552,13 +552,17 @@ itself, and offers Undo afterwards.
    but you never need it open.
 2. Click **Delete N messages** to confirm. **Cancel**, **Esc**, or selecting
    another message clears the confirmation and removes nothing. If the
-   messages under it change before you confirm (a reply finishes, say), Delete
-   asks again with the new count rather than removing more than you saw.
+   messages under it change before you confirm (a new turn arrives under it,
+   say), Delete asks again with the new count rather than removing more than
+   you saw.
 3. A **Deleted N messages** receipt opens. **Undo** (focused) puts exactly
    those messages back where they were and returns the conversation to the
    branch you were on; they stay restored after you close and reopen the
    chat. **Done** or **Esc** keeps the delete, and from then on it can't be
-   undone in the app.
+   undone in the app. If Undo can't finish (the database is busy, say), the
+   messages stay deleted and the receipt opens again so you can retry; if
+   something changed them after the delete, Undo is refused and the delete
+   stands.
 
 ### Capture a reply into a note
 1. Select the assistant reply, click **More…**, then choose

@@ -179,7 +179,9 @@ async def test_delete_confirms_scope_on_row_then_undo_restores_exact_subtree(siz
         assert set(_deleted_flags(db, conversation_id).values()) == {0}
 
         console.query_one(confirm, Button).press()
-        await _wait_until(pilot, lambda: bool(host.screen.query("#console-delete-receipt")))
+        await _wait_until(
+            pilot, lambda: bool(host.screen.query("#console-delete-receipt"))
+        )
         receipt_text = _painted(host)
         assert "Deleted 8 messages" in receipt_text
         assert "Deleted message from transcript." not in receipt_text
@@ -196,8 +198,9 @@ async def test_delete_confirms_scope_on_row_then_undo_restores_exact_subtree(siz
         )
         await _wait_until(
             pilot,
-            lambda: [m.id for m in store.messages_for_session(session_id)]
-            == original_ids,
+            lambda: (
+                [m.id for m in store.messages_for_session(session_id)] == original_ids
+            ),
         )
         assert db.get_conversation_active_cursor(conversation_id) == (
             seeded["persisted"][-1],
@@ -248,9 +251,13 @@ async def test_cancel_or_moving_selection_clears_pending_delete():
         await _wait_for_selector(console, pilot, confirm)
         assert "Delete this message and 5 later messages?" in _painted(host)
 
-        console.query_one(f"#console-message-action-delete-cancel-{target}", Button).press()
+        console.query_one(
+            f"#console-message-action-delete-cancel-{target}", Button
+        ).press()
         await _wait_until(pilot, lambda: not console.query(confirm))
-        await _wait_for_selector(console, pilot, f"#console-message-action-more-{target}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-more-{target}"
+        )
         assert "later messages?" not in _painted(host)
         assert console._pending_console_delete_message_id is None
 
@@ -264,7 +271,9 @@ async def test_cancel_or_moving_selection_clears_pending_delete():
         await _wait_until(pilot, lambda: not console.query(confirm))
         assert console._pending_console_delete_message_id is None
         transcript.select_message(target)
-        await _wait_for_selector(console, pilot, f"#console-message-action-more-{target}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-more-{target}"
+        )
         assert not console.query(confirm)
         assert "later messages?" not in _painted(host)
 
@@ -277,9 +286,272 @@ async def test_cancel_or_moving_selection_clears_pending_delete():
         await pilot.press("escape")
         await _wait_until(pilot, lambda: not console.query(confirm))
         transcript.select_message(target)
-        await _wait_for_selector(console, pilot, f"#console-message-action-more-{target}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-more-{target}"
+        )
         assert not console.query(confirm)
         assert console._pending_console_delete_message_id is None
 
         assert [m.id for m in store.messages_for_session(session_id)] == original_ids
         assert set(_deleted_flags(db, seeded["conversation_id"]).values()) == {0}
+
+
+async def _open_rows(
+    console: Any, db: Any, rows: list[tuple[str, str, str | None]], leaf: str
+) -> dict[str, Any]:
+    """Persist ``(id, role, parent)`` rows as one tree and open it."""
+    conversation_id = ChatConversationService(db).create_conversation(
+        id=f"delete-undo-{leaf}",
+        title="Delete undo",
+        scope_type="global",
+        state="in-progress",
+    )
+    for index, (message_id, role, parent) in enumerate(rows):
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "parent_message_id": parent,
+                "sender": role,
+                "role": role,
+                "content": f"{message_id} text",
+                "timestamp": f"2026-09-30T00:00:{index:02d}.000000+00:00",
+            }
+        )
+    assert db.set_conversation_active_cursor(
+        conversation_id, active_leaf_message_id=leaf, before_message_id=None
+    )
+    store = console._ensure_console_chat_store()
+    session = store.restore_persisted_session(
+        title="Delete undo",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=_tree_nodes(db, conversation_id),
+        active_leaf_persisted_id=leaf,
+    )
+    await console._sync_native_console_chat_ui()
+    native = {
+        node.persisted_message_id: node.id
+        for node in store._nodes_by_session[session.id].values()
+    }
+    return {
+        "conversation_id": conversation_id,
+        "native": native,
+        "session_id": session.id,
+        "store": store,
+    }
+
+
+def _tree_shape(store: Any, session_id: str) -> dict[str, Any]:
+    """Return the store's tree registration for one session."""
+    return {
+        "children": {
+            parent: list(children)
+            for parent, children in store._children_by_parent[session_id].items()
+        },
+        "parents": {
+            node_id: store._native_parent_by_message.get(node_id)
+            for node_id in store._nodes_by_session[session_id]
+        },
+        "leaf": store._active_leaf_by_session.get(session_id),
+        "path": list(store.active_path_message_ids(session_id)),
+    }
+
+
+async def _confirm_delete(console: Any, pilot: Any, host: Any, message_id: str) -> None:
+    await _arm_delete_from_more(console, pilot, message_id)
+    confirm = f"#console-message-action-delete-confirm-{message_id}"
+    await _wait_for_selector(console, pilot, confirm)
+    console.query_one(confirm, Button).press()
+    await _wait_until(pilot, lambda: bool(host.screen.query("#console-delete-receipt")))
+
+
+@pytest.mark.asyncio
+async def test_confirm_rearms_when_the_subtree_changed_while_pending():
+    """Confirm deletes only the scope the user saw; a changed subtree re-asks."""
+    app = _build_test_app()
+    db = attach_chachanotes_db(app)
+    notices: list[str] = []
+    app.notify = lambda message, **kwargs: notices.append(str(message))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        rows = [
+            (f"m{i}", "user" if i % 2 == 0 else "assistant", f"m{i - 1}" if i else None)
+            for i in range(6)
+        ]
+        seeded = await _open_rows(console, db, rows, "m5")
+        native, store = seeded["native"], seeded["store"]
+        confirm = f"#console-message-action-delete-confirm-{native['m2']}"
+
+        await _arm_delete_from_more(console, pilot, native["m2"])
+        await _wait_for_selector(console, pilot, confirm)
+        assert "Delete 4 messages" in str(console.query_one(confirm, Button).label)
+
+        # Something else removes the last turn while the confirmation shows.
+        store.delete_message(native["m4"])
+        console.query_one(confirm, Button).press()
+        await pilot.pause(0.3)
+
+        flags = _deleted_flags(db, seeded["conversation_id"])
+        assert (flags["m2"], flags["m3"]) == (0, 0), flags
+        assert not host.screen.query("#console-delete-receipt")
+        await _wait_until(
+            pilot,
+            lambda: (
+                bool(console.query(confirm))
+                and "Delete 2 messages" in str(console.query_one(confirm, Button).label)
+            ),
+        )
+        assert any("changed" in notice for notice in notices), notices
+
+
+@pytest.mark.asyncio
+async def test_branched_undo_restores_sibling_order_and_selection():
+    """AC#3 on a branched tree: off-branch copy, exact position, reselection."""
+    app = _build_test_app()
+    db = attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        rows = [
+            ("u1", "user", None),
+            ("a1", "assistant", "u1"),
+            # The active branch is the FIRST sibling: a naive re-append on
+            # Undo would move it to the end.
+            ("u2a", "user", "a1"),
+            ("a2a", "assistant", "u2a"),
+            ("u2b", "user", "a1"),
+            ("a2b", "assistant", "u2b"),
+        ]
+        seeded = await _open_rows(console, db, rows, "a2a")
+        native, store, session_id = (
+            seeded["native"],
+            seeded["store"],
+            seeded["session_id"],
+        )
+        before = _tree_shape(store, session_id)
+        assert before["children"][native["a1"]] == [native["u2a"], native["u2b"]]
+
+        # Deleting a1 would also take the off-path branch u2b/a2b.
+        await _arm_delete_from_more(console, pilot, native["a1"])
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-delete-confirm-{native['a1']}"
+        )
+        await _wait_until(
+            pilot,
+            lambda: (
+                "Delete this message and 4 later messages (2 on other branches)?"
+                in _painted(host)
+            ),
+        )
+        console.query_one(
+            f"#console-message-action-delete-cancel-{native['a1']}", Button
+        ).press()
+        await pilot.pause()
+
+        await _confirm_delete(console, pilot, host, native["u2a"])
+        assert _tree_shape(store, session_id) != before
+        host.screen.query_one("#console-delete-receipt-undo", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: set(_deleted_flags(db, seeded["conversation_id"]).values()) == {0},
+        )
+        await pilot.pause()
+
+        assert _tree_shape(store, session_id) == before
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(
+            pilot, lambda: transcript.selected_message_id == native["u2a"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_done_keeps_the_delete_without_a_cleanup_warning():
+    """AC#4 on the path that releases references: Undo focused, Esc is Done."""
+    app = _build_test_app()
+    db = attach_chachanotes_db(app)
+    notices: list[str] = []
+    app.notify = lambda message, **kwargs: notices.append(str(message))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        rows = [
+            ("u1", "user", None),
+            ("a1", "assistant", "u1"),
+            ("u2", "user", "a1"),
+            ("a2", "assistant", "u2"),
+        ]
+        seeded = await _open_rows(console, db, rows, "a2")
+
+        await _confirm_delete(console, pilot, host, seeded["native"]["u2"])
+        undo = host.screen.query_one("#console-delete-receipt-undo", Button)
+        await _wait_until(pilot, lambda: undo.has_focus)
+        await pilot.press("escape")
+        await _wait_until(
+            pilot, lambda: not host.screen.query("#console-delete-receipt")
+        )
+        await pilot.pause(0.3)
+
+        assert _deleted_flags(db, seeded["conversation_id"]) == {
+            "u1": 0,
+            "a1": 0,
+            "u2": 1,
+            "a2": 1,
+        }
+    assert not any(_CLEANUP_WARNING in notice for notice in notices), notices
+
+
+@pytest.mark.asyncio
+async def test_a_transient_undo_failure_keeps_undo_on_offer(monkeypatch):
+    """A busy database is not "these messages changed": Undo can be retried."""
+    import sqlite3
+
+    app = _build_test_app()
+    db = attach_chachanotes_db(app)
+    notices: list[str] = []
+    app.notify = lambda message, **kwargs: notices.append(str(message))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        rows = [
+            ("u1", "user", None),
+            ("a1", "assistant", "u1"),
+            ("u2", "user", "a1"),
+            ("a2", "assistant", "u2"),
+        ]
+        seeded = await _open_rows(console, db, rows, "a2")
+        conversation_id = seeded["conversation_id"]
+        await _confirm_delete(console, pilot, host, seeded["native"]["u2"])
+
+        real_restore = db.restore_message_subtree
+        attempts: list[int] = []
+
+        def locked_once(tombstones):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return real_restore(tombstones)
+
+        monkeypatch.setattr(db, "restore_message_subtree", locked_once)
+        host.screen.query_one("#console-delete-receipt-undo", Button).press()
+        await _wait_until(pilot, lambda: any("still deleted" in n for n in notices))
+        assert not any("changed after they were deleted" in n for n in notices)
+        assert _deleted_flags(db, conversation_id)["u2"] == 1
+        await _wait_until(
+            pilot, lambda: bool(host.screen.query("#console-delete-receipt"))
+        )
+
+        host.screen.query_one("#console-delete-receipt-undo", Button).press()
+        await _wait_until(
+            pilot, lambda: set(_deleted_flags(db, conversation_id).values()) == {0}
+        )
+        assert len(attempts) == 2

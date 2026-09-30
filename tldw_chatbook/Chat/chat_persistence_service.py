@@ -258,7 +258,9 @@ class ChatPersistenceService:
         self.context_repository = ConsoleContextRepository(db)
         self.recovered_media_cleanup_pending = False
         self._recovered_messages = None
-        self._held_recovered_releases: list[str] | None = None
+        # Per-thread: a hold diverts only its own thread's releases, so a
+        # worker thread's unrelated delete during the hold is released as usual.
+        self._held_recovered_releases = threading.local()
         try:
             from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
                 RecoveredMessageReferences,
@@ -289,9 +291,10 @@ class ChatPersistenceService:
         """Release references for committed tombstones; True if left pending."""
         if not message_ids:
             return False
-        if self._held_recovered_releases is not None:
+        held = getattr(self._held_recovered_releases, "ids", None)
+        if held is not None:
             # An undoable delete: keep references until it becomes final.
-            self._held_recovered_releases.extend(message_ids)
+            held.extend(message_ids)
             return False
         try:
             if self._recovered_messages is None:
@@ -317,18 +320,21 @@ class ChatPersistenceService:
     def hold_recovered_media_release(self) -> Iterator[list[str]]:
         """Hold reference releases for deletes that can still be undone.
 
-        Yields the list the held message ids accumulate in. Releasing them is
-        the caller's job once the delete is final
+        Yields the list the held message ids accumulate in: exactly the
+        messages the CALLING thread tombstoned while the hold was open (other
+        threads' releases proceed normally). Releasing them is the caller's
+        job once the delete is final
         (:meth:`release_recovered_media_references`); a crash before that is
         safe, because startup's positive-tombstone retry releases them.
         """
-        previous = self._held_recovered_releases
+        local = self._held_recovered_releases
+        previous = getattr(local, "ids", None)
         held: list[str] = []
-        self._held_recovered_releases = held
+        local.ids = held
         try:
             yield held
         finally:
-            self._held_recovered_releases = previous
+            local.ids = previous
 
     def release_recovered_media_references(self, message_ids: Sequence[str]) -> bool:
         """Release held references for a now-final delete.

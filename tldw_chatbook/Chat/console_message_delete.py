@@ -21,16 +21,27 @@ down -- because ``console_chat_store.py`` is held by a size ratchet
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 from loguru import logger
 
+from ..DB.ChaChaNotes_DB import ConflictError
 from .console_chat_models import ConsoleChatMessage
 
 
 class ConsoleDeleteUndoError(RuntimeError):
-    """Undo was refused; the message is user-facing copy."""
+    """Undo was refused; the message is user-facing copy.
+
+    Attributes:
+        retryable: Nothing changed and the refusal may be transient (a busy
+            database, a pending dispatch), so Undo can be offered again.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def _messages(count: int) -> str:
@@ -76,16 +87,15 @@ class ConsoleDeleteScope:
             if self.off_branch_count
             else ""
         )
-        return (
-            f"Delete this message and {later} later {_messages(later)}{branches}?"
-        )
+        return f"Delete this message and {later} later {_messages(later)}{branches}?"
 
     @property
     def guide(self) -> str:
         """Return the row legend while the confirmation is pending."""
+        kept = "it" if self.removed_count == 1 else "them"
         return (
             f"{self.prompt} {self.confirm_label} to confirm, Cancel to keep "
-            "them. Undo is offered right after."
+            f"{kept}. Undo is offered right after."
         )
 
     @property
@@ -101,7 +111,9 @@ def console_delete_scope(store: Any, message_id: str) -> ConsoleDeleteScope:
         KeyError: The message is no longer in the store.
     """
     subtree = tuple(store.subtree_message_ids(message_id))
-    active = set(store.active_path_message_ids(store.session_id_for_message(message_id)))
+    active = set(
+        store.active_path_message_ids(store.session_id_for_message(message_id))
+    )
     return ConsoleDeleteScope(
         message_id=message_id,
         subtree_ids=subtree,
@@ -125,6 +137,8 @@ class ConsoleDeletedSubtree:
     previous_cursor: tuple[str | None, str | None] | None
     restored_tree_ids: frozenset[str]
     pending_persistence_ids: frozenset[str]
+    failed_retry_ids: frozenset[str]
+    variant_restored_ids: frozenset[str]
     speech_revisions: Mapping[str, int]
     completion_generations: Mapping[str, int]
     tool_markers: tuple[tuple[str | None, ConsoleChatMessage], ...]
@@ -183,6 +197,8 @@ def capture_deleted_subtree(store: Any, message_id: str) -> ConsoleDeletedSubtre
         previous_cursor=previous_cursor,
         restored_tree_ids=frozenset(ids & store._restored_tree_message_ids),
         pending_persistence_ids=frozenset(ids & store._pending_persistence_message_ids),
+        failed_retry_ids=frozenset(ids & store._failed_retry_message_ids),
+        variant_restored_ids=frozenset(ids & store._variant_restored_message_ids),
         speech_revisions={
             node_id: store._message_speech_revisions.get(node_id, 0) for node_id in ids
         },
@@ -195,12 +211,31 @@ def capture_deleted_subtree(store: Any, message_id: str) -> ConsoleDeletedSubtre
 
 
 def with_committed_tombstones(
-    store: Any, deleted: ConsoleDeletedSubtree
+    store: Any,
+    deleted: ConsoleDeletedSubtree,
+    *,
+    committed_ids: tuple[str, ...] | None = None,
 ) -> ConsoleDeletedSubtree:
-    """Record the tombstone versions the delete just committed."""
-    persisted = [
-        node.persisted_message_id for node in deleted.nodes if node.persisted_message_id
-    ]
+    """Record the tombstone versions the delete just committed.
+
+    Args:
+        store: The Console store the delete ran on.
+        deleted: The pre-delete capture.
+        committed_ids: The persisted ids the durable delete tombstoned. The
+            DB deletes its whole ``parent_message_id`` subtree, which can hold
+            rows that are never store nodes (tool-role rows, empty rows), so
+            these -- not the captured nodes -- are what Undo must restore.
+            ``None`` falls back to the captured nodes' persisted ids.
+    """
+    persisted = (
+        list(committed_ids)
+        if committed_ids is not None
+        else [
+            node.persisted_message_id
+            for node in deleted.nodes
+            if node.persisted_message_id
+        ]
+    )
     database = getattr(store.persistence, "db", None) if store.persistence else None
     reader = getattr(database, "get_message_tombstones", None)
     if not persisted or not callable(reader):
@@ -208,9 +243,31 @@ def with_committed_tombstones(
     rows = reader(persisted)
     return replace(
         deleted,
-        tombstones=tuple(
-            (str(row["message_id"]), int(row["version"])) for row in rows
-        ),
+        tombstones=tuple((str(row["message_id"]), int(row["version"])) for row in rows),
+    )
+
+
+def delete_subtree_for_undo(
+    store: Any, message_id: str
+) -> tuple[ConsoleDeletedSubtree, tuple[str, ...]]:
+    """Delete ``message_id`` and its subtree, keeping what Undo needs.
+
+    Recovered-media reference release is held back while Undo is possible;
+    the held message ids are returned so the caller can release them once
+    the delete is final.
+
+    Raises:
+        Exception: Whatever ``store.delete_message`` raised.
+    """
+    deleted = capture_deleted_subtree(store, message_id)
+    hold = getattr(store.persistence, "hold_recovered_media_release", None)
+    with hold() if callable(hold) else nullcontext(None) as held:
+        store.delete_message(message_id)
+    # The hold collects exactly the ids this thread's delete tombstoned.
+    committed = tuple(held) if held is not None else None
+    return (
+        with_committed_tombstones(store, deleted, committed_ids=committed),
+        committed or (),
     )
 
 
@@ -240,23 +297,30 @@ def restore_deleted_subtree(store: Any, deleted: ConsoleDeletedSubtree) -> None:
                 raise ConsoleDeleteUndoError("Saved messages can't be restored here.")
             try:
                 with store._dispatch_branch_mutation(session_id):
-                    restorer(
+                    restored_rows = restorer(
                         tombstones=deleted.tombstones,
                         conversation_id=deleted.conversation_id,
                         active_cursor=(
                             deleted.previous_cursor if deleted.on_active_path else None
                         ),
                     )
-            except ValueError as exc:  # pending dispatch owns the branch
-                raise ConsoleDeleteUndoError(str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001 - version check or storage refusal
-                logger.bind(conversation_id=deleted.conversation_id).warning(
-                    "Console delete Undo refused by storage: {}", type(exc).__name__
-                )
+            except ConflictError as exc:  # a tombstone moved since the delete
                 raise ConsoleDeleteUndoError(
                     "These messages changed after they were deleted, so Undo "
                     "can't restore them."
                 ) from exc
+            except ValueError as exc:  # pending dispatch owns the branch
+                raise ConsoleDeleteUndoError(str(exc), retryable=True) from exc
+            except Exception as exc:  # noqa: BLE001 - storage refusal, nothing changed
+                logger.bind(conversation_id=deleted.conversation_id).warning(
+                    "Console delete Undo failed in storage: {}", type(exc).__name__
+                )
+                raise ConsoleDeleteUndoError(
+                    "Undo couldn't finish; the messages are still deleted. Try "
+                    "Undo again, or choose Done to keep the delete.",
+                    retryable=True,
+                ) from exc
+            _rebind_versions(deleted, restored_rows)
         _reinsert(store, deleted)
         if deleted.on_active_path and not deleted.tombstones:
             store._persist_active_leaf(session_id, deleted.previous_active_leaf)
@@ -267,6 +331,25 @@ def restore_deleted_subtree(store: Any, deleted: ConsoleDeletedSubtree) -> None:
             )
         except Exception:  # noqa: BLE001 - projection is best-effort, as for deletes
             logger.warning("Failed to project restored Console messages to Sync v2")
+
+
+def _rebind_versions(deleted: ConsoleDeletedSubtree, rows: Any) -> None:
+    """Teach restored nodes the versions the undelete committed.
+
+    Delete and undelete each bump a row's version, so a node that cached its
+    pre-delete version would fail its next version-checked write (Regenerate,
+    a manual variant) with ConflictError and lose that generation.
+    """
+    versions = {
+        str(row["message_id"]): int(row["version"]) for row in rows or () if row
+    }
+    for node in deleted.nodes:
+        version = versions.get(node.persisted_message_id or "")
+        if (
+            version is not None
+            and type(node.provider_continuation_message_version) is int
+        ):
+            node.provider_continuation_message_version = version
 
 
 def _reinsert(store: Any, deleted: ConsoleDeletedSubtree) -> None:
@@ -280,6 +363,8 @@ def _reinsert(store: Any, deleted: ConsoleDeletedSubtree) -> None:
     siblings.insert(min(deleted.sibling_index, len(siblings)), deleted.root_id)
     store._restored_tree_message_ids.update(deleted.restored_tree_ids)
     store._pending_persistence_message_ids.update(deleted.pending_persistence_ids)
+    store._failed_retry_message_ids.update(deleted.failed_retry_ids)
+    store._variant_restored_message_ids.update(deleted.variant_restored_ids)
     store._message_speech_revisions.update(deleted.speech_revisions)
     store._message_completion_generations.update(deleted.completion_generations)
     restored = set(deleted.node_ids)

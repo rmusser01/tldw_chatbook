@@ -177,6 +177,9 @@ from ...Widgets.Console import (
     ConsoleSaveAsModal,
     ConsoleThinkingEditResult,
 )
+from ...Widgets.Console.console_transcript_delete_confirmation import (
+    show_delete_confirmation,
+)
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -1852,9 +1855,7 @@ class ConsoleMessageController:
         )
         if selected_id is not None:
             transcript.set_fork_eligibilities({selected_id: eligibility})
-        set_delete_confirmation = getattr(transcript, "set_delete_confirmation", None)
-        if callable(set_delete_confirmation):
-            set_delete_confirmation(pending_delete_scope(self))
+        show_delete_confirmation(transcript, pending_delete_scope(self))
         return selected_id, eligibility
 
     @property

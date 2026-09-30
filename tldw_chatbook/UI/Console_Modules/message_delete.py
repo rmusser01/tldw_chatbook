@@ -21,7 +21,6 @@ the attributes its delete branch already used, plus ``push_screen``.
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import Any
 
 from loguru import logger
@@ -31,11 +30,10 @@ from ...Chat.console_message_delete import (
     ConsoleDeletedSubtree,
     ConsoleDeleteScope,
     ConsoleDeleteUndoError,
-    capture_deleted_subtree,
     console_delete_receipt_copy,
     console_delete_scope,
+    delete_subtree_for_undo,
     restore_deleted_subtree,
-    with_committed_tombstones,
 )
 
 #: Actions the delete flow owns end to end (the confirm/cancel pair only
@@ -127,25 +125,20 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
         session_id
     )
     host._console_original_attempt_previews.clear()
-    deleted = capture_deleted_subtree(store, message_id)
-    hold = getattr(store.persistence, "hold_recovered_media_release", None)
-    with (hold() if callable(hold) else nullcontext([])) as held:
-        try:
-            store.delete_message(message_id)
-        except ValueError as exc:  # a pending dispatch or live reply owns it
-            host.app_instance.notify(str(exc), severity="warning")
-            await host._sync_native_console_chat_ui()
-            return
-        except Exception as exc:  # noqa: BLE001 - report at the UI boundary
-            logger.warning("Console message delete failed: {}", type(exc).__name__)
-            host.app_instance.notify(
-                "Delete could not complete. Reopen this chat to see what is saved.",
-                severity="error",
-            )
-            await host._sync_native_console_chat_ui()
-            return
-    held_ids = tuple(held)
-    deleted = with_committed_tombstones(store, deleted)
+    try:
+        deleted, held_ids = delete_subtree_for_undo(store, message_id)
+    except ValueError as exc:  # a pending dispatch or live reply owns it
+        host.app_instance.notify(str(exc), severity="warning")
+        await host._sync_native_console_chat_ui()
+        return
+    except Exception as exc:  # noqa: BLE001 - report at the UI boundary
+        logger.warning("Console message delete failed: {}", type(exc).__name__)
+        host.app_instance.notify(
+            "Delete could not complete. Reopen this chat to see what is saved.",
+            severity="error",
+        )
+        await host._sync_native_console_chat_ui()
+        return
     host._invalidate_console_fork_image_selections(scope.subtree_ids)
     # TASK-251: a deleted message can change what the browser row shows for
     # this conversation (title/updated_at) -- invalidate so the next sync
@@ -179,7 +172,10 @@ async def _offer_receipt(
             restore_deleted_subtree(store, deleted)
         except ConsoleDeleteUndoError as exc:
             host.app_instance.notify(str(exc), severity="warning")
-            _finalize(host, store, held_ids)
+            if exc.retryable:  # nothing changed; keep Undo on offer
+                await _offer_receipt(host, store, deleted, held_ids)
+            else:
+                _finalize(host, store, held_ids)
             return
         noun = "message" if deleted.count == 1 else "messages"
         host._last_console_action = ConsoleActionResult(

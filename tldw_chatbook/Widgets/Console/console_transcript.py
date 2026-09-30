@@ -133,6 +133,10 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
     selection_menus_on_screen,
 )
+from tldw_chatbook.Widgets.Console.console_transcript_delete_confirmation import (
+    action_button_classes,
+    drop_stale_delete_scope,
+)
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
@@ -143,13 +147,12 @@ from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
     from tldw_chatbook.Widgets.Console.console_voice_preview import (
         ConsoleVoicePreview,
         VoicePreviewProjection,
     )
     from textual.screen import Screen
-
-    from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
 
 
 # TASK-17658: rule separators paint via the stylesheet's hatch fill
@@ -4653,37 +4656,6 @@ class ConsoleTranscript(VerticalScroll):
             and isinstance(eligibility, ConsoleForkEligibility)
         }
 
-    def set_delete_confirmation(self, scope: ConsoleDeleteScope | None) -> None:
-        """Show (or clear) a scoped delete confirmation on its selected row."""
-        if scope == self._delete_scope:
-            return
-        self._delete_scope = scope
-        if self.is_mounted:
-            self.call_later(self._show_delete_confirmation, scope)
-
-    async def _show_delete_confirmation(self, scope: ConsoleDeleteScope | None) -> None:
-        """Re-plan rows, then focus Cancel with the confirm row and legend in view."""
-        await self.refresh_messages()
-        targets: list[Widget] = []
-        for _attempt in range(12 if scope is not None else 0):
-            if scope != self._delete_scope:
-                return
-            targets = list(
-                self.query(
-                    f"#console-message-action-delete-cancel-{scope.message_id}, "
-                    f"#console-transcript-row-action-help-{scope.message_id}"
-                )
-            )
-            if targets and all(widget.size for widget in targets):
-                break
-            await asyncio.sleep(1 / 60)  # fresh rows have no size until laid out
-        if scope is None or not targets:
-            return
-        self._release_anchor_quietly()  # tail-follow would pull the row away
-        for widget in targets:
-            widget.scroll_visible(animate=False)
-        self._focus_action_button(scope.message_id, "delete-cancel")
-
     def set_memory_banner_presentation(
         self, presentation: ConsoleMemoryBannerPresentation | None
     ) -> None:
@@ -6687,8 +6659,7 @@ class ConsoleTranscript(VerticalScroll):
 
     def _flat_transcript_rows(self) -> list[_TranscriptRow]:
         """Plan the legacy per-message rows reused by standalone and nested UI."""
-        if self._delete_scope and self._delete_scope.message_id != self.selected_message_id:
-            self._delete_scope = None  # moving the selection away cancels it
+        drop_stale_delete_scope(self)  # moving the selection away cancels it
         rows: list[_TranscriptRow] = []
         banner = self.memory_banner_presentation
         banner_anchor = None
@@ -8400,8 +8371,7 @@ class ConsoleTranscript(VerticalScroll):
         button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
-            classes="console-transcript-action-button"
-            + (" console-transcript-action-danger" if action.action_id == "delete-confirm" else ""),
+            classes=action_button_classes(action.action_id),
             disabled=not action.enabled,
         )
         if action.disabled_reason:
