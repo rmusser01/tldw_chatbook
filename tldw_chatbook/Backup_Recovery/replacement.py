@@ -218,9 +218,10 @@ def _checked_originals(plan, journal, session):
         entries = normalized_originals(
             Inventory(tuple(entries), True, plan.target_fingerprint, ())
         ).items
-        directories = {
-            item.path: item for item in entries if item.status == "included_directory"
-        }
+        directories = {}
+        for item in entries:
+            if item.status == "included_directory":
+                directories.setdefault(item.path, []).append(item)
         normalized = []
         for item in entries:
             info = os.stat(item.path, follow_symlinks=False)
@@ -238,13 +239,44 @@ def _checked_originals(plan, journal, session):
                 )
             elif ancestors:
                 root = min(ancestors, key=lambda path: len(path.parts))
+                roots = directories[root]
+                if item.status == "included_directory" and item.path == root:
+                    roots = [item]
+                elif len(roots) > 1:
+                    roots = [
+                        row
+                        for row in roots
+                        if item.metadata is not None
+                        and item.metadata.root_id
+                        in {
+                            row.logical_id,
+                            row.metadata.root_id if row.metadata else None,
+                        }
+                    ]
+                if len(roots) != 1:
+                    raise ValueError("rollback_inventory_incomplete")
+                root_item = roots[0]
+                parents = directories.get(item.path.parent, [])
+                if len(parents) > 1:
+                    parents = [
+                        row
+                        for row in parents
+                        if item.metadata is not None
+                        and item.metadata.parent_id == row.logical_id
+                        and row.metadata is not None
+                        and row.metadata.root_id
+                        in {
+                            root_item.logical_id,
+                            root_item.metadata.root_id if root_item.metadata else None,
+                        }
+                    ]
+                    if len(parents) != 1:
+                        raise ValueError("rollback_inventory_incomplete")
                 meta = FileMetadata(
                     1,
-                    directories[root].logical_id,
+                    root_item.logical_id,
                     item.path.relative_to(root).as_posix() if item.path != root else "",
-                    directories[item.path.parent].logical_id
-                    if item.path.parent in directories
-                    else None,
+                    parents[0].logical_id if parents else None,
                     "directory" if stat.S_ISDIR(info.st_mode) else "file",
                     stat.S_IMODE(info.st_mode),
                     info.st_mtime_ns,

@@ -160,7 +160,11 @@ def replacement_case(
             if item.status != "included":
                 continue
             extra_root = next(
-                (key for key, path in extra_directories.items() if path == item.path.parent),
+                (
+                    key
+                    for key, path in extra_directories.items()
+                    if path == item.path.parent
+                ),
                 "root",
             )
             if item.shared_group:
@@ -186,6 +190,8 @@ def replacement_case(
                 )
             data = item.path.read_bytes()
             payload_key = item.logical_id.rsplit(":", 1)[-1]
+            if payload_key in payloads:
+                payload_key = hashlib.sha256(item.logical_id.encode()).hexdigest()
             payloads[payload_key] = data
             doc["files"].append(
                 {
@@ -819,6 +825,159 @@ def test_installed_mixed_and_shared_owners_round_trip(
         publication.publish_candidate(case[0], case[1], case[2], output)
         assert not Path(str(source) + "-wal").exists()
         assert not Path(str(source) + "-shm").exists()
+
+
+@pytest.mark.parametrize("lineage", ("valid", "cross-parent"))
+def test_shared_directory_safety_copy_keeps_each_actual_alias_tree(
+    tmp_path, monkeypatch, helper_resource_root, lineage
+):
+    from dataclasses import replace
+
+    from Tests.Backup_Recovery.test_directory_metadata_rollback import node
+    from tldw_chatbook.Backup_Recovery import crypto, replacement
+    from tldw_chatbook.Backup_Recovery.inventory import classify_entries
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    members = []
+    owner = "persona.visual_identity_builtin"
+
+    def original_tree(live):
+        core = live / "core.db"
+        db = CharactersRAGDB(core, "fixture")
+        db.close()
+        root = live / "themes"
+        nested = root / "nested"
+        empty = nested / "empty"
+        for directory in (root, nested, empty):
+            directory.mkdir(mode=0o700)
+        payload = nested / "theme.txt"
+        payload.write_bytes(b"same physical original theme bytes")
+        payload.chmod(0o600)
+        for profile in ("first", "second"):
+            prefix = f"profile:{profile}:{owner}"
+            for suffix, path, parent in (
+                ("", root, None),
+                (":nested", nested, prefix),
+                (":empty", empty, prefix + ":nested"),
+                (":file", payload, prefix + ":nested"),
+            ):
+                info = path.stat()
+                metadata = FileMetadata(
+                    1,
+                    prefix,
+                    path.relative_to(root).as_posix() if path != root else "",
+                    parent,
+                    "file" if path == payload else "directory",
+                    info.st_mode & 0o777,
+                    info.st_mtime_ns,
+                    "private",
+                )
+                if profile == "first" and path == payload and lineage == "cross-parent":
+                    metadata = replace(
+                        metadata, parent_id=f"profile:second:{owner}:nested"
+                    )
+                members.append(
+                    StorageItem(
+                        owner,
+                        prefix + suffix,
+                        path,
+                        "included" if path == payload else "included_directory",
+                        (parent,)
+                        if parent
+                        else (f"profile:{profile}:db.chachanotes.primary",),
+                        "shared-theme" + suffix,
+                        metadata=metadata,
+                    )
+                )
+        return tuple(
+            StorageItem(
+                "db.chachanotes.primary",
+                f"profile:{profile}:db.chachanotes.primary",
+                core,
+                "included",
+                (),
+                "shared-core",
+            )
+            for profile in ("first", "second")
+        )
+
+    with replacement_case(
+        tmp_path, monkeypatch, prepared=False, extras=original_tree
+    ) as original:
+        archive = replacement._acquired_source(original[0], original[1], Event())
+        target = classify_entries((*original[1].target.items, *members))
+        assert target.complete
+        plan = plan_restore(
+            archive,
+            mode="replace",
+            destinations=dict((*original[1].destinations, *original[1].selectors)),
+            target=target,
+            profile_names=dict(original[1].profile_names),
+            safety_scope=tuple(item.logical_id for item in members),
+        )
+        journal = Journal(tmp_path / "control", "shared-theme")
+        candidate = stage_restore(
+            archive, plan, tmp_path / "shared-candidate", Event(), journal=journal
+        )
+        selector = original[5]
+        root = bootstrap.default_bootstrap_root()
+        register_pending(
+            root, journal.operation_id, ("profile",), journal.root.parent, (selector,)
+        )
+        paths = {item.path for item in members}
+        before = {path: node(path) for path in paths}
+        original_bytes = next(path for path in paths if path.is_file()).read_bytes()
+        with admission_authority(root).maintenance(
+            ("profile", "bootstrap.unbound"), 3
+        ) as session:
+            journal.prepare_publication(
+                candidate,
+                plan,
+                bootstrap_root=root,
+                namespaces=("profile",),
+                selectors=(selector,),
+                generation="shared-theme",
+            )
+            case = (candidate, plan, journal, session, original[4], selector)
+            if lineage != "valid":
+                with pytest.raises(ValueError, match="^rollback_inventory_incomplete$"):
+                    run_capture(case, tmp_path)
+            else:
+                try:
+                    encrypted = run_capture(case, tmp_path)
+                except replacement.RollbackCredentialReviewRequired as review:
+                    retry = tmp_path / "reviewed-capture"
+                    retry.mkdir(mode=0o700)
+                    encrypted = run_capture(case, retry, issues=review.issues)
+                captured = acquire(
+                    encrypted,
+                    tmp_path / "shared-readback",
+                    ArchiveLimits(),
+                    b"test-only-password",
+                    Event(),
+                )
+                document = verify_sealed(captured)
+                rows = {
+                    row.logical_id: row
+                    for row in (*document.directories, *document.files)
+                }
+                with zipfile.ZipFile(captured.path) as container:
+                    for item in members:
+                        row = rows[item.logical_id]
+                        assert (row.root_id, row.parent_id, row.relative_path) == (
+                            item.metadata.root_id,
+                            item.metadata.parent_id,
+                            item.metadata.relative_path,
+                        )
+                        if item.status == "included":
+                            assert container.read(row.payload) == original_bytes
+            assert {path: node(path) for path in paths} == before
+            assert (
+                next(path for path in paths if path.is_file()).read_bytes()
+                == original_bytes
+            )
 
 
 @pytest.mark.parametrize("suffix", ["-wal", "-shm"])
