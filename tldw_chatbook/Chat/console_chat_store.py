@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from collections.abc import Iterator
@@ -6616,7 +6616,7 @@ class ConsoleChatStore:
     def publish_durable_turn_identity(
         self, session_id: str, commit: ConsoleDurableTurnCommit
     ) -> None:
-        """Publish committed identity, policy, first-send bases, project controls."""
+        """Publish committed identity, policy, and first-send settings bases."""
 
         self.publish_committed_identity(session_id, commit.identity)
         with self._preparation_lock:
@@ -6637,7 +6637,6 @@ class ConsoleChatStore:
         generation_base_installed = False
         context_base_installed = False
         if commit.first_persist:
-            self._persist_project_instruction_state(session)  # TASK-33621.13
             lifecycle = self._settings_persistence_lifecycles.setdefault(
                 session_id, _ConsoleSettingsPersistenceLifecycle()
             )
@@ -10452,12 +10451,16 @@ class ConsoleChatStore:
         """
         session = self._session_or_raise(session_id)
         session.project_instruction_state = state
-        self._persist_project_instruction_state(session)
+        self.persist_project_instruction_state(session)
         return session
 
-    def _persist_project_instruction_state(self, session: ConsoleChatSession) -> None:
-        """Best-effort write one durable session's local control state."""
-        conversation_id = session.persisted_conversation_id
+    def persist_project_instruction_state(self, session: ConsoleChatSession) -> None:
+        """Never-raising write of controls to the saved (or just-committed) chat."""
+        with self._preparation_lock:  # TASK-33621.13: committed, unpublished first send
+            reservation = self._first_identity_reservations.get(session.id)
+        owner, staged, durable = reservation or (None, None, False)
+        committed = staged.conversation_id if owner and durable else None
+        conversation_id = session.persisted_conversation_id or committed
         if (
             session.ephemeral
             or conversation_id is None
@@ -10467,17 +10470,14 @@ class ConsoleChatStore:
         setter = getattr(
             self.persistence, "set_conversation_console_project_context", None
         )
-        if callable(setter):
-            try:
+        with suppress(Exception):
+            if callable(setter):
                 setter(
                     conversation_id=conversation_id,
                     project_context_json=encode_project_context_json(
                         session.project_instruction_state
                     ),
                 )
-            except Exception:
-                pass
-            else:
                 return
         logger.warning(
             "project_instruction_state_write_failed: the updated choice "
@@ -18570,7 +18570,7 @@ class ConsoleChatStore:
                     "Failed to flush Console roleplay context while promoting "
                     "a temporary session."
                 )
-        self._persist_project_instruction_state(session)
+        self.persist_project_instruction_state(session)
         pinned_prefill = (
             session.settings.pinned_prefill if session.settings is not None else None
         )
@@ -19224,7 +19224,7 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self._persist_project_instruction_state(session)
+        self.persist_project_instruction_state(session)
         self._flush_context_policy_on_first_persist(session)
         return identity.conversation_id
 

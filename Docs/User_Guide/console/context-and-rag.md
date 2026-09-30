@@ -618,8 +618,10 @@ the picker shows only "No eligible folders"; bind one in a named workspace
 first.
 
 The choice is stored with the conversation and kept after a restart. In a new
-chat with no messages yet, it is stored when you send the first message and
-the chat is saved.
+chat with no messages yet, it is stored as soon as your first message is
+saved, even if that send then stops before a reply (for example, when the
+chat shows **Blocked**). Choosing again while the chat is stopped like that
+is stored too.
 
 The **Context** view's explicit **Preview** sections are the only automatic UI
 surface that may show the exact instruction body, as a disposable preview of

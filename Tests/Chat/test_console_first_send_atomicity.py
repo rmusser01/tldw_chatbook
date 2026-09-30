@@ -684,6 +684,90 @@ async def test_first_send_persists_a_project_folder_chosen_before_the_chat_was_s
     assert reopened.project_instruction_state == chosen
 
 
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stop_after_commit", ["trace_provenance_pause", "identity_publication_failure"]
+)
+async def test_project_folder_survives_a_first_send_that_stops_after_its_commit(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stop_after_commit: str,
+) -> None:
+    """TASK-33621.13 live re-verification: the first send in a new named
+    workspace committed the chat and then stopped as 'Blocked' ~5 ms later,
+    before identity publication ever ran. The folder was written only at
+    publication, so the saved chat's column stayed NULL and after a restart
+    the chat read 'Off · Project'. Both ways a send can stop after its
+    durable commit -- a paused turn that never reaches publication, and a
+    publication that fails -- must leave the folder saved with that chat, as
+    must a folder chosen again while the turn is still stopped."""
+    db, store, controller, gateway = _controller(tmp_path)
+    if stop_after_commit == "trace_provenance_pause":
+
+        def refuse_trace_request(**_kwargs: Any) -> None:
+            raise RuntimeError("trace provenance unavailable")
+
+        monkeypatch.setattr(
+            controller, "_build_durable_trace_request", refuse_trace_request
+        )
+    else:
+
+        def fail_publication(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("identity publication failed")
+
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_publication)
+    chosen = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-7",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key="notice-key",
+    )
+    store.set_session_project_instruction_state("session-1", chosen)
+
+    result = await controller.submit_draft("keep my folder", session_id="session-1")
+
+    # The send stopped after its commit: the chat exists, identity was never
+    # published to the session, and the provider was never called.
+    assert result.accepted is True
+    assert result.provider_started is False
+    assert gateway.calls == 0
+    assert store.sessions()[0].persisted_conversation_id is None
+    rows = db.get_connection().execute(
+        "SELECT id FROM conversations WHERE deleted = 0"
+    ).fetchall()
+    assert len(rows) == 1
+    conversation_id = rows[0]["id"]
+    assert db.get_conversation_console_project_context(conversation_id) == (
+        encode_project_context_json(chosen)
+    )
+
+    rechosen = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-8",
+        working_folder_locator_fingerprint="e" * 64,
+        project_instruction_notice_key="notice-key",
+    )
+    store.set_session_project_instruction_state("session-1", rechosen)
+    assert db.get_conversation_console_project_context(conversation_id) == (
+        encode_project_context_json(rechosen)
+    )
+
+    # A restart: a fresh connection and a fresh store over the same file.
+    reopened_db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="restart")
+    conversation = reopened_db.get_conversation_by_id(conversation_id)
+    reopened = ConsoleChatStore(
+        persistence=ChatPersistenceService(reopened_db)
+    ).restore_persisted_session(
+        title=str(conversation["title"]),
+        workspace_id=conversation.get("workspace_id"),
+        persisted_conversation_id=conversation_id,
+        all_nodes=(),
+    )
+    assert reopened.project_instruction_state == rechosen
+
+
 @pytest.mark.asyncio
 async def test_later_send_does_not_republish_first_persist_settings_bases(
     tmp_path: Path,
