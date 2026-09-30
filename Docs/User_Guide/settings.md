@@ -582,6 +582,50 @@ protocol error instead of being passed through.
 - MiMo and BytePlus streams may arrive without token counts; the reply still
   completes.
 
+#### Azure, W&B, Cloudflare, OpenCode Zen, and Command Code
+
+Five more presets from the Hermes and oh-my-pi comparison, set up the same
+way (public documentation, strict replies). Two of them need a URL that
+belongs to your account, like Databricks: until you set `api_base_url`, the
+provider shows as not ready and names the URL it needs.
+
+| Provider | Base URL | API key env var |
+| --- | --- | --- |
+| **Azure OpenAI** | your resource host, e.g. `https://my-resource.openai.azure.com` (`/openai/v1` is added) | `AZURE_OPENAI_API_KEY` |
+| **W&B Inference (CoreWeave)** | `https://api.inference.wandb.ai/v1` | `WANDB_API_KEY` |
+| **Cloudflare Workers AI** | `https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1` | `CLOUDFLARE_API_TOKEN` |
+| **OpenCode Zen** | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` |
+| **Command Code** | `https://api.commandcode.ai/provider/v1` | `COMMANDCODE_API_KEY` |
+
+- **Azure OpenAI** uses the v1 API with your resource key. Models are your
+  **deployment names**: add each one as a **Custom model** (Azure's model list
+  names base models, not deployments, so there is no Discover models).
+  Requests send `max_completion_tokens`, which newer deployments require.
+  Content-filter annotations are accepted; a reply Azure stops for content
+  filtering is reported as a provider error. Deployments using
+  **Asynchronous Filter** mode are not supported — use the default filter
+  mode. Microsoft Entra ID tokens are not supported; use the resource key.
+- **W&B Inference** fills its model list with **Discover models**. To bill a
+  specific team and project, set `project = "team/project"` in
+  `[api_settings.wandb]`; it is sent as the `OpenAI-Project` header, and
+  nothing is sent when it is unset (W&B then uses your default project).
+- **Cloudflare Workers AI** needs an API token with **Account > Workers AI >
+  Read**. Put your account id (from the Cloudflare dashboard) in the URL
+  above. The list ships with current Workers AI models (`@cf/...`); enter any
+  other as a **Custom model**. To route through a named AI Gateway, set
+  `gateway_id` in `[api_settings.cloudflare]` (sent as `cf-aig-gateway-id`).
+  The `gateway.ai.cloudflare.com` compatibility endpoint is not used: it
+  takes two credential headers, while this REST endpoint needs only the token.
+- **OpenCode Zen** serves each model on one API style, and Chatbook uses the
+  Chat Completions one, so its list ships with the Zen models that support it
+  (DeepSeek, GLM, Kimi, MiniMax, Qwen Max, and the free models). GPT, Claude,
+  Gemini, and the Qwen Flash/Plus models are on other API styles and are not
+  offered. **OpenCode Go** is not offered either: it is a subscription meant
+  for coding agents and requires a per-conversation session header.
+- **Command Code** needs its Provider plan (or a GOAT, Pro, Max, or Team
+  plan). Its Claude models are served only on the Messages API, so they are
+  not in the list. Streams always include token usage.
+
 #### Custom endpoints
 
 A **custom endpoint** is a named endpoint entry you can template off any

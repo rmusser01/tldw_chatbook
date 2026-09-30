@@ -49,6 +49,9 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "Nous",
     "Venice",
     "Meta",
+    # TASK-33506: W&B lists models; Azure (deployments), Cloudflare (no
+    # route), OpenCode Zen and Command Code (mixed protocols) ship seeded.
+    "WandB",
 )
 
 SELECTOR_MERGE_CAP = 50

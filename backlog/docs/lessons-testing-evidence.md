@@ -1,5 +1,32 @@
 # Lessons: what counts as evidence a change works
 
+## A provider preset's own tests never touched the surfaces users set it up with
+
+**TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
+and #2896. Each came with registry, dispatch, payload, stream and config-table tests, and each
+passed the required check. None of those tests went through the surfaces a user actually
+touches. Qodo's review of #2916 found three bugs as a result:
+- **Settings could not save them.** `provider_setup_persistence._CANONICAL_PROVIDER_KEYS`
+  was a hand list holding only Databricks, so saving a changed key or endpoint for any other
+  preset failed with "Provider settings are invalid".
+- **Settings rewrote four shipped URLs.** The endpoint contract forced a `/v1` shape onto
+  every URL:
+  - DeepInfra `/v1/openai` was rejected.
+  - BytePlus, Kilo and Qianfan were saved with a bogus `/v1` appended.
+  - Azure and Databricks bare hosts were saved as `/v1` instead of `/openai/v1`.
+- **Readiness looked for the wrong env var.** When the `[api_settings]` table was absent
+  (every existing `config.toml`), readiness derived `<KEY>_API_KEY`. That missed six
+  documented variables, and `OllamaCloud`/`OpenCodeZen` normalized to unknown keys.
+
+Qodo reported only the five new keys; the other 25 presets had been broken all along.
+- **Evidence for a new preset:**
+  - `ProviderSetupDraft` accepts it.
+  - Its documented URL round-trips exactly through `build_provider_setup_mutation`.
+  - Readiness finds its documented env var with no settings table.
+- **Test shape:** write these as sweeps over `ALL_RECORDS`, derived from the registry, not
+  over the new keys. See `Tests/Chat/test_provider_setup_persistence.py` and
+  `Tests/Chat/test_provider_readiness.py`, both "every engine preset".
+
 ## Tests that read a moved file's source run outside the PR gate
 
 **TASK-33011, 2026-09-29.** Nine PRs moved code verbatim out of `app.py` into `app_*.py`

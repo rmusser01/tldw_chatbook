@@ -81,9 +81,12 @@ from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
     ARCEE,
+    AZURE,
     BASETEN,
     BYTEPLUS,
     CEREBRAS,
+    CLOUDFLARE,
+    COMMANDCODE,
     CUSTOM_HOSTED,
     DATABRICKS,
     DEEPINFRA,
@@ -98,6 +101,7 @@ from tldw_chatbook.provider_registry import (  # noqa: E402
     NOVITA,
     NVIDIA,
     OLLAMA_CLOUD,
+    OPENCODE_ZEN,
     QIANFAN,
     SAMBANOVA,
     SILICONFLOW,
@@ -107,6 +111,7 @@ from tldw_chatbook.provider_registry import (  # noqa: E402
     UPSTAGE,
     VENICE,
     VERCEL,
+    WANDB,
     ZENMUX,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
@@ -227,6 +232,12 @@ API_CALL_HANDLERS = {
     "nous": _LazyHostedChatHandler(NOUS),
     "venice": _LazyHostedChatHandler(VENICE),
     "meta": _LazyHostedChatHandler(META),
+    # TASK-33505..33509 follow-up presets.
+    "azure": _LazyHostedChatHandler(AZURE),
+    "wandb": _LazyHostedChatHandler(WANDB),
+    "cloudflare": _LazyHostedChatHandler(CLOUDFLARE),
+    "opencode_zen": _LazyHostedChatHandler(OPENCODE_ZEN),
+    "commandcode": _LazyHostedChatHandler(COMMANDCODE),
     # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
     # gateway identity site swaps ``openai_compatible`` custom-ep entries to
     # this key when ``[console] custom_endpoints_use_engine`` is on. The
@@ -941,6 +952,11 @@ PROVIDER_PARAM_MAP = {
     "nous": ENGINE_PROVIDER_PARAM_MAP,
     "venice": ENGINE_PROVIDER_PARAM_MAP,
     "meta": ENGINE_PROVIDER_PARAM_MAP,
+    "azure": ENGINE_PROVIDER_PARAM_MAP,
+    "wandb": ENGINE_PROVIDER_PARAM_MAP,
+    "cloudflare": ENGINE_PROVIDER_PARAM_MAP,
+    "opencode_zen": ENGINE_PROVIDER_PARAM_MAP,
+    "commandcode": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
 

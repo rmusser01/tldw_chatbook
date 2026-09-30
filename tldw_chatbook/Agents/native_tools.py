@@ -105,6 +105,12 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "qianfan",
         "venice",
         "meta",
+        # TASK-33505..33509 follow-up presets.
+        "azure",
+        "wandb",
+        "cloudflare",
+        "opencode_zen",
+        "commandcode",
     }
 )
 

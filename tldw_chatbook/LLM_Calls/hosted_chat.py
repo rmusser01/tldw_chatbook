@@ -177,8 +177,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         tolerant_top_level_extras: bool = False,
         usage_optional: bool = False,
         event_check: Callable[[Mapping[str, Any]], None] | None = None,
+        annotation_key: str | None = None,
     ) -> None:
         self._records = records
+        # A provider annotation frame (TASK-33505: Azure's
+        # prompt_filter_results): no choices, no usage, this key present.
+        self._annotation_key = annotation_key
         # Provider-specific check on each decoded event before parsing
         # (TASK-33201: MiniMax status envelope); may raise ChatProviderError.
         self._event_check = event_check
@@ -301,6 +305,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         if usage is not None and not isinstance(usage, Mapping):
             raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
         if not choices:
+            if (
+                usage is None
+                and self._annotation_key is not None
+                and self._annotation_key in event
+            ):
+                return self._filtered_event(event)
             if self._finish_reason is None or usage is None:
                 raise HostedChatProtocolError("Hosted Chat stream usage is misplaced.")
             normalized_usage = deepcopy(dict(usage))
@@ -861,11 +871,12 @@ def _json_shape_is_safe(value: object) -> bool:
 def _level_allowance_value_is_valid(value: object) -> bool:
     """Value rule for level-keyed allowances (choice/message/delta).
 
-    An allowlisted extra may be null, a scalar (str/int/float/bool), or a
-    shape-safe mapping; anything else (e.g. a list) fails closed. Valid
+    An allowlisted extra may be null, an empty list (no data, e.g. OpenAI's
+    ``annotations: []``), a scalar (str/int/float/bool), or a shape-safe
+    mapping; anything else (e.g. a non-empty list) fails closed. Valid
     values are validated then dropped -- never passed through.
     """
-    if value is None or isinstance(value, (str, int, float)):
+    if value is None or value == [] or isinstance(value, (str, int, float)):
         return True
     return isinstance(value, Mapping) and _json_shape_is_safe(value)
 
