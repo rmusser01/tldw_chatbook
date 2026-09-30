@@ -85,6 +85,23 @@ Package discovery and shared execution need separate module boundaries.
 10. Runtime interfaces consume owned definitions and authority validators;
     they do not depend on marketplace discovery. Adapters qualify complete
     event/matcher/payload/output behavior and report stricter adaptations.
+11. V2 definitions have a closed host-owned event projection and closed nested
+    effect shapes. A resolved active dependency is supplied to phase selection
+    by the host, not authored in a handler. Transformation takes precedence over
+    validation, context and observation. A strict bounded raw JSON gate retains
+    duplicate-key evidence for command/text results; already decoded objects
+    receive shape validation only. Matcher availability comes from qualified
+    producer identities, never names or untrusted result properties. Child cap
+    proposals are intersected with current child authority by the accepting
+    owner; zero denotes unlimited only for the specified token, tool-result and
+    tool-call caps. PreCompact turn-lifetime context belongs to its pending
+   compaction candidate and is discarded if that candidate aborts.
+12. Whole-batch v2 rejection retains bounded event/scope metadata so invalid
+    selected guards and explicit requirements cannot vanish. Invalid optional
+    context remains optional: `require_context` checks accepted output, not
+    failure scope. Unresolved malformed declarations refuse their v2 definition
+    set's activation; they do not create a blanket requirement on unrelated
+    legacy/user work. Active dependency state stays with the host owner.
 
 ## Alternatives considered
 

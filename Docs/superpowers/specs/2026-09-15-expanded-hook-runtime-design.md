@@ -115,6 +115,24 @@ requirement. Context-producing handlers remain effectful even when failure is
 optional; they never enter the lossy observation queue. require_context defines
 valid output rather than changing its failure scope. Optional observation
 failure is diagnostic, not authority to disable an unrelated component.
+If a user v2 batch is rejected whole, retain bounded body-free metadata for
+each inspected declaration's supported event and failure scope: explicit
+required, selected event-policy control, optional or unresolved. An unresolved
+shape prevents activation of that v2 definition set until repaired; it is not
+silently downgraded to an optional handler. `require_context` alone remains an
+output-success rule and never becomes explicit requiredness. A rejected
+optional-only batch does not create a global run requirement. Active dependency
+edges remain host-owned state outside this config record.
+
+The pure phase classifier accepts host-resolved `dependency_required` (default
+false), which is absent from definitions and their digest. `updated_input` wins;
+otherwise deny, explicit required or an active dependency selects validation;
+otherwise context selects context, and empty effects select observation.
+
+`env` names use `[A-Za-z_][A-Za-z0-9_]*`. Values are literal strings or exactly
+`{"variable": "DECLARED_NAME"}`; references require an owning declared-variable
+context. NUL and reserved `PLUGIN_ROOT`/`PLUGIN_DATA` names are invalid. Host
+values are set last. No shell or recursive expansion is implied.
 
 ### 2.2 Event payload
 
@@ -139,6 +157,19 @@ value consisting solely of ${field.path} preserves its JSON type; embedded
 references render bounded scalar text. Missing paths and non-scalar embedded
 values fail validation. Expansion is one pass with no evaluation, environment
 lookup or recursive command substitution. Vendor spellings are adapter-owned.
+
+The host-owned top level is closed: protocol_version=2, nonempty event_id/event/
+timestamp/runtime_session_id, applicable run_id/parent_run_id/turn_id/workspace_id,
+initiator, origin, optional plugin owner_installation_id/owner_component_id,
+causal_chain_id, causal_depth and bounded data. Initial documented data keys are
+SessionStart.reason (startup/resume/configuration_changed), UserPromptSubmit.prompt,
+PreToolUse tool_name/tool_args/tool_id/provider/operation/definition_hash/
+original_arguments/candidate_arguments, PostToolUse and PostToolUseFailure the
+corresponding dispatch identity/status/failure code/result fields,
+ApprovalRequested calls/session_active, SubagentStop child_run_id/status, and
+Stop.status. Other event data is initially empty. Future producers must amend
+this projection before exposing further keys or template paths. Tool argument
+and result objects are bounded untrusted JSON, never host identity.
 
 ### 2.3 V2 results
 
@@ -167,6 +198,19 @@ hook output. Output effects not declared in the reviewed definition are
 invalid; they do not silently become new capabilities.
 
 Unknown fields or malformed results follow the event's failure policy.
+`child_limits` is a closed object with at least one of duplicate-free `tool_ids`
+(empty means no catalog tools) or nonempty `budget_caps`. Allowed caps are
+max_steps, max_model_turns, max_wall_seconds, max_subagents,
+max_subagent_result_chars, max_tool_result_chars, max_total_tokens,
+max_tool_call_seconds and max_model_retries. Numeric booleans, nonfinite,
+negative and unknown values fail; steps, model turns, wall seconds and
+subagent-result characters are positive. The accepting owner intersects with
+already contained child authority and separate runtime-tool gates. Zero means
+unlimited for total tokens, tool-call seconds and tool-result characters only;
+it cannot widen an existing finite cap. `continuation` is exactly one nonempty
+UTF-8 `message` of at most 4 KiB; combined Stop settlement remains 8 KiB.
+`stop_continuations` accepts only true. Neither effect supplies scheduler IDs.
+Context lifetime is `turn`, or `runtime` on SessionStart only.
 Nonzero exit, output overflow and invalid JSON are errors; exit code 2 is
 not a new v2 protocol shortcut. Legacy/vendor exit meanings are translated
 by the selected adapter before v2 result validation.
@@ -196,6 +240,13 @@ For native v2 MCP hooks, normalize a successful tool result as follows:
    concatenated blocks or embedded-resource/image-derived effects.
 
 Reject duplicate JSON keys, malformed objects and unsupported result shapes.
+Command stdout and MCP text pass a strict UTF-8 raw gate capped at 16 KiB
+before parsing. It rejects duplicate keys at any level, non-JSON constants,
+trailing data and non-object values. Empty successful command output is a
+separate no-effect success. Object validation cannot recover duplicate-key
+provenance from an already decoded dict. Typed MCP protocol decoding, complete
+result framing/size/depth and representation provenance are M1/M2/M3/H6 owner
+requirements before H1 result normalization.
 The 16 KiB MCP hook result cap covers the complete tool-result payload, including
 both representations and metadata, before v2 normalization; do not truncate it.
 The transport must also enforce finite framing/body/depth limits before parsing
@@ -395,6 +446,15 @@ nonempty arrays of exact values or bounded case-sensitive glob patterns.
 Keys combine with AND; values within a key combine with OR. Empty/unknown
 keys or unavailable fields are invalid for that event. No shell expressions,
 LLM matching or unbounded regular expressions.
+
+SessionStart accepts only reason. PreToolUse/PostToolUse accept tool_id,
+provider and operation. PostToolUseFailure additionally accepts reason. All
+other events accept no matcher. Tool identity/provider are host-resolved catalog
+identities; operation is a qualified canonical operation and failure reason is
+a host-normalized code. An unavailable operation makes a matcher requiring it
+unsupported without invalidating a tool-ID-only matcher. Missing required
+producer identity/reason is invalid producer state, while a supported optional
+occurrence value may genuinely nonmatch. ApprovalRequested is a batch.
 
 The runtime supplies canonical operations for actual tool providers, such as
 file.read, file.write, file.edit, shell.execute and mcp.call. Missing operation

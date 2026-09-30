@@ -4,6 +4,7 @@ import tomllib
 
 import pytest
 
+from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from tldw_chatbook import config
 from tldw_chatbook.Agents.run_hooks import HookSpec, load_hooks_config
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -16,6 +17,8 @@ from tldw_chatbook.Chat.console_conversation_hydration import (
 from tldw_chatbook.Chat.message_metadata import MESSAGE_ORIGIN_HOOK, MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+hook_file = _hook_file
+
 
 def test_default_config_template_configures_no_hook_commands():
     parsed = tomllib.loads(config.CONFIG_TOML_CONTENT)
@@ -24,8 +27,9 @@ def test_default_config_template_configures_no_hook_commands():
     assert load_hooks_config(parsed).hooks == ()
 
 
-def test_real_config_loader_preserves_hooks_across_setting_save(tmp_path, monkeypatch):
-    path = tmp_path / "config.toml"
+@pytest.mark.bootstrap_profile
+def test_real_config_loader_preserves_hooks_across_setting_save(hook_file):
+    path = hook_file
     path.write_text(
         "[hooks]\nenabled = false\n"
         '[[hooks.hook]]\nevent = "PreToolUse"\nmatcher = "fs_*"\n'
@@ -33,7 +37,6 @@ def test_real_config_loader_preserves_hooks_across_setting_save(tmp_path, monkey
         "timeout_s = 2.5\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
     expected = HookSpec(
         "PreToolUse",
         ("/custom/guard", "argument with spaces", "$literal"),
@@ -94,3 +97,52 @@ def test_hook_origin_system_row_survives_database_rehydration(tmp_path, content)
         assert messages[0].metadata.origin == MESSAGE_ORIGIN_HOOK
     finally:
         db.close_connection()
+
+
+@pytest.mark.bootstrap_profile
+def test_real_config_loader_preserves_mixed_legacy_and_v2_hooks(hook_file):
+    path = hook_file
+    path.write_text(
+        "[hooks]\nenabled = false\n"
+        '[[hooks.hook]]\nevent = "PreToolUse"\ncommand = ["/bin/legacy"]\n'
+        '[[hooks.handler]]\nid = "guard"\nevent = "PreToolUse"\n'
+        'type = "command"\nargv = ["/bin/v2"]\neffects = ["deny"]\nrequired = true\n',
+        encoding="utf-8",
+    )
+    loaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert loaded.hooks == (HookSpec("PreToolUse", ("/bin/legacy",)),)
+    assert loaded.v2_handlers[0].id == "guard"
+    assert loaded.v2_requirements_unsatisfied
+
+    assert config.save_setting_to_cli_config("hooks", "enabled", True)
+    reloaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert reloaded.hooks == loaded.hooks
+    assert reloaded.v2_handlers == loaded.v2_handlers
+    assert not reloaded.v2_requirements_unsatisfied
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))["hooks"]
+    assert saved["hook"][0]["command"] == ["/bin/legacy"]
+    assert saved["handler"][0]["effects"] == ["deny"]
+
+
+@pytest.mark.bootstrap_profile
+def test_real_config_loader_keeps_invalid_required_hook_across_save(hook_file):
+    path = hook_file
+    path.write_text(
+        "[hooks]\nenabled = false\n"
+        '[[hooks.hook]]\nevent = "PreToolUse"\ncommand = ["/bin/legacy"]\n'
+        '[[hooks.handler]]\nid = "guard"\nevent = "PreToolUse"\n'
+        'type = "command"\nargv = []\neffects = ["deny"]\nrequired = true\n',
+        encoding="utf-8",
+    )
+    loaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert loaded.hooks == (HookSpec("PreToolUse", ("/bin/legacy",)),)
+    assert loaded.v2_invalid_required
+    assert loaded.v2_invalid_admissions[0].event == "PreToolUse"
+    assert loaded.v2_requirements_unsatisfied
+
+    assert config.save_setting_to_cli_config("hooks", "enabled", True)
+    reloaded = load_hooks_config(config.load_settings(force_reload=True))
+    assert reloaded.hooks == loaded.hooks
+    assert reloaded.v2_invalid_required
+    assert reloaded.v2_invalid_admissions == loaded.v2_invalid_admissions
+    assert reloaded.v2_requirements_unsatisfied

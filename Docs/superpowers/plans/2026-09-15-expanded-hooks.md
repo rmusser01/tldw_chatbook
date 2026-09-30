@@ -84,7 +84,7 @@ the decomposition; no unrelated broad refactoring is part of these plans.
 - Consumes: Legacy RunHooksConfig/load_hooks_config remain their own schema. The companion hook spec defines the complete event/effect matrix.
 - Produces: parse_handlers(value: object) -> tuple[HookHandler, ...]; parse_result(value: object, handler: HookHandler) -> HookResult; handler_phase(handler: HookHandler) -> str. Frozen Pydantic HookHandler carries the exact section 2.1 fields. HookEvent carries section 2.2 host-owned identities and event data; HookResult carries only section 2.3 fields. validation never imports Plugins. User config and owned plugin definitions normalize into these same types.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_mixed_transformer_runs_in_transformation_phase():
@@ -95,9 +95,9 @@ def test_mixed_transformer_runs_in_transformation_phase():
     assert handler_phase(guards[0]) == "validate"
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Agents/test_hooks_v2_validation.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Agents/test_hooks_v2_validation.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def classify_effects(effects: frozenset[str], required: bool) -> str:
@@ -108,20 +108,20 @@ def classify_effects(effects: frozenset[str], required: bool) -> str:
     return "context" if effects else "observe"
 ```
 
-  - [ ] 3.1. Add the new namespace without moving the legacy engine. Parse hooks.handler separately and preserve legacy hooks.hook logging/output contracts exactly.
-  - [ ] 3.2. Implement closed event/type/effect validation, bounded JSON parsing, structured matchers and one-pass typed MCP templates. Reject type-inappropriate fields, duplicate keys and ownership fields supplied by output.
-  - [ ] 3.3. Implement required/require_context/dependency classification and phase ordering. The small classification kernel applies only after event validation; dependency-controlled effect-free handlers also use the controlling path.
-  - [ ] 3.4. Add positive and negative table cases for all 13 events, unsupported fields, required teardown/approval/Stop and invalid context lifetimes; check the master switch suppresses execution without removing requirements.
+  - [x] 3.1. Add the new namespace without moving the legacy engine. Parse hooks.handler separately and preserve legacy hooks.hook logging/output contracts exactly.
+  - [x] 3.2. Implement closed event/type/effect validation, bounded JSON parsing, structured matchers and one-pass typed MCP templates. Reject type-inappropriate fields, duplicate keys and ownership fields supplied by output.
+  - [x] 3.3. Implement required/require_context/dependency classification and phase ordering. The small classification kernel applies only after event validation; dependency-controlled effect-free handlers also use the controlling path.
+  - [x] 3.4. Add positive and negative table cases for all 13 events, unsupported fields, required teardown/approval/Stop and invalid context lifetimes; check the master switch suppresses execution without removing requirements.
 
 **Failure and successful-control matrix:** Empty-success versus required context, malformed result, every mixed PreToolUse effect set, oversized payload, missing typed template path and legacy unknown/non-JSON stdout controls.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Agents/test_hooks_v2_validation.py Tests/Agents/test_run_hooks.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32676 --plain
