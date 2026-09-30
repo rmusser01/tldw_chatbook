@@ -9740,9 +9740,9 @@ class ChatScreen(BaseAppScreen):
             model=selected_model,
             base_url=selection.base_url,
         )
-        # TASK-33620.4: no `active_run` -- a run in flight is a run-state fact
-        # (the settings modal gates its own mutations on it), not a provider
-        # blocker for these display/send surfaces.
+        # TASK-33620.4 invariant: this readiness NEVER carries `active_run`
+        # (only the settings modal's own does, to gate mutations), so the
+        # `wait_for_active_run` guards its consumers keep are belt-and-braces.
         readiness = build_console_settings_readiness(
             effective_settings, app_config=self._provider_readiness_app_config()
         )

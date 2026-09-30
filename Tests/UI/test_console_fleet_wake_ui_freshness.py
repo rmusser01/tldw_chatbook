@@ -319,6 +319,15 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
             "the send button's hover copy must name the wake too, not the "
             f"queue's not-yet-accepted line: {tooltip!r}"
         )
+        # TASK-33620.4 review: a keystroke re-syncs the composer from its OWN
+        # cache (`_sync_current_action_state`, no screen pass in between,
+        # asserted before the loop can tick). That cache dropped the wake
+        # flag, so the strip fell through to the queue's wait copy.
+        composer.insert_text("x")
+        resynced = str(composer._send_disabled_reason or "")
+        assert "sub-agent" in resynced.lower(), (
+            f"a keystroke mid-wake re-named the wait: {resynced!r}"
+        )
 
         gate.set()
         await _settle(

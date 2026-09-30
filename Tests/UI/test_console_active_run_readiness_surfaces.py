@@ -34,6 +34,7 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import (
     DelayedWaitingGateway,
+    WaitingGateway,
     _build_console_send_test_app,
     _configure_native_ready_console,
     _configure_openai_missing_api_key,
@@ -43,7 +44,10 @@ from Tests.UI.test_destination_shells import _static_text, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Chat.console_prompt_queue import MAX_CONSOLE_QUEUE_ENTRIES
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
@@ -94,6 +98,11 @@ def _edge_badge(console) -> str:
     ).badge
 
 
+def _model_recovery_display(console) -> str:
+    """The Context rail Model section's "Not ready" line (display value)."""
+    return str(console.query_one("#console-model-section-recovery", Static).styles.display)
+
+
 def _right_rail_text(console) -> str:
     rail = console.query_one("#console-right-rail")
     return " ".join(
@@ -140,6 +149,8 @@ def _run_surface_violations(console) -> list[str]:
         violations.append("AC#2 'Provider setup needed' rendered in the rail")
     if badge != "running":
         violations.append(f"AC#3 edge badge {badge!r} (want 'running')")
+    if _model_recovery_display(console) != "none":
+        violations.append("AC#2 the Model section's 'Not ready' line is shown")
     return violations
 
 
@@ -156,6 +167,8 @@ def _composer_queue_violations(
         violations.append(f"AC#4 Send tooltip blames provider setup: {tooltip!r}")
     if expected not in reason:
         violations.append(f"AC#4 strip lacks queue copy {expected!r}: {reason!r}")
+    if expected not in tooltip:
+        violations.append(f"AC#4 Send tooltip lacks queue copy {expected!r}: {tooltip!r}")
     if composer.has_class("console-composer-setup-blocked"):
         violations.append("AC#4 strip is the setup-wizard link")
     return violations
@@ -197,6 +210,12 @@ async def test_held_healthy_run_reads_running_on_every_surface_and_never_setup()
             composer, expected="this turn"
         )
         assert not violations, "[preparing] " + "; ".join(violations)
+        # A keystroke re-syncs the composer from its OWN cached state (no
+        # screen pass): asserted synchronously, before the 0.2s tick can
+        # repaint over a re-sync that dropped the queue slot.
+        composer.insert_text("x")
+        violations = _composer_queue_violations(composer, expected="this turn")
+        assert not violations, "[preparing, keystroke] " + "; ".join(violations)
         # Activating the strip mid-run must never open first-run setup.
         await pilot.click(_STRIP, offset=_STRIP_TEXT_OFFSET)
         await pilot.pause()
@@ -238,17 +257,94 @@ async def test_held_healthy_run_reads_running_on_every_surface_and_never_setup()
             composer, expected="Queue full"
         )
         assert not violations, "[queue-full] " + "; ".join(violations)
+        composer.insert_text("x")
+        violations = _composer_queue_violations(composer, expected="Queue full")
+        assert not violations, "[queue-full, keystroke] " + "; ".join(violations)
         await pilot.click(_STRIP, offset=_STRIP_TEXT_OFFSET)
         await pilot.pause()
         assert host.setup_wizard_activations == 0, (
             "AC#4: clicking the Queue-full strip opened the setup wizard"
         )
 
+        # AC#3 is about the COLLAPSED edge: close Inspect mid-run and read the
+        # handle that actually paints, not the hidden handle's attribute.
+        await pilot.click("#console-inspector-rail-collapse")
+        for _ in range(60):
+            await _settle(console, pilot)
+            handle = console.query_one(
+                "#console-inspector-rail-handle", ConsoleRailHandle
+            )
+            badges = handle.query("#console-inspector-rail-badge")
+            if handle.display and badges and badges.first(Static).display:
+                break
+            await pilot.pause(0.05)
+        assert handle.display and handle.styles.display != "none", (
+            "the collapsed Inspect handle is not shown"
+        )
+        assert badges, "AC#3: the collapsed Inspect handle shows no badge mid-run"
+        painted = _static_text(badges.first(Static))
+        assert painted == "running", f"AC#3 collapsed edge badge {painted!r}"
+
         # Release the held turn and let it finish; the harness teardown
         # cancels whatever the queue does next.
         composer.load_draft("")
         gateway.release.set()
         await _wait_for_text(console, pilot, "partial done")
+
+
+@pytest.mark.asyncio
+async def test_held_regenerate_names_the_run_wait_not_a_queue_that_never_opens():
+    """Review follow-up: regenerate (like continue and an agent wake) never
+    creates a prompt chain, so it is never queue-accepted and the queue never
+    opens behind it. Mid-stream the composer must name the run it is waiting
+    on -- not promise a queue -- and never provider setup."""
+    gateway = WaitingGateway()
+    gateway.release.set()  # the first, ordinary turn streams straight through
+    app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
+    app.console_provider_gateway_factory = lambda: gateway
+    host = _WizardRecordingHarness(app)
+
+    async with host.run_test(size=_SIZE) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "partial done")
+        controller = console._ensure_console_chat_controller()
+        for _ in range(80):
+            if controller.run_state.status not in FEEDBACK_ACTIVE_RUN_STATUSES:
+                break
+            await pilot.pause(0.05)
+        store = controller.store
+        assistant_id = store.active_leaf(store.active_session_id)
+        assert assistant_id is not None
+
+        # Hold the regenerate mid-stream (the provider double, not the seam).
+        gateway.started = asyncio.Event()
+        gateway.release = asyncio.Event()
+        regenerate = asyncio.create_task(controller.regenerate_message(assistant_id))
+        await asyncio.wait_for(gateway.started.wait(), timeout=_SETTLE_TIMEOUT)
+        await _settle(console, pilot)
+        assert controller.run_state.status is ConsoleRunStatus.STREAMING
+        activity = controller.prompt_queue_coordinator.activity(
+            store.active_session_id
+        )
+        assert activity.occupies_slot and not activity.accepted_live_turn
+        violations = _composer_queue_violations(
+            composer, expected="Wait for the current run to finish"
+        )
+        assert not violations, "[regenerate] " + "; ".join(violations)
+        assert "queue" not in str(composer._send_disabled_reason).lower()
+
+        # Let the held regenerate finish. Its outcome is not this test's
+        # subject: this harness's `:memory:` DB (`attach_chachanotes_db`) is
+        # empty on the worker thread its terminal persistence runs on.
+        gateway.release.set()
+        done, _pending = await asyncio.wait({regenerate}, timeout=_SETTLE_TIMEOUT)
+        for task in done:
+            task.exception()
 
 
 @pytest.mark.asyncio
@@ -279,10 +375,16 @@ async def test_missing_api_key_still_reads_blocked_with_a_recovery_action():
         assert next_action.removeprefix("Next action: ").strip(), (
             f"a genuine blocker must name its recovery action: {next_action!r}"
         )
+        # The rollup ranks the unresolved-recovery state above Blocked, and a
+        # missing key always supplies a recovery action, so this is exact;
+        # AC#5's "Blocked" is the Provider row above.
         run_line = _run_line(console)
-        assert run_line in {"Run: Blocked", "Run: Recovery required"}, run_line
+        assert run_line == "Run: Recovery required", run_line
         assert _edge_badge(console) == "setup"
         assert "Not ready" in _settings_readiness_line(console)
+        # The Model section's "Not ready" line is live for a real blocker
+        # (so the held-run test's "hidden mid-run" check is not vacuous).
+        assert _model_recovery_display(console) == "block"
         reason = str(composer._send_disabled_reason or "")
         assert "api key" in reason.lower(), reason
         assert composer.has_class("console-composer-setup-blocked"), (

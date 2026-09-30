@@ -657,9 +657,10 @@ def build_console_inspector_rail_badge(
     """Build the right rail badge from run, review, tool, and staged state.
 
     Task-400: the staged-sources Context section lives in the Inspector rail,
-    so its "N staged"/"staged" badge surfaces here. Action-required signals
-    (failed/setup/blocked/approvals/tools) keep precedence; staged context
-    outranks the informational artifact/source readiness fallbacks.
+    so its "N staged"/"staged" badge surfaces here. Precedence: failed,
+    setup, blocked, approvals, then an active run (``running``), then tools;
+    staged context outranks the informational artifact/source readiness
+    fallbacks.
 
     TASK-33620.4: an active run is read from the STRUCTURED ``run_status``
     (the canonical active set) and shows ``running`` just below approvals

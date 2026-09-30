@@ -104,6 +104,40 @@ def test_presentation_uses_exact_send_queue_boundaries() -> None:
     assert full.send_enabled is False
 
 
+def test_refusing_presentation_copy_names_the_wait_the_run_is_in() -> None:
+    """TASK-33620.4: a refusing presentation's tooltip is also the composer's
+    reason-strip copy, so it must be true of the run it describes.
+
+    Only a prompt-chain turn is ever queue-accepted. Regenerate / continue
+    (and an agent wake) never create a chain, so they occupy the slot
+    WITHOUT preparing-before-acceptance for their whole stream -- the queue
+    never opens behind them, and saying it will is the review's finding.
+    """
+    registry = ConsolePromptQueueRegistry()
+    empty = registry.snapshot("session-a")
+
+    preparing = derive_prompt_queue_presentation(empty, _activity(preparing=True))
+    assert preparing.send_tooltip == "Queue opens once this turn is accepted"
+
+    chainless = derive_prompt_queue_presentation(empty, _activity(occupies=True))
+    assert chainless.send_enabled is False
+    assert chainless.send_tooltip == "Wait for the current run to finish"
+
+    chain = _registry_with_chain()
+    chained = chain.snapshot("session-a")
+    for index in range(MAX_CONSOLE_QUEUE_ENTRIES):
+        chained = chain.admit(
+            "session-a",
+            text=f"prompt {index}",
+            expected_revision=chained.revision,
+        ).snapshot
+    full = derive_prompt_queue_presentation(
+        chained,
+        _activity(accepted=True, count=MAX_CONSOLE_QUEUE_ENTRIES),
+    )
+    assert full.send_tooltip == "Queue full — manage it to make room"
+
+
 def test_background_session_label_exposes_count_only() -> None:
     label = ConsoleSessionSurface._tab_label("Session", queued_count=3)
 

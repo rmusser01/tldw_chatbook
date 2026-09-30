@@ -1406,8 +1406,9 @@ def test_console_disabled_reason_names_queue_state_never_provider_setup():
     own slot. It used to ride ``setup_blocked_reason`` and fall through to
     "finish provider setup" -- mid-run, as the setup-wizard link."""
     for queue_copy in (
-        "Wait for this turn to start, then queue",
-        "Queue full (10/10) — manage it to make room",
+        "Queue opens once this turn is accepted",
+        "Wait for the current run to finish",
+        "Queue full — manage it to make room",
     ):
         for has_draft in (False, True):
             reason = build_console_disabled_reason(
@@ -1425,7 +1426,7 @@ def test_console_disabled_reason_names_queue_state_never_provider_setup():
             has_draft=True,
             send_blocked=True,
             setup_blocked_reason="Add API key in Settings > Providers & Models before sending.",
-            queue_blocked_reason="Wait for this turn to start, then queue",
+            queue_blocked_reason="Queue opens once this turn is accepted",
         )
         == "Send blocked — add an API key to continue"
     )
@@ -1436,10 +1437,36 @@ def test_console_disabled_reason_names_queue_state_never_provider_setup():
             has_draft=False,
             send_blocked=True,
             wake_turn_active=True,
-            queue_blocked_reason="Wait for this turn to start, then queue",
+            queue_blocked_reason="Queue opens once this turn is accepted",
         )
         == "Send blocked — delivering a sub-agent result"
     )
+
+
+def test_console_disabled_reason_keeps_the_run_hold_under_the_preparing_label():
+    """TASK-33620.4 on top of TASK-33625.1's label-keyed copy: a regenerate /
+    continue / agent wake holds the slot labelled "Preparing..." with no
+    prompt chain, so the strip names the run it waits on -- never the queue
+    that only opens for a pre-acceptance prompt turn."""
+    from tldw_chatbook.Chat.console_display_state import (
+        QUEUE_REASON_PREPARING,
+        QUEUE_REASON_RUN_HOLD,
+        SEND_LABEL_PREPARING,
+    )
+
+    def preparing(queue_copy: str) -> str:
+        return build_console_disabled_reason(
+            action_id="send",
+            has_draft=True,
+            send_blocked=True,
+            queue_blocked_reason=queue_copy,
+            send_label=SEND_LABEL_PREPARING,
+        )
+
+    assert preparing(QUEUE_REASON_RUN_HOLD) == "Wait for the current run to finish"
+    assert preparing(QUEUE_REASON_PREPARING) == "Queue opens once this turn is accepted"
+    # Any other Preparing tooltip keeps TASK-33625.1's queue-state copy.
+    assert preparing("Wait for this turn to be accepted.") == QUEUE_REASON_PREPARING
 
 
 def test_console_disabled_reason_copy_handles_draft_and_ready_states():

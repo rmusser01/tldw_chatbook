@@ -101,7 +101,9 @@ Context rail, **Alt+I** for the Inspector — which works at every width,
 including the single-pane sizes where the handles hide. The handle badges
 abbreviate ("N appr" = N approvals pending, "art" = artifact ready); hover a
 badge for its full text. While a turn is in flight the Inspect handle reads
-**running**; **setup** appears only when the provider or model genuinely needs
+**running** unless something more urgent outranks it (a failed turn, a real
+setup or blocked problem, or approvals waiting on you, e.g. "1 appr");
+**setup** appears only when the provider or model genuinely needs
 configuring, never merely because a run is active.
 
 Console Behavior uses category-wide drafts: **Save** writes every pending edit
@@ -432,8 +434,10 @@ of the next prompt, and **Manage** plus a state-specific action such as
 
 - **Preparing...** means the turn has not crossed the accepted boundary yet;
   the draft stays in the composer and the strip beside the button reads
-  "Queue opens once this turn is accepted". With an empty draft after
-  acceptance it reads "Type to queue".
+  "Queue opens once this turn is accepted". A regenerate or continue never
+  opens the queue, so once one is streaming the strip reads "Wait for the
+  current run to finish" instead. With an empty draft after acceptance it
+  reads "Type to queue".
 - **Queue full** preserves the draft and asks you to manage the existing 10;
   the strip reads "Queue full — manage it to make room".
 - Neither is a provider problem: these queue messages never say "finish

@@ -1421,7 +1421,9 @@ def test_queue_state_labels_match_the_prompt_queue_presentation():
         derive_prompt_queue_presentation,
     )
 
-    def label(*, accepted: bool, occupies: bool, count: int) -> str:
+    def label(
+        *, accepted: bool, occupies: bool, count: int, preparing: bool = False
+    ) -> str:
         snapshot = SimpleNamespace(
             total_count=count,
             mode=PromptQueueMode.DRAINING,
@@ -1429,12 +1431,20 @@ def test_queue_state_labels_match_the_prompt_queue_presentation():
             entries=(),
             revision=1,
         )
+        # TASK-33620.4: the presentation reads `preparing_before_acceptance`
+        # to word the Preparing tooltip (a chainless hold vs a prompt turn).
         activity = SimpleNamespace(
-            accepted_live_turn=accepted, occupies_slot=occupies
+            accepted_live_turn=accepted,
+            occupies_slot=occupies,
+            preparing_before_acceptance=preparing,
         )
         return derive_prompt_queue_presentation(snapshot, activity).send_label
 
     assert label(accepted=False, occupies=True, count=0) == SEND_LABEL_PREPARING
+    assert (
+        label(accepted=False, occupies=True, count=0, preparing=True)
+        == SEND_LABEL_PREPARING
+    )
     assert label(accepted=True, occupies=True, count=0) == SEND_LABEL_QUEUE
     assert (
         label(accepted=True, occupies=True, count=MAX_CONSOLE_QUEUE_ENTRIES)
