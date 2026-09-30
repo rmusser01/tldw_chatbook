@@ -95,3 +95,14 @@ jobs:
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_screen_preimport_payload_budget.py \
             -v --timeout=300
+
+      # The Console storage-unit ratchet joined with TASK-33260 after review
+      # on #2888: without it here, a per-call admission or a per-connection
+      # SQLite helper merges with every perf guard green -- the failure the
+      # ratchet exists to catch. On this Linux runner it gates the admission
+      # and helper counts; its os.open ceilings are macOS measurements. Same
+      # rule as above: never remove it from here.
+      - name: Run Console storage-unit ratchet
+        run: |
+          pytest "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets" \
+            -v --timeout=300

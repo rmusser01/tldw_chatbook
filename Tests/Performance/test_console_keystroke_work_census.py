@@ -854,12 +854,16 @@ async def test_console_storage_units_stay_within_their_ratchets(
             "path, so every ceiling below would pass vacuously."
         )
     slack = {"os_opens": OS_OPENS_JITTER_SLACK}
+    # The os.open ceilings are macOS measurements (path depth differs per OS),
+    # so elsewhere -- the Linux perf-guard runner -- only the logic-level
+    # admission and helper counts gate.
+    gated = set(IO_UNITS) if sys.platform == "darwin" else set(IO_UNITS) - {"os_opens"}
     over = [
         f"{phase} {unit}: {value} > ceiling {ceilings[unit]}"
         f"{' x ' + str(slack[unit]) if unit in slack else ''}"
         for phase, (values, ceilings) in measured.items()
         for unit, value in values.items()
-        if value > ceilings[unit] * slack.get(unit, 1)
+        if unit in gated and value > ceilings[unit] * slack.get(unit, 1)
     ]
     assert not over, (
         "Console storage units rose above their ratchet: "
