@@ -492,6 +492,16 @@ Models ▸ Custom endpoints**.
 For a faster switch, **Alt+M** opens the quick **Model** popover —
 provider, model, and temperature without the full modal.
 
+Switch model keeps no history of its own. Its **RECENT** group is built
+from chats you already have: every open Console chat, temporary chats
+included, and your 50 most recently changed saved chats in the global
+scope. A workspace chat's model appears there only while that chat is
+open. A saved chat whose stored settings are damaged, or were written by a
+newer version of tldw_chatbook, is left out. The list opens straight away
+and RECENT fills in a moment later. **PREVIOUS** is the model you last
+switched away from in this chat with Switch model, remembered until you
+quit; before that, it is the most recent other model in RECENT.
+
 Switching the provider, here or in the full modal, picks that provider's
 own model: its `model`, `api_model` or `default_model` in
 `[api_settings.<provider>]`, or, for a custom endpoint, the first model
