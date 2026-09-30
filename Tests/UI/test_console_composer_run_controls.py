@@ -29,6 +29,7 @@ import pytest
 from rich.cells import cell_len
 from textual.app import App
 from textual.errors import NoWidget
+from textual.events import Paste
 from textual.widgets import Button, OptionList, Static
 
 from Tests.private_profile import private_profile_test
@@ -1097,6 +1098,38 @@ async def test_redirect_reservation_survives_a_resize_while_collapsed(
         finally:
             gateway.release.set()
             await pilot.pause()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_paste_on_a_focused_button_lands_in_a_focused_draft(request):
+    """A paste while Menu held focus edited a draft that showed no caret
+    (AC#3/#4's one-focus rule). A paste is a deliberate gesture aimed at the
+    draft, not stray typing, so the draft takes focus and the paste lands
+    where the caret shows it (Qodo, PR #2934)."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        composer.load_draft("hello")
+        menu = composer.query_one("#console-composer-menu", Button)
+        menu.focus()
+        await pilot.pause()
+        assert console.app.focused is menu
+
+        menu.post_message(Paste(" world"))
+        await _wait_for(
+            pilot, lambda: composer.draft_text() != "hello", "the paste never landed"
+        )
+        assert composer.draft_text() == "hello world"
+        assert console.app.focused is composer, (
+            f"the paste edited the draft but focus stayed on {console.app.focused!r}"
+        )
+        await _wait_for(
+            pilot,
+            lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
+            "the pasted-into draft never painted its caret",
+        )
+        gateway.release.set()
 
 
 # ---------------------------------------------------------------------------

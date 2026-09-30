@@ -23313,6 +23313,7 @@ class ChatScreen(BaseAppScreen):
             return
         if not self._should_capture_console_input(composer):
             return
+        run_controls.hand_paste_to_draft(self, composer)
         dropped = extract_dropped_path(event.text)
         if dropped is not None and looks_attachable(dropped.path):
             event.stop()
