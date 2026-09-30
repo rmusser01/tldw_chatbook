@@ -527,7 +527,13 @@ class GuardianChecker:
         except Exception:  # noqa: BLE001 - retention never blocks the summary
             logger.opt(exception=True).debug("Guardian retention sweep failed")
 
-        if not per_topic_counts and not escalated_rules and not trend_notices:
+        # Storage gate (carried P5 ruling, Task 2 review): store ONLY when
+        # the visit has at least one surfaced topic count or trend notice.
+        # ``escalated_rules`` alone is NOT a storing condition -- a
+        # silent_log rule that escalates leaves its bookkeeping in the
+        # escalation state table, and the visit itself stays invisible by
+        # design (empty visits mint nothing, spec §Post-visit summary).
+        if not per_topic_counts and not trend_notices:
             return None
 
         payload = {

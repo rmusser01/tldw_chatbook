@@ -128,6 +128,12 @@ class CycleDeps:
             to disable the one-time reminder linked to a retired tracked
             item (Qodo #13, PR #2890). ``None`` (the default) leaves
             linked reminders enabled.
+        guardian_db_getter: Returns the Guardian DB or ``None``; read only
+            by the profile refresh, whose Guardian reader
+            (``profile_sources.read_guardian_topics``) contributes
+            AGGREGATE topic counts from feeds_discovery rules' alerts
+            (ADR-204 contract 3). ``None`` (the default) means no
+            Guardian signal -- a disabled Guardian never feeds Dreams.
     """
     dreams_db: DreamsDB
     chachanotes_db_getter: Callable[[], Any]
@@ -142,6 +148,7 @@ class CycleDeps:
     dispatch_getter: Callable[[], Any] | None = None
     subs_service_getter: Callable[[], Any] | None = None
     scheduling_db_getter: Callable[[], Any] | None = None
+    guardian_db_getter: Callable[[], Any] | None = None
 
 
 @dataclass(slots=True)
@@ -370,9 +377,9 @@ def _preferred_sources(
 
     A topic the sources agree on keeps ONE row, so it needs one ``source``:
     the reader whose signal contributed the most weight wins, first-read
-    order (notes, media, personal context) breaking ties. The reader's own
-    ``source`` value is preferred when it sets one, with the origin name as
-    the fallback.
+    order (notes, media, personal context, guardian) breaking ties. The
+    reader's own ``source`` value is preferred when it sets one, with the
+    origin name as the fallback.
     """
     winners: dict[tuple[str, str], tuple[float, str]] = {}
     for origin, rows in collected:
@@ -444,11 +451,18 @@ async def _refresh_profile_signals(
 ) -> list[str]:
     """Stage 0a (ruling R18): rebuild derived profile rows from signals.
 
-    Reads the three signal sources through the injected getters (a ``None``
-    skips that source silently), merges them, and upserts the merged topics.
-    Every source — and the write — degrades with a note on failure; the
-    cycle always continues. Reads run one ``asyncio.to_thread`` hop per
-    source DB, and the Dreams write is one more hop (stage discipline).
+    Reads the signal sources through the injected getters (a ``None``
+    skips that source silently), merges them, and upserts the merged
+    topics. Every source — and the write — degrades with a note on
+    failure; the cycle always continues. Reads run one ``asyncio.to_thread``
+    hop per source DB, and the Dreams write is one more hop (stage
+    discipline).
+
+    The Guardian source (ADR-204 contract 3) rides the same discipline:
+    ``guardian_db_getter`` contributes AGGREGATE topic counts from
+    feeds_discovery rules' alerts only (the gate lives in
+    ``profile_sources.read_guardian_topics``'s join), written under origin
+    ``'guardian'`` so the profile keeps the provenance of every row.
     """
     notes: list[str] = []
     collected: list[tuple[str, list[dict]]] = []
@@ -466,6 +480,14 @@ async def _refresh_profile_signals(
                 profile_sources.read_media_topics, media_db)))
         except Exception as exc:  # noqa: BLE001
             notes.append(f"profile signals: media failed: {exc}")
+    guardian_getter = getattr(deps, "guardian_db_getter", None)
+    guardian_db = guardian_getter() if guardian_getter is not None else None
+    if guardian_db is not None:
+        try:
+            collected.append(("guardian", await asyncio.to_thread(
+                profile_sources.read_guardian_topics, guardian_db)))
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"profile signals: guardian failed: {exc}")
     pc_service = deps.pc_service_getter()
     if pc_service is not None:
         try:

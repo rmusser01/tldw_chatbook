@@ -53,8 +53,13 @@ class DreamsDB(BaseDB):
 
     Schema v1 covered the Phase 1 discovery tables (spec §Data model); v2
     adds the Phase 2 track tables (``dream_tracked_items`` /
-    ``dream_track_runs``) additively, so v1 files upgrade in place on open.
-    Connections are held per thread
+    ``dream_track_runs``) additively, so v1 files upgrade in place on open;
+    v3 widens the interest profile's ``source`` CHECK with ``'guardian'``
+    (ADR-204 contract 3: the Guardian aggregate feed writes profile rows
+    under that origin). CHECK constraints are baked into a table's DDL, so
+    the v2 -> v3 step REBUILDS ``dream_interest_profile`` (create-new,
+    copy, drop, rename) inside the same opening transaction -- additive in
+    data terms, never destructive. Connections are held per thread
     via the ``Library_Collections_DB`` idiom: Python's sqlite3 refuses a
     connection used from a thread other than its creator, and Dreams is
     reached both from the UI thread and from ``asyncio.to_thread`` cycle
@@ -68,7 +73,7 @@ class DreamsDB(BaseDB):
     reclaimed by :meth:`fail_stale_generating` before the next date claim.
     """
 
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
     #: Pinging a recently-used held connection on every call roughly doubles
     #: the statement count on query-heavy paths (task-261/3011); idle ones
@@ -84,7 +89,8 @@ class DreamsDB(BaseDB):
             weight REAL NOT NULL DEFAULT 1.0,
             searchable INTEGER NOT NULL DEFAULT 1,
             source TEXT NOT NULL
-                CHECK(source IN ('user', 'seed', 'personal_context', 'notes', 'media')),
+                CHECK(source IN ('user', 'seed', 'personal_context', 'notes',
+                                 'media', 'guardian')),
             query_angle TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -341,10 +347,60 @@ class DreamsDB(BaseDB):
                 raise DreamsSchemaError("schema_too_new")
             for statement in self._SCHEMA_DDL:
                 conn.execute(statement)
+            self._migrate_profile_source_check_v3(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
                 (self._CURRENT_SCHEMA_VERSION,),
             )
+
+    @staticmethod
+    def _migrate_profile_source_check_v3(conn: sqlite3.Connection) -> None:
+        """v2 -> v3: widen the profile ``source`` CHECK with ``'guardian'``.
+
+        A CHECK constraint cannot be altered, so the migration rebuilds the
+        table (create with the current DDL shape under a temp name, copy
+        every row, drop, rename). It runs ONLY when the on-disk table's DDL
+        still carries the old CHECK -- the detection reads
+        ``sqlite_master.sql`` for the ``'guardian'`` token, so a fresh v3
+        build (whose DDL already has the widened CHECK) and a re-open of an
+        already-migrated file both skip the rebuild entirely. Old-source
+        rows are a subset of the new CHECK, so the copy never loses data.
+        """
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master"
+            " WHERE type = 'table' AND name = 'dream_interest_profile'"
+        ).fetchone()
+        if row is None or "'guardian'" in str(row[0] or ""):
+            return
+        conn.execute("DROP TABLE IF EXISTS dream_interest_profile_v3")
+        conn.execute(
+            """
+            CREATE TABLE dream_interest_profile_v3 (
+                id INTEGER PRIMARY KEY,
+                facet TEXT NOT NULL CHECK(facet IN ('topic', 'goal')),
+                text TEXT NOT NULL,
+                weight REAL NOT NULL DEFAULT 1.0,
+                searchable INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL
+                    CHECK(source IN ('user', 'seed', 'personal_context', 'notes',
+                                     'media', 'guardian')),
+                query_angle TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_boosted_at TEXT,
+                UNIQUE(facet, text)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO dream_interest_profile_v3"
+            " SELECT * FROM dream_interest_profile"
+        )
+        conn.execute("DROP TABLE dream_interest_profile")
+        conn.execute(
+            "ALTER TABLE dream_interest_profile_v3"
+            " RENAME TO dream_interest_profile"
+        )
 
     # ------------------------------------------------------------------
     # Collections (one row per local date)
@@ -704,7 +760,7 @@ class DreamsDB(BaseDB):
             weight: Feedback-adjusted weight.
             searchable: 1 when the entry may appear in search queries.
             source: Where the entry came from (``user``/``seed``/
-                ``personal_context``/``notes``/``media``).
+                ``personal_context``/``notes``/``media``/``guardian``).
         """
         now = _utc_now_iso()
         with self.transaction() as conn:

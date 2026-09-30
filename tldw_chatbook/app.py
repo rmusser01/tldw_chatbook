@@ -6417,6 +6417,11 @@ class TldwCli(
             scheduling_db_getter=lambda: getattr(
                 getattr(self, "scheduling_service", None), "db", None
             ),
+            # guardian: the aggregate Dreams feed (ADR-204 contract 3) --
+            # resolved at cycle time so the enabled-gated builder returns
+            # None while Guardian is off, and the profile refresh skips
+            # the source silently.
+            guardian_db_getter=lambda: self.get_guardian_db(),
         )
 
     def _start_dreams_boot_catchup(self) -> None:  # dreams phase 1

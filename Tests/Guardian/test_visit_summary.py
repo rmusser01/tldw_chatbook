@@ -173,6 +173,44 @@ async def test_finalize_silent_only_visit_stores_no_row(gate_on, tmp_path):
     assert _summaries(db) == []
 
 
+async def test_finalize_silent_escalated_only_visit_stores_no_row(
+    gate_on, tmp_path
+):
+    """Carried P5 ruling (Task 2 review): the storage gate is the brief's
+    letter -- store ONLY when ``per_topic_counts or trend_notices`` is
+    non-empty. A silent_log rule escalating to block leaves escalation
+    bookkeeping in its own state row, but the visit itself is invisible by
+    design: no summary row, no payload."""
+    db = _fresh_db(
+        tmp_path,
+        [
+            {
+                "name": "quiet escalator",
+                "topic": "doomscrolling",
+                "pattern": "doomscroll",
+                "display_mode": "silent_log",
+                "action": "redact",
+                "escalate_session_threshold": 1,
+                "notification_frequency": "every_message",
+                "cooldown_minutes": 5,
+            }
+        ],
+    )
+    notes = _notes()
+    checker = _checker(db, notes)
+
+    # One hit clears the session threshold: redact -> block (escalated,
+    # cooldown armed) -- but display_mode is silent_log, so the visit's
+    # surfaced artifacts are all empty.
+    await checker.check("doomscroll again")
+
+    assert checker.finalize_visit() is None
+    assert _summaries(db) == [], (
+        "silent-escalated-only visits store nothing (P5: escalation state "
+        "is not a surfaced artifact)"
+    )
+
+
 async def test_finalize_non_empty_visit_stores_payload(gate_on, tmp_path):
     db = _fresh_db(
         tmp_path,
