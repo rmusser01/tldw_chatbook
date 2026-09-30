@@ -23,20 +23,33 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 async def _open_settings(console, harness, pilot, surface):
     if surface == "quick":
         await console.action_open_console_model_popover()
+        await pilot.pause()
+        await harness.workers.wait_for_complete()
+        await _highlight_current(harness.screen, pilot)
     else:
         await console._open_console_settings(focus_model=True)
     await pilot.pause()
     return harness.screen
 
 
+async def _highlight_current(modal, pilot) -> None:
+    """Move Switch model's highlight to the CURRENT row (PREVIOUS opens it)."""
+    rows = modal._rows
+    index = next(i for i, row in enumerate(rows) if row.note == "● CURRENT")
+    modal._set_highlight(index)
+    await pilot.pause()
+
+
 async def _submit_settings(modal, console, harness, pilot, surface, action):
     if surface == "quick":
-        if action == "default":
-            modal.query_one("#console-popover-defaults", Button).press()
-            await pilot.pause()
-            button_id = "console-popover-make-new-chat-default"
-        else:
-            button_id = "console-popover-apply"
+        # TASK-33004.4: no Defaults… subview; both keys act on the highlighted
+        # pair, so select the chat's current pair first.
+        await _highlight_current(modal, pilot)
+        button_id = (
+            "console-popover-make-new-chat-default"
+            if action == "default"
+            else "console-popover-apply"
+        )
     else:
         button_id = (
             "console-settings-make-default"

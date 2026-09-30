@@ -261,7 +261,26 @@ async def _open_provider_popover(
     await pilot.pause()
     modal = harness.screen
     assert isinstance(modal, ConsoleModelPopover)
+    # Readiness, RECENT and catalogs fill in after open (TASK-33004.4).
+    await harness.workers.wait_for_complete()
+    await pilot.pause()
     return modal
+
+
+async def _highlight(modal: ConsoleModelPopover, pilot, query: str):
+    """Type in Find and return the row Enter would act on."""
+    modal.query_one("#console-popover-find", Input).value = query
+    await pilot.pause()
+    return modal.highlighted_row()
+
+
+async def _edit_highlighted(modal: ConsoleModelPopover, pilot, temperature: str) -> None:
+    """Editing a value edits the highlighted pair's values (TASK-33004.4)."""
+    field = modal.query_one("#console-popover-temperature", Input)
+    field.focus()
+    await pilot.pause()
+    field.value = temperature
+    await pilot.pause()
 
 
 async def _select_vllm_model(
@@ -271,17 +290,11 @@ async def _select_vllm_model(
     model: str = "model-b",
     temperature: str = "0.31",
 ) -> None:
-    modal.query_one("#console-popover-provider", Select).value = "vllm"
-    await pilot.pause()
-    picker = modal.query_one("#console-popover-model-search")
-    picker.set_model_value(model)
-    picker.post_message(picker.ModelSelected(model))
-    await pilot.pause()
-    modal.query_one("#console-popover-temperature", Input).value = temperature
-    modal.query_one("#console-popover-compaction-mode", Select).value = (
-        ContextCompactionMode.AUTOMATIC.value
-    )
-    await pilot.pause()
+    """Rewritten for TASK-33004.4: Find + the vllm row replace the provider
+    Select, the model picker and the (removed) compaction Select."""
+    row = await _highlight(modal, pilot, model)
+    assert row is not None and (row.provider, row.model) == ("vllm", model)
+    await _edit_highlighted(modal, pilot, temperature)
 
 
 async def _drain_settings_tasks(app) -> None:
@@ -385,10 +398,8 @@ async def test_apply_closes_and_changes_only_later_send_context(
             "model-b",
             pytest.approx(0.31),
         )
-        assert store.session_context_policy_overrides(session.id) == replace(
-            policy_before,
-            compaction_mode=ContextCompactionMode.AUTOMATIC,
-        )
+        # Quick Apply submits the compaction override unchanged (ADR-095).
+        assert store.session_context_policy_overrides(session.id) == policy_before
         captured_after = console._session._build_console_turn_execution_context(
             session.id
         )
@@ -448,7 +459,8 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             "model-b",
             pytest.approx(0.31),
         )
-        assert policy.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+        # Quick Apply carries the chat's (absent) compaction override as is.
+        assert policy.overrides.compaction_mode is None
 
         conversation = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert conversation is not None
@@ -468,10 +480,7 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             "vllm",
             "model-b",
         )
-        assert (
-            resumed.context_policy_overrides.compaction_mode
-            is ContextCompactionMode.AUTOMATIC
-        )
+        assert resumed.context_policy_overrides.compaction_mode is None
 
         temporary = store.create_session(
             settings=ConsoleSessionSettings(
@@ -809,10 +818,9 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
             failure.policy_failure_label
             is ConsoleSettingsPolicyFailureLabel.COMPACTION
         )
-        assert failure.context_policy_overrides == replace(
-            original_policy,
-            compaction_mode=ContextCompactionMode.AUTOMATIC,
-        )
+        # TASK-33004.4: the quick surface no longer edits compaction, so the
+        # failed quick write carries the unchanged policy (ADR-095).
+        assert failure.context_policy_overrides == original_policy
 
         monkeypatch.setattr(
             persistence,
@@ -877,13 +885,9 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         )
         streaming = modal.query_one("#console-popover-streaming", Button)
         assert str(streaming.label) == "Streaming: on"
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
         assert await pilot.click(streaming) is True
         await pilot.pause()
         assert str(streaming.label) == "Streaming: off"
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
         await pilot.click("#console-popover-save-model-default")
         await pilot.pause()
         assert harness.screen is console
@@ -906,17 +910,16 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         assert restarted_target.streaming is False
 
         modal = await _open_provider_popover(console, harness, pilot)
-        modal.query_one("#console-popover-temperature", Input).value = "0.23"
+        # PREVIOUS (llama.cpp) is highlighted on open; pick the current pair.
+        row = await _highlight(modal, pilot, literal_model)
+        assert (row.provider, row.model, row.note) == ("vllm", literal_model, "● CURRENT")
+        await _edit_highlighted(modal, pilot, "0.23")
         streaming = modal.query_one("#console-popover-streaming", Button)
         assert str(streaming.label) == "Streaming: off"
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
         assert await pilot.click(streaming) is True
         await pilot.pause()
         assert str(streaming.label) == "Streaming: on"
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
-        await pilot.click("#console-popover-make-new-chat-default")
+        await pilot.press("ctrl+n")
         await pilot.pause()
         assert harness.screen is console
         await _drain_settings_tasks(app)
@@ -1091,17 +1094,12 @@ async def test_quick_default_actions_write_the_quick_mask_to_the_exact_profile(
         )
 
         modal = await _open_provider_popover(console, harness, pilot)
+        await _highlight(modal, pilot, literal_model)
         streaming = modal.query_one("#console-popover-streaming", Button)
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
         assert await pilot.click(streaming) is True
         await pilot.pause()
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
         save_copy = modal.query_one("#console-popover-save-model-default-copy", Static)
-        assert str(save_copy.renderable).startswith(
-            "Remember Temperature, Max tokens + Streaming for "
-        )
+        assert str(save_copy.render()) == "saves Temperature, Max tokens, Streaming"
         await pilot.click("#console-popover-save-model-default")
         await pilot.pause()
         assert harness.screen is console
@@ -1116,10 +1114,8 @@ async def test_quick_default_actions_write_the_quick_mask_to_the_exact_profile(
         assert saved["chat_defaults"]["provider"] == "llama_cpp"
 
         modal = await _open_provider_popover(console, harness, pilot)
-        modal.query_one("#console-popover-temperature", Input).value = "0.23"
-        await pilot.pause()
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
+        await _highlight(modal, pilot, literal_model)
+        await _edit_highlighted(modal, pilot, "0.23")
         await pilot.click("#console-popover-make-new-chat-default")
         await pilot.pause()
         assert harness.screen is console
@@ -1183,8 +1179,7 @@ async def test_quick_save_of_a_stale_blank_max_tokens_keeps_chat_and_profile_in_
         )
 
         modal = await _open_provider_popover(console, harness, pilot)
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
+        await _highlight(modal, pilot, literal_model)
         await pilot.click("#console-popover-save-model-default")
         await pilot.pause()
         assert harness.screen is console
@@ -1304,23 +1299,23 @@ async def test_custom_and_unconfigured_selection_stays_literal_and_blocks_defaul
         )
 
         modal = await _open_provider_popover(console, harness, pilot)
-        provider = modal.query_one("#console-popover-provider", Select)
-        picker = modal.query_one("#console-popover-model-search")
-        assert provider.value == "anthropic"
-        assert picker.value == literal_model
+        # The unconfigured current pair stays literal and marked (TASK-33004.4);
+        # nothing substitutes a fallback model.
+        current = next(row for row in modal._rows if row.note == "● CURRENT")
+        assert (current.provider, current.model) == ("anthropic", literal_model)
+        assert all(
+            row.model in {None, literal_model}
+            for row in modal._rows
+            if row.provider == "anthropic"
+        )
+        row = await _highlight(modal, pilot, literal_model)
+        assert row.key == current.key
 
-        await pilot.click("#console-popover-defaults")
+        await pilot.press("ctrl+n")
         await pilot.pause()
-        make_default = modal.query_one(
-            "#console-popover-make-new-chat-default", Button
-        )
-        block_copy = str(
-            modal.query_one(
-                "#console-popover-new-chat-default-block", Static
-            ).renderable
-        )
-        assert make_default.disabled is True
-        assert "unavailable" in block_copy.lower()
+        assert harness.screen is modal
+        error = str(modal.query_one("#console-popover-error", Static).render())
+        assert error.lower().startswith("unavailable")
         assert store.session_settings(session_id).model == literal_model
 
 

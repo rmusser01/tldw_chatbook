@@ -42,6 +42,28 @@ _PROVENANCE_GROUP_LABELS = {
 }
 
 
+def normalize_model_id(value: object | None) -> str | None:
+    """Return a model id as bounded single-line text, or None (TASK-14812 AC#7).
+
+    Shared by this picker and Switch model's typed-id row.
+    """
+    raw_text = str(value or "")
+    text = raw_text.strip()
+    if not text or text.lower() in {"none", "null"}:
+        return None
+    if (
+        sanitize_string(raw_text, max_length=MODEL_ID_MAX_LENGTH) != raw_text
+        or any(character in raw_text for character in "\r\n\t")
+        or not validate_text_input(
+            raw_text,
+            max_length=MODEL_ID_MAX_LENGTH,
+            allow_html=False,
+        )
+    ):
+        return None
+    return text
+
+
 def _count(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
@@ -247,23 +269,7 @@ class ModelSearchPicker(Widget):
         else:
             self._set_status("Choose a provider first.")
 
-    @staticmethod
-    def _normalize_model(value: object | None) -> str | None:
-        raw_text = str(value or "")
-        text = raw_text.strip()
-        if not text or text.lower() in {"none", "null"}:
-            return None
-        if (
-            sanitize_string(raw_text, max_length=MODEL_ID_MAX_LENGTH) != raw_text
-            or any(character in raw_text for character in "\r\n\t")
-            or not validate_text_input(
-                raw_text,
-                max_length=MODEL_ID_MAX_LENGTH,
-                allow_html=False,
-            )
-        ):
-            return None
-        return text
+    _normalize_model = staticmethod(normalize_model_id)
 
     def _current_provider(self) -> str | None:
         try:
@@ -439,9 +445,9 @@ class ModelSearchPicker(Widget):
         normalized = self._normalize_model(model_id)
         if normalized is None:
             return None
-        if provider is not None and provider_config_key(provider) != provider_config_key(
-            self._provider
-        ):
+        if provider is not None and provider_config_key(
+            provider
+        ) != provider_config_key(self._provider):
             return None
         if self._custom_mode:
             return ConsoleModelProvenance.CUSTOM_UNVERIFIED
@@ -584,9 +590,7 @@ class ModelSearchPicker(Widget):
         """
         if self._custom_mode:
             if self.is_mounted:
-                custom_value = self.query_one(
-                    "#model-search-picker-input", Input
-                ).value
+                custom_value = self.query_one("#model-search-picker-input", Input).value
                 if custom_value and self._normalize_model(custom_value) is None:
                     self._set_status(
                         "Invalid model ID. Use a single-line value of at most "

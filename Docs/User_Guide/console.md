@@ -489,8 +489,42 @@ conversations using it survive restart. Renaming, editing, and deletion
 (with a guard that detaches conversations first) live in **F9 ▸ Providers &
 Models ▸ Custom endpoints**.
 
-For a faster switch, **Alt+M** opens the quick **Model** popover —
-provider, model, and temperature without the full modal.
+For a faster switch, **Alt+M** opens **Switch model**, a 120-column list of
+provider·model pairs; every row is a pair, so you never pick a provider
+without a model. Focus starts in **Find** and the rows are grouped:
+
+- **PREVIOUS**, highlighted when the list opens, so **Alt+M** then **Enter**
+  swaps back to the model you used before.
+- **RECENT**, your recently used pairs, with **● CURRENT** on this chat's
+  pair and when each was last used.
+- **READY PROVIDERS**, the first three models of each provider with no known
+  blocker, then an "… N more" row (Enter on it puts the provider's name in
+  Find).
+- **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
+  on one never applies it: it closes the list and opens **Settings ▸
+  Providers & Models** at that provider, with its key or endpoint field in
+  focus. Keys are only ever entered in Settings.
+
+Each row shows the model, the provider's name, its context size (`~` marks
+an estimate), readiness and last use. Readiness comes from your
+configuration only, so it reads "Ready · not tested" or "Not ready · no
+key" (or another reason); the list never claims a provider was verified or
+reachable. Typing filters every provider's saved and cached models in
+memory and highlights the best match; it never starts a model listing or a
+network call. A model id that no list has appears under **TYPED MODEL ID**
+for this chat's provider; type a provider's name first ("Ollama qwen3:32b")
+to pair the id with that provider. A provider whose list is still loading,
+empty or unavailable says so in its own row. Legacy alias providers (such
+as "llama.cpp (legacy alias)") only appear when a chat uses them.
+
+Up and Down move the highlight while you type. **Enter** applies the
+highlighted pair to this chat only. Tabbing into Temperature or
+**Streaming** edits the highlighted pair's values. **Ctrl+N** makes the
+highlighted pair the default for new chats, and **Save as model default**
+saves its Temperature, Max tokens and Streaming. **Chat settings…** opens the
+full modal with the same draft. **Esc** closes without changing anything.
+Context and compaction settings live in the full modal only; Apply here
+keeps the chat's compaction setting as it is.
 
 Switch model keeps no history of its own. Its **RECENT** group is built
 from chats you already have: every open Console chat, temporary chats
@@ -502,16 +536,15 @@ and RECENT fills in a moment later. **PREVIOUS** is the model you last
 switched away from in this chat with Switch model, remembered while the
 chat stays open; before that, it is the most recent other model in RECENT.
 
-Switching the provider, here or in the full modal, picks that provider's
-own model: its `model`, `api_model` or `default_model` in
-`[api_settings.<provider>]`, or, for a custom endpoint, the first model
-listed in that endpoint's entry. Your default model (`[chat_defaults]
-model`) only comes along when you switch to your default provider. A
-provider with no configured model gets no model, and Console asks you to
-choose one. In the popover, the model field shows its "Choose or search
-models" placeholder, **Apply to this chat** answers "Choose a model.", and
-**Defaults…** says "Unavailable: choose a model first." It never borrows
-another provider's model.
+Switching the provider in the full modal picks that provider's own model:
+its `model`, `api_model` or `default_model` in `[api_settings.<provider>]`,
+or, for a custom endpoint, the first model listed in that endpoint's entry.
+Your default model (`[chat_defaults] model`) only comes along when you switch
+to your default provider. A provider with no configured model gets no model,
+and Console asks you to choose one. It never borrows another provider's
+model. In Switch model a chat with no model has no **● CURRENT** row, and
+**Enter** with nothing to apply answers "Choose a model: type to search,
+then Enter."
 
 Focusing the **Provider** or **Model** field, by Tab or by a click, keeps
 its current value on screen, selected, and opens the full list below it;
@@ -704,8 +737,8 @@ and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-b
    provider**, pick a provider in "Provider and model" (for a local server,
    enter its Endpoint, then **Discover models**), pick a model, and press
    **Save**. The card's steps tick off and the composer unlocks.
-2. **Switch model for just this session.** Press **Alt+M**, choose the
-   provider/model, and confirm — or open **Settings** and press **Save**
+2. **Switch model for just this session.** Press **Alt+M**, type part of
+   the model's name, and press **Enter** — or open **Settings** and press **Save**
    (not "Save as default"). Other tabs and future launches are unaffected.
 3. **Make today's provider the default.** Open **Settings**, configure
    provider and model, and press **Save as default** — the next launch
@@ -732,7 +765,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Ctrl+T | New Console tab |
 | Ctrl+G | Stop this tab's run (only while one is running; shown in the footer then) |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
-| Alt+M | Quick "Model" popover |
+| Alt+M | Switch model (provider·model pairs; Enter applies to this chat) |
 | Alt+C | Open or close the Context (left) rail |
 | Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |

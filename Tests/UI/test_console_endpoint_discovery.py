@@ -376,15 +376,15 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         await pilot.pause()
         quick = harness.screen
         assert isinstance(quick, ConsoleModelPopover)
-        provider_select = quick.query_one("#console-popover-provider", Select)
-        provider_select.value = provider_id
+        await harness.workers.wait_for_complete()
+        # TASK-33004.4: Find + the entry's pair row replace the provider
+        # Select and model picker; the entry's name picks the provider.
+        quick.query_one("#console-popover-find", Input).value = (
+            f"{display_name} {model_id}"
+        )
         await pilot.pause()
-        assert provider_select.value == provider_id
-        assert quick._draft.settings.provider == provider_id
-        picker = quick.query_one("#console-popover-model-search")
-        picker.set_model_value(model_id)
-        picker.post_message(picker.ModelSelected(model_id))
-        await pilot.pause()
+        row = quick.highlighted_row()
+        assert (row.provider, row.model) == (provider_id, model_id)
         apply = quick.query_one("#console-popover-apply", Button)
         assert not apply.disabled
         apply.press()

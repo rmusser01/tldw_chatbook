@@ -1,5 +1,8 @@
 """TASK-32533: the quick popover mounts when its provider draft is not an option.
 
+TASK-33004.4 replaced the provider Select with Switch model's pair list; the
+tests below keep the mount and typed-id pins against the new surface.
+
 A fresh no-provider profile can hand ``ConsoleModelPopover`` a draft whose
 ``settings.provider`` is empty, or a key that ``_provider_select_options()``
 does not list. Textual's ``Select`` raises ``InvalidSelectValueError`` from
@@ -13,7 +16,6 @@ provider select.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Input, Select
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.app import TldwCli
@@ -95,67 +97,52 @@ class _PopoverHarness(ConsolidatedCSSApp):
         await self.push_screen(self._popover)
 
 
+async def _open(app, pilot) -> None:
+    for _ in range(200):
+        if isinstance(app.screen, ConsoleModelPopover) and app.screen.query(
+            "#console-popover-find"
+        ):
+            break
+        await pilot.pause(0.01)
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 async def _assert_mounts_with_a_blank_provider(provider: str) -> None:
+    """Rewritten for TASK-33004.4: the provider Select is gone, so the crash
+    it guarded (TASK-32533) cannot recur; the pin is now that Switch model
+    mounts, lists pairs and applies nothing without one."""
     app = _PopoverHarness(_popover(provider))
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(200):
-            if isinstance(app.screen, ConsoleModelPopover) and app.screen.query(
-                "#console-popover-provider"
-            ):
-                break
-            await pilot.pause(0.01)
-        await pilot.pause()
+        await _open(app, pilot)
 
         assert app.is_running, "the app stopped while mounting the popover"
         assert app._exception is None, f"popover mount raised {app._exception!r}"
-        provider_select = app.screen.query_one("#console-popover-provider", Select)
-        assert provider_select.value is Select.NULL
-        # The membership guard must not have quietly dropped the real options.
-        assert "llama_cpp" in {value for _, value in provider_select._options}
+        rows = app.screen._rows
+        assert ("pair", "llama_cpp", "model-a") in {row.key for row in rows}
 
 
 async def test_blank_popover_survives_a_custom_model_id_keystroke() -> None:
-    """TASK-32533 review, Important #1: the UPDATE path needs the same guard.
-
-    Guarding only the mount left a blank popover two user actions from the same
-    crash: **Custom ID** is not gated on having a provider, and the first
-    keystroke rebases the draft to ``provider=""`` and reaches
-    ``_sync_controls_from_draft``'s ``provider_select.value = settings.provider``.
-    """
+    """TASK-32533 review, Important #1, kept for the typed-id path: a blank
+    popover plus a typed model id must neither crash nor apply a pair with no
+    provider (spec rule 1)."""
     app = _PopoverHarness(_popover(""))
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(200):
-            if isinstance(app.screen, ConsoleModelPopover) and app.screen.query(
-                "#console-popover-provider"
-            ):
-                break
-            await pilot.pause(0.01)
-        await pilot.pause()
-        assert app.screen.query_one("#console-popover-provider", Select).value is (
-            Select.NULL
-        )
-
-        await pilot.click("#model-search-picker-custom")
-        await pilot.pause()
-        model_input = app.screen.query_one("#model-search-picker-input", Input)
-        model_input.focus()
-        await pilot.pause()
+        await _open(app, pilot)
         await pilot.press("g")
         await pilot.pause()
 
         assert app.is_running, "the popover took the app down on the update path"
         assert app._exception is None, f"the update path raised {app._exception!r}"
-        assert (
-            app.screen.query_one("#console-popover-provider", Select).value
-            is Select.NULL
-        )
+        assert all(row.kind != "typed" for row in app.screen._rows)
+        assert isinstance(app.screen, ConsoleModelPopover)
 
 
 async def test_popover_mounts_with_an_empty_provider_draft() -> None:
-    """A no-provider draft (provider == '') mounts with a blank provider select."""
+    """A no-provider draft (provider == '') mounts and lists ready pairs."""
     await _assert_mounts_with_a_blank_provider("")
 
 
 async def test_popover_mounts_with_a_provider_absent_from_its_options() -> None:
-    """A provider the option builder does not list mounts blank, not dead."""
+    """A provider the option builder does not list mounts, not dead."""
     await _assert_mounts_with_a_blank_provider("zq-not-a-provider")

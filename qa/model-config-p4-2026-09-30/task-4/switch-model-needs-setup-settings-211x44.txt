@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ │  ▶ Prompt-cache snapshots                                                                                         │ │  │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │ │ │                                                                                                                   │ │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │▇ │  │  │  Focused setting: API key               │
+│      Appearance              │  │  │ │ Provider                                                                                                              │  │  │  │  Purpose: Stores a provider API key     │
+│      Theme                   │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  in local config for Console          ▄ │
+│      Splash Screen           │  │  │ │ ▊  Search providers by name or ID                                                                                   ▎ │  │  │  │  generation.                            │
+│      Console Behavior        │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  Saved as: api_settings.llama_cpp.      │
+│  Data & Privacy              │  │  │ │ Novita AI                                                                                                             │  │  │  │    api_key                              │
+│      Storage                 │  │  │ │ NVIDIA NIM                                                                                                            │  │  │  │  Save: staged - press s to save, r to   │
+│      Workspaces              │  │  │ │ Ollama Cloud                                                                                                       ▇▇ │  │  │  │  revert                                 │
+│      Tool Profiles           │  │  │ │ OpenAI                                                                                                             ▇▇ │  │  │  │  Validation: single-line secret         │
+│      Privacy & Security      │  │  │ │ OpenCode Zen                                                                                                          │  │  │  │  value; visible UI stays masked         │
+│      Network                 │  │  │ │ OpenRouter                                                                                                            │  │  │  │  Runtime owner: Settings persisted      │
+│      My Profile              │  │  │ │ Choose a provider or enter a supported provider alias.                                                                │  │  │  │  defaults; Console runtime selection    │
+│  Troubleshooting             │  │  │ │ Model                   │ qwen3:32b                                                                                   │  │  │  │  Writes allowed: Yes                    │
+│      Diagnostics (view)      │  │  │ │ Endpoint                │ https://openrouter.ai/api/v1                                                                │  │  │  │  Owns: chat_defaults.provider           │
+│      About (view)            │  │  │ │                                                                                                                       │  │  │  │  chat_defaults.model                  ▃ │
+│      Agents                  │  │  │ │  Credentials                                                                                                          │  │  │  │  api_settings.<provider>.               │
+│  Expert                      │  │  │ │  API key source: missing; set OPENROUTER_API_KEY or paste a local key                                                 │  │  │  │    endpoint                             │
+│      Hooks                   │  │  │ │ API key                 █ Paste API key to save locally in config                                                     │  │  │  │  api_settings.<provider>.               │
+│      Internal Prompts        │  │  │ │                          Clear saved key                                                                              │  │  │  │    api_key                              │
+│      Advanced Config         │  │  │ │ Env var                 │ OPENROUTER_API_KEY                                                                          │  │  │  │  api_settings.<provider>.               │
+│   Domain Defaults ▸ (11)     │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.         │  │  │  │    api_key_env_var                      │
+│                              │  │  │ │  Test Provider                                                                                                        │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │  Runs a local readiness check; URL-based local providers also get a short live endpoint probe.                        │  │  │  │    api_mode                             │
+│                              │  │  │ │ Configuration check has not run.                                                                                      │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | Esc, t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

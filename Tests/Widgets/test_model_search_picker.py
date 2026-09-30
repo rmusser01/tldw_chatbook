@@ -283,7 +283,11 @@ async def test_over_cap_catalog_fully_searchable():
 
 
 class PickerCustomSelectApp(App[None]):
-    """Host app exposing a non-default provider select id (popover-style)."""
+    """Host app exposing a non-default provider select id.
+
+    The Alt+M popover used to be this host; Switch model (TASK-33004.4) no
+    longer embeds the picker, so the id is a neutral one.
+    """
 
     def __init__(self, providers_models, entries):
         super().__init__()
@@ -294,13 +298,13 @@ class PickerCustomSelectApp(App[None]):
     def compose(self):
         yield Select(
             [("OpenRouter", "OpenRouter")],
-            id="console-popover-provider",
+            id="custom-provider-select",
             value="OpenRouter",
             allow_blank=False,
         )
         yield ModelSearchPicker(
             id="model-search-picker",
-            provider_select_id="#console-popover-provider",
+            provider_select_id="#custom-provider-select",
         )
 
     @on(ModelSearchPicker.ModelSelected)

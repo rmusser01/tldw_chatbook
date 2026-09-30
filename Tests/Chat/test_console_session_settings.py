@@ -2819,6 +2819,9 @@ async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_mode
     llama.cpp -> Anthropic fills Anthropic's own model; Anthropic -> Moonshot
     (a key, no configured model, a non-empty catalog) leaves the model empty and
     the popover reads as needing one instead of borrowing any model.
+
+    Rewritten for TASK-33004.4: Switch model has no provider Select, so the
+    switch is a pair row and the pin is that every pair keeps its own model.
     """
     from types import SimpleNamespace
 
@@ -2838,7 +2841,6 @@ async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_mode
     from tldw_chatbook.Widgets.Console.console_model_popover import (
         ConsoleModelPopover,
     )
-    from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
     app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
@@ -2891,46 +2893,31 @@ async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_mode
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(popover, callback=app.capture)
         await pilot.pause()
-        picker = popover.query_one("#console-popover-model-search", ModelSearchPicker)
-        picker_input = picker.query_one("#model-search-picker-input", Input)
-        provider_select = popover.query_one("#console-popover-provider", Select)
-
-        provider_select.value = "anthropic"
-        await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
+        # TASK-33004.4: Switch model offers pairs only, so a provider always
+        # arrives with one of its own models; the rows prove nothing borrows.
+        for row in popover._rows:
+            if row.provider == "moonshot":
+                assert row.model in {None, "kimi-k3"}, row
+            if row.provider == "anthropic":
+                assert row.model in {"claude-haiku-5", "claude-sonnet-5"}, row
+        find = popover.query_one("#console-popover-find", Input)
+        temperature = popover.query_one("#console-popover-temperature", Input)
 
-        assert popover._draft.settings.provider == "anthropic"
-        assert popover._draft.settings.model == "claude-sonnet-5"
-        assert picker.value == "claude-sonnet-5"
-        assert picker_input.value == "claude-sonnet-5"
+        for query, pair in (
+            ("claude-sonnet-5", ("anthropic", "claude-sonnet-5")),
+            ("kimi-k3", ("moonshot", "kimi-k3")),
+        ):
+            find.focus()
+            find.value = query
+            await pilot.pause()
+            temperature.focus()  # editing values rebases to the highlighted pair
+            await pilot.pause()
+            settings = popover._draft.settings
+            assert (settings.provider, settings.model) == pair
+            assert settings.model != "gpt-5.6-terra"
 
-        provider_select.value = "moonshot"
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        # AC#3: no model, and nothing borrowed -- not gpt-5.6-terra, not
-        # Anthropic's model, not the first catalog entry.
-        assert popover._draft.settings.provider == "moonshot"
-        assert popover._draft.settings.model is None
-        assert picker.value is None
-        assert picker_input.value == ""
-        assert picker_input.placeholder == "Choose or search models"
-        target = popover.query_one("#console-popover-defaults-target", Static)
-        assert str(target.renderable) == "Defaults target: moonshot/No model"
-        block = popover.query_one("#console-popover-new-chat-default-block", Static)
-        assert str(block.renderable) == "Unavailable: choose a model first."
-        assert popover.query_one(
-            "#console-popover-make-new-chat-default", Button
-        ).disabled
-
-        popover.query_one("#console-popover-apply", Button).press()
-        await pilot.pause()
-
-        error = popover.query_one("#console-popover-error", Static)
-        assert error.display is True
-        assert str(error.renderable) == "Choose a model."
         assert app.results == []
         assert app.screen is popover
 

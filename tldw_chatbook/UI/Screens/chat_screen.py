@@ -198,7 +198,6 @@ from ...Chat.console_context_policy import (
 )
 from ...Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
-    QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
     ConsoleSettingsDraftState,
@@ -664,9 +663,6 @@ from ...Widgets.Console.console_prompt_comparison_modal import (
     PromptComparisonResult,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Widgets.Console.console_model_popover import (
-    ConsoleModelPopover,
-)
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
@@ -5517,60 +5513,10 @@ class ChatScreen(BaseAppScreen):
         self._review_selection.open_trajectory_view()
 
     async def action_open_console_model_popover(self) -> None:
-        """Open the Alt+M quick provider/model/temperature/streaming popover."""
-        if self._console_setup_modal_blocking():
-            return
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        if session_id is None:
-            return
-        origin = store.capture_console_settings_origin(session_id)
-        settings = store.session_settings(session_id)
-        if settings is None:
-            return
-        context_policy = store.session_context_policy_overrides(session_id)
-        session = store.switch_session(session_id)
-        initial_draft = self._console_settings_initial_draft(
-            settings,
-            context_policy,
-            exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
-        )
-        providers_models = await self._providers_models_for_console_settings(
-            settings.provider,
-            current_model=settings.model,
-        )
-        effective_thinking_policy = await self._ensure_console_chat_controller().effective_thinking_history_policy_for_session(
-            origin.session_id
-        )
-        context_state = self._console_context_control_state_for_session(
-            origin.session_id,
-            settings=settings,
-            thinking_history_effective_policy=effective_thinking_policy,
-        )
-        self.app.push_screen(
-            ConsoleModelPopover(
-                origin=origin,
-                app_config=self._provider_readiness_app_config(),
-                initial_draft=initial_draft,
-                providers_models=providers_models,
-                context_state=context_state,
-                context_window_resolver=lambda settings: self._ensure_console_provider_gateway().resolve_context_window(settings),
-                scope_copy="Applies to this conversation",
-                durability_copy=(
-                    "Temporary until this chat is promoted"
-                    if session.ephemeral
-                    else "Saved with the conversation after its first message"
-                    if session.persisted_conversation_id is None
-                    else "Saved with this conversation"
-                ),
-                draft_rebaser=(
-                    self._ensure_console_chat_controller().rebase_console_settings_draft
-                ),
-                live_committer=self._commit_console_settings_submission_live,
-                default_readiness_resolver=self._console_default_readiness,
-            ),
-            callback=self._apply_console_model_popover_result,
-        )
+        """Open Switch model (Alt+M): provider·model pairs and quick values."""
+        from ..Console_Modules.model_switcher import open_model_switcher
+
+        await open_model_switcher(self)
 
     def on_console_workspace_details_tray_default_persona_requested(self, event) -> None:
         """Route the workspace details action to its explicit workspace owner."""

@@ -2524,3 +2524,9 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 .console-tool-approval:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
 .console-tool-approval:focus { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
 .console-tool-approval:disabled { background: $ds-disabled-bg; color: $ds-text-disabled-readable; }
+
+/* TASK-33004.4: Switch model's size (the box itself is auto height). */
+#console-model-popover {
+    width: $ds-model-switcher-width;
+    max-height: $ds-model-switcher-max-height;
+}

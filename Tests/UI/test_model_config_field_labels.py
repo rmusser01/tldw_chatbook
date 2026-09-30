@@ -17,10 +17,8 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.test_console_model_popover_geometry import (
-    PopoverGeometryHarness,
-    build_geometry_popover,
-)
+from Tests.UI.test_console_model_popover_geometry import PopoverGeometryHarness
+from Tests.UI.test_console_model_switcher import Recorder, build_switcher
 from Tests.UI.test_console_session_settings import StyledModalHarness, _basic_modal
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -258,7 +256,7 @@ async def test_popover_labels_come_from_the_field_table():
     """AC#2/#3: the Alt+M popover's Temperature and Streaming labels."""
     app = PopoverGeometryHarness()
     async with app.run_test(size=(211, 44)) as pilot:
-        await app.push_screen(build_geometry_popover())
+        await app.push_screen(build_switcher(Recorder()))
         await pilot.pause()
         screen = app.screen
         assert (
@@ -272,10 +270,10 @@ async def test_popover_labels_come_from_the_field_table():
         streaming = screen.query_one("#console-popover-streaming", Button)
         assert str(streaming.label).startswith(f"{MODEL_FIELD_LABELS['streaming']}: ")
         # Captures flag 5: the row read "Response max" where the modal and
-        # Settings say Max tokens.
+        # Settings say Max tokens (Switch model's value strip, TASK-33004.4).
         response_max = screen.query_one("#console-popover-response-max", Static)
         assert str(response_max.content).startswith(
-            f"{MODEL_FIELD_LABELS['max_tokens']}  "
+            f"{MODEL_FIELD_LABELS['max_tokens']} "
         )
 
 
