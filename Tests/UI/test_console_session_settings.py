@@ -5050,6 +5050,133 @@ async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
     assert widths_by_size[(211, 44)] == widths_by_size[(235, 52)]
 
 
+_CHOICE_IDS = (
+    "console-settings-reasoning-effort",
+    "console-settings-reasoning-summary",
+    "console-settings-verbosity",
+    "console-settings-thinking-effort",
+)
+#: llama.cpp shows Reasoning effort only; a custom endpoint entry (ADR-146)
+#: has no authoritative capability data, so it shows all four choice rows.
+_CHOICE_ROW_CHATS = {
+    "llama_cpp": (None, 1),
+    "custom_endpoint": (
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="model-a"),
+        4,
+    ),
+}
+
+
+async def _focus_in_view(pilot, screen, widget) -> None:
+    """Focus ``widget`` and wait until the body has scrolled it into view."""
+    body = screen.query_one("#console-settings-body")
+    widget.focus()
+    for _ in range(20):
+        await pilot.pause()
+        if body.region.contains_region(widget.region):
+            return
+    raise AssertionError((widget.id, widget.region, body.region))
+
+
+def _assert_choice_row_paints(screen, control_id: str, shown: str) -> None:
+    """The row paints its label and ``shown`` in the Select, no empty error edge."""
+    select = screen.query_one(f"#{control_id}", Select)
+    row = screen.query_one(f"#{control_id}-row", Horizontal)
+    validation = screen.query_one(f"#{control_id}-validation", Static)
+    label = row.query_one(".console-settings-modal-label", Static)
+    painted = _painted_rows(screen)[select.region.y]
+    assert str(label.render()).strip() in painted, (control_id, painted)
+    cell = painted[select.region.x : select.region.right]
+    assert shown in cell and "▼" in cell, (control_id, shown, painted)
+    assert "█" not in painted[select.region.right :], (control_id, painted)
+    assert validation.region.width == 0, (control_id, validation.region)
+    assert row.region.height == 1, (control_id, row.region)
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.parametrize("chat", sorted(_CHOICE_ROW_CHATS))
+@pytest.mark.asyncio
+async def test_console_settings_choice_rows_paint_their_select(chat, size) -> None:
+    """TASK-33003.8: every displayed choice row paints its Select.
+
+    The empty validation line used to stay displayed with no width, took the
+    whole row and left the Select zero wide (or, once sized, painted its thick
+    error edge and a blank margin row). Real key presses pick an option and
+    the painted row must then show it.
+    """
+    settings, expected_rows = _CHOICE_ROW_CHATS[chat]
+    app = StyledModalHarness()
+    app.app_config = _registry_app_config()
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(_one_row_settings_modal(app.app_config, settings))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#console-settings-generation-advanced", Collapsible).collapsed = False
+        await pilot.pause()
+        shown = [
+            control_id
+            for control_id in _CHOICE_IDS
+            if screen.query_one(f"#{control_id}-row").display
+        ]
+        assert len(shown) == expected_rows, shown
+        for control_id in shown:
+            select = screen.query_one(f"#{control_id}", Select)
+            await _focus_in_view(pilot, screen, select)
+            _assert_choice_row_paints(screen, control_id, select.prompt)
+            first_option = str(select._options[1][0])
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("down", "enter")
+            await pilot.pause()
+            _assert_choice_row_paints(screen, control_id, first_option)
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_console_settings_obsolete_choice_copy_paints_beside_its_select(
+    size,
+) -> None:
+    """TASK-33003.8 AC#2: a restored obsolete value keeps its recovery copy."""
+    app = StyledModalHarness()
+    snapshot = _task_30012_suspended_modal_draft(
+        focus_control_id="console-settings-provider-picker",
+        advanced_generation=True,
+        raw_values={"console-settings-reasoning-effort": "obsolete-effort"},
+    )
+    modal = _basic_modal(
+        snapshot.settings,
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+        suspended_draft=snapshot,
+    )
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        control_id = "console-settings-reasoning-effort"
+        select = modal.query_one(f"#{control_id}", Select)
+        validation = modal.query_one(f"#{control_id}-validation", Static)
+        await _focus_in_view(pilot, modal, select)
+        painted = _painted_rows(modal)
+        row = modal.query_one(f"#{control_id}-row", Horizontal)
+        # Beside the Select and its support note, wrapping inside the row.
+        assert validation.region.x >= select.region.right, validation.region
+        assert validation.region.right <= row.region.right, (validation.region, row.region)
+        copy = "".join(
+            painted[y][validation.region.x : validation.region.right].strip() + " "
+            for y in range(validation.region.y, validation.region.bottom)
+        )
+        assert "Saved value is unavailable." in painted[select.region.y], painted[
+            select.region.y
+        ]
+        assert "Choose one of: none, minimal, low, medium, high, xhigh." in copy, copy
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        await pilot.pause()
+        _assert_choice_row_paints(modal, control_id, "None")
+
+
 @pytest.mark.asyncio
 async def test_endpoint_template_modal_keeps_its_three_row_controls() -> None:
     """TASK-33003.2 AC#7: the one-row rules stay scoped to Chat settings."""
@@ -6582,9 +6709,14 @@ async def test_console_settings_modal_saves_replaced_temperature_input() -> None
             "#console-settings-generation-advanced", Collapsible
         ).collapsed = False
         await pilot.pause()
+        # TASK-33003.8: close the focused provider picker's open list first.
+        # Otherwise the mouse-down's blur collapses it mid-click and the
+        # click lands on whatever row moved under the pointer.
+        await pilot.press("escape")
+        await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
-        body.scroll_to_widget(temperature)
+        body.scroll_to_widget(temperature, animate=False)
         await pilot.pause()
 
         await pilot.click(temperature)
@@ -6625,9 +6757,14 @@ async def test_console_settings_modal_replaces_focused_sampling_input() -> None:
             "#console-settings-generation-advanced", Collapsible
         ).collapsed = False
         await pilot.pause()
+        # TASK-33003.8: close the focused provider picker's open list first.
+        # Otherwise the mouse-down's blur collapses it mid-click and the
+        # click lands on whatever row moved under the pointer.
+        await pilot.press("escape")
+        await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
-        body.scroll_to_widget(temperature)
+        body.scroll_to_widget(temperature, animate=False)
         await pilot.pause()
 
         await pilot.click(temperature)

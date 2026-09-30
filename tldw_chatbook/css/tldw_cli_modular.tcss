@@ -8743,7 +8743,9 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     max-width: $ds-console-settings-wide-max-width;
 }
 
+
 .console-settings-error {
+    width: $ds-width-fill;
     height: auto;
     min-height: $ds-size-1;
     max-height: $ds-size-3;

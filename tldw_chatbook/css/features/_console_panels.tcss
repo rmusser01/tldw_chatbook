@@ -287,7 +287,11 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     max-width: $ds-console-settings-wide-max-width;
 }
 
+/* TASK-33003.8: beside a choice row's Select and its support note (a
+   Label, so content-wide), the recovery copy wraps in what is left; an
+   unsized Static takes the whole row. */
 .console-settings-error {
+    width: $ds-width-fill;
     height: auto;
     min-height: $ds-size-1;
     max-height: $ds-size-3;

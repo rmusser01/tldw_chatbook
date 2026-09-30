@@ -1581,6 +1581,14 @@ class ConsoleSettingsModal(
         select.tooltip = self._choice_placeholder(control_id)
         return select
 
+    def _generation_choice_validation(self, control_id: str) -> Static:
+        """Build an obsolete restored choice's recovery line, hidden while empty."""
+        validation = Static(
+            id=f"{control_id}-validation", classes="console-settings-error", markup=False
+        )
+        self._sync_generation_choice_validation(control_id, validation)
+        return validation
+
     def _generation_choice_validation_copy(self, control_id: str) -> str:
         """Return inline recovery copy for an obsolete restored enum value."""
         if control_id not in self._invalid_generation_choice_drafts:
@@ -2018,19 +2026,12 @@ class ConsoleSettingsModal(
                             "console-settings-reasoning-effort",
                             self._settings.reasoning_effort,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-reasoning-effort-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-reasoning-effort"
-                            ),
-                            id="console-settings-reasoning-effort-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-reasoning-effort")
                     with Horizontal(
                         id="console-settings-reasoning-summary-row",
                         classes="console-settings-modal-row",
@@ -2040,19 +2041,12 @@ class ConsoleSettingsModal(
                             "console-settings-reasoning-summary",
                             self._settings.reasoning_summary,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-reasoning-summary-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-reasoning-summary"
-                            ),
-                            id="console-settings-reasoning-summary-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-reasoning-summary")
                     with Horizontal(
                         id="console-settings-verbosity-row",
                         classes="console-settings-modal-row",
@@ -2062,19 +2056,12 @@ class ConsoleSettingsModal(
                             "console-settings-verbosity",
                             self._settings.verbosity,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-verbosity-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-verbosity"
-                            ),
-                            id="console-settings-verbosity-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-verbosity")
                     with Horizontal(
                         id="console-settings-thinking-effort-row",
                         classes="console-settings-modal-row",
@@ -2084,19 +2071,12 @@ class ConsoleSettingsModal(
                             "console-settings-thinking-effort",
                             self._settings.thinking_effort,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-thinking-effort-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-thinking-effort"
-                            ),
-                            id="console-settings-thinking-effort-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-thinking-effort")
                     with Horizontal(
                         id="console-settings-thinking-budget-tokens-row",
                         classes="console-settings-modal-row",
@@ -2109,7 +2089,7 @@ class ConsoleSettingsModal(
                             id="console-settings-thinking-budget-tokens",
                             classes="console-settings-control",
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-thinking-budget-tokens-support",
                             classes="console-settings-control-support",
@@ -4971,13 +4951,22 @@ class ConsoleSettingsModal(
                 self._choice_placeholder(input_id)
             )
 
-    def _sync_generation_choice_validation(self, control_id: str) -> None:
-        """Render an obsolete restored choice beside its constrained control."""
-        try:
-            validation = self.query_one(f"#{control_id}-validation", Static)
-        except (NoMatches, QueryError):
-            return
-        validation.update(self._generation_choice_validation_copy(control_id))
+    def _sync_generation_choice_validation(
+        self, control_id: str, validation: Static | None = None
+    ) -> None:
+        """Render an obsolete restored choice beside its constrained control.
+
+        An empty line is hidden: displayed, it took the whole row (no width)
+        and painted its error edge plus a blank margin row (TASK-33003.8).
+        """
+        if validation is None:
+            try:
+                validation = self.query_one(f"#{control_id}-validation", Static)
+            except (NoMatches, QueryError):
+                return
+        copy = self._generation_choice_validation_copy(control_id)
+        validation.update(copy)
+        validation.display = bool(copy)
 
     @on(
         Select.Changed,

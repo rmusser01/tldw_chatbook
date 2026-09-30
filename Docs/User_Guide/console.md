@@ -447,7 +447,13 @@ dimming; a focused plain button always stands out from the panel at least as muc
 holds, not as wide as the window: a number gets 12 columns, a dropdown is as
 wide as its longest choice, and text is capped by what it holds (your name in
 this chat 32, the provider and model 48, an endpoint URL 64). The fields keep
-their width on a wider terminal. When the form is taller than the window,
+their width on a wider terminal. The reasoning and thinking dropdowns
+(**Reasoning effort**, **Reasoning summary**, **Verbosity**, **Thinking**)
+show their choice, or "Select" when none is set. A value saved earlier that
+the dropdown does not offer is not dropped silently: "Saved value is
+unavailable. Choose one of: …" appears beside the dropdown in the error
+colour, and saving waits until you pick a choice. When the form is taller
+than the window,
 "▼ more — scroll for the rest" sits under it while anything is left below and
 disappears once you have scrolled to the bottom; scroll back up and it
 returns.

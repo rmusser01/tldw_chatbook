@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
+                │  Endpoint · Not tested                                                                                                                                                          │     │
+   Terminal     │  Model · Selected — not verified at this endpoint                                                                                                                               │     │
+ ───────────────│  Generation · Not tested                                                                                                                                                        │     │
+ Workspaces     │  Generation test unavailable for this provider.                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Conversations  │   ▼ Advanced generation                                                                                                                                                         │     │
+        Archive │                                                                                                                                                                                 │     │
+          Archiv│   Temperature            │ 0.6                                                                                                                                                  │     │
+        Search a│   Top P                  │ 0.95                                                                                                                                                 │     │
+   Chat 1       │   Min P                  │ 0.05                                                                                                                                                 │     │
+                │   Top K                  │ 50                                                                                                                                                   │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│   Max tokens             │                                                                                                                                                   ▆  │     │
+  ▊  Filter visi│   Seed                   │                                                                                                                                                      │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│   Presence penalty       │                                                                                                                                                      │     │
+                │   Frequency penalty      │                                                                                                                                                      │     │◂ Inspect
+   New conversat│   Streaming                   On                                                                                                                                                │     │
+  Chats         │   Reasoning effort       █ None    ▼ Support not verified for this model.                                                                                                       │     │
+   Chat 1       │                                                                                                                                                                                 │     │
+                │   Reasoning summary      │ Select   ▼ Support not verified for this model.                                                                                                      │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Character · No │   Verbosity              │ Select ▼ Support not verified for this model.                                                                                                        │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Model          │   Thinking               │ Select ▼ Support not verified for this model.                                                                                                        │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Agent          │   Thinking budget        │           Support not verified for this model.                                                                                                       │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Details        │                                                                                                                                                                                 │     │
+                │   ▶ Conversation identity                                                                                                                                                       │     │
+                │                                                                                                                                                                                 │     │
+                │   ▶ Request estimate                                                                                                                                                            │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                      Esc close (asks: 1 unsaved)   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation   │ent 0 tok · On
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

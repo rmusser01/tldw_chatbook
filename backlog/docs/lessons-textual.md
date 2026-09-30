@@ -1311,3 +1311,26 @@ one edge silently zeroes the other three that a lower rule set. Restate every
 edge you need in the winning rule, and measure `styles.margin` rather than
 reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
 to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).
+
+## An empty Static still takes its row: hide it, don't just clear it
+
+**TASK-33003.8, Chat settings choice rows, 2026-09-30.** Each provider-choice
+row (Reasoning effort, Reasoning summary, Verbosity, Thinking) ends with a
+recovery-copy `Static` that is empty unless a restored value is obsolete. The
+modal only ever called `update("")` on it, so it stayed displayed. With no
+width it took the whole row, the `1fr` Select beside it resolved to 0
+columns, and all that painted was the Static's thick error edge, `█`, plus
+its margin row. Reasoning and thinking levels could not be chosen in Chat
+settings, and origin/dev 89dd84943a shows the same row (with the old label
+"Reasoning"). The tests stayed green because they set and read
+`Select.value` and never looked at painted text.
+
+**What to do.** An optional line must set `display = bool(copy)` wherever its
+copy changes, including at compose. A note that shares a row with a control
+should be a `Label` (its own `DEFAULT_CSS` is `width: auto`), not a `Static`.
+Prove a row paints with `screen._compositor.render_strips()` text at the
+control's region, after real key presses, not by reading `.value`
+(`test_console_settings_choice_rows_paint_their_select`). Live-driver trap:
+a mouse click opens a Select's list with **nothing** highlighted, so the
+first Down lands on the blank prompt. Opening it with Enter highlights the
+current value instead, and a single Down is then enough, as the pilot tests do.
