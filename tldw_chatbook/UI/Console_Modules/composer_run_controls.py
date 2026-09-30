@@ -125,12 +125,13 @@ def route_composer_control_key(
 
 
 def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:
-    """Move focus off a composer button to the draft before a paste lands.
+    """Focus the draft before a captured paste lands in it.
 
-    A paste is a deliberate gesture aimed at the draft, not stray typing, so
-    unlike typing it is not swallowed on a focused button -- but it must not
-    edit a draft that shows no caret either (TASK-33622.2 AC#3/#4). The
-    draft takes focus first, so the paste lands where the caret shows it.
+    The screen captures a paste while a composer button holds focus, or
+    while nothing does (`_should_capture_console_input`). A paste is a
+    deliberate gesture aimed at the draft, but it must not edit a draft that
+    shows no caret (TASK-33622.2 AC#3/#4), so the draft takes focus first --
+    in both cases -- and the paste lands where the caret shows it.
 
     Args:
         screen: The Console screen routing the paste.
@@ -138,7 +139,7 @@ def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:
     """
 
     focused = screen.app.focused
-    if focused is not None and focused is not composer:
+    if focused is not composer:
         composer.focus_draft_from(focused)
 
 

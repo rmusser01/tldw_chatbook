@@ -1283,6 +1283,37 @@ async def test_paste_on_a_focused_button_lands_in_a_focused_draft(request):
         gateway.release.set()
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_paste_with_nothing_focused_lands_in_a_focused_draft(request):
+    """With nothing focused, Textual hands a paste to the screen, and
+    `_should_capture_console_input` still claims it for the draft -- which
+    then changed with no caret anywhere on screen (PR #2934 checkpoint
+    review). The draft takes focus first here too."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        composer.load_draft("hello")
+        console.set_focus(None)
+        await pilot.pause()
+        assert console.app.focused is None
+
+        host.post_message(Paste(" world"))
+        await _wait_for(
+            pilot, lambda: composer.draft_text() != "hello", "the paste never landed"
+        )
+        assert composer.draft_text() == "hello world"
+        assert console.app.focused is composer, (
+            f"the paste edited the draft but focus is {console.app.focused!r}"
+        )
+        await _wait_for(
+            pilot,
+            lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
+            "the pasted-into draft never painted its caret",
+        )
+        gateway.release.set()
+
+
 # ---------------------------------------------------------------------------
 # Contract pins for the routes above (pure, no mounted app)
 # ---------------------------------------------------------------------------
