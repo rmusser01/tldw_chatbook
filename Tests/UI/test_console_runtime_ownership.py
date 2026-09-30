@@ -657,6 +657,7 @@ async def test_unmount_detaches_before_later_view_cleanup_can_fail():
     runtime._attached_generation = generation
     screen._console_runtime = lambda: runtime
     screen._console_runtime_attachment_generation = generation
+    screen._hooks = SimpleNamespace(cancel_pending=lambda: None)
     screen._release_claimed_conversation_settings_return = lambda: None
 
     async def fail_cleanup() -> None:
@@ -703,6 +704,7 @@ async def test_late_outgoing_ensure_cannot_reclaim_a_successor_attachment():
     outgoing = ChatScreen.__new__(ChatScreen)
     successor = ChatScreen.__new__(ChatScreen)
     for screen in (outgoing, successor):
+        screen._hooks = SimpleNamespace(cancel_pending=lambda: None)
         screen._release_claimed_conversation_settings_return = lambda: None
         screen._console_runtime_ref = runtime
         screen.console_view_hooks = lambda: {}
@@ -755,6 +757,7 @@ async def test_unmount_releases_settings_claim_before_blocked_sidebar_flush():
         raise RuntimeError("stop after flush")
 
     screen = SimpleNamespace(
+        _hooks=SimpleNamespace(cancel_pending=lambda: None),
         _release_claimed_conversation_settings_return=lambda: released.append("claim"),
         _console_runtime=lambda: SimpleNamespace(detach_view=lambda *_: None),
         _flush_sidebar_state_now=flush,
@@ -1486,9 +1489,13 @@ async def test_persistent_attach_sync_failure_has_bounded_backoff_and_resume_ret
 
     screen.call_after_refresh = lambda callback: scheduled.append((0.0, callback))
     screen.on_screen_resume()
-    assert len(scheduled) == 1
-    _delay, retry = scheduled.pop()
-    await retry()
+    retries = [
+        callback
+        for _delay, callback in scheduled
+        if callback == screen._reconcile_console_after_attach
+    ]
+    assert len(retries) == 1
+    await retries[0]()
     assert sync_calls == 5
 
 

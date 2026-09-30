@@ -16930,3 +16930,17 @@ The QA child now has its own private HOME as well as private config/data;
 the real app then passed both terminal sizes. Native tests of startup
 boundaries must isolate every root that participates in admission, not only
 the config file.
+
+
+## 2026-09-29 — Shared lifecycle changes need ownership-harness qualification (TASK-33163)
+
+PR #2922 passed 245 focused Hooks/UI/boot/latency cases, but required CI found
+four failures in the Console ownership group. Three bare `ChatScreen.__new__`
+or namespace fixtures bypassed controller wiring and lacked the new Hooks
+child; a resume-backoff assertion counted the additional indicator callback
+as a second retry. All four reproduced locally. Supplying the child stub and
+filtering the reconciliation callback retained the detach/claim/backoff pins;
+the exact isolated admission group then passed 123 cases with its existing xfail.
+When changing shared mount/resume/unmount paths, include their ownership tests
+in the targeted run. Count callbacks by the owner contract being tested, rather
+than assuming every scheduled background callback is its retry.

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-28 03:03'
-updated_date: '2026-09-30 03:38'
+updated_date: '2026-09-30 05:12'
 labels:
   - hooks
   - console
@@ -58,4 +58,8 @@ Integrated the four implementation commits onto dev 857b3dd7d0 as codex/hook-rev
 Current targeted evidence: 194 runtime, 25 config/mounted UI, and 12 import/first-paint passes. Earlier complete 21-case boot and 37-case token/CSS groups cover unchanged portions; overlapping cohorts are separately named in QA. Authored-line Ruff/format is clean across 51 changed Python files, all three QA scripts pass full checks, generated CSS reproduces, and profile-path/diagnostic/worker/task governance passes. Real TldwCli passed all six private-profile groups at actual 80x24 and 120x40; four captures were visually inspected. Two broader Settings search assertions reproduce on current dev. Self-review and documentation are complete; no full suite or real provider generation ran. Named evidence, historical qualification, and limits are in Docs/superpowers/reviews/2026-09-27-console-hook-settings-and-review.md. PR #2922 review replies, hosted checks, latest-dev confirmation, and authorized merge remain pending.
 
 Latest-dev qualification: clean rebase onto 2a74675eea preserved all eight patches exactly. Inspected upstream provider/config/Console seams. All 245 distinct targeted cases pass (195 runtime/config, 16 mounted UI, 21 complete boot group, 13 latency/stall-persistence). Authored Ruff/format across 51 changed Python files, full QA-script checks, and derived diagnostic/profile-path/CSS checks pass. Previous broader baseline controls and native captures retain 857b3dd7d0 provenance. Qodo reports zero active findings on the prior patch-equivalent published head; all review threads have evidence-backed replies. Feature implementation, self-review and documentation are complete. PR #2922 final integration remains gated on the rebased head hosted checks; no merge claimed.
+
+Hosted PR Fast Lane passed the 1171-case main contract but its admission step has four ownership-harness failures: three constructor-bypassing screen fakes omit the new Hooks controller, and one resume backoff assertion counts the additional hook indicator callback. Reproduce the four cases, update test seams without weakening detach/backoff assertions, then rerun the exact admission group and static checks before publishing.
+
+Hosted CI follow-up: main PR contract passed 1171 cases; UI Fast Lane and Perf Guard passed. Reproduced all four admission ownership-harness failures locally, supplied the new Hooks child to constructor-bypassing teardown fakes and isolated the reconciliation callback count. Original detach, settings-claim and bounded-backoff assertions remain. Four regressions and the exact 123-pass CI admission group pass; its one pre-existing xfail is retained, with no new skips. Combined distinct current-base local passes: 350. Production is unchanged; authored Ruff/format is clean across 52 changed Python files. Added the evidence-backed shared lifecycle testing lesson and updated named QA/report/plan results. Auto-merge is held until the new head passes hosted gates.
 <!-- SECTION:NOTES:END -->

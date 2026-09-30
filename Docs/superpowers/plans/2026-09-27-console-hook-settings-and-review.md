@@ -759,3 +759,13 @@ unique targeted cases (195 runtime/config, 16 mounted UI, 21 complete boot,
 diagnostic and CSS checks. QA scripts and static evidence now use this base.
 Prior broader controls/native captures retain their original base provenance.
 No new ADR is required. Hosted review/merge checks remain pending.
+
+
+Hosted admission follow-up: reproduced four ownership-harness failures after
+1171 main-contract passes and green UI/Perf lanes. Added the new child-controller
+stub to constructor-bypassing teardown fixtures and counted reconciliation
+callbacks separately from indicator refresh. Detach/claim/backoff assertions
+remain intact. Four regressions and the exact 123-pass admission invocation
+(with one existing xfail) pass locally; current-base unique local passes total
+350. Authored static checks are clean across 52 changed Python files. Production
+is unchanged, and hosted merge gates must rerun on the published test fix.

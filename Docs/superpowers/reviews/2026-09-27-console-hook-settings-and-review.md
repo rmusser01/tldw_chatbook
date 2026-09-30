@@ -203,3 +203,20 @@ No full suite or real provider generation ran. Qodo resolved all findings on
 the prior published, patch-equivalent head; replies explain the verified fixes
 and intentional failed-Disable fence. Hosted checks on the rebased head and
 final integration remain pending.
+
+
+Hosted UI Fast Lane and Perf Guard passed on `72f8ceabd2`, and PR Fast Lane's
+main contract passed all 1171 cases. Its admission step found four integration
+failures. All four reproduced locally: three teardown fixtures bypassed the
+ChatScreen constructor and lacked the Hooks controller; one resume assertion
+counted the new indicator refresh as an extra reconciliation retry. Minimal
+fixture stubs and filtering the reconciliation callback preserve the existing
+detach, claim-release and bounded-backoff assertions. Production is unchanged.
+
+All four regressions pass after the test fix. The exact isolated CI admission
+invocation passes **123 cases with one pre-existing expected failure**; no new
+skip or xfail was added. Combined with the current-base qualification above,
+there are **350 distinct local passing cases** (overlapping named cohorts are
+not summed). Authored Ruff/format remains clean across 52 changed Python files.
+Native auto-merge was held on the hosted failure; fresh hosted gates on the
+published test fix must pass before it is enabled again.
