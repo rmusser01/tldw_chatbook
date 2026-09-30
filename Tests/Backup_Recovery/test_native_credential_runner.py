@@ -397,6 +397,221 @@ def test_native_worker_observes_suppressed_archive_io_without_changing_inspectio
     assert not work.exists()
 
 
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    (
+        ("shm", "declared_shm"),
+        ("wal", "declared_wal"),
+        ("main", "declared_main"),
+        ("other", "other"),
+        ("shared", "declared_shm"),
+        ("ordinary-competitor", "ambiguous"),
+        ("duplicate", "ambiguous"),
+        ("missing-main", "ambiguous"),
+        ("excluded-main", "ambiguous"),
+        ("raw-payload", "ambiguous"),
+        ("classifier-failure", None),
+        ("instance", "declared_instance_lock"),
+        ("instance-status", "ambiguous"),
+        ("instance-competitor", "ambiguous"),
+    ),
+)
+def test_native_failure_classifies_only_exact_fingerprint_read_chain(
+    tmp_path, monkeypatch, case, expected
+):
+    from contextlib import contextmanager
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery import (
+        archive_reader,
+        owner_registry,
+        restore_plan,
+    )
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+        Inventory,
+        StorageItem,
+    )
+
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    main_path = tmp_path / ("payload.bin" if case == "raw-payload" else "main.sqlite")
+    main = StorageItem(
+        "recovered.media" if case == "raw-payload" else "research.local",
+        "positive-native-secret-main",
+        main_path,
+        "intentionally_excluded" if case == "excluded-main" else "included",
+        (),
+        shared_group="synthetic-shared" if case == "shared" else None,
+    )
+    path = (
+        main_path
+        if case == "main"
+        else Path(str(main_path) + ("-wal" if case == "wal" else "-shm"))
+    )
+    sidecar = StorageItem(
+        "sqlite.transient",
+        "positive-native-secret-sidecar",
+        path,
+        "intentionally_excluded",
+        (main.logical_id,),
+    )
+    items = (main,) if case == "main" else (main, sidecar)
+    if case == "other":
+        items = (
+            replace(sidecar, owner="ui.state", status="included", dependencies=()),
+        )
+    elif case == "ordinary-competitor":
+        items += (
+            replace(
+                sidecar,
+                owner="ui.state",
+                logical_id="ordinary",
+                status="included",
+                dependencies=(),
+            ),
+        )
+    elif case == "duplicate":
+        items += (sidecar,)
+    elif case == "missing-main":
+        items = (sidecar,)
+    elif case == "shared":
+        peer = replace(main, logical_id="peer")
+        items += (
+            peer,
+            replace(
+                sidecar, logical_id="peer-sidecar", dependencies=(peer.logical_id,)
+            ),
+        )
+    elif case.startswith("instance"):
+        data = tmp_path / "Ada"
+        data.mkdir()
+        selector = tmp_path / "config.toml"
+        selector.write_text("")
+        config = {
+            "paths": {"data_dir": str(tmp_path)},
+            "general": {"users_name": "Ada"},
+            DISCOVERY_CONTEXT_KEY: DiscoveryContext(selector, "p"),
+        }
+        path = data / ".instance.lock"
+        path.write_bytes(b"positive-native-secret")
+        owners = {row.owner_id: row for row in owner_registry.install_adapters()}
+        lock = owners["runtime.instance_lock"].discover(config)[0]
+        items = (*owners["config"].discover(config), lock)
+        if case == "instance-status":
+            items = (items[0], replace(lock, status="included"))
+        elif case == "instance-competitor":
+            items += (replace(lock, owner="ui.state", logical_id="ordinary"),)
+    path.write_bytes(b"positive-native-secret")
+    original = path.read_bytes()
+
+    @contextmanager
+    def write_only(path):
+        with path.open("ab") as stream:
+            yield stream
+
+    monkeypatch.setattr(archive_reader, "_regular", write_only)
+    if case == "classifier-failure":
+
+        def unavailable_declarations():
+            raise RuntimeError("positive-native-secret")
+
+        monkeypatch.setattr(
+            owner_registry, "install_adapters", unavailable_declarations
+        )
+    with pytest.raises(OSError) as caught:
+        restore_plan._fingerprint((path,), Inventory(items, True, "local", ()))
+    runner._record_native_failure(failure_root, caught.value)
+    runner._publish_native_failures(private, artifacts)
+    receipt_path = artifacts / "native-failures.json"
+    rows = json.loads(receipt_path.read_text())["failures"]
+    assert [row.get("target_kind") for row in rows] == [expected]
+    assert [frame["function"] for frame in rows[0]["frames"]][-3:] == [
+        "_fingerprint",
+        "_observed",
+        "_hash",
+    ]
+    assert path.read_bytes() == original
+    assert "positive-native-secret" not in receipt_path.read_text()
+
+
+def test_native_failure_does_not_classify_fabricated_fingerprint_names(tmp_path):
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+
+    def _hash(path):
+        raise PermissionError(13, "positive-native-secret", str(path))
+
+    def _observed(path):
+        return _hash(path)
+
+    def _fingerprint(path, target):
+        return _observed(path)
+
+    with pytest.raises(PermissionError) as caught:
+        _fingerprint(tmp_path / "positive-native-secret", object())
+    runner._record_native_failure(
+        failure_root, caught.value, metadata={"target_kind": "declared_shm"}
+    )
+    runner._publish_native_failures(private, artifacts)
+    receipt_path = artifacts / "native-failures.json"
+    rows = json.loads(receipt_path.read_text())["failures"]
+    assert rows[0]["error_class"] == "PermissionError" and rows[0]["errno"] == 13
+    assert "target_kind" not in rows[0]
+    assert "positive-native-secret" not in receipt_path.read_text()
+
+
+@pytest.mark.parametrize(
+    ("errno", "winerror", "expected"),
+    (
+        (13, 5, {"errno": 13, "winerror": 5}),
+        (13, 32, {"errno": 13, "winerror": 32}),
+        (13, 33, {"errno": 13, "winerror": 33}),
+        (None, None, {}),
+        (True, True, {}),
+        (14, 34, {}),
+        ("13", "33", {}),
+    ),
+)
+def test_native_failure_revalidates_only_fixed_os_codes(
+    tmp_path, errno, winerror, expected
+):
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    error = PermissionError("positive-native-secret")
+    error.errno, error.winerror = errno, winerror
+    runner._record_native_failure(failure_root, error)
+    (failure_root / "untrusted.json").write_text(
+        json.dumps(
+            {
+                "error_class": "PermissionError",
+                "frames": [],
+                "errno": errno,
+                "winerror": winerror,
+                "target_kind": "positive-native-secret/path",
+                "filename": "positive-native-secret",
+                "message": "positive-native-secret",
+            }
+        )
+    )
+    runner._publish_native_failures(private, artifacts)
+    receipt_path = artifacts / "native-failures.json"
+    rows = json.loads(receipt_path.read_text())["failures"]
+    assert all(
+        {key: row[key] for key in ("errno", "winerror") if key in row} == expected
+        for row in rows
+    )
+    assert all("target_kind" not in row for row in rows)
+    assert "positive-native-secret" not in receipt_path.read_text()
+
+
 def test_native_failure_optional_diagnostics_revalidate_fixed_values(tmp_path):
     private, artifacts = tmp_path / "private", tmp_path / "artifacts"
     failure_root = private / "native-failures"

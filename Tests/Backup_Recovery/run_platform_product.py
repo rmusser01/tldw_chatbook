@@ -927,6 +927,20 @@ def _native_failure_metadata(record: Mapping[str, object]) -> dict[str, object]:
             raise RuntimeError("unsafe_native_failure_frame")
         projected.append({"file": filename, "function": function, "line": line})
     result = {"error_class": kind, "frames": projected}
+    for field, allowed in (("errno", {13}), ("winerror", {5, 32, 33})):
+        value = record.get(field)
+        if type(value) is int and value in allowed:
+            result[field] = value
+    target_kind = record.get("target_kind")
+    if isinstance(target_kind, str) and target_kind in {
+        "declared_shm",
+        "declared_wal",
+        "declared_main",
+        "declared_instance_lock",
+        "other",
+        "ambiguous",
+    }:
+        result["target_kind"] = target_kind
     if "issue" in record:
         from tldw_chatbook.Backup_Recovery.recovery_service import issue_code
 
@@ -1000,8 +1014,144 @@ def _record_native_failure(
         from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
         from tldw_chatbook.Backup_Recovery.recovery_service import issue_code
 
+        optional = dict(metadata or {})
+        optional.pop("target_kind", None)
+        try:
+            from tldw_chatbook.Backup_Recovery import archive_reader, restore_plan
+            from tldw_chatbook.Backup_Recovery.capture import _item_validator
+            from tldw_chatbook.Backup_Recovery.config_adapter import _InstanceLock
+            from tldw_chatbook.Backup_Recovery.models import Inventory
+            from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+            from tldw_chatbook.Backup_Recovery.publication import _sidecar_main
+
+            trace = error.__traceback__ if isinstance(error, OSError) else None
+            for _ in range(64):
+                if trace is None:
+                    break
+                observed = trace.tb_next
+                hashed = observed.tb_next if observed is not None else None
+                if (
+                    trace.tb_frame.f_code is restore_plan._fingerprint.__code__
+                    and observed is not None
+                    and observed.tb_frame.f_code is restore_plan._observed.__code__
+                    and hashed is not None
+                    and hashed.tb_frame.f_code is archive_reader._hash.__code__
+                    and hashed.tb_next is None
+                ):
+                    path = trace.tb_frame.f_locals.get("path")
+                    target = trace.tb_frame.f_locals.get("target")
+                    if (
+                        isinstance(path, Path)
+                        and path == observed.tb_frame.f_locals.get("path")
+                        and path == hashed.tb_frame.f_locals.get("path")
+                        and type(target) is Inventory
+                    ):
+                        owners = {row.owner_id: row for row in install_adapters()}
+                        matches = [row for row in target.items if row.path == path]
+                        kinds, mains = set(), []
+                        for item in matches:
+                            if (
+                                sum(
+                                    row.logical_id == item.logical_id
+                                    for row in target.items
+                                )
+                                != 1
+                            ):
+                                kinds.add("ambiguous")
+                                continue
+                            if item.owner == "sqlite.transient":
+                                candidates = [
+                                    row
+                                    for row in target.items
+                                    if item.dependencies == (row.logical_id,)
+                                ]
+                                try:
+                                    main = _sidecar_main(item, target.items, owners)
+                                except ValueError:
+                                    kinds.add("ambiguous")
+                                    continue
+                                if len(candidates) != 1 or main.status != "included":
+                                    kinds.add("ambiguous")
+                                    continue
+                                kinds.add(
+                                    "declared_shm"
+                                    if path == Path(str(main.path) + "-shm")
+                                    else "declared_wal"
+                                )
+                            elif item.owner == "runtime.instance_lock":
+                                parts = item.logical_id.split(":")
+                                config_id = (
+                                    item.logical_id.removesuffix(item.owner) + "config"
+                                )
+                                configs = [
+                                    row
+                                    for row in target.items
+                                    if row.logical_id == config_id
+                                ]
+                                meta = item.metadata
+                                kinds.add(
+                                    "declared_instance_lock"
+                                    if type(owners.get(item.owner)) is _InstanceLock
+                                    and len(parts) == 3
+                                    and parts[0] == "profile"
+                                    and parts[1]
+                                    and parts[2] == item.owner
+                                    and path.name == ".instance.lock"
+                                    and item.status == "intentionally_excluded"
+                                    and item.dependencies == (config_id,)
+                                    and len(configs) == 1
+                                    and configs[0].owner == "config"
+                                    and configs[0].status == "included"
+                                    and configs[0].path is not None
+                                    and meta is not None
+                                    and (
+                                        meta.root_id,
+                                        meta.parent_id,
+                                        meta.relative_path,
+                                        meta.kind,
+                                        meta.policy,
+                                    )
+                                    == (item.logical_id, None, "", "file", "private")
+                                    else "ambiguous"
+                                )
+                                continue
+                            else:
+                                adapter = owners.get(item.owner)
+                                policy = (
+                                    _item_validator(adapter, item).schema_policy()
+                                    if adapter
+                                    else None
+                                )
+                                if (
+                                    item.status != "included"
+                                    or policy is None
+                                    or not policy.schema_sql
+                                ):
+                                    kinds.add("other")
+                                    continue
+                                main = item
+                                kinds.add("declared_main")
+                            mains.append(main)
+                        if len(mains) > 1 and not all(
+                            row.path == mains[0].path
+                            and row.shared_group
+                            and row.shared_group == mains[0].shared_group
+                            for row in mains
+                        ):
+                            kinds.add("ambiguous")
+                        optional["target_kind"] = (
+                            next(iter(kinds))
+                            if len(kinds) == 1
+                            else "ambiguous"
+                            if kinds
+                            else "other"
+                        )
+                    break
+                trace = trace.tb_next
+        except Exception:  # noqa: BLE001 - optional classification cannot hide the failure.
+            optional.pop("target_kind", None)
         record = _native_failure_metadata(
-            {**(metadata or {}), **_error_metadata(error), "issue": issue_code(error)}
+            {**optional, **_error_metadata(error), "issue": issue_code(error)}
         )
         _write_json(root / f"{os.getpid()}-{uuid4().hex}.json", record)
     except Exception:  # noqa: BLE001 - preserve the original private failure.
