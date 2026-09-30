@@ -13,8 +13,9 @@ than unmounted. The default ``--phase warm`` measures exactly that visit.
 ``--phase production`` / ``--phase controls`` are TASK-19505's composition
 A/Bs (eager vs deferred Context rail; empty Inspector/Context controls, the
 evidence behind ADR-078). Their variants patch ``compose``, which only runs
-on a COLD mount; on the reusable route every measured visit is warm, so their
-variants now measure the same resume and differ only by noise.
+on a COLD mount, so those phases evict the cached Console before every
+measured visit (``_evict_reusable_console``): each sample is a cold mount
+and the variants measure their own compositions.
 """
 
 from __future__ import annotations
@@ -377,6 +378,25 @@ async def _measure_navigation(
     }
 
 
+def _evict_reusable_console(app: Any) -> None:
+    """Drop the cached Console so the next visit mounts it cold.
+
+    The composition A/B phases patch ``compose``, which runs only when a
+    ``ChatScreen`` is built and mounted. On the reusable route (TASK-31520)
+    every later visit resumes the one cached instance, so each measured
+    visit first disposes it the way ``app_navigation`` disposes a stale
+    reusable screen: out of the cache, uninstalled, removed. Called while
+    Library is showing, so the Console is off the screen stack.
+    """
+    cache = getattr(app, "_reusable_screen_instances", None) or {}
+    entry = cache.pop("chat", None)
+    if entry is None:
+        return
+    _, screen = entry
+    app.uninstall_screen(screen)
+    screen.remove()
+
+
 async def _run(iterations: int, *, phase: str) -> dict[str, Any]:
     from Tests.UI.app_factory import (
         _build_test_app,
@@ -395,17 +415,20 @@ async def _run(iterations: int, *, phase: str) -> dict[str, Any]:
         async with app.run_test(size=(170, 48)) as pilot:
             for _ in range(20):
                 await pilot.pause(0.05)
-            # Visit Console once before measuring so every sample is a warm
-            # resume of the reused route, whatever the configured default
-            # tab: a first visit would construct and mount it (cold).
-            await _navigate(app, "chat")
-            for _ in range(5):
-                await pilot.pause(0.05)
+            if phase == "warm":
+                # Visit Console once before measuring so every sample is a warm
+                # resume of the reused route, whatever the configured default
+                # tab: a first visit would construct and mount it (cold).
+                await _navigate(app, "chat")
+                for _ in range(5):
+                    await pilot.pause(0.05)
             await _navigate(app, "library")
             for iteration in range(iterations):
                 offset = iteration % len(variants)
                 variant_order = variants[offset:] + variants[:offset]
                 for variant in variant_order:
+                    if phase != "warm":
+                        _evict_reusable_console(app)
                     sample = await _measure_navigation(
                         app,
                         pilot,

@@ -5490,6 +5490,15 @@ async def run_scripted_mounted_sample(
                 resolved_destination=resolve_console_destination(resolution),
             )
 
+        def cached_context_window(self, settings: Any) -> Any:
+            """The production gateway's pure first-paint fallback (TASK-33372)."""
+            from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+            return resolve_context_window("llama_cpp", settings.model or "")
+
+        async def resolve_context_window(self, settings: Any) -> Any:
+            return self.cached_context_window(settings)
+
         async def stream_chat(self, _resolution: Any, _messages: Any, **_kwargs: Any):
             self.calls += 1
             call = self.calls
