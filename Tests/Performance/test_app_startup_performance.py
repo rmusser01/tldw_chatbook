@@ -705,7 +705,14 @@ async def test_deferred_migration_rechecks_disabled_policy_between_units() -> No
     assert migration.calls == 1
 
 
+# bootstrap_profile (TASK-33260): these build real config/DB owners, whose
+# reads go through the ADR-126 config admission. Under the per-test env
+# redirect the admission fails closed with
+# RecoveryRequired("raw_source_selection_changed") before the test body runs,
+# which masked every assertion below; keeping the collection-time profile lets
+# them report real results.
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_ui_ready_before_nonessential_startup_services_finish(
     monkeypatch,
 ) -> None:
@@ -777,6 +784,7 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
     """TTS event paths can initialize the handler lazily after startup."""
 
@@ -909,6 +917,7 @@ async def test_tts_ui_loop_guard_settles_owner_when_its_checks_fail(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_stts_handler_initializes_on_first_use(monkeypatch) -> None:
     """S/TT/S command paths can initialize the handler lazily after startup."""
 

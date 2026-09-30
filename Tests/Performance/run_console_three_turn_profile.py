@@ -5490,6 +5490,33 @@ async def run_scripted_mounted_sample(
                 resolved_destination=resolve_console_destination(resolution),
             )
 
+        def cached_context_window(self, settings: Any) -> Any:
+            """Return the production gateway's pure first-paint fallback.
+
+            TASK-33372: the Console estimates context through this before any
+            serving metadata exists; the scripted provider has none.
+
+            Args:
+                settings: Console session settings; only ``model`` is read.
+
+            Returns:
+                The ``ContextWindowResolution`` for the scripted llama.cpp model.
+            """
+            from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+            return resolve_context_window("llama_cpp", settings.model or "")
+
+        async def resolve_context_window(self, settings: Any) -> Any:
+            """Return the same fallback; the scripted server has no metadata.
+
+            Args:
+                settings: Console session settings; only ``model`` is read.
+
+            Returns:
+                The ``ContextWindowResolution`` from ``cached_context_window``.
+            """
+            return self.cached_context_window(settings)
+
         async def stream_chat(self, _resolution: Any, _messages: Any, **_kwargs: Any):
             self.calls += 1
             call = self.calls

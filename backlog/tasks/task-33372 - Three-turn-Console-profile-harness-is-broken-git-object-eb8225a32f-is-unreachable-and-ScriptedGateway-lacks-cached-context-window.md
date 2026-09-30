@@ -32,7 +32,7 @@ Separately, test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write f
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+2026-09-29 (via PR #2888, Qodo review): `ScriptedGateway` now implements `cached_context_window` and `resolve_context_window`, using the production gateway's pure first-paint fallback, so the mounted sample no longer raises `AttributeError`. It still fails later: "mounted sample did not settle before timeout". MCP `compose_catalog` fails in the harness, so the scripted `load_tools` -> `fs_write` turn never completes. AC #2 therefore stays open, on that MCP harness drift, and AC #1 (the unreachable commit eb8225a32f) is untouched.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
