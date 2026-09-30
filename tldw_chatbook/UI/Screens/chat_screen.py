@@ -22367,15 +22367,12 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
-            setup_blocked_reason=(
-                setup_blocked_reason
-                or attachment_blocked_reason
-                or (
-                    queue_presentation.send_tooltip
-                    if queue_presentation is not None
-                    and not queue_presentation.send_enabled
-                    else ""
-                )
+            setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
+            queue_blocked_reason=(
+                queue_presentation.send_tooltip
+                if queue_presentation is not None
+                and not queue_presentation.send_enabled
+                else ""
             ),
             ephemeral=self._console_active_session_is_ephemeral(),
             send_label=(
@@ -22388,7 +22385,7 @@ class ChatScreen(BaseAppScreen):
             # makes the composer name the wake instead.
             wake_turn_active=self._fleet._console_wake_turn_active(active_session_id),
         )
-        run_controls.sync_stop_affordances(self, composer)
+        run_controls.sync_stop_affordances(self)
         composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy
         # (console_composer_bar.py L303); apply the pending-attachment label
@@ -22452,13 +22449,12 @@ class ChatScreen(BaseAppScreen):
         """Return True when key or paste input belongs to the Console composer."""
         if composer.collapsed:
             return False
+        # TASK-33622.2: a focused composer BUTTON is captured too, and
+        # `route_composer_control_key` lets it own Enter/Space and swallows
+        # typing -- one rule for every button (TASK-15704's id exemptions
+        # swallowed Space on "Composer ▾"; its collapsed-strip ids are
+        # covered by the early return above).
         focused = self.app.focused
-        if getattr(focused, "id", None) in {
-            "console-composer-collapse",
-            "console-composer-expand",
-            "console-collapsed-stop-generation",
-        }:
-            return False
         return focused is None or self._is_descendant_or_self(focused, composer)
 
     @on(Resize)

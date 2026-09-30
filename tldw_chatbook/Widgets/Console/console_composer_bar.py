@@ -27,6 +27,7 @@ from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
@@ -36,8 +37,10 @@ from textual.events import (
     DescendantBlur,
     DescendantFocus,
     Enter,
+    Hide,
     Key,
     Leave,
+    MouseDown,
     MouseUp,
 )
 from textual.geometry import Region
@@ -45,11 +48,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
-from ...Chat.console_display_state import (
-    SEND_LABEL_PREPARING,
-    SEND_LABEL_QUEUE_FULL,
-    build_console_disabled_reason,
-)
+from ...Chat.console_display_state import build_console_disabled_reason
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
 from ...Chat.console_voice_input import (
     STATE_FINISHING,
@@ -413,6 +412,60 @@ def send_button_width_for(label: str) -> int:
     return max(6, max(widest, cell_len(label)) + 2)
 
 
+class ComposerControlButton(Button):
+    """A composer-bar button that never keeps text focus by accident.
+
+    TASK-33622.2 lets a focused composer button own its keys: Enter and Space
+    press it, and typing is swallowed so it never edits a draft that lacks
+    focus. That makes where focus rests after a press load-bearing. Textual
+    focuses a Button on mouse-down, and hands a disabled or hidden focused
+    Button's focus to a visible sibling -- live, a click on Send left focus
+    on Dictate, the next prompt vanished and its first Space started
+    dictation (TASK-33625.1 review). So a composer button:
+
+    * is pressed by a mouse click without taking focus; the click puts focus
+      in the draft, where the next keystroke belongs;
+    * hands focus to the draft, not a sibling, when it is disabled while
+      focused (Send once it dispatches, Stop's "Stopping…", Dictate while
+      transcribing) or hidden (Stop/Redirect when the run ends, ✕ once the
+      attachment is cleared);
+    * answers Space as well as Enter (the web/ARIA button convention; Textual
+      binds only Enter), on the collapsed strip too.
+    """
+
+    FOCUS_ON_CLICK = False
+    BINDINGS = [Binding("space", "press", "Press button", show=False)]
+
+    def _owning_composer(self) -> ConsoleComposerBar | None:
+        for node in self.ancestors:
+            if isinstance(node, ConsoleComposerBar):
+                return node
+        return None
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """A click presses (see ``_on_click``) but the draft keeps focus."""
+        composer = self._owning_composer()
+        if composer is not None:
+            composer.focus_draft_from(None)
+
+    def watch_disabled(self, disabled: bool) -> None:
+        """Hand a focused button's focus to the draft before Textual blurs it."""
+        composer = self._owning_composer() if disabled else None
+        if composer is not None:
+            composer.focus_draft_from(self)
+        super().watch_disabled(disabled)
+
+    def on_hide(self, event: Hide) -> None:
+        """Hand a hidden button's focus to the draft.
+
+        Dispatched before ``Widget._on_hide`` (subclass first), whose blur
+        is then a no-op: focus has already moved.
+        """
+        composer = self._owning_composer()
+        if composer is not None:
+            composer.focus_draft_from(self)
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -773,7 +826,7 @@ class ConsoleComposerBar(Horizontal):
     @staticmethod
     def _bounded_button(label: str, *, width: int, **kwargs: Any) -> Button:
         kwargs.setdefault("compact", True)
-        button = Button(label, **kwargs)
+        button = ComposerControlButton(label, **kwargs)
         button.remove_class(*(name for name in button.classes if name.startswith("w-")))
         button.set_styles(width=None)
         button.add_class(f"w-{width}")
@@ -887,6 +940,23 @@ class ConsoleComposerBar(Horizontal):
             return self.screen.focused is self
         except NoScreen:
             return False
+
+    def focus_draft_from(self, control: Widget | None) -> None:
+        """Focus the draft -- only off ``control`` when one is given.
+
+        Synchronous (``Screen.set_focus``, not the deferred ``focus()``), so
+        it lands before Textual would hand a disabled or hidden control's
+        focus to a sibling (`ComposerControlButton`). A collapsed composer
+        (``can_focus`` False) has no draft to focus and leaves focus alone.
+        """
+        try:
+            screen = self.screen
+        except NoScreen:
+            return
+        if control is not None and screen.focused is not control:
+            return
+        if self.can_focus:
+            screen.set_focus(self, scroll_visible=False)
 
     def draft_text(self) -> str:
         """Return the canonical native Console draft payload.
@@ -1942,8 +2012,10 @@ class ConsoleComposerBar(Horizontal):
             send_blocked=self._send_blocked,
             dispatch_recovery_blocked=self._dispatch_recovery_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
+            queue_blocked_reason=self._queue_blocked_reason,
             ephemeral=self._ephemeral,
             send_label=self._send_label,
+            wake_turn_active=self._wake_turn_active,
         )
 
     def _send_reason_width_cap(self) -> int:
@@ -2215,6 +2287,7 @@ class ConsoleComposerBar(Horizontal):
         send_label: str = "Send",
         wake_turn_active: bool = False,
         dispatch_recovery_blocked: bool = False,
+        queue_blocked_reason: str = "",
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -2224,6 +2297,10 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
             setup_blocked_reason: Provider/model setup copy when setup blocks Send.
+            queue_blocked_reason: The prompt queue's own disabled tooltip
+                ("Preparing...", "Queue full"). Kept apart from setup copy
+                (TASK-33625.1 review) so a queue state never masks a real
+                setup/attachment blocker, nor links to the setup wizard.
             dispatch_recovery_blocked: An unresolved response needs explicit recovery.
             ephemeral: Whether the active session is temporary, which blocks
                 Save Chatbook (a second door onto the same write the
@@ -2239,12 +2316,16 @@ class ConsoleComposerBar(Horizontal):
         can_save_chatbook = bool(can_save_chatbook)
         send_blocked = bool(send_blocked)
         setup_blocked_reason = setup_blocked_reason.strip()
+        queue_blocked_reason = queue_blocked_reason.strip()
         ephemeral = bool(ephemeral)
         setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
         self._run_active = run_active
         self._send_blocked = send_blocked
         self._dispatch_recovery_blocked = bool(dispatch_recovery_blocked)
         self._setup_blocked_reason = setup_blocked_reason
+        # Replayed by `_sync_current_action_state` (keystrokes, resize).
+        self._queue_blocked_reason = queue_blocked_reason
+        self._wake_turn_active = bool(wake_turn_active)
         self._can_save_chatbook = can_save_chatbook
         self._ephemeral = ephemeral
         self._sync_collapsed_presentation()
@@ -2318,8 +2399,8 @@ class ConsoleComposerBar(Horizontal):
                 "A background sub-agent result is being delivered. "
                 "Wait for it to finish."
             )
-        elif effective_send_blocked and setup_blocked_reason:
-            send_button.tooltip = setup_blocked_reason
+        elif effective_send_blocked and (setup_blocked_reason or queue_blocked_reason):
+            send_button.tooltip = setup_blocked_reason or queue_blocked_reason
         elif effective_send_blocked:
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
@@ -2340,18 +2421,12 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
         send_button.set_class(effective_send_blocked, "console-send-blocked")
-        # TASK-33625.1: a mid-run queue state ("Preparing...", "Queue full")
-        # rides `setup_blocked_reason` too, but it is not a setup problem --
-        # the reason must not become a link into the setup wizard.
-        queue_state_blocked = normalized_send_label in {
-            SEND_LABEL_PREPARING,
-            SEND_LABEL_QUEUE_FULL,
-        }
+        # TASK-33625.1: a queue state arrives as `queue_blocked_reason`, never
+        # as setup copy, so it cannot become a link into the setup wizard.
         self.set_class(
             effective_send_blocked
             and bool(setup_blocked_reason)
             and not wake_turn_active
-            and not queue_state_blocked
             # Recovery is resolved at its own controls, not the setup wizard.
             and not dispatch_recovery_blocked,
             "console-composer-setup-blocked",
@@ -2361,6 +2436,7 @@ class ConsoleComposerBar(Horizontal):
             has_draft=has_draft,
             send_blocked=effective_send_blocked,
             setup_blocked_reason=setup_blocked_reason,
+            queue_blocked_reason=queue_blocked_reason,
             wake_turn_active=wake_turn_active,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
             send_label=normalized_send_label,
@@ -2401,16 +2477,12 @@ class ConsoleComposerBar(Horizontal):
             redirect_button.styles.display = (
                 "block" if redirect_visible else "none"
             )
-        # A control that just hid must not keep focus: Textual leaves focus on
-        # a display:none widget, so the next Enter would press a Stop nobody
-        # can see. Hand focus back to the draft instead.
-        hidden_with_focus = (not run_active and stop_button.has_focus) or (
-            redirect_button is not None
-            and not redirect_visible
-            and redirect_button.has_focus
-        )
-        if hidden_with_focus and self.can_focus:
-            self.focus()
+        # A control that just hid must not keep focus, nor pass it to a
+        # sibling: the draft takes it now, not when its Hide event arrives.
+        if not run_active:
+            self.focus_draft_from(stop_button)
+        if redirect_button is not None and not redirect_visible:
+            self.focus_draft_from(redirect_button)
 
         # Attach and Save Chatbook no longer live in this row -- their
         # enabled/disabled presentation (including the temporary-chat block
@@ -3768,8 +3840,11 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_visible = True
             draft = self._display_draft_text()
             width = self._draft_render_width()
+            # The caret cell is reserved while focus is anywhere in the
+            # composer, not only on the draft (which alone PAINTS the caret),
+            # so Tab onto a composer button never resizes the bar.
             row_count = self._visible_draft_row_count(
-                draft, width, reserve_trailing_cell=self.draft_has_focus
+                draft, width, reserve_trailing_cell=self.has_focus_within
             )
             renderable = self._current_visible_draft_renderable(draft, width)
             self.query_one("#console-command-visible-text", Static).update(renderable)
@@ -3909,20 +3984,16 @@ class ConsoleComposerBar(Horizontal):
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
 
-    @on(Button.Pressed, "#console-stop-generation")
-    def _return_focus_from_pressed_stop(self, event: Button.Pressed) -> None:
-        """Move focus from a pressed Stop to the draft, synchronously.
+    @on(Button.Pressed, "#console-redirect-generation")
+    def _return_focus_from_pressed_redirect(self, event: Button.Pressed) -> None:
+        """Redirect submits the draft as Send does: the next key is the draft's.
 
-        TASK-33625.1: the screen's Stop handler disables the button to
-        acknowledge the press ("Stopping…"), and Textual then blurs it and
-        hands focus to a NEIGHBOUR -- live, that was Dictate, so the next
-        prompt the user typed was swallowed and its Enter started dictation.
-        This handler runs before the Pressed message bubbles to the screen,
-        so focus is already on the draft when Stop disables itself. Not
-        stopped: the screen still owns what the press does.
+        Send, Stop and ✕ hand focus back by disabling or hiding themselves
+        (`ComposerControlButton`); Redirect stays enabled mid-run, so it
+        hands focus back on the press -- a refusal ("type your correction")
+        also wants the draft. Not stopped: the screen owns what it does.
         """
-        if self.can_focus and self.screen.focused is event.button:
-            self.screen.set_focus(self)
+        self.focus_draft_from(event.button)
 
     @on(Button.Pressed, "#console-send-message")
     def _stash_visible_send_draft(self, event: Button.Pressed) -> None:
@@ -6110,6 +6181,11 @@ class ConsoleComposerBar(Horizontal):
     #: CLASS attribute for the same hand-built-fixture reason as
     #: `_voice_status_last` below.
     _redirect_budgeted: bool = False
+    #: Last `sync_action_state` queue copy and wake flag, replayed by
+    #: `_sync_current_action_state` (it used to drop the wake flag on every
+    #: keystroke and resize). CLASS attributes for the same reason.
+    _queue_blocked_reason: str = ""
+    _wake_turn_active: bool = False
 
     #: TASK-24620: last `set_voice_status` inputs, replayed from
     #: `on_resize` so the chip's row-width budget is re-derived on resize. A

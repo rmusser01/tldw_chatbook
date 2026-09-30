@@ -41,7 +41,7 @@ task...".
   Prompts, Attach, Save as Chatbook, Generate Image/Caption, Impersonate), the draft area,
   and the Send / Dictate buttons. While a run is active, Send reads **Queue**
   and **Stop** appears at the right end of the row; at widths that leave the
-  draft room (roughly 100 columns and up) **Redirect** sits just before it.
+  draft room (about 150 columns and up) **Redirect** sits just before it.
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
@@ -195,6 +195,9 @@ tool, code, and link styling keeps priority over immersive coloring.
   actions menu with its first item focused — and typing does nothing until
   focus is back in the draft (**Esc**, or click the draft). Only the draft
   shows a caret, so a focused button is the one focus mark on screen.
+  Pressing **Send**, **Queue**, **Redirect**, **Stop** or **✕** puts focus
+  back in the draft, ready for your next message, and clicking any composer
+  button with the mouse presses it without taking focus from the draft.
 - The Composer menu and its menu-only actions are also in the command palette
   (**Ctrl+P**): **Console: Open composer menu**, **Attach file…**, **Save as
   Chatbook**, **Impersonate**, and **Improve current draft…**. An entry the

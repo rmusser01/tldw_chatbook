@@ -34,7 +34,10 @@ from textual.widgets import Button, OptionList, Static
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_dictation import FakeDictationSession
-from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
+from Tests.UI.test_console_native_chat_flow import (
+    _select_llamacpp_console,
+    _staged_image_attachment,
+)
 from Tests.UI.test_console_regenerate_feedback import GatedGateway
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -79,6 +82,23 @@ async def _wait_for(pilot, predicate, what, timeout: float = 5.0) -> None:
             return
         await pilot.pause(0.05)
     assert predicate(), what() if callable(what) else what
+
+
+async def _settle(pilot, predicate, timeout: float = 5.0) -> None:
+    """Poll ``predicate`` WITHOUT asserting: a wait that never decides.
+
+    For layout settles that hold on pre-fix code as well, so the assertions
+    that follow -- not the wait -- give the verdict.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and not predicate():
+        await pilot.pause(0.05)
+
+
+async def _type(pilot, text: str) -> None:
+    """Type ``text`` key by key through the real key routing."""
+    for character in text:
+        await pilot.press("space" if character == " " else character)
 
 
 async def _mounted(host, pilot):
@@ -184,6 +204,17 @@ def _draft_render(composer) -> str:
     return composer.query_one("#console-command-visible-text", Static).renderable.plain
 
 
+def _fake_dictation(monkeypatch) -> FakeDictationSession:
+    """Swap the real microphone session for a recording fake."""
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    return fake
+
+
 # ---------------------------------------------------------------------------
 # TASK-33625.1 AC#1/#5: Stop (and Redirect) are painted whole while running
 # ---------------------------------------------------------------------------
@@ -205,12 +236,17 @@ async def test_running_stop_is_painted_whole_inside_the_action_row(size, request
             actions = composer.query_one("#console-composer-actions")
             stop = composer.query_one("#console-stop-generation", Button)
             screen_region = host.screen.region
-            # Neutral settle: the row's laid-out width has caught up with its
-            # budget (whatever that budget is) before geometry is read.
-            await _wait_for(
+            # Neutral settle: Stop has been through a layout pass and the
+            # row's laid-out width has caught up with its budget (whatever
+            # that budget is) before geometry is read. Review: settling on
+            # the row alone once read Stop as Region(0, 0, 0, 0) -- the row
+            # already sat at its budget before `display: block` was laid
+            # out. Both hold on pre-fix code too (Stop laid out at x=83..238,
+            # off-screen), so this waits; the assertions below decide.
+            await _settle(
                 pilot,
-                lambda: actions.region.width == actions.styles.width.value,
-                "the action row never laid out at its budget",
+                lambda: stop.region.width > 0
+                and actions.region.width == actions.styles.width.value,
             )
 
             assert stop.focusable, "a displayed Stop must be keyboard-reachable"
@@ -528,12 +564,7 @@ async def test_enter_on_each_idle_composer_button_runs_its_own_action(request):
 async def test_enter_on_focused_dictate_starts_dictation_without_sending(
     request, monkeypatch
 ):
-    fake = FakeDictationSession()
-    monkeypatch.setattr(
-        dictation_module.ConsoleDictationController,
-        "_create_console_dictation_session",
-        lambda self: fake,
-    )
+    fake = _fake_dictation(monkeypatch)
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
@@ -569,7 +600,17 @@ async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request
                     session_id
                 ).total_count
 
-            notices = _record_notices(console, host)
+            # Pass-through spy on the controller call Redirect makes: proves
+            # Redirect itself ran with the draft (review nit -- a toast match
+            # also passed on the handler's refusal copy).
+            redirects: list[str] = []
+            original_redirect = controller.redirect_active_run
+
+            def spy_redirect(text):
+                redirects.append(text)
+                return original_redirect(text)
+
+            controller.redirect_active_run = spy_redirect
 
             # Redirect: its own action (a redirect attempt), never a queue.
             composer.load_draft("correct course")
@@ -582,11 +623,20 @@ async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request
             await pilot.press("enter")
             await _wait_for(
                 pilot,
-                lambda: any("redirect" in notice.lower() for notice in notices),
-                "Enter on the focused Redirect did not run Redirect",
+                lambda: redirects == ["correct course"],
+                lambda: f"Enter on the focused Redirect did not run Redirect ({redirects})",
             )
             assert sends == [], "Enter on Redirect went down the send path"
             assert queued() == 0, "Enter on Redirect queued the draft instead"
+            # Redirect submits the draft like Send does: the next keystroke
+            # belongs to the draft again, not to a still-focused Redirect.
+            await _wait_for(
+                pilot,
+                lambda: console.app.focused is composer,
+                lambda: f"focus stayed on {console.app.focused!r} after Redirect",
+            )
+            await _type(pilot, " now")
+            assert composer.draft_text().endswith(" now"), composer.draft_text()
 
             # Queue: the Send button mid-run -- its own action queues.
             send = composer.query_one("#console-send-message", Button)
@@ -657,8 +707,12 @@ async def test_keys_on_a_focused_button_never_edit_the_draft_or_show_its_caret(
         console, composer = await _mounted(host, pilot)
         composer.load_draft("hello")
         composer.focus()
-        await pilot.pause()
-        assert ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer)
+        # Polled: the caret blinks, so one read can land on its off phase.
+        await _wait_for(
+            pilot,
+            lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
+            "the focused draft never painted its caret",
+        )
 
         menu = composer.query_one("#console-composer-menu", Button)
         menu.focus()
@@ -683,6 +737,148 @@ async def test_keys_on_a_focused_button_never_edit_the_draft_or_show_its_caret(
         assert composer.draft_text() == "hello"
         await pilot.press("escape")
         await pilot.pause()
+
+        # ...on every composer button, "Composer ▾" included (the doc lists
+        # it; review: its TASK-15704 capture exemption swallowed Space).
+        composer.query_one("#console-composer-collapse", Button).focus()
+        await pilot.pause()
+        await pilot.press("space")
+        await _wait_for(
+            pilot, lambda: composer.collapsed, "Space on Composer ▾ did not collapse"
+        )
+        assert composer.draft_text() == "hello"
+        gateway.release.set()
+
+
+# ---------------------------------------------------------------------------
+# Review blocker: pressing or clicking a composer button never strands focus
+# on a button, where typing is (rightly) swallowed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["click", "enter"])
+@private_profile_test
+async def test_after_send_the_next_prompt_is_typed_into_the_draft(
+    how, request, monkeypatch
+):
+    """Send disables itself once it dispatches. Textual then handed focus to
+    its neighbour, Dictate, so the next prompt was swallowed and its first
+    Space (or its Enter) started dictation -- after a mouse click on Send as
+    much as after Enter on a Tab-focused Send."""
+    fake = _fake_dictation(monkeypatch)
+    gateway, host = _held_run_host()
+    gateway.release.set()  # runs finish at once; this test is about focus
+    async with host.run_test(size=(120, 40)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        store = console._ensure_console_chat_store()
+        composer.focus()
+        composer.load_draft("first prompt")
+        await pilot.pause()
+        send = composer.query_one("#console-send-message", Button)
+        if how == "click":
+            await pilot.click("#console-send-message")
+        else:
+            send.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+        await _wait_for(
+            pilot, lambda: _user_turns(store) == 1, "no first turn", timeout=20
+        )
+        # The run has fully finished (a turn is recorded before its run
+        # starts, so `run_active` alone can read False too early).
+        await _wait_for(
+            pilot,
+            lambda: any(
+                message.role is ConsoleMessageRole.ASSISTANT
+                and "final-chunk" in message.content
+                for message in store.messages_for_session(store.active_session_id)
+            )
+            and not composer.run_active,
+            "the first run never finished",
+            timeout=20,
+        )
+        await pilot.pause()
+
+        await _type(pilot, "second prompt")
+        assert composer.draft_text() == "second prompt", (
+            f"the next prompt was swallowed (focus {console.app.focused!r})"
+        )
+        assert fake.start_calls == 0, "a keystroke of the next prompt dictated"
+        # Enter sends it (the send path is entered -- this harness does not
+        # complete a second turn even for two plain draft sends).
+        sends = _spy_sends(console)
+        await pilot.press("enter")
+        await _wait_for(pilot, lambda: len(sends) == 1, "Enter did not send it")
+        assert fake.start_calls == 0, "Enter on the next prompt started dictation"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clicking_composer_buttons_keeps_typing_in_the_draft(
+    request, monkeypatch
+):
+    """A mouse click presses a composer button without focusing it."""
+    fake = _fake_dictation(monkeypatch)
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        composer.focus()
+        composer.load_draft("hello")
+        await pilot.pause()
+
+        await pilot.click("#console-composer-menu")
+        await _wait_for(
+            pilot,
+            lambda: isinstance(host.screen_stack[-1], ConsoleComposerMenuModal),
+            "clicking Menu did not open the Composer actions menu",
+        )
+        await pilot.press("escape")
+        await _wait_for(
+            pilot, lambda: host.screen_stack[-1] is console, "menu did not close"
+        )
+        await _type(pilot, "ab")
+        assert composer.draft_text() == "helloab", (
+            f"typing after the menu was lost (focus {console.app.focused!r})"
+        )
+
+        await pilot.click("#console-dictation")
+        await _wait_for(pilot, lambda: fake.start_calls == 1, "Dictate click ignored")
+        assert console.app.focused is composer, console.app.focused
+        await _type(pilot, "cd")
+        assert composer.draft_text() == "helloabcd"
+        gateway.release.set()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_enter_on_clear_attachment_returns_focus_to_the_draft(request):
+    """✕ hides itself once the attachment is gone; its focus must land in the
+    draft, not on whichever sibling Textual picks (Send, then swallowed)."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+        console._sync_console_control_bar()
+        clear = composer.query_one("#console-clear-attachment", Button)
+        await _wait_for(pilot, lambda: clear.display, "✕ never appeared")
+        clear.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for(
+            pilot,
+            lambda: store.pending_attachment(session.id) is None,
+            "Enter on ✕ did not clear the attachment",
+        )
+        await _wait_for(
+            pilot,
+            lambda: console.app.focused is composer,
+            lambda: f"focus landed on {console.app.focused!r} after ✕",
+        )
+        await _type(pilot, "ab")
+        assert composer.draft_text() == "ab"
         gateway.release.set()
 
 
@@ -770,14 +966,16 @@ def test_disabled_reason_names_the_queue_state_not_send_or_setup():
         action_id="send",
         has_draft=True,
         send_blocked=True,
-        setup_blocked_reason="Wait for this turn to be accepted before queueing a message.",
+        queue_blocked_reason=(
+            "Wait for this turn to be accepted before queueing a message."
+        ),
         send_label=SEND_LABEL_PREPARING,
     )
     full = build_console_disabled_reason(
         action_id="send",
         has_draft=True,
         send_blocked=True,
-        setup_blocked_reason="10/10 · Manage to make room",
+        queue_blocked_reason="10/10 · Manage to make room",
         send_label=SEND_LABEL_QUEUE_FULL,
     )
     empty_queue = build_console_disabled_reason(
@@ -794,6 +992,18 @@ def test_disabled_reason_names_the_queue_state_not_send_or_setup():
         build_console_disabled_reason(action_id="send", has_draft=False, send_blocked=False)
         == "Send disabled: type a message"
     )
+    # Review: a real setup/attachment blocker outranks the queue state -- a
+    # "Preparing..." label must not mask it behind queue copy.
+    for label in (SEND_LABEL_PREPARING, SEND_LABEL_QUEUE_FULL):
+        masked = build_console_disabled_reason(
+            action_id="send",
+            has_draft=True,
+            send_blocked=True,
+            setup_blocked_reason="Choose a model before sending.",
+            queue_blocked_reason="Wait for this turn to be accepted.",
+            send_label=label,
+        )
+        assert masked == "Send blocked — choose a model to continue", masked
 
 
 def test_queue_state_labels_match_the_prompt_queue_presentation():

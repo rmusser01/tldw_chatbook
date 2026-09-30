@@ -255,6 +255,7 @@ def build_console_disabled_reason(
     wake_turn_active: bool = False,
     dispatch_recovery_blocked: bool = False,
     send_label: str = "Send",
+    queue_blocked_reason: str = "",
 ) -> str:
     """Return concise disabled copy for Console action controls.
 
@@ -265,17 +266,20 @@ def build_console_disabled_reason(
         setup_blocked_reason: Provider/setup blocker copy, when present.
         dispatch_recovery_blocked: An unresolved response needs explicit recovery.
         send_label: The send control's current label. TASK-33625.1: mid-run it
-            reads a queue state (``Preparing...``, ``Queue``, ``Queue full``)
-            whose tooltip rides ``setup_blocked_reason``; the copy must name
-            that state rather than provider setup, and never say "Send"
-            beside a button labelled Queue.
+            reads a queue state (``Preparing...``, ``Queue``, ``Queue full``);
+            the copy names that state rather than provider setup, and never
+            says "Send" beside a button labelled Queue.
+        queue_blocked_reason: The prompt queue's own disabled tooltip, when
+            the queue (not setup) blocks Send. A real ``setup_blocked_reason``
+            outranks it: a "Preparing..." label must not mask a setup or
+            attachment blocker (TASK-33625.1 review).
         wake_turn_active: Whether the active session is busy with a
             machine-injected auto-wake turn (task-15862 AC#3). Checked
-            before provider setup: during a wake the queue presentation's "wait to be
-            accepted" tooltip rides the ``setup_blocked_reason`` slot (a
-            chainless wake is never queue-accepted), and the setup
-            fallback below would blame provider setup for it -- the
-            observed live lie.
+            before the queue and setup copy: a chainless wake is never
+            queue-accepted, so the queue's "wait to be accepted" state
+            would name the wrong blocker (before TASK-33625.1 that copy
+            rode ``setup_blocked_reason`` and blamed provider setup -- the
+            observed live lie).
 
     Returns:
         A user-facing disabled reason, or an empty string when no conservative
@@ -288,12 +292,13 @@ def build_console_disabled_reason(
         return "Send blocked — resolve response recovery first"
     if send_blocked and wake_turn_active:
         return "Send blocked — delivering a sub-agent result"
-    if send_blocked and send_label == SEND_LABEL_PREPARING:
-        return "Queue opens once this turn is accepted"
-    if send_blocked and send_label == SEND_LABEL_QUEUE_FULL:
-        return "Queue full — manage it to make room"
 
     setup_reason = _clean(setup_blocked_reason, "")
+    queue_blocked = send_blocked and bool(queue_blocked_reason) and not setup_reason
+    if queue_blocked and send_label == SEND_LABEL_PREPARING:
+        return "Queue opens once this turn is accepted"
+    if queue_blocked and send_label == SEND_LABEL_QUEUE_FULL:
+        return "Queue full — manage it to make room"
     setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
         if setup_reason == "Checking Claude subscription credential.":

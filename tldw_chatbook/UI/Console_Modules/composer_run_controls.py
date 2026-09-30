@@ -53,7 +53,7 @@ _CONTROL_PASSTHROUGH_KEYS = frozenset(
 #: Why a menu action that the Composer menu would not even list is refused.
 _MENU_ACTION_ABSENT_COPY = {
     ACTION_IMPROVE_CURRENT_DRAFT: (
-        "Write a draft first -- Improve works on the unsent message."
+        "Write a draft first — Improve works on the unsent message."
     ),
 }
 
@@ -76,10 +76,10 @@ def route_composer_control_key(
 
     The draft surface is the composer itself; its Buttons are descendants.
     Only the draft (or nothing) is a text target. While a Button has focus:
-    Enter falls through unconsumed to the Button's own ``enter`` binding,
-    Space presses it (the web/ARIA convention, which Textual does not bind),
-    plain typing is swallowed so it can never edit a draft that lacks focus,
-    and every other key -- Tab, Escape, bindings -- keeps its normal route.
+    Enter and Space fall through unconsumed to the Button's own bindings
+    (`ComposerControlButton` binds Space, the web/ARIA convention), plain
+    typing is swallowed so it can never edit a draft that lacks focus, and
+    every other key -- Tab, Escape, bindings -- keeps its normal route.
 
     Args:
         screen: The Console screen routing the key.
@@ -97,9 +97,6 @@ def route_composer_control_key(
     if event.key in _CONTROL_PASSTHROUGH_KEYS:
         return False
     if event.key == "space" and isinstance(focused, Button):
-        focused.press()
-        event.stop()
-        event.prevent_default()
         return True
     if ConsoleComposerBar.is_text_entry_key(event):
         event.stop()
@@ -131,13 +128,17 @@ def with_stop_shortcut(
     return (STOP_RUN_FOOTER_HINT, *shortcuts)
 
 
-def sync_stop_affordances(screen: Any, composer: ConsoleComposerBar) -> None:
-    """Re-advertise the stop key when this tab's run state flips."""
+def sync_stop_affordances(screen: Any) -> None:
+    """Re-advertise the stop key when its availability flips.
 
-    running = composer.run_active
-    if getattr(screen, "_console_stop_key_advertised", False) == running:
+    Keyed on `stop_available` -- run state AND the setup-modal gate -- not
+    on run state alone, so the footer hint never outlives the key.
+    """
+
+    available = stop_available(screen)
+    if getattr(screen, "_console_stop_key_advertised", False) == available:
         return
-    screen._console_stop_key_advertised = running
+    screen._console_stop_key_advertised = available
     screen._register_console_footer_shortcuts()
     screen.refresh_bindings()
 
@@ -147,16 +148,8 @@ async def stop_this_tab_run(screen: Any) -> None:
 
     if screen._console_setup_modal_blocking():
         return
-    composer = _composer(screen)
-    if (
-        composer is not None
-        and composer.can_focus
-        and getattr(screen.focused, "id", None) == "console-stop-generation"
-    ):
-        # Stop disables itself to acknowledge the stop; were it still focused
-        # (a palette closing restores focus to it), Textual would hand focus
-        # to its neighbour, Dictate. Same handoff as a pressed Stop.
-        screen.set_focus(composer)
+    # A still-focused Stop (a palette closing restores focus to it) disables
+    # itself below and hands focus to the draft (`ComposerControlButton`).
     await screen._stop_console_generation_from_visible_action()
 
 
