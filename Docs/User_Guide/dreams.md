@@ -135,5 +135,11 @@ watch is checked more often than once per
   title/snippet/URL — never note bodies or Personal Context records.
 - Everything is stored locally in the Dreams SQLite database.
 
+Dreams' interest profile can also draw on [Guardian](guardian.md):
+awareness rules you explicitly opt in with *feeds Dreams* contribute their
+topic **counts** (never message text) to this profile — and crisis-flagged
+rules can never opt in, so crisis-adjacent text never becomes a search
+query.
+
 —
 *Actions/tracking verified against feat/dreams-phase-3 @ a5f7daa078 — 2026-09-28; enabling-via-Settings section added on feat/dreams-phase-4 — 2026-09-28*

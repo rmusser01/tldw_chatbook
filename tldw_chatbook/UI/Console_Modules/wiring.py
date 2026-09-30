@@ -720,6 +720,51 @@ class _DeferredConsoleTerminalController:
         return bool(await self._resolve().request_resize(columns, rows))
 
 
+def _guardian_checker_for_screen(screen: Any) -> Any:
+    """Return the Console's Guardian checker, or None while disabled.
+
+    ADR-204 contract 1 (zero footprint when off): the ``[guardian]``
+    enabled flag is read live on every dispatch; while off this returns
+    ``None`` without building anything, making the seam a no-op
+    passthrough. The checker is otherwise built once per screen and
+    cached (its own gate cache and visit id live on it); the flag is
+    still consulted first on every call so a mid-session disable stops
+    checks immediately. All Guardian imports are deferred to first real
+    use (ADR-097 boot-census ratchet).
+    """
+    checker = getattr(screen, "_guardian_checker", None)
+    from tldw_chatbook.Guardian.settings import guardian_setting
+
+    if not guardian_setting("enabled"):
+        return None
+    if checker is not None:
+        return checker
+    from tldw_chatbook.Guardian.check_pipeline import GuardianChecker
+    from tldw_chatbook.Utils.timestamps import utc_now_iso
+
+    def _append_system_row(text: str) -> Any:
+        return screen._append_native_console_system_message(text)
+
+    checker = GuardianChecker(
+        # The app-owned builder (ADR-204 contract 1): builds the store
+        # only while enabled, returns None otherwise.
+        db_getter=lambda: screen.app_instance.get_guardian_db(),
+        session_id_getter=lambda: (
+            screen._ensure_console_chat_store().active_session_id or ""
+        ),
+        notify=lambda text, severity: screen.app_instance.notify(
+            text, severity=severity
+        ),
+        append_system_row=_append_system_row,
+        now=utc_now_iso,
+    )
+    try:
+        screen._guardian_checker = checker
+    except Exception:  # noqa: BLE001 - read-only view doubles keep working
+        pass
+    return checker
+
+
 def build_console_controllers(
     screen: "ChatScreen",
     *,
@@ -2269,6 +2314,9 @@ def build_console_controllers(
             )
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
+        guardian_checker_getter=(
+            lambda: _guardian_checker_for_screen(screen)
+        ),
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),
