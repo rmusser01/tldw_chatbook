@@ -124,9 +124,9 @@ def test_registry_carries_the_provisional_allowance_comment() -> None:
 
 
 def test_fireworks_reasoning_is_proprietary() -> None:
-    """Fireworks hides reasoning behind its own API surface (response
-    format modes), so the engine treats any reasoning_content as
-    proprietary -- never surfaced, never forwarded."""
+    """Fireworks returns reasoning in ``reasoning_content`` and requires it
+    replayed on interleaved tool turns, so the engine treats it as
+    proprietary -- never surfaced, replayed only through continuations."""
     assert RECORDS_BY_KEY["fireworks"].reasoning_disposition == "proprietary"
     assert RECORDS_BY_KEY["together"].reasoning_disposition == "ignored"
     assert RECORDS_BY_KEY["cerebras"].reasoning_disposition == "ignored"

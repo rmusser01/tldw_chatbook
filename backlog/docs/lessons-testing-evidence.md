@@ -23,6 +23,33 @@ limit were unchanged. Check native handle retirement under retained app referenc
 and collect source-free before/after counts; a successful directory drain is not
 resource-lifecycle evidence.
 
+## A provider preset's own tests never touched the surfaces users set it up with
+
+**TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
+and #2896. Each came with registry, dispatch, payload, stream and config-table tests, and each
+passed the required check. None of those tests went through the surfaces a user actually
+touches. Qodo's review of #2916 found three bugs as a result:
+- **Settings could not save them.** `provider_setup_persistence._CANONICAL_PROVIDER_KEYS`
+  was a hand list holding only Databricks, so saving a changed key or endpoint for any other
+  preset failed with "Provider settings are invalid".
+- **Settings rewrote four shipped URLs.** The endpoint contract forced a `/v1` shape onto
+  every URL:
+  - DeepInfra `/v1/openai` was rejected.
+  - BytePlus, Kilo and Qianfan were saved with a bogus `/v1` appended.
+  - Azure and Databricks bare hosts were saved as `/v1` instead of `/openai/v1`.
+- **Readiness looked for the wrong env var.** When the `[api_settings]` table was absent
+  (every existing `config.toml`), readiness derived `<KEY>_API_KEY`. That missed six
+  documented variables, and `OllamaCloud`/`OpenCodeZen` normalized to unknown keys.
+
+Qodo reported only the five new keys; the other 25 presets had been broken all along.
+- **Evidence for a new preset:**
+  - `ProviderSetupDraft` accepts it.
+  - Its documented URL round-trips exactly through `build_provider_setup_mutation`.
+  - Readiness finds its documented env var with no settings table.
+- **Test shape:** write these as sweeps over `ALL_RECORDS`, derived from the registry, not
+  over the new keys. See `Tests/Chat/test_provider_setup_persistence.py` and
+  `Tests/Chat/test_provider_readiness.py`, both "every engine preset".
+
 ## Tests that read a moved file's source run outside the PR gate
 
 **TASK-33011, 2026-09-29.** Nine PRs moved code verbatim out of `app.py` into `app_*.py`
@@ -814,6 +841,20 @@ and separately prepared run afterward, while proving the old cancelled run
 does not resume. Reordering irreversible closes alone cannot establish this;
 distinguish fallible preparation/physical settlement from final destruction.
 
+## Hook launch suppression must also verify the blocking outcome
+
+**TASK-33163, 2026-09-28.** A revoke/reapprove race test proved that a queued
+hook never started its marker command, but exercised only PostToolUse. The
+same stale-target refusal used `skip=True` for PreToolUse and UserPromptSubmit,
+so those required guards disappeared and the protected action could continue.
+The expanded real-engine test failed for both blocking events after revocation
+and after disable/re-enable. Classifying stale blocking targets as refusals
+fixed all four cases while keeping stale observer targets silent.
+
+For permission races, assert both the absence of subprocess side effects and
+the protected action's denial. A no-marker assertion alone cannot establish a
+fail-closed outcome.
+
 ## Retaining a disclosure does not prove its streaming body stays mounted
 
 **TASK-32522, thinking flicker, 2026-09-12.** The existing same-widget test
@@ -1502,6 +1543,18 @@ app can restore focus by stable ID across recomposition without the pilot holdin
 a stale object. If mouse behavior is the contract, capture before/after regions
 and the widget at the old coordinate first so a compositor race is distinguished
 from a product interaction failure.
+
+**Same trap, scroll variant (TASK-33211, 2026-09-28).** The only failing test in
+84 PR Fast Lane runs was an MCP Workbench test that clicked Run with a bare
+`await pilot.click(run_button)` right after a focus scroll. Under load the
+scroll was still animating, the button moved (`y=8 -> y=5`), and the click missed
+(`pilot.click` returned False, service never called). The failure surfaced three
+steps later as "expected an error toast, got []", which pointed at the product.
+Commit 86efdced97 had already moved 20 sibling tests onto a settle-then-click
+helper that asserts `await pilot.click(...)`, but the sweep missed this one call
+inside a `try/finally`. When a harness wraps a flaky call, grep for every raw
+call site, not just the obvious ones. Always assert a pilot click's return value,
+so a miss fails at the click.
 
 ---
 
@@ -17114,3 +17167,66 @@ replay assertions remain, and an additional assertion observes the two actual
 policy phases. All 20 provider journeys and 18 private children pass. Target
 the intended fault owner rather than treating every use of a shared helper as
 the same transaction.
+
+## 2026-09-28 — Own and assert the native terminal size (TASK-33163)
+
+The Hooks integration requested 120×40 with stty and initially read that size,
+but the tool transport resized the terminal to 80×24 after yielding. A later
+interaction assertion caught the mismatch. The native QA wrapper now owns its
+child PTY, sets its dimensions directly, and asserts the application's size after
+interactions. Requested dimensions alone are not evidence of a wide-layout check.
+
+## 2026-09-29 — An isolated config is not an isolated recovery startup (TASK-33163)
+
+The current-dev native Hooks check selected a fresh `TLDW_CONFIG_PATH` but
+failed before app import with `recovery_scope_uncertain`. Tracing
+`acquire_storage()` showed that startup admission still used the existing
+HOME-based recovery authority, which could not enroll that new selector.
+The QA child now has its own private HOME as well as private config/data;
+the real app then passed both terminal sizes. Native tests of startup
+boundaries must isolate every root that participates in admission, not only
+the config file.
+
+
+## 2026-09-29 — Shared lifecycle changes need ownership-harness qualification (TASK-33163)
+
+PR #2922 passed 245 focused Hooks/UI/boot/latency cases, but required CI found
+four failures in the Console ownership group. Three bare `ChatScreen.__new__`
+or namespace fixtures bypassed controller wiring and lacked the new Hooks
+child; a resume-backoff assertion counted the additional indicator callback
+as a second retry. All four reproduced locally. Supplying the child stub and
+filtering the reconciliation callback retained the detach/claim/backoff pins;
+the exact isolated admission group then passed 123 cases with its existing xfail.
+When changing shared mount/resume/unmount paths, include their ownership tests
+in the targeted run. Count callbacks by the owner contract being tested, rather
+than assuming every scheduled background callback is its retry.
+
+## Private-profile children need an explicit coverage handoff
+
+**PR #2910, 2026-09-30.** Qodo found that the Buddy qualification file passed in private pytest children while parent coverage omitted their application execution. The helper disables plugin autoload, so parent --cov flags alone did not measure the child. A real child-only probe produced zero hits in serial and xdist parent XML reports. Conditional child pytest-cov plus unique parallel files consumed by native parent combination repaired it; both complementary child branches now reach the serial/two-worker report and standalone/--no-cov controls remain unchanged. Keep the child's output private and the parent's report threshold authoritative.
+
+Directly updating an active worker CoverageData also failed the xdist probe on coverage 7.16.0: the worker contained the child lines, but its filename hash still described its empty original collection and native combination deduplicated it. Use native parallel-file combination rather than mutating that active worker dataset. Fixed source b007dd43cf70408d88093ec983bf9702a800cb08 passed four coverage probes and all 16 Buddy cases under coverage; each real profile contributed 987 app run-context lines. Raw probes/data/XML remain local; the sanitized receipt is Docs/Reviews/artifacts/buddy-v1-32108/qodo-coverage-20260930/verification.json.
+
+## 2026-09-28 — Counting storage units in a mounted census (TASK-33260)
+
+**Never wrap `os.open` to count it.** The first cut of the Console
+storage-unit census monkeypatched `os.open` with a counting wrapper, and
+`TldwCli()` then raised `RecoveryRequired('raw_source_selection_changed')`
+-- the same signature the per-test env redirect produces, so it read as the
+known harness baseline. The real cause: `raw_participants._pinned_io_available()`
+requires `{os.open, ...} <= os.supports_dir_fd`, and a wrapper is not in that
+set, so every config admission fails closed. Count it with
+`sys.addaudithook` instead: the `open` event carries `mode=None` only for
+`os.open` (`builtins.open`/`io.open_code` pass `'r'`).
+
+**Hold the wall-clock loops before trusting a count.** With the Console's
+timers live, the same 24-key burst measured 27 config admissions on most runs
+and 49 on a loaded one: the 0.2 s trailing draft-spend refresh fires whenever
+two presses are >0.2 s apart. The 0.25 s credential poll and the 1 Hz legacy
+trace-maintenance batch likewise bill however many ticks the machine fires
+into whatever window is open. The census became exact (config admissions
+identical across 11 runs) only after stopping/capturing those loops for the
+burst and driving each one's tick directly in its own phase. Storage
+admissions and helper spawns still jitter *downward* by 1-3 (a worker that
+lands on an executor thread with a live connection skips the connect), so pin
+observed maxima, not a single run.

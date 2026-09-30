@@ -2048,3 +2048,45 @@ def test_legacy_only_google_key_lands_in_the_table_chat_with_google_reads(
     assert settings["api_settings"]["google"]["api_key"] == "google-legacy-only-key"
     # The table the handler used to read is still produced by nobody.
     assert "google_api" not in settings["api_settings"]
+
+
+# --- TASK-33511: engine presets' documented env vars without a settings table ---
+
+_ENGINE_PRESETS_FOR_ENV = [
+    record
+    for record in __import__("tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]).ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+]
+
+
+@pytest.mark.parametrize("record", _ENGINE_PRESETS_FOR_ENV, ids=lambda record: record.key)
+def test_engine_preset_documented_env_var_is_found_without_a_settings_table(record):
+    """An existing config.toml predates each new preset, so its table is
+    absent; readiness must look for the variable the engine reads (Vercel
+    AI_GATEWAY_API_KEY, BytePlus ARK_API_KEY, Azure AZURE_OPENAI_API_KEY, ...)."""
+    from tldw_chatbook.Chat.provider_readiness import (
+        PROVIDERS_REQUIRING_BASE_URL_KEYS,
+        default_api_key_env_var,
+    )
+
+    assert default_api_key_env_var(record.key) == record.api_key_env_var
+    readiness = get_provider_readiness(
+        record.config_key, {"api_settings": {}}, environ={record.api_key_env_var: "sk-env-canary-1234"}
+    )
+    if record.key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
+        assert readiness.configuration_issue == "endpoint_missing"  # key found; URL is the gap
+    else:
+        assert readiness.ready is True
+        assert readiness.api_key_source == f"env:{record.api_key_env_var}"
+
+
+@pytest.mark.parametrize("record", _ENGINE_PRESETS_FOR_ENV, ids=lambda record: record.key)
+def test_first_run_detects_engine_preset_documented_env_var(record):
+    """The first-run wizard's 'found in your environment' uses the same name."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_provider_secret_presence
+
+    presence = read_provider_secret_presence(
+        {"api_settings": {}}, {record.api_key_env_var: "sk-env-canary-1234"}, provider_key=record.key
+    )
+    assert presence.env_var == record.api_key_env_var
+    assert presence.configured is True

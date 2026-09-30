@@ -429,7 +429,11 @@ before saving.
 #### Inference clouds
 
 **Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
-**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** are
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, **MiniMax**, the
+gateways and hosts **Vercel AI Gateway**, **ZenMux**, **Kilo Gateway**,
+**SiliconFlow**, **Baseten**, **GMI Cloud**, and **Ollama Cloud**, and the
+model makers **Upstage**, **Arcee AI**, **Baidu Qianfan**, **Nous Research**,
+**Venice**, and **Meta (Muse Spark)** are
 engine presets: each one is
 a provider registry record served through the shared strict hosted-provider
 engine (the same path Databricks uses), not a per-provider adapter. There is
@@ -446,16 +450,30 @@ no API mode selector for any of them.
 | **Nebius Token Factory** | `https://api.tokenfactory.nebius.com/v1` | `NEBIUS_API_KEY` |
 | **Novita AI** | `https://api.novita.ai/openai/v1` | `NOVITA_API_KEY` |
 | **MiniMax** | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` |
+| **Vercel AI Gateway** | `https://ai-gateway.vercel.sh/v1` | `AI_GATEWAY_API_KEY` |
+| **ZenMux** | `https://zenmux.ai/api/v1` | `ZENMUX_API_KEY` |
+| **Kilo Gateway** | `https://api.kilo.ai/api/gateway` | `KILO_API_KEY` |
+| **SiliconFlow** | `https://api.siliconflow.com/v1` | `SILICONFLOW_API_KEY` |
+| **Baseten** | `https://inference.baseten.co/v1` | `BASETEN_API_KEY` |
+| **GMI Cloud** | `https://api.gmi-serving.com/v1` | `GMI_API_KEY` |
+| **Ollama Cloud** | `https://ollama.com/v1` | `OLLAMA_API_KEY` |
+| **Upstage** | `https://api.upstage.ai/v1` | `UPSTAGE_API_KEY` |
+| **Arcee AI** | `https://api.arcee.ai/api/v1` | `ARCEE_API_KEY` |
+| **Baidu Qianfan** | `https://qianfan.baidubce.com/v2` | `QIANFAN_API_KEY` |
+| **Nous Research** | `https://inference-api.nousresearch.com/v1` | `NOUS_API_KEY` |
+| **Venice** | `https://api.venice.ai/api/v1` | `VENICE_API_KEY` |
+| **Meta (Muse Spark)** | `https://api.meta.ai/v1` | `META_API_KEY` |
 
-All except MiniMax are **discovery-first**: no models ship in the config
-because each account serves a different catalog. The provider model list
-starts empty — fill it with **Discover models** (an authenticated
+All except MiniMax, Upstage, and Baidu Qianfan are **discovery-first**: no
+models ship in the config because each account serves a different catalog.
+The provider model list starts empty — fill it with **Discover models** (an authenticated
 `GET {base}/models` that reuses the chat credential) or by seeding the
 provider's `[providers]` entry (for example `[providers].Together`) manually.
 Until a model is set, readiness blocks sends with the model named as the
 missing piece. **MiniMax** documents no models route, so its list ships
 seeded with the models its API reference names (`MiniMax-M3`,
-`MiniMax-M2.7`, …) and is not refreshed automatically.
+`MiniMax-M2.7`, …) and is not refreshed automatically. Upstage and
+Baidu Qianfan ship seeded the same way (see the notes below).
 
 SambaNova, NVIDIA NIM, DeepInfra, Nebius, Novita, and MiniMax were set up
 from each provider's public API documentation rather than from a recorded
@@ -464,12 +482,12 @@ a real reply fails with a protocol error instead of being passed through.
 If that happens, please report the provider and the error.
 
 Function tools are exposed for the models that support them. Reasoning
-differs by provider: Together and Cerebras have no reasoning-effort control,
-while **Fireworks keeps R1-family model reasoning private** — the server
-reasons behind its own API surface and does not stream it with the reply, so
-reasoning does not appear in transcripts (any `reasoning_content` the server
-does return gets Z.ai's private treatment: kept off the live stream). That is
-provider behavior, not the app dropping output. **NVIDIA NIM**, **Nebius**,
+differs by provider. Most of these presets take no reasoning-effort setting,
+so Console hides that control for them rather than offering a level the
+request would refuse (NVIDIA's Qwen3.5 models are the exception, below).
+**Fireworks** returns reasoning in a separate field that Chatbook keeps
+private: it stays off the live stream and out of transcripts, and is sent
+back on tool turns as Fireworks requires. **NVIDIA NIM**, **Nebius**,
 **Novita**, and **MiniMax** reasoning models get the same private treatment;
 Novita and MiniMax are asked to return reasoning separately so it never
 leaks into the reply text as `<think>` tags. **SambaNova** documents reasoning
@@ -481,8 +499,38 @@ form out of the reply text.
 show no token counts. Nebius and MiniMax treat a `content_filter` finish as
 a provider error rather than a partial reply.
 
+**NVIDIA NIM's Qwen3.5 models think on every turn by default.** Set
+**Reasoning effort** to **None** to turn thinking off; any other level leaves
+it on, because NVIDIA offers on/off rather than levels. Other NVIDIA models
+take no reasoning setting.
+
+If a reasoning model spends its whole **Max tokens** budget thinking, the
+turn stops before any reply and the error says the max-tokens limit was
+reached. Raise **Max tokens** and send again; the request is not retried
+automatically, because it would stop the same way.
+
 GitHub Models and Hyperbolic are not offered: both services retired their
 hosted inference APIs in 2026.
+
+The gateways, hosts, and model makers added from the Hermes and oh-my-pi
+comparison follow the same rules. A few notes:
+
+- **Upstage** and **Baidu Qianfan** document no models route, so their lists
+  ship seeded from each API reference and are not refreshed; enter any other
+  model as a **Custom model**. Qianfan keys are the whole `bce-v3/ALTAK-...`
+  string and require Baidu Cloud real-name verification.
+- **Vercel AI Gateway** and **ZenMux** are asked to leave reasoning out of
+  replies (their reasoning format is a list the strict parser rejects).
+- **Meta's SDKs** read `MODEL_API_KEY`; this preset reads `META_API_KEY` so an
+  unrelated key with that generic name is never sent to Meta. Set
+  `api_key_env_var = "MODEL_API_KEY"` in `[api_settings.meta]` to use Meta's
+  name. Meta accepts only automatic tool choice.
+- **Nous Research** ships with function tools off until its response format
+  is verified against a live call.
+- **SiliconFlow** China users set `api_base_url` to
+  `https://api.siliconflow.cn/v1`.
+- **Kilo Gateway** reports a failure after the reply has started as a
+  provider error rather than a cut-off reply.
 
 If Test Provider reports invalid settings, keep exactly one canonical
 `[api_settings.<provider>]` table (for example `[api_settings.together]`), set the API key (or its env var), and leave
@@ -533,6 +581,50 @@ protocol error instead of being passed through.
   finish from MiMo or TokenHub ends the reply normally.
 - MiMo and BytePlus streams may arrive without token counts; the reply still
   completes.
+
+#### Azure, W&B, Cloudflare, OpenCode Zen, and Command Code
+
+Five more presets from the Hermes and oh-my-pi comparison, set up the same
+way (public documentation, strict replies). Two of them need a URL that
+belongs to your account, like Databricks: until you set `api_base_url`, the
+provider shows as not ready and names the URL it needs.
+
+| Provider | Base URL | API key env var |
+| --- | --- | --- |
+| **Azure OpenAI** | your resource host, e.g. `https://my-resource.openai.azure.com` (`/openai/v1` is added) | `AZURE_OPENAI_API_KEY` |
+| **W&B Inference (CoreWeave)** | `https://api.inference.wandb.ai/v1` | `WANDB_API_KEY` |
+| **Cloudflare Workers AI** | `https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1` | `CLOUDFLARE_API_TOKEN` |
+| **OpenCode Zen** | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` |
+| **Command Code** | `https://api.commandcode.ai/provider/v1` | `COMMANDCODE_API_KEY` |
+
+- **Azure OpenAI** uses the v1 API with your resource key. Models are your
+  **deployment names**: add each one as a **Custom model** (Azure's model list
+  names base models, not deployments, so there is no Discover models).
+  Requests send `max_completion_tokens`, which newer deployments require.
+  Content-filter annotations are accepted; a reply Azure stops for content
+  filtering is reported as a provider error. Deployments using
+  **Asynchronous Filter** mode are not supported — use the default filter
+  mode. Microsoft Entra ID tokens are not supported; use the resource key.
+- **W&B Inference** fills its model list with **Discover models**. To bill a
+  specific team and project, set `project = "team/project"` in
+  `[api_settings.wandb]`; it is sent as the `OpenAI-Project` header, and
+  nothing is sent when it is unset (W&B then uses your default project).
+- **Cloudflare Workers AI** needs an API token with **Account > Workers AI >
+  Read**. Put your account id (from the Cloudflare dashboard) in the URL
+  above. The list ships with current Workers AI models (`@cf/...`); enter any
+  other as a **Custom model**. To route through a named AI Gateway, set
+  `gateway_id` in `[api_settings.cloudflare]` (sent as `cf-aig-gateway-id`).
+  The `gateway.ai.cloudflare.com` compatibility endpoint is not used: it
+  takes two credential headers, while this REST endpoint needs only the token.
+- **OpenCode Zen** serves each model on one API style, and Chatbook uses the
+  Chat Completions one, so its list ships with the Zen models that support it
+  (DeepSeek, GLM, Kimi, MiniMax, Qwen Max, and the free models). GPT, Claude,
+  Gemini, and the Qwen Flash/Plus models are on other API styles and are not
+  offered. **OpenCode Go** is not offered either: it is a subscription meant
+  for coding agents and requires a per-conversation session header.
+- **Command Code** needs its Provider plan (or a GOAT, Pro, Max, or Team
+  plan). Its Claude models are served only on the Messages API, so they are
+  not in the list. Streams always include token usage.
 
 #### Custom endpoints
 

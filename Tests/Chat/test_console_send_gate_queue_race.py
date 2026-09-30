@@ -232,7 +232,7 @@ async def test_queued_follow_up_cannot_be_admitted_while_the_durable_commit_runs
                 return
             snapshot = controller.prompt_queue_registry.snapshot("session-1")
             activity = controller.activity_for("session-1")
-            admitted = controller.queue_prompt(
+            admitted = await controller.queue_prompt(
                 "session-1",
                 text="follow-up offered mid-commit",
                 expected_revision=snapshot.revision,
@@ -317,7 +317,7 @@ async def test_healthy_live_owner_admits_a_queued_follow_up_drained_strictly_aft
     assert _checkpoint_rows(db) == 1
 
     snapshot = controller.prompt_queue_registry.snapshot("session-1")
-    admitted = controller.queue_prompt(
+    admitted = await controller.queue_prompt(
         "session-1", text="second", expected_revision=snapshot.revision
     )
     assert admitted.status is QueueMutationStatus.APPLIED
@@ -435,7 +435,7 @@ async def test_follow_up_admitted_mid_run_is_refused_when_the_owner_turns_unheal
     await asyncio.wait_for(gateway.started.wait(), timeout=5)
 
     snapshot = controller.prompt_queue_registry.snapshot("session-1")
-    admitted = controller.queue_prompt(
+    admitted = await controller.queue_prompt(
         "session-1", text="second", expected_revision=snapshot.revision
     )
     assert admitted.status is QueueMutationStatus.APPLIED

@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Agents.hook_test_utils import trusted_hook_engine
+
 from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Agents.agent_models import (
     normalize_tool_review,
@@ -17,7 +19,11 @@ from tldw_chatbook.Agents.agent_models import (
     RunOutcome,
     ToolCall,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL,
+    MCPPendingCall,
+)
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat import console_chat_controller as controller_module
@@ -3616,6 +3622,116 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     assert {
         key: normalize_tool_review(value).verdict for key, value in verdicts.items()
     } == {"write_thing": "proceed"}
+
+
+@pytest.mark.parametrize(
+    ("sibling_answer", "refusal"),
+    [
+        ("timeout", TIMEOUT_REFUSAL),
+        ("surprise", UNRESOLVED_REFUSAL),
+        (None, UNRESOLVED_REFUSAL),
+    ],
+)
+def test_review_hook_refuses_a_sibling_without_its_own_approval(
+    sibling_answer, refusal
+):
+    """TASK-33082: a row that lacks its own approval is refused by the hook.
+
+    The gate's stamp is name-keyed and keeps the sibling's approval, so the
+    unanswered row would otherwise pass `BuiltinToolGate.check` and run on
+    it. The approved row still proceeds.
+
+    Args:
+        sibling_answer: The unapproved sibling's own card answer; ``None``
+            leaves it out of the map.
+        refusal: The model-facing refusal that answer must produce.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    gate = _FakeBuiltinGate()
+    answers = {"1": "approve_once"}
+    if sibling_answer is not None:
+        answers["2"] = sibling_answer
+    hook = build_tool_review_hook(
+        gate,
+        _FakeBuiltinProvider(_FakeMutatingTool()),
+        None,
+        lambda _pending: answers,
+    )
+
+    verdicts = hook(
+        [
+            ToolCall(name="write_thing", args={"n": 1}, call_id="1"),
+            ToolCall(name="write_thing", args={"n": 2}, call_id="2"),
+        ],
+        RUN,
+    )
+
+    assert normalize_tool_review(verdicts["1"]).verdict == "proceed"
+    assert normalize_tool_review(verdicts["2"]).verdict == refusal
+    assert gate.stamped == [("write_thing", "approve_once")]
+
+
+class _AuditingReviewProvider(_FakeReviewProvider):
+    """`_FakeReviewProvider` plus the two hook-level audit seams."""
+
+    def __init__(self, gated_names: set[str]) -> None:
+        super().__init__(gated_names=gated_names)
+        self.hook_refusals: list[tuple[str, bool]] = []
+
+    def record_user_denial(self, llm_name: str) -> None:
+        raise AssertionError(f"no row was denied: {llm_name}")
+
+    def record_hook_refusal(self, llm_name: str, *, timed_out: bool) -> None:
+        self.hook_refusals.append((llm_name, timed_out))
+
+
+@pytest.mark.parametrize(
+    ("sibling_answer", "refusal"),
+    [
+        ("timeout", TIMEOUT_REFUSAL),
+        ("surprise", UNRESOLVED_REFUSAL),
+        (None, UNRESOLVED_REFUSAL),
+    ],
+)
+def test_review_hook_refuses_and_audits_an_mcp_sibling_without_its_own_approval(
+    sibling_answer, refusal
+):
+    """TASK-33082: an MCP row refused at the hook still gets its audit row.
+
+    The runtime never dispatches the refused row, so `invoke()` never
+    records its timeout or unresolved outcome; the hook records it once
+    through the provider's seam.
+
+    Args:
+        sibling_answer: The unapproved sibling's own card answer; ``None``
+            leaves it out of the map.
+        refusal: The model-facing refusal that answer must produce.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    provider = _AuditingReviewProvider(gated_names={"mcp__srv__run"})
+    answers = {"1": "approve_once"}
+    if sibling_answer is not None:
+        answers["2"] = sibling_answer
+    hook = build_tool_review_hook(
+        _FakeBuiltinGate(),
+        _FakeBuiltinProvider(_FakeMutatingTool()),
+        provider,
+        lambda _pending: answers,
+    )
+
+    verdicts = hook(
+        [
+            ToolCall(name="mcp__srv__run", args={"x": 1}, call_id="1"),
+            ToolCall(name="mcp__srv__run", args={"x": 2}, call_id="2"),
+        ],
+        RUN,
+    )
+
+    assert normalize_tool_review(verdicts["1"]).verdict == "proceed"
+    assert normalize_tool_review(verdicts["2"]).verdict == refusal
+    assert provider.hook_refusals == [("mcp__srv__run", sibling_answer == "timeout")]
 
 
 def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
@@ -11902,7 +12018,7 @@ class TestUserPromptSubmitHooks:
                 }
             }
         )
-        return RunHooksEngine(
+        return trusted_hook_engine(
             config_provider=lambda: config,
             cwd_provider=lambda: str(tmp_path),
         )

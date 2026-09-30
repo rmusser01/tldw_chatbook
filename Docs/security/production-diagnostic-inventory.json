@@ -57,6 +57,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "dfe1fd39f4a79121adb6",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Agents/hook_permissions.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 3,
       "diagnostic_digest": "1da8e63bff29cc4744fb",
       "owner": "TASK-494",
@@ -92,8 +99,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 28,
-      "diagnostic_digest": "c94af431beac2382e1d6",
+      "call_count": 25,
+      "diagnostic_digest": "57ab0d3c9ec81c45bec8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/run_hooks.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11300,6 +11307,17 @@
     "status_meaning": "unresolved baseline candidate; inventory presence is not approval or a reviewed-safe classification"
   },
   "persistent_sink_topology": [
+    {
+      "path": "tldw_chatbook/Agents/hook_permissions.py",
+      "sinks": [
+        {
+          "digest": "b51945ab3eb29875",
+          "kind": "open_private_text_append_stream",
+          "method": "open_private_text_append_stream",
+          "scope": "HookPermissions._store_lock"
+        }
+      ]
+    },
     {
       "path": "tldw_chatbook/Backup_Recovery/recovered_media.py",
       "sinks": [

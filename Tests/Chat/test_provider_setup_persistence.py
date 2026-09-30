@@ -2160,3 +2160,73 @@ def test_template_endpoint_without_user_acceptance_is_not_explicitly_configured(
         )
         is False
     )
+
+
+# --- TASK-33510: every engine preset can be set up ---
+
+_ENGINE_PRESET_RECORDS = [
+    record
+    for record in __import__("tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]).ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+]
+
+
+@pytest.mark.parametrize("record", _ENGINE_PRESET_RECORDS, ids=lambda record: record.key)
+def test_every_engine_preset_is_owned_by_setup_persistence(record):
+    """Settings and first-run setup could save no engine preset but Databricks;
+    each one must resolve by key and display name to its own section."""
+    assert canonical_provider_key(record.key) == record.key
+    assert canonical_provider_key(record.config_key) == record.key
+    assert provider_endpoint_key(record.key) == "api_base_url"
+    assert provider_credential_keys(record.key) == ("api_key", "api_key_env_var")
+
+
+def _saved_engine_endpoint(provider: str, key: str, endpoint: str) -> dict:
+    mutation = build_provider_setup_mutation(
+        _draft(
+            provider=provider,
+            model="some-model",
+            endpoint=endpoint,
+            credential_source="draft",
+            credential_value="sk-test-canary-1234567890",
+        ),
+        {"api_settings": {}},
+    )
+    return dict(mutation.section_values[f"api_settings.{key}"])
+
+
+@pytest.mark.parametrize(
+    "record",
+    [record for record in _ENGINE_PRESET_RECORDS if record.default_base_url],
+    ids=lambda record: record.key,
+)
+def test_every_engine_preset_saves_its_documented_url_unchanged(record):
+    """The endpoint contract used to force a ``/v1`` model onto every URL:
+    DeepInfra's ``/v1/openai`` was rejected and BytePlus/Kilo/Qianfan gained a
+    bogus ``/v1``. Each preset's documented base must save exactly."""
+    section = _saved_engine_endpoint(record.config_key, record.key, record.default_base_url)
+    assert section["api_base_url"] == record.default_base_url
+    assert section["api_key"] == "sk-test-canary-1234567890"
+    assert section["model"] == "some-model"
+
+
+@pytest.mark.parametrize(
+    ("provider", "key", "entered", "saved"),
+    [
+        ("Azure", "azure", "https://my-resource.openai.azure.com",
+         "https://my-resource.openai.azure.com/openai/v1"),
+        ("Databricks", "databricks", "https://dbc-1.cloud.databricks.com",
+         "https://dbc-1.cloud.databricks.com/openai/v1"),
+        ("Cloudflare", "cloudflare", "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+         "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1"),
+        ("Kilo", "kilo", "https://api.kilo.ai", "https://api.kilo.ai/api/gateway"),
+        ("Together", "together", "https://api.together.xyz/v1/chat/completions",
+         "https://api.together.xyz/v1"),
+    ],
+)
+def test_engine_preset_bare_hosts_and_pasted_chat_urls_save_the_api_base(
+    provider, key, entered, saved
+):
+    """A bare host takes the preset's suffix or documented path; a pasted
+    chat-completions URL saves as its base."""
+    assert _saved_engine_endpoint(provider, key, entered)["api_base_url"] == saved

@@ -93,6 +93,12 @@ _BUDGETS: dict[str, int] = {
     # (FeatureGlueMixin); governed there, so governed here.
     "tldw_chatbook/app_feature_glue.py": 742,
     "tldw_chatbook/Chat/console_chat_controller.py": 29210,
+    # 2026-09-30, task-25907.23: Hook integration bodies retain exact
+    # recipient ceilings; all pre-existing source ceilings remain unchanged.
+    "tldw_chatbook/Chat/console_run_hooks.py": 123,
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 911,
+    "tldw_chatbook/UI/Console_Modules/hooks.py": 211,
+    "tldw_chatbook/UI/Console_Modules/wiring.py": 2399,
     "tldw_chatbook/Chat/console_chat_store.py": 22092,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16419,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8265,

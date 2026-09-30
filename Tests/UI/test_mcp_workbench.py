@@ -6191,7 +6191,7 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
             messages.append, level="WARNING", format="{message}"
         )
         try:
-            await pilot.click(run_button)
+            await _click_test_run(pilot)
             await app.workers.wait_for_complete()
             await pilot.pause()
         finally:

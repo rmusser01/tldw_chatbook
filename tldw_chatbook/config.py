@@ -12,6 +12,7 @@ admit_startup()
 # Imports
 import copy
 import difflib
+import hashlib
 import importlib.util
 import json
 import re
@@ -74,7 +75,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
-from tldw_chatbook.provider_registry import CLOUD_PROVIDER_CONFIG_KEYS
+from tldw_chatbook.provider_registry import ALL_RECORDS, CLOUD_PROVIDER_CONFIG_KEYS
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -1584,7 +1585,20 @@ def normalize_provider_config_key(provider: object) -> str:
         underscores.
     """
     normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
-    return "zai" if normalized == "z.ai" else normalized
+    if normalized == "z.ai":
+        return "zai"
+    return _ENGINE_CONFIG_KEY_ALIASES.get(normalized, normalized)
+
+
+#: An engine preset's display config key may not normalize to its registry
+#: key ("OllamaCloud" -> "ollamacloud", not "ollama_cloud"), which made
+#: readiness answer "Unknown provider" (TASK-33511). Derived from the
+#: registry; identity for every other preset.
+_ENGINE_CONFIG_KEY_ALIASES = {
+    record.config_key.lower(): record.key
+    for record in ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+}
 
 
 class ProviderSettingsError(ValueError):
@@ -4318,6 +4332,33 @@ MiMo = ["mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed", "mimo-v2
 TokenHub = [] # Tencent TokenHub: fills via /v1/models discovery (Hy4 is hy4-preview)
 BytePlus = ["seed-2-0-lite-260228", "seed-1-8-251228"] # also accepts your own ep-... endpoint IDs
 StepFun = [] # fills via /v1/models discovery or manual seeding
+# Gateway/host presets from the Hermes / oh-my-pi comparison (TASK-33351).
+# Upstage and Qianfan document no models route and ship seeded from their API
+# references; the rest fill via discovery. Any other ID can be entered as a
+# custom model.
+Vercel = []
+ZenMux = []
+Kilo = []
+SiliconFlow = []
+Baseten = []
+GMI = []
+OllamaCloud = []
+Upstage = ["solar-pro4", "solar-mini4", "solar-pro3", "solar-pro2", "solar-mini", "syn-pro"]
+Arcee = []
+Qianfan = ["ernie-5.1", "ernie-5.0", "ernie-5.0-thinking-latest", "ernie-4.5-turbo-128k", "ernie-4.5-turbo-32k", "ernie-3.5-8k"]
+Nous = []
+Venice = []
+Meta = []
+# Follow-up presets (TASK-33505..33509). Azure lists your DEPLOYMENT names
+# (add them as custom models); W&B fills via discovery. Cloudflare has no
+# models route, and OpenCode Zen / Command Code list models on several
+# protocols, so they ship seeded with their Chat Completions models (read
+# from each provider's model pages, 2026-09-29).
+Azure = []
+WandB = []
+Cloudflare = ["@cf/moonshotai/kimi-k2.6", "@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.3-flash", "@cf/deepseek-ai/deepseek-v4-pro-0813", "@cf/deepseek-ai/deepseek-v4-flash-0731", "@cf/openai/gpt-oss-120b", "@cf/qwen/qwen3.8-27b", "@cf/google/gemma-4-26b-a4b-it", "@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
+OpenCodeZen = ["qwen3.8-max", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "glm-5.3", "glm-5.3-flash", "glm-5.2", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "big-pickle", "mimo-v2.6-flash-free", "nemotron-3-ultra-free"]
+CommandCode = ["gpt-5.5", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash", "Qwen/Qwen3.7-Max", "Qwen/Qwen3.6-Plus", "moonshotai/Kimi-K3", "moonshotai/Kimi-K2.6", "zai-org/GLM-5.3", "zai-org/GLM-5.1", "MiniMaxAI/MiniMax-M3", "MiniMaxAI/MiniMax-M2.7", "stepfun/Step-3.5-Flash", "xiaomi/mimo-v2.5-pro", "google/gemini-3.5-flash"]
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -4654,6 +4695,176 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     api_key_env_var = "STEPFUN_API_KEY" # or "STEP_API_KEY", the name StepFun's own samples use
     # api_key = "" # Less secure fallback - use env var instead
     api_base_url = "https://api.stepfun.ai/v1" # China: https://api.stepfun.com/v1
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # Gateway/host presets (TASK-33351): same shape as above.
+    [api_settings.vercel] # Matches key in [providers]
+    api_key_env_var = "AI_GATEWAY_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://ai-gateway.vercel.sh/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.zenmux] # Matches key in [providers]
+    api_key_env_var = "ZENMUX_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://zenmux.ai/api/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.kilo] # Matches key in [providers]
+    api_key_env_var = "KILO_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.kilo.ai/api/gateway"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.siliconflow] # Matches key in [providers]
+    api_key_env_var = "SILICONFLOW_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.siliconflow.com/v1" # China: https://api.siliconflow.cn/v1
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.baseten] # Matches key in [providers]
+    api_key_env_var = "BASETEN_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://inference.baseten.co/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.gmi] # Matches key in [providers]
+    api_key_env_var = "GMI_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.gmi-serving.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.ollama_cloud] # Matches key in [providers]
+    api_key_env_var = "OLLAMA_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://ollama.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.upstage] # Matches key in [providers]
+    api_key_env_var = "UPSTAGE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.upstage.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.arcee] # Matches key in [providers]
+    api_key_env_var = "ARCEE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.arcee.ai/api/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.qianfan] # Matches key in [providers]
+    api_key_env_var = "QIANFAN_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://qianfan.baidubce.com/v2" # key is the whole bce-v3/ALTAK-... string
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.nous] # Matches key in [providers]
+    api_key_env_var = "NOUS_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://inference-api.nousresearch.com/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.venice] # Matches key in [providers]
+    api_key_env_var = "VENICE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.venice.ai/api/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.meta] # Matches key in [providers]
+    api_key_env_var = "META_API_KEY" # or "MODEL_API_KEY", the name Meta's SDKs read
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.meta.ai/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    # Follow-up presets (TASK-33505..33509): same shape as above.
+    [api_settings.azure] # Matches key in [providers]
+    # Azure OpenAI v1 API. The resource host is per-account, so NO
+    # api_base_url ships: set yours (e.g. "https://my-resource.openai.azure.com");
+    # the /openai/v1 path is appended. Models are your deployment names.
+    api_key_env_var = "AZURE_OPENAI_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.wandb] # Matches key in [providers]
+    api_key_env_var = "WANDB_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.inference.wandb.ai/v1"
+    # project = "my-team/my-project" # optional: sent as the OpenAI-Project header
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.cloudflare] # Matches key in [providers]
+    # Workers AI REST API. The account id is part of the URL, so NO
+    # api_base_url ships: set
+    # "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1".
+    api_key_env_var = "CLOUDFLARE_API_TOKEN"
+    # api_key = "" # Less secure fallback - use env var instead
+    # gateway_id = "my-gateway" # optional: sent as the cf-aig-gateway-id header
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.opencode_zen] # Matches key in [providers]
+    api_key_env_var = "OPENCODE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://opencode.ai/zen/v1"
+    timeout = 90
+    retries = 3
+    retry_delay = 5.0
+    streaming = true
+
+    [api_settings.commandcode] # Matches key in [providers]
+    api_key_env_var = "COMMANDCODE_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    api_base_url = "https://api.commandcode.ai/provider/v1"
     timeout = 90
     retries = 3
     retry_delay = 5.0
@@ -7170,6 +7381,7 @@ class AtomicLiteralMutationSnapshot:
     generation: int
     raw_values: Mapping[str, object]
     effective_values: Mapping[str, object]
+    config_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -7180,6 +7392,101 @@ class LiteralConfigMutationResult:
     caches_reloaded: bool
     settings_view: Mapping[str, object] | None
     failure_phase: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HookConfigSnapshot:
+    """Detached saved hook section paired with its actual file identity."""
+
+    config_path: Path
+    section_present: bool
+    section: object = field(repr=False)
+    section_stamp: str
+    profile_data_dir: Path | None = field(default=None, repr=False)
+
+
+def _hooks_config_snapshot(
+    config_path: Path, raw: Mapping[str, object]
+) -> HookConfigSnapshot:
+    present = "hooks" in raw
+    section = copy.deepcopy(raw.get("hooks"))
+    stamp: dict[str, object] = {"present": present}
+    if present:
+        stamp["section"] = section
+    encoded = toml.dumps(stamp).encode("utf-8")
+    return HookConfigSnapshot(
+        config_path.resolve(),
+        present,
+        section,
+        hashlib.sha256(encoded).hexdigest(),
+        profile_paths.user_data_dir(raw),
+    )
+
+
+@contextmanager
+def locked_hooks_config_snapshot() -> Iterator[HookConfigSnapshot]:
+    """Hold the config writer lock while reading and consuming hook authority."""
+    config_path = validate_path_simple(
+        _get_effective_config_path(),
+        require_exists=False,
+        probe_existing=False,
+        reject_shell_metacharacters=False,
+    )
+    with _config_write_lock(config_path):
+        if _get_effective_config_path().resolve() != config_path.resolve():
+            raise ValueError("Hook configuration file changed; reload.")
+        yield _hooks_config_snapshot(
+            config_path, _read_raw_cli_config_unlocked(config_path)
+        )
+
+
+def read_hooks_config_snapshot() -> HookConfigSnapshot:
+    """Read current saved hook definitions without consulting runtime caches."""
+    with locked_hooks_config_snapshot() as snapshot:
+        return snapshot
+
+
+def replace_hooks_config_snapshot(
+    expected: HookConfigSnapshot,
+    replacement: Mapping[str, object],
+) -> LiteralConfigMutationResult:
+    """Replace the current hook section through the canonical guarded writer."""
+    owned = copy.deepcopy(dict(replacement))
+
+    def build(snapshot: AtomicLiteralMutationSnapshot) -> LiteralSettingsMutation:
+        if snapshot.config_path is None:
+            raise ValueError("Hook configuration file unavailable.")
+        current = _hooks_config_snapshot(snapshot.config_path, snapshot.raw_values)
+        if (
+            current.config_path != expected.config_path
+            or current.section_stamp != expected.section_stamp
+            or current.profile_data_dir != expected.profile_data_dir
+        ):
+            raise ValueError("Hook configuration changed; reload before saving.")
+        if current.section_present and not isinstance(current.section, Mapping):
+            raise ValueError("Repair malformed Hooks section in Advanced Config.")
+        old = current.section if isinstance(current.section, Mapping) else {}
+        return LiteralSettingsMutation(
+            section_values={
+                ("hooks",): {
+                    **{
+                        key: value
+                        for key, value in old.items()
+                        if key not in {"enabled", "hook"}
+                    },
+                    **owned,
+                }
+            },
+            delete_keys={
+                ("hooks",): tuple(
+                    key
+                    for key in ("enabled", "hook")
+                    if key in old and key not in owned
+                )
+            },
+        )
+
+    return apply_literal_settings_transaction_to_cli_config(build)
 
 
 def _atomic_config_values_from_raw(
@@ -8114,6 +8421,7 @@ def _apply_literal_settings_transaction_locked(
                 generation=_CONFIG_GENERATION,
                 raw_values=copy.deepcopy(config_data),
                 effective_values=copy.deepcopy(effective_values),
+                config_path=config_path,
             )
             mutation = _detach_literal_settings_mutation(mutation_builder(snapshot))
             if validate_literal_targets:

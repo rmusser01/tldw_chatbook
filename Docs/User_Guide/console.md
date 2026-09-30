@@ -603,14 +603,21 @@ The default test suite makes no paid request.
 #### Inference clouds in Console
 
 **Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
-**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** run
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, **MiniMax**, and the
+gateways, hosts, and model makers listed in the Settings guide (Vercel AI
+Gateway, ZenMux, Kilo, SiliconFlow, Baseten, GMI Cloud, Ollama Cloud, Upstage,
+Arcee AI, Baidu Qianfan, Nous Research, Venice, and Meta, plus Azure
+OpenAI, W&B Inference, Cloudflare Workers AI, OpenCode Zen, and Command Code)
+run
 on the ordinary streaming Console path — set the provider's API key (for
 example `TOGETHER_API_KEY` or `NVIDIA_API_KEY`) in Settings and pick a model.
 Chatbook function tools use the standard approval and execution loop for the
 models that support them, and **Discover models** reuses the chat credential
 (authenticated `GET {base}/models`) to fill the provider's empty model list.
-Fireworks keeps R1-family reasoning private — reasoning never appears in the
-transcript, which is provider behavior, not dropped output. Streamed NVIDIA
+Fireworks reasoning is kept private — it never appears in the transcript.
+Most of these presets take no reasoning-effort setting, so the settings modal
+hides that control for them; for NVIDIA NIM's Qwen3.5 models, **Reasoning
+effort** **None** turns thinking off. Streamed NVIDIA
 NIM replies carry no token counts (NVIDIA does not report streamed usage).
 Setup details, env vars, and per-provider notes live in
 [Settings — Inference clouds](settings.md#inference-clouds).

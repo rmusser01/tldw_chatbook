@@ -40,6 +40,9 @@ import weakref
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 
+from . import console_run_hooks
+from .console_interrupt_rounds import _sibling_approval_refusals
+
 from tldw_chatbook.Agents.approval_provenance import (
     approval_key_unanswered,
     selected_approval_key,
@@ -364,6 +367,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Tools.character_tool_service import CharacterReadGuard
@@ -412,6 +416,8 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import (
+    TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL,
     MCPPendingCall,
     MCPToolProvider,
     approval_effects_for_tool,
@@ -2535,6 +2541,10 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
     "always_allow": 3,
 }
 
+#: The card answers that approve a call for every tool owner. MCP rows also
+#: accept ``"allow_matching"``; built-in and local rows do not.
+_APPROVING_DECISIONS: tuple[str, ...] = ("approve_once", "approve_session", "always_allow")
+
 
 class ApprovalDecisions(dict):
     """One approval round's verdict map, plus the keys nobody actually answered.
@@ -2607,7 +2617,7 @@ def _review_decision(
     decisions: Mapping[str, str],
     verdict: str,
     *,
-    allowing: tuple[str, ...] = ("approve_once", "approve_session", "always_allow"),
+    allowing: tuple[str, ...] = _APPROVING_DECISIONS,
     name_fallback: bool = True,
 ) -> ToolReviewDecision:
     """Attach an answered raw choice to the owner's unchanged verdict."""
@@ -2642,6 +2652,8 @@ def _stamp_answer_provenance(
         and approval_was_unanswered(row, decisions)
     )
     return result
+
+
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -3187,8 +3199,10 @@ def build_tool_review_hook(
     `mcp_provider.apply_batch_decisions(run_id, ...)` for MCP rows,
     `builtin_gate.stamp(run_id, name, decision)` for built-in rows. The returned
     verdict map carries "proceed" for approved calls and REFUSAL STRINGS
-    for per-call denials (TASK-1861) and kill-switch blocks (TASK-631) --
-    the runtime enforces those directly, skipping dispatch. Approvals are
+    for per-call denials (TASK-1861), kill-switch blocks (TASK-631), and
+    calls that lack an approval of their own while a same-name sibling was
+    approved (TASK-33082) -- the runtime enforces those directly, skipping
+    dispatch. Approvals are
     still left to `invoke()`'s gate on dispatch, which records the audit
     decision.
 
@@ -3553,22 +3567,32 @@ def build_tool_review_hook(
             verdicts[key] = _review_decision(
                 row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
             )
+
+        def _allowing(row: MCPPendingCall) -> tuple[str, ...]:
+            if row in mcp_pending:
+                return (*_APPROVING_DECISIONS, "allow_matching")
+            return _APPROVING_DECISIONS
+
+        def _record_sibling_refusal(row: MCPPendingCall, timed_out: bool) -> None:
+            # Built-in rows are left unaudited, as for a Deny above.
+            if mcp_provider is not None and row in mcp_pending:
+                mcp_provider.record_hook_refusal(row.llm_name, timed_out=timed_out)
+
+        verdicts.update(
+            _sibling_approval_refusals(
+                mcp_pending + builtin_pending,
+                _decision_for,
+                decisions,
+                _allowing,
+                _record_sibling_refusal,
+            )
+        )
         # Settle all name-wide refusals first. Metadata must never add an
         # exact proceed that bypasses an id-less sibling's refusal fallback.
         verdicts.update(
             {
                 row.call_id or row.llm_name: _review_decision(
-                    row,
-                    decisions,
-                    "proceed",
-                    allowing=(
-                        "approve_once",
-                        "approve_session",
-                        "always_allow",
-                        "allow_matching",
-                    )
-                    if row in mcp_pending
-                    else ("approve_once", "approve_session", "always_allow"),
+                    row, decisions, "proceed", allowing=_allowing(row)
                 )
                 for row in mcp_pending + builtin_pending
                 if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
@@ -3729,6 +3753,17 @@ def build_local_review_hook(
             verdicts[key] = _review_decision(
                 row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
             )
+        verdicts.update(
+            _sibling_approval_refusals(
+                pending,
+                _decision_for,
+                decisions,
+                lambda _row: _APPROVING_DECISIONS,
+                lambda row, timed_out: provider.record_hook_refusal(
+                    row.llm_name, timed_out=timed_out
+                ),
+            )
+        )
         # Preserve settled name-wide refusal fallback before adding facts.
         verdicts.update(
             {
@@ -4747,6 +4782,7 @@ class ConsoleChatController:
         canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
+        hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -4881,6 +4917,7 @@ class ConsoleChatController:
         #: mid-session config edit (first-ever ``[hooks]`` entry) is picked
         #: up without rebuilding the controller.
         self._ensure_run_hooks = ensure_run_hooks
+        self._hook_permissions_accessor = hook_permissions_accessor
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
         ] = {}
@@ -6740,7 +6777,13 @@ class ConsoleChatController:
                     self._session_lifecycle_revisions.get(session_id, 0) + 1
                 )
 
-    def queue_prompt(
+    _hook_admission_reason = console_run_hooks._hook_admission_reason
+
+    async def hook_admission_reason(self) -> str | None:
+        """Read hook authority off-thread before acquiring new draft custody."""
+        return await asyncio.to_thread(self._hook_admission_reason)
+
+    async def queue_prompt(
         self,
         session_id: str,
         *,
@@ -6756,6 +6799,13 @@ class ConsoleChatController:
                 QueueMutationStatus.INVALID,
                 self.prompt_queue_registry.snapshot(session_id),
                 detail=validation_error,
+            )
+        reason = await self.hook_admission_reason()
+        if reason is not None:
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                self.prompt_queue_registry.snapshot(session_id),
+                detail=reason,
             )
         if configuration is None:
             configuration = self.resolve_turn_configuration_snapshot(session_id)
@@ -9711,6 +9761,16 @@ class ConsoleChatController:
             and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
         ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
+        reason = await self.hook_admission_reason()
+        if reason is not None:
+            return ConsoleSubmitResult(
+                False,
+                False,
+                reason,
+                session_id=owner_key,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
         active_task = asyncio.current_task()
         with self._capture_quiescence_lock:
             if owner_key is not None and self.store.capture_quiescent(owner_key):
@@ -11177,6 +11237,9 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
+            reason = await self.hook_admission_reason()
+            if reason is not None:
+                raise ConsoleDispatchSettlementError(reason)
             assistant = assistant_holder.get("assistant")
             if assistant is None:
                 assistant = self.store.get_message(commit.assistant_message_id)
@@ -14831,6 +14894,13 @@ class ConsoleChatController:
             builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
             profile_id_provider=profile_id_provider,
             persona_policy_provider=persona_policy_provider,
+            # TASK-33106: ADR-183's built-in character writes follow THIS
+            # session's runtime source, like the Console's character_save.
+            runtime_source_provider=(
+                None
+                if session_id is None
+                else functools.partial(self._session_runtime_source, session_id)
+            ),
             maximum_tool_ids=maximum_tool_ids,
             maximum_definition_hashes=maximum_definition_hashes,
         )
@@ -15509,6 +15579,22 @@ class ConsoleChatController:
 
         return {"ask_user": _ask}
 
+    def _session_runtime_source(self, session_id: str) -> str:
+        """The runtime source ``session_id`` runs on: ``"server"`` or ``"local"``.
+
+        Read fresh on every call, from the worker thread that dispatches the
+        tool, so a session switched mid-run is judged by its current backend.
+
+        Args:
+            session_id: The session whose backend decides.
+
+        Returns:
+            ``"server"`` for a server-backed session; ``"local"`` otherwise,
+            including a session that no longer exists.
+        """
+        current = next((s for s in self.store.sessions() if s.id == session_id), None)
+        return "server" if current and current.runtime_backend == "server" else "local"
+
     def _character_wiring(self, session_id: str | None) -> dict[str, Any]:
         """The ``character_service`` kwarg for ``LocalToolProvider`` (TASK-32954).
 
@@ -15541,10 +15627,6 @@ class ConsoleChatController:
                 raise RuntimeError("local character service unavailable")
             return service
 
-        def _runtime_source() -> str:
-            current = next((s for s in self.store.sessions() if s.id == session_id), None)
-            return "server" if current and current.runtime_backend == "server" else "local"
-
         def _changed(character_id: int) -> None:
             from tldw_chatbook.Character_Chat.character_events import (
                 CharacterCardChanged,
@@ -15558,7 +15640,8 @@ class ConsoleChatController:
             app.post_message(CharacterCardChanged(character_id))
 
         return {"character_service": CharacterToolService(
-            service_loader=_service, runtime_source_loader=_runtime_source,
+            service_loader=_service,
+            runtime_source_loader=functools.partial(self._session_runtime_source, session_id),
             read_guard=guard, on_changed=_changed)}
 
     def _library_provider_for_context(
@@ -22662,100 +22745,9 @@ class ConsoleChatController:
             staged_evidence_launch=request.staged_evidence_launch,
         )
 
-    def _notify_run_hook_approval(
-        self, kind: str, payload: dict[str, Any], state: dict[str, Any]
-    ) -> None:
-        """Publish one successfully admitted permission round, including headless runs."""
-        engine = self._run_hooks_engine()
-        if engine is None:
-            return
-        from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments
+    _notify_run_hook_approval = console_run_hooks._notify_run_hook_approval
 
-        session_id = payload.get("session_id") or state.get("session_id")
-        run_id = (
-            state.get("run_id")
-            if kind == "worktree_merge"
-            else payload.get("run_id") or state.get("run_id")
-        )
-        if kind == "approval":
-            calls = [
-                {
-                    "name": row.get("llm_name") or row.get("tool_name") or "",
-                    "args_summary": summarize_hook_arguments(
-                        row.get("arguments") or {}
-                    ),
-                }
-                for row in payload.get("calls", ())
-            ]
-        elif kind == "worktree_merge":
-            action = payload.get("action") or payload.get("mode")
-            arguments = {
-                key: payload[key]
-                for key in (
-                    "handle_id",
-                    "run_id",
-                    "action",
-                    "mode",
-                    "branch",
-                    "worktree",
-                    "source",
-                    "destination",
-                )
-                if key in payload
-            }
-            calls = [
-                {
-                    "name": (
-                        "discard_agent_worktree"
-                        if action == "discard"
-                        else "merge_agent_worktree"
-                    ),
-                    "args_summary": summarize_hook_arguments(arguments),
-                }
-            ]
-        else:
-            arguments = (
-                {"url": payload.get("url", "")}
-                if kind == "skill_install"
-                else {
-                    key: payload[key]
-                    for key in ("skill_name", "script_path", "mechanism", "args")
-                    if key in payload
-                }
-            )
-            calls = [{
-                "name": "install_skill" if kind == "skill_install" else "run_skill_script",
-                "args_summary": summarize_hook_arguments(arguments),
-            }]
-        engine.notify(
-            "ApprovalRequested", session_id=session_id,
-            run_id=run_id,
-            data={
-                "calls": calls,
-                "session_active": bool(
-                    session_id == self.store.active_session_id
-                    and self._interrupt_host.view_visible is not False
-                    and (
-                        self.set_pending_decision is not None
-                        or self._interrupt_host._setter(kind) is not None
-                    )
-                ),
-            },
-        )
-
-    def _run_hooks_engine(self):
-        """Resolve the app-owned run-hooks engine for this send, or ``None``.
-
-        Spec 2026-09-11 (Task 7): the submit path reaches the engine through
-        the optional ``ensure_run_hooks`` accessor (the Task 5 bridge seam --
-        a bound ``ConsoleRuntime.ensure_run_hooks``, or a test double).
-        ``None`` -- no accessor wired, or no ``[hooks]`` configured -- means
-        the fire site skips entirely; the accessor is consulted per send, so
-        an engine built after the first-ever ``[hooks]`` entry appears is
-        picked up without rebuilding this controller.
-        """
-        accessor = self._ensure_run_hooks
-        return accessor() if accessor is not None else None
+    _run_hooks_engine = console_run_hooks._run_hooks_engine
 
     async def _record_prompt_history(self, text: str) -> None:
         """Append an accepted send's draft to the shared prompt history.

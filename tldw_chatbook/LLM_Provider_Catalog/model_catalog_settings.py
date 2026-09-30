@@ -36,6 +36,22 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     # (MiMo and BytePlus are seeded-only).
     "TokenHub",
     "StepFun",
+    # TASK-33351 gateway/host presets with a models route (Upstage and
+    # Qianfan document none and ship seeded).
+    "Vercel",
+    "ZenMux",
+    "Kilo",
+    "SiliconFlow",
+    "Baseten",
+    "GMI",
+    "OllamaCloud",
+    "Arcee",
+    "Nous",
+    "Venice",
+    "Meta",
+    # TASK-33506: W&B lists models; Azure (deployments), Cloudflare (no
+    # route), OpenCode Zen and Command Code (mixed protocols) ship seeded.
+    "WandB",
 )
 
 SELECTOR_MERGE_CAP = 50

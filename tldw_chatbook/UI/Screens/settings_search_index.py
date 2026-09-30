@@ -302,6 +302,16 @@ def build_field_search_index() -> None:
     FIELD_SEARCH_INDEX.clear()
     FIELD_SEARCH_INDEX.update(
         {
+            SettingsCategoryId.HOOKS: (
+                ("settings-hooks-enabled", "Enable Console hooks"),
+                ("settings-hooks-list", "Hook definitions and permissions"),
+                ("settings-hooks-row-enabled", "Enable hook"),
+                ("settings-hooks-event", "Hook lifecycle event"),
+                ("settings-hooks-command", "Hook command JSON argument array"),
+                ("settings-hooks-matcher", "Hook tool matcher glob"),
+                ("settings-hooks-timeout", "Hook timeout seconds"),
+                ("settings-hooks-review", "Review saved hook permissions"),
+            ),
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
                 (
                     "settings-console-show-model-thinking",

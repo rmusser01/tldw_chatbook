@@ -44,6 +44,9 @@ from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class ConsoleChatStore(_ConsoleChatStore):
     """Test store whose intentionally db-less sessions are explicitly ephemeral."""
 
@@ -255,9 +258,9 @@ def _arm_controller(gateway: SequencedGateway):
     return controller, store, session.id
 
 
-def _queue(controller: ConsoleChatController, session_id: str, text: str) -> str:
+async def _queue(controller: ConsoleChatController, session_id: str, text: str) -> str:
     snapshot = controller.prompt_queue_registry.snapshot(session_id)
-    result = controller.queue_prompt(
+    result = await controller.queue_prompt(
         session_id,
         text=text,
         expected_revision=snapshot.revision,
@@ -267,7 +270,7 @@ def _queue(controller: ConsoleChatController, session_id: str, text: str) -> str
     return result.entry_id
 
 
-def test_controller_refuses_unsafe_queue_text_before_admission() -> None:
+async def test_controller_refuses_unsafe_queue_text_before_admission() -> None:
     controller, store, session_id = _arm_controller(SequencedGateway())
     snapshot = controller.prompt_queue_registry.snapshot(session_id)
     snapshot = controller.prompt_queue_registry.begin_chain(
@@ -276,7 +279,7 @@ def test_controller_refuses_unsafe_queue_text_before_admission() -> None:
         expected_revision=snapshot.revision,
     ).snapshot
 
-    result = controller.queue_prompt(
+    result = await controller.queue_prompt(
         session_id,
         text="<script>alert('queued')</script>",
         expected_revision=snapshot.revision,
@@ -301,8 +304,8 @@ async def test_lifecycle_impact_counts_claimed_entries_without_prompt_content():
         controller.run_prompt_chain("manual", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "private first follow-up")
-    _queue(controller, session_id, "private second follow-up")
+    await _queue(controller, session_id, "private first follow-up")
+    await _queue(controller, session_id, "private second follow-up")
 
     gateway.release[0].set()
     await gateway.second_resolve_started.wait()
@@ -334,7 +337,7 @@ async def test_lifecycle_impact_does_not_describe_paused_queue_as_live_run():
         controller.run_prompt_chain("manual", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "wait until recovery")
+    await _queue(controller, session_id, "wait until recovery")
     gateway.release[0].set()
     await task
 
@@ -385,8 +388,8 @@ async def test_three_turn_chain_drains_fifo_with_one_slot_and_explicit_origins()
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    second_id = _queue(controller, session_id, "two")
-    third_id = _queue(controller, session_id, "three")
+    second_id = await _queue(controller, session_id, "two")
+    third_id = await _queue(controller, session_id, "three")
 
     activity = controller.activity_for(session_id)
     assert activity.occupies_slot
@@ -454,7 +457,7 @@ async def test_queued_drain_enters_runtime_custody_before_controller_with_frozen
         controller.run_prompt_chain("one", session_id=session.id)
     )
     await gateway.started[0].wait()
-    queued_id = _queue(controller, session.id, "two frozen")
+    queued_id = await _queue(controller, session.id, "two frozen")
     controller.temperature = 1.75
 
     queued_submit_started = asyncio.Event()
@@ -512,7 +515,7 @@ async def test_intermediate_completions_emit_only_one_final_background_outcome()
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
+    await _queue(controller, session_id, "two")
     controller.new_session(title="Viewed elsewhere", ephemeral=True)
 
     gateway.release[0].set()
@@ -535,8 +538,8 @@ async def test_failed_accepted_queued_turn_pauses_remaining_without_requeueing_i
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
-    third_id = _queue(controller, session_id, "three")
+    await _queue(controller, session_id, "two")
+    third_id = await _queue(controller, session_id, "three")
 
     gateway.release[0].set()
     await gateway.started[1].wait()
@@ -572,8 +575,8 @@ async def test_unexpected_exception_after_queued_acceptance_keeps_only_future_wo
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
-    third_id = _queue(controller, session_id, "three")
+    await _queue(controller, session_id, "two")
+    third_id = await _queue(controller, session_id, "three")
     gateway.release[0].set()
 
     with pytest.raises(RuntimeError, match="post-acceptance"):
@@ -604,7 +607,7 @@ async def test_context_change_before_first_admission_pauses_for_explicit_review(
         if message.role is ConsoleMessageRole.USER
     )
     store.set_session_context_summary(session_id, "summary changed", user.id)
-    queued_id = _queue(controller, session_id, "two")
+    queued_id = await _queue(controller, session_id, "two")
 
     gateway.release[0].set()
     gateway.release[1].set()  # lets an illicit mutated dispatch fail, not hang
@@ -652,7 +655,7 @@ async def test_stop_pauses_immediately_and_resume_next_dispatches_once():
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
+    await _queue(controller, session_id, "two")
 
     assert controller.stop_active_run()
     stopped_snapshot = controller.prompt_queue_registry.snapshot(session_id)
@@ -680,7 +683,7 @@ async def test_failed_retry_adopts_authorized_epoch_then_drains_next_prompt():
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
+    await _queue(controller, session_id, "two")
     gateway.release[0].set()
     await task
     failed = next(
@@ -708,7 +711,7 @@ async def test_failed_retry_stays_on_queue_owner_after_viewed_session_switch():
         controller.run_prompt_chain("owner turn", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "owner follow-up")
+    await _queue(controller, session_id, "owner follow-up")
     gateway.release[0].set()
     await task
     failed = next(
@@ -747,7 +750,7 @@ async def test_preaccept_refusal_returns_claim_to_head_and_writes_no_history():
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    queued_id = _queue(controller, session_id, "two")
+    queued_id = await _queue(controller, session_id, "two")
     gateway.release[0].set()
     await task
 
@@ -769,7 +772,7 @@ async def test_shutdown_tombstones_before_cancel_and_never_starts_next_prompt():
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
+    await _queue(controller, session_id, "two")
 
     await controller.shutdown()
     await chain_task
@@ -788,7 +791,7 @@ async def test_shutdown_during_claimed_readiness_cannot_accept_or_dispatch_it():
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
+    await _queue(controller, session_id, "two")
     gateway.release[0].set()
     await gateway.second_resolve_started.wait()
 
@@ -813,7 +816,7 @@ async def test_close_tombstones_before_cancel_and_never_starts_next_prompt():
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
+    await _queue(controller, session_id, "two")
 
     close_controller_session(controller, session_id)
     await asyncio.gather(chain_task, return_exceptions=True)
@@ -832,7 +835,7 @@ async def test_paused_queue_gates_unrelated_generation_and_cap_refuses_reacquire
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session_id, "two")
+    await _queue(controller, session_id, "two")
     gateway.release[0].set()
     await task
 
@@ -887,7 +890,7 @@ async def test_rag_capture_receives_manual_then_queued_origin_for_owner_session(
         controller.run_prompt_chain("one", session_id=session.id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session.id, "two")
+    await _queue(controller, session.id, "two")
     gateway.release[0].set()
     await gateway.started[1].wait()
     gateway.release[1].set()
@@ -910,7 +913,7 @@ async def test_accepted_queued_prompts_use_normal_persistence_exactly_once():
         controller.run_prompt_chain("one", session_id=session.id)
     )
     await gateway.started[0].wait()
-    _queue(controller, session.id, "two")
+    await _queue(controller, session.id, "two")
     gateway.release[0].set()
     await gateway.started[1].wait()
     gateway.release[1].set()
@@ -940,8 +943,8 @@ async def test_two_sessions_keep_independent_chains_and_each_occupies_one_slot()
         controller.run_prompt_chain("b1", session_id=second.id)
     )
     await gateway.started[1].wait()
-    _queue(controller, first.id, "a2")
-    _queue(controller, second.id, "b2")
+    await _queue(controller, first.id, "a2")
+    await _queue(controller, second.id, "b2")
     assert controller.in_flight_run_count() == 2
 
     for release in gateway.release:
@@ -969,7 +972,7 @@ async def test_approval_wait_uses_same_activity_projection_and_keeps_queue_edita
         controller.run_prompt_chain("one", session_id=session_id)
     )
     await gateway.started[0].wait()
-    entry_id = _queue(controller, session_id, "two original")
+    entry_id = await _queue(controller, session_id, "two original")
     controller.add_pending_round(session_id, "approval-round")
 
     activity = controller.activity_for(session_id)
@@ -1008,7 +1011,7 @@ async def test_rider_added_after_admission_returns_claim_without_consuming_it():
         controller.run_prompt_chain("one", session_id=session.id)
     )
     await gateway.started[0].wait()
-    queued_id = _queue(controller, session.id, "two")
+    queued_id = await _queue(controller, session.id, "two")
     later_attachment = PendingAttachment(
         "/later.png",
         "later.png",
@@ -1054,7 +1057,7 @@ async def test_multi_entry_queue_chain_publishes_one_final_durable_outcome(tmp_p
         controller.run_prompt_chain("one", session_id=queued_session.id)
     )
     await gateway.started[0].wait()
-    _queue(controller, queued_session.id, "two")
+    await _queue(controller, queued_session.id, "two")
     store.switch_session(active_session.id)
     gateway.release[0].set()
     await gateway.started[1].wait()

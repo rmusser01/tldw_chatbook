@@ -756,7 +756,21 @@ def _admitted_file(function):
                 if function.__name__ == "atomic_private_write_bytes":
                     raw.mcp_sources.published(state, path)
                 return result
-            if config is not None and state.source is config:
+            if state.route == "hook_permissions":
+                selected = lexical_path(path)
+                allowed = (
+                    function.__name__ == "secure_private_directory"
+                    and selected == state.selected.parent
+                    or function.__name__ == "create_private_text"
+                    and selected
+                    == state.selected.with_name(state.selected.name + ".lock")
+                    or function.__name__ == "atomic_private_write_bytes"
+                    and selected == state.selected
+                    and state.temporary is not None
+                )
+                if not allowed:
+                    raise RuntimeError("raw_source_helper_not_supported")
+            elif config is not None and state.source is config:
                 selected = lexical_path(path)
                 allowed = (
                     function.__name__ == "secure_private_directory"
@@ -893,9 +907,9 @@ def _admitted_stream(function):
                     raise RuntimeError("raw_source_helper_not_supported")
                 raw.mcp_sources.check_destination(state, path)
                 return _MCPAppendStream(function(path, *args, **kwargs), operation)
-            if state.source is not config or lexical_path(
-                path
-            ) != (
+            if (
+                state.route != "hook_permissions" and state.source is not config
+            ) or lexical_path(path) != (
                 state.selected
                 if state.route == "config_data_lock"
                 else state.selected.with_name(state.selected.name + ".lock")

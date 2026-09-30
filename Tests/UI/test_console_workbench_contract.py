@@ -41,6 +41,10 @@ from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
 
+# Real config consumers retain their synthetic collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
@@ -59,7 +63,7 @@ class _CountingReadyResolutionGateway(_ReadyResolutionGateway):
         return await super().resolve_for_send(selection)
 
 
-class _UnavailableResolutionGateway:
+class _UnavailableResolutionGateway(_ReadyResolutionGateway):
     async def resolve_for_send(self, _selection):
         raise RuntimeError("provider unavailable")
 
@@ -657,7 +661,7 @@ async def test_direct_improve_keeps_provider_recovery_when_review_is_unavailable
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-shell")
+        await _wait_for_selector(console, pilot, "#console-native-composer")
         console.query_one("#console-native-composer").load_draft("Improve me.")
         recovery = AsyncMock()
         console._open_console_provider_recovery = recovery
@@ -813,7 +817,8 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         # ahead of the staged-context tray.
         assert children[0].id == "console-environment-section"
         assert children[1].id == "console-tasks-section"
-        assert children[2] is tray
+        assert children[2].id == "console-agent-section-subagents"
+        assert children[3] is tray
         readiness = console.query_one("#console-live-work-source-readiness")
         live_work_section = console.query_one("#console-live-work-section")
         assert live_work_section in readiness.ancestors
@@ -869,6 +874,9 @@ async def test_console_blocked_inspector_explains_impact_and_next_action():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
+        if not _is_displayed(console.query_one("#console-right-rail")):
+            console._set_console_rail_preference(right_open=True)
+            await pilot.pause()
 
         inspector = console.query_one("#console-run-inspector-state")
         visible_text = " ".join(
@@ -892,6 +900,9 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
+        if not _is_displayed(console.query_one("#console-right-rail")):
+            await console.action_toggle_console_inspector_rail()
+            await pilot.pause()
 
         inspector = console.query_one("#console-run-inspector-state")
         text = " ".join(
@@ -1202,9 +1213,24 @@ def test_console_empty_recovery_action_copy_matches_setup_blocker(
     expected_label: str,
     expected_tooltip: str,
 ):
-    assert ChatScreen._console_empty_recovery_action_copy(blocker_copy) == (
+    assert ChatScreen._console_empty_recovery_action_copy(
+        blocker_copy,
+        provider_action_label=expected_label,
+        provider_action_tooltip=expected_tooltip,
+    ) == (
         expected_label,
         expected_tooltip,
+    )
+
+
+def test_console_empty_recovery_copy_uses_generic_fallback_without_structured_action():
+    assert ChatScreen._console_empty_recovery_action_copy("Unknown setup blocker") == (
+        "Review settings",
+        "Review Console provider settings before sending",
+    )
+    assert ChatScreen._console_empty_recovery_action_copy("") == (
+        "Choose model",
+        "Choose the provider and model for this Console session.",
     )
 
 
@@ -1264,6 +1290,7 @@ def test_console_workbench_state_exposes_core_actions_visibly():
     assert tuple(actions) == (
         "new-tab",
         "settings",
+        "hooks",
         "attach-context",
         "run-library-rag",
         "send",
@@ -1839,7 +1866,8 @@ async def test_console_registers_footer_workbench_shortcuts():
             # task-32277: Alt+A follows immediately after, same reasoning --
             # the approval card had no key binding at all before this.
             "Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new "
-            "tab | Alt+I inspect | Alt+A approval | Ctrl+P palette | Ctrl+Q quit"
+            "tab | Alt+I inspect | Alt+A approval | Alt+C context rail | "
+            "Ctrl+P palette | Ctrl+Q quit"
         )
 
         await console.remove()

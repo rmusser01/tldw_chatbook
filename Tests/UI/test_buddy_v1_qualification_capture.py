@@ -14,12 +14,14 @@ from pathlib import Path
 import pytest
 from textual.widgets import Button, Select, Switch
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_navigation_decisions import _until
 from Tests.UI.test_console_screen_reuse import (
     _boot_settled,
     _press_until_screen,
-    _scratch_env,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 _ARTIFACT_ROOT = Path(tempfile.gettempdir()) / "chatbook-buddy-v1-qualification-32108"
 
@@ -184,7 +186,6 @@ def test_upgrade_setup_closes_connection_after_activation_failure(
         monkeypatch: Scoped scratch profile and activation failure injection.
         tmp_path: Disposable predecessor database location.
     """
-    _scratch_env(monkeypatch, tmp_path)
     from Tests.Persona_Visual import test_persona_visual_repository as fixture
 
     activate = fixture._activate
@@ -228,22 +229,32 @@ def test_dynamic_qualification_requires_complete_ordered_loop(sequence, complete
 @pytest.mark.asyncio
 @pytest.mark.ui
 @pytest.mark.parametrize("profile_kind", ["fresh", "upgrade"])
+@private_profile_test
 async def test_buddy_v1_rendered_profile_journey(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, profile_kind: str
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    profile_kind: str,
 ) -> None:
     """Render the production app with real bundled art and local SQLite.
 
     Args:
-        monkeypatch: Scoped disposable profile and predecessor-schema overrides.
-        tmp_path: Isolated HOME, config, data, database and default capture root.
-        profile_kind: Fresh setup or synthetic schema69-to70 upgrade journey.
+        request: Exact test identity for its private-profile child process.
+        monkeypatch: Scoped predecessor-schema and rendering overrides.
+        tmp_path: Disposable capture root within the child pytest process.
+        profile_kind: Fresh setup or schema69-to-current upgrade journey.
     """
-    _scratch_env(monkeypatch, tmp_path)
+    profile_root = Path(os.environ["TLDW_TEST_CONFIG_ROOT"])
     monkeypatch.delenv("NO_COLOR", raising=False)
     output = _capture_output(tmp_path)
     output.mkdir(parents=True, exist_ok=True)
     from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.config import get_chachanotes_db_path
+    from tldw_chatbook.config import (
+        get_chachanotes_db_path,
+        get_cli_config_path,
+        save_settings_to_cli_config,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
     from tldw_chatbook.UI.Navigation.buddy_management import get_buddy_management
     from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
@@ -255,8 +266,13 @@ async def test_buddy_v1_rendered_profile_journey(
     from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
 
     assert os.environ["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
+    assert get_cli_config_path().is_relative_to(profile_root)
+    assert Path(os.environ["XDG_DATA_HOME"]).is_relative_to(profile_root)
+    assert save_settings_to_cli_config(
+        {"first_run": {"setup_completed": True}, "splash_screen": {"enabled": False}}
+    )
     database_path = get_chachanotes_db_path()
-    assert database_path.is_relative_to(tmp_path)
+    assert database_path.is_relative_to(profile_root)
     assert not database_path.exists()
     legacy = None
     if profile_kind == "upgrade":
@@ -281,7 +297,7 @@ async def test_buddy_v1_rendered_profile_journey(
                     "SELECT version FROM db_schema_version WHERE schema_name=?",
                     ("rag_char_chat_schema",),
                 ).fetchone()[0]
-                == 70
+                == CharactersRAGDB._CURRENT_SCHEMA_VERSION
             )
         if legacy is not None:
             assert (
@@ -427,7 +443,7 @@ async def test_buddy_v1_rendered_profile_journey(
             cleared_workspace.assistant_defaults_explicit_none
         )
         evidence["conversation_id"] = target.id
-        evidence["schema_version"] = 70
+        evidence["schema_version"] = CharactersRAGDB._CURRENT_SCHEMA_VERSION
         evidence["persona_count_unchanged_during_artwork_selection"] = True
     evidence["source_commit"] = (
         await asyncio.to_thread(

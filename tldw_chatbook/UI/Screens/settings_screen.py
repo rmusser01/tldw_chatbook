@@ -61,6 +61,8 @@ from tldw_chatbook.UI.focus_ownership import (
 # is imported where it is rendered rather than at module scope -- this
 # module is reached by the screen pre-importer.
 
+from ...Chat.console_runtime import ensure_console_runtime
+from .settings_hooks import HooksSettingsPanel
 from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
@@ -455,6 +457,7 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
+    from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.contracts import ToolPackError
     from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.Settings_Widgets.personal_context_panel import (
@@ -1550,6 +1553,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
         SettingsCategoryId.WEB_SEARCH,
         SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
+        SettingsCategoryId.HOOKS,
         SettingsCategoryId.LIBRARY_RAG,
         SettingsCategoryId.STORAGE,
         SettingsCategoryId.PRIVACY_SECURITY,
@@ -2020,6 +2024,17 @@ _RAG_GROUP_GUIDANCE: dict[str, tuple[tuple[str, str], ...]] = {
 # SettingsCategoryId MUST have an entry: this table is read inside compose, so
 # a missing key would otherwise take down the whole app (see PR #713 / #742).
 _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
+    SettingsCategoryId.HOOKS: (
+        ("Affected config", "[hooks] and standalone Console lifecycle commands"),
+        (
+            "Recovery",
+            "Revert reloads saved definitions; Review saved offers permission recovery",
+        ),
+        (
+            "Boundary",
+            "Saving a definition grants no permission; hooks cannot approve tool access",
+        ),
+    ),
     SettingsCategoryId.WEB_SEARCH: (
         ("Affected config", "shared search default and backend credentials"),
         (
@@ -3104,6 +3119,8 @@ class SettingsScreen(BaseAppScreen):
         self._console_capture_applying = False
         self._personal_context_service_injection = personal_context_service
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
+        self._hooks_snapshot: HookReviewSnapshot | None = None
+        self._hooks_saving = False
         self._raw_cli_save_pending = False
         self._raw_cli_unlock_confirmation_pending = False
         self._raw_cli_arm_confirmation_pending = False
@@ -3580,6 +3597,9 @@ class SettingsScreen(BaseAppScreen):
         if self._web_search_settings is not None:
             self._web_search_settings.capture_pending_input()
             state["web_search_session"] = self._web_search_settings
+        for panel in self.query(HooksSettingsPanel):
+            panel.capture()
+        state["hooks_snapshot"] = self._hooks_snapshot
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
         if self._advanced_config_settings is not None:
             try:
@@ -3656,6 +3676,13 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts = copy.deepcopy(valid_drafts)
             except Exception:
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
+
+        hooks_snapshot = state.get("hooks_snapshot")
+        if hooks_snapshot is not None:
+            from ...Agents.hook_permissions import HookReviewSnapshot
+
+            if isinstance(hooks_snapshot, HookReviewSnapshot):
+                self._hooks_snapshot = hooks_snapshot
 
         search_session = state.get("web_search_session")
         if search_session is not None:
@@ -4490,8 +4517,119 @@ class SettingsScreen(BaseAppScreen):
             ("Pending outgoing", "Loading"),
         )
 
+    def _hooks_owner(self):
+        return ensure_console_runtime(self.app_instance).ensure_hook_permissions()
+
+    @on(HooksSettingsPanel.Requested)
+    def _hooks_requested(self, event: HooksSettingsPanel.Requested) -> None:
+        event.stop()
+        if event.action == "load":
+            self.run_worker(
+                self._load_hooks_settings, group="settings-hooks-load", exclusive=True
+            )
+        elif event.action == "edited":
+            self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+        elif event.action == "save":
+            self._start_hooks_save()
+        elif event.action == "revert":
+            self.action_settings_revert_category(allow_text_entry_focus=True)
+        elif event.action == "review":
+            self.run_worker(
+                self._review_saved_hooks, group="settings-hooks-review", exclusive=True
+            )
+        elif event.action == "advanced":
+            self.apply_navigation_context({"category": "advanced-config"})
+
+    async def _load_hooks_settings(self, *, reset: bool = False) -> None:
+        snapshot = await asyncio.to_thread(self._hooks_owner().snapshot)
+        draft = self._settings_drafts.setdefault(
+            SettingsCategoryId.HOOKS, SettingsDraft(SettingsCategoryId.HOOKS)
+        )
+        if reset or not draft.is_dirty:
+            self._hooks_snapshot = snapshot
+        for panel in self.query(HooksSettingsPanel):
+            panel.load(snapshot, reset=reset)
+        self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+
+    async def _review_saved_hooks(self) -> None:
+        from ...Widgets.Console.console_hooks_review_modal import request_hook_review
+
+        snapshot = await asyncio.to_thread(self._hooks_owner().snapshot)
+        await request_hook_review(
+            self, self._hooks_owner(), snapshot, False, lambda: None
+        )
+        await self._load_hooks_settings()
+
+    def _start_hooks_save(self) -> None:
+        if self._hooks_saving or self._hooks_snapshot is None:
+            return
+        try:
+            panel = self.query_one(HooksSettingsPanel)
+            section, legacy_ids = panel.submission()
+        except (QueryError, ValueError) as error:
+            self.app.notify(str(error), severity="error")
+            return
+        if not panel.draft.is_dirty:
+            self.app.notify("No hook settings changes to save.", severity="information")
+            return
+        expected = self._hooks_snapshot
+        submitted_draft = copy.deepcopy(panel.draft.values)
+        self._hooks_saving = True
+        panel.disabled = True
+        self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+
+        async def save() -> None:
+            try:
+                result, snapshot = await asyncio.to_thread(
+                    self._hooks_owner().save_configuration,
+                    expected,
+                    section,
+                    legacy_ids=legacy_ids,
+                )
+                draft = self._settings_drafts[SettingsCategoryId.HOOKS]
+                # A detached/returned screen must never replace a newer edit.
+                if result.file_replaced and draft.values == submitted_draft:
+                    draft.originals = {
+                        "section": copy.deepcopy(section),
+                        "origins": list(range(len(section.get("hook", [])))),
+                    }
+                    draft.values = copy.deepcopy(draft.originals)
+                    self._hooks_snapshot = snapshot
+                    if panel.is_mounted:
+                        panel.load(snapshot)
+                elif panel.is_mounted:
+                    panel.snapshot = snapshot
+                    for status in panel.query("#settings-hooks-status").results(Static):
+                        status.update(
+                            snapshot.notice
+                            or snapshot.blocked_reason
+                            or "Reload before retrying."
+                        )
+                self.app.notify(
+                    snapshot.notice or "Hook settings updated.",
+                    severity="information" if result.caches_reloaded else "warning",
+                )
+            except (OSError, ValueError):
+                self.app.notify(
+                    "Hooks changed or could not be saved. Revert to reload before retrying.",
+                    severity="error",
+                )
+            finally:
+                self._hooks_saving = False
+                if panel.is_mounted:
+                    panel.disabled = False
+                self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+
+        self.run_worker(save, group="settings-hooks-save", exclusive=True)
+
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
+            SettingsCategorySummary(
+                SettingsCategoryId.HOOKS,
+                "Hooks",
+                "Console lifecycle commands and one-time permission review.",
+                "Guided",
+            ),
             SettingsCategorySummary(
                 SettingsCategoryId.OVERVIEW,
                 "Overview",
@@ -5490,6 +5628,7 @@ class SettingsScreen(BaseAppScreen):
             (
                 "Expert",
                 (
+                    SettingsCategoryId.HOOKS,
                     SettingsCategoryId.INTERNAL_PROMPTS,
                     SettingsCategoryId.ADVANCED_CONFIG,
                 ),
@@ -5660,6 +5799,18 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
         return (
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.HOOKS,
+                owns_config_sections=("hooks",),
+                reads_runtime_state_from=(
+                    "saved hook definitions",
+                    "local exact-definition consent",
+                ),
+                writes_allowed=True,
+                runtime_owner="Console hook permission owner",
+                boundary_copy="Edits stay staged until Save; enabled new or changed hooks require review before Send. Tool permissions remain separate.",
+                recovery_copy="Revert edits, disable a hook, or retry permission refresh in Review saved.",
+            ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.WEB_SEARCH,
                 owns_config_sections=(
@@ -9029,6 +9180,10 @@ class SettingsScreen(BaseAppScreen):
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
+        if category is SettingsCategoryId.HOOKS:
+            return (
+                self._category_has_unsaved_changes(category) and not self._hooks_saving
+            )
         if category is SettingsCategoryId.WEB_SEARCH:
             return (
                 self._category_has_unsaved_changes(category)
@@ -9163,6 +9318,10 @@ class SettingsScreen(BaseAppScreen):
                     ).disabled = not has_unsaved_changes
                 except QueryError:
                     pass
+        if category is SettingsCategoryId.HOOKS:
+            for button_id in ("settings-hooks-save", "settings-hooks-revert"):
+                for button in self.query(f"#{button_id}"):
+                    button.disabled = not has_unsaved_changes or self._hooks_saving
         if category is SettingsCategoryId.VIDEO_GENERATION:
             # task-3401.12: same sibling idiom for Video Gen's in-panel
             # Save/Revert.
@@ -9729,6 +9888,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
         """The category-scope half of the State banner (after the badge)."""
+        if category is SettingsCategoryId.HOOKS:
+            return "Saved enabled changes require review before the next Send."
         if category is SettingsCategoryId.WEB_SEARCH:
             return "Shared by basic and deep search; changes apply after Save."
         if category is SettingsCategoryId.ADVANCED_CONFIG:
@@ -21932,7 +22093,14 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
-        if category is SettingsCategoryId.OVERVIEW:
+        if category is SettingsCategoryId.HOOKS:
+            yield HooksSettingsPanel(
+                self._settings_drafts.setdefault(category, SettingsDraft(category)),
+                self._hooks_snapshot,
+                id="settings-hooks-panel",
+                disabled=self._hooks_saving,
+            )
+        elif category is SettingsCategoryId.OVERVIEW:
             yield from self._render_overview_detail()
         elif category is SettingsCategoryId.PERSONAL_CONTEXT:
             panel_class = _personal_context_settings_panel_class()
@@ -22911,6 +23079,16 @@ class SettingsScreen(BaseAppScreen):
         """Scrollable inspector remainder: guides, ownership, boundaries."""
         summary = self._active_summary()
         ownership = self._ownership_record(summary.category)
+        if summary.category is SettingsCategoryId.HOOKS:
+            yield Static("Hook permissions", classes="destination-section")
+            yield Static(
+                "Commands receive event data on stdin and run as an argument array. "
+                "Review binds to the exact event, arguments, matcher and timeout. "
+                "Editing an executable at the same path is outside this review. "
+                "Revoking permission prevents later launches; it does not stop a hook already running.",
+                classes="settings-detail-row",
+                markup=False,
+            )
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
@@ -31035,6 +31213,9 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.HOOKS:
+            self._start_hooks_save()
+            return
         # Network sits ABOVE the GUIDED_SETTINGS_MUTATION_CATEGORIES guard on
         # purpose: the category deliberately bypasses the SettingsDraft
         # staging machinery (plain `self._network_pending` dict) with this
@@ -32004,6 +32185,16 @@ class SettingsScreen(BaseAppScreen):
 
     def _revert_category(self, category: SettingsCategoryId) -> None:
         """Discard a dirty category's staged edits (post-confirmation)."""
+        if category is SettingsCategoryId.HOOKS:
+            if not self._hooks_saving:
+
+                async def reload_hooks() -> None:
+                    await self._load_hooks_settings(reset=True)
+
+                self.run_worker(
+                    reload_hooks, group="settings-hooks-load", exclusive=True
+                )
+            return
         if category is SettingsCategoryId.WEB_SEARCH:
             from ...Widgets.settings_web_search_panel import WebSearchSettingsPanel
 

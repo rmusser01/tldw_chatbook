@@ -82,6 +82,21 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         # (MiMo and BytePlus are seeded-only).
         "TokenHub",
         "StepFun",
+        # TASK-33351 gateway/host presets with a models route (Upstage and
+        # Qianfan are seeded-only).
+        "Vercel",
+        "ZenMux",
+        "Kilo",
+        "SiliconFlow",
+        "Baseten",
+        "GMI",
+        "OllamaCloud",
+        "Arcee",
+        "Nous",
+        "Venice",
+        "Meta",
+        # TASK-33506 (the other four follow-up presets are seeded-only).
+        "WandB",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 18
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 30
     assert SELECTOR_MERGE_CAP == 50

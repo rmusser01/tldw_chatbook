@@ -14,18 +14,30 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Agents.hook_test_utils import trusted_hook_engine
+from Tests.private_profile import private_profile_test
+
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    AgentConfig,
+    ModelTurn,
     normalize_tool_review,
     ToolCall,
+    ToolLoadSelection,
     ToolResult,
 )
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LocalApprovalEffect,
     LocalToolProvider,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL,
+    MCPPendingCall,
+)
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -68,6 +80,10 @@ ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 #: writes is keyed by it. These tests each drive ONE run; the assertions
 #: are unchanged apart from that key.
 RUN = "run-1"
+
+
+# Real config consumers retain their synthetic collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def test_watchlists_receipt_capture_accepts_only_structured_canonical_ids():
@@ -309,6 +325,140 @@ def test_local_same_name_broad_approval_scope_survives_later_narrow_scope(
         "call-narrow": "proceed",
     }
     assert p.stamped(RUN, "watchlists_create_collection") == broad
+
+
+# Both TASK-33082 tests read the [tools] config through LocalToolProvider,
+# which the per-test sandbox's config admission refuses (ADR-126); they need
+# only a tmp_path workspace, so they keep the collection-time test profile.
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("sibling_answer", "refusal", "audit"),
+    [
+        ("timeout", TIMEOUT_REFUSAL, "denied-timeout"),
+        ("surprise", UNRESOLVED_REFUSAL, "denied-unresolved"),
+        (None, UNRESOLVED_REFUSAL, "denied-unresolved"),
+    ],
+)
+def test_sibling_without_its_own_approval_never_dispatches(
+    tmp_path, sibling_answer, refusal, audit
+):
+    """TASK-33082: a reviewed call runs only on its own row's approval.
+
+    One `fs_list` call is approved; its same-name sibling timed out, got an
+    unknown answer, or got no answer. The name-keyed stamp keeps the
+    approval, so before the fix the hook returned "proceed" for the sibling
+    and it ran on its neighbour's stamp. Drives the real hook and the real
+    provider through `run_agent_loop`. The refused sibling is never
+    dispatched, so the hook audits it, once.
+
+    Args:
+        tmp_path: The provider's workspace root.
+        sibling_answer: The unapproved sibling's own card answer; ``None``
+            leaves it out of the map.
+        refusal: The model-facing refusal that answer must produce.
+        audit: The execution-log decision recorded for the refused sibling.
+    """
+    (tmp_path / "sub").mkdir()
+    recorded: list[tuple[str, str]] = []
+    p = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    answers = {"call-ok": "approve_once"}
+    if sibling_answer is not None:
+        answers["call-late"] = sibling_answer
+    hook = build_local_review_hook(p, lambda _pending: answers)
+    calls = [
+        ToolCall(name="fs_list", args={"path": "."}, call_id="call-ok"),
+        ToolCall(name="fs_list", args={"path": "sub"}, call_id="call-late"),
+    ]
+    raw_calls = [
+        {
+            "id": call.call_id,
+            "type": "function",
+            "function": {"name": call.name, "arguments": json.dumps(call.args)},
+        }
+        for call in calls
+    ]
+    turns = iter(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=tuple(calls),
+                assistant_message={
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": raw_calls,
+                },
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+    seen_messages: list[list[dict]] = []
+    dispatched: list[str] = []
+
+    def call_model(messages, _schemas):
+        seen_messages.append([dict(message) for message in messages])
+        return next(turns)
+
+    def invoke(call):
+        dispatched.append(call.call_id)
+        with use_run_id(RUN):
+            return p.invoke(call.name, call.args)
+
+    deps = LoopDeps(
+        call_model=call_model,
+        invoke_tool=invoke,
+        spawn=lambda _task: ToolResult(ok=True, content=""),
+        find_tools=lambda _query: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
+        should_cancel=lambda: False,
+        clock=lambda: 0.0,
+        review_tool_calls=lambda batch: hook(batch, RUN),
+    )
+    config = AgentConfig(model="m", system_prompt="s", allowed_tools=("fs_list",))
+
+    out = run_agent_loop(config, [{"role": "user", "content": "list"}], [], deps)
+
+    assert out.status == RUN_DONE
+    assert dispatched == ["call-ok"], (
+        f"a call with no approval of its own was dispatched: {dispatched}"
+    )
+    results = {
+        message["tool_call_id"]: message["content"]
+        for message in seen_messages[1]
+        if message.get("role") == "tool"
+    }
+    assert results["call-late"] == refusal
+    assert p.stamped(RUN, "fs_list") == "approve_once"
+    assert [row for row in recorded if row[1].startswith("denied")] == [
+        ("fs_list", audit)
+    ]
+
+
+@pytest.mark.bootstrap_profile
+def test_lone_timed_out_row_still_reaches_the_provider_refusal(tmp_path):
+    """TASK-33082 leaves a fully timed-out batch on its existing path.
+
+    With no approved sibling the name's stamp is "timeout", so the hook
+    still returns "proceed" and the provider refuses the call at dispatch,
+    recording its audit row, as before.
+
+    Args:
+        tmp_path: The provider's workspace root.
+    """
+    p = provider(ASK, tmp_path)
+    hook = build_local_review_hook(p, lambda _pending: {"call-late": "timeout"})
+
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="call-late")], RUN
+    )
+
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"fs_list": "proceed", "call-late": "proceed"}
+    assert p.stamped(RUN, "fs_list") == "timeout"
 
 
 def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
@@ -607,6 +757,8 @@ def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
     controller.app = app
+    controller.store = ConsoleChatStore()
+    controller._character_read_guards = {}
     from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
     controller.set_pending_question = None
@@ -846,18 +998,17 @@ def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    # The exact private-profile child retains its admitted config source.
 
     class AppDatabase:
         def __init__(self):
@@ -914,18 +1065,16 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_compose_local_provider_wires_transactional_watchlists_commands(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    # The exact private-profile child retains its admitted config source.
     RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
     database = SubscriptionsDB(tmp_path / "subscriptions.db")
     local_service = LocalWatchlistsService(db_factory=lambda: database)
@@ -1031,18 +1180,16 @@ def test_compose_local_provider_routes_schedule_through_shared_app_command_servi
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    # The exact private-profile child retains its admitted config source.
     RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
 
     class Coordinator:
@@ -1086,18 +1233,17 @@ async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordin
     assert coordinator.briefings == [(5, 2)]
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    # The exact private-profile child retains its admitted config source.
     policy_store = RuntimeSourceStateStore(default_runtime_policy_path())
     policy_store.save(RuntimeSourceState())
 
@@ -1636,7 +1782,7 @@ def _deny_fs_tools_engine(tmp_path):
 
     from tldw_chatbook.Agents.run_hooks import HookSpec, RunHooksConfig, RunHooksEngine
 
-    return RunHooksEngine(
+    return trusted_hook_engine(
         lambda: RunHooksConfig(
             enabled=True,
             hooks=(
@@ -1681,7 +1827,9 @@ def test_pretooluse_hook_denies_before_permission_store(tmp_path):
     )
     assert verdicts["fs_list"] != "proceed"
     assert verdicts["fs_list"].startswith("hook: ")
-    assert verdicts["git_status"] == "proceed"
+    approved = normalize_tool_review(verdicts["git_status"])
+    assert approved.verdict == "proceed"
+    assert approved.approval_decision == "approved"
     # ONE approval round trip, carrying only the non-matching call: the
     # hook-denied call never reaches the permission store.
     assert rounds == [["git_status"]]

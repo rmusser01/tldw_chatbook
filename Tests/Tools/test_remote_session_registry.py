@@ -418,3 +418,14 @@ def test_close_all_closes_in_parallel_and_is_bounded(monkeypatch):
     started = time.monotonic()
     reg.close_all()
     assert time.monotonic() - started < 2.0  # a wedged close never holds app exit
+
+
+def test_budget_expired_start_is_not_shared_with_waiters():
+    """TASK-33420: OP_TIMEOUT is the first caller's budget, not a dead host."""
+    reg = RemoteSessionRegistry()
+    timeout = TransportFailure(TransportFailureKind.OP_TIMEOUT, None, "operation timed out")
+    with pytest.raises(SessionStartError):
+        reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=SessionStartError(True, timeout, "budget")))
+    assert ("run-1", "b1") not in reg._start_failures
+    assert ("run-1", "b1") not in reg._disabled
+    assert reg.acquire(("run-1", "b1"), FakeWorker) is not None  # next call gets a session

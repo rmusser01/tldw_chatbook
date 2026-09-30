@@ -8431,6 +8431,8 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 }
 .console-generation-frame { border: round $ds-console-frame !important; }
 
+#console-control-hooks.hooks-attention{color:$ds-status-approval-required;}
+
 /* ===== MODULE: features/_console_panels.tcss ===== */
 
 

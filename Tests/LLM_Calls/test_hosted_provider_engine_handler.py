@@ -414,3 +414,76 @@ def test_resolve_hosted_engine_request_alias_matches_private_signature():
     assert list(inspect.signature(engine.resolve_hosted_engine_request).parameters) == (
         list(inspect.signature(engine.resolve_hosted_request).parameters)
     )
+
+
+# --- TASK-33504: a turn cut off by the token limit before any reply ---
+
+
+def test_non_streaming_reasoning_only_length_stop_reaches_caller_as_token_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handler turns protocol errors into a generic "malformed" 502, so
+    the token-limit error must be a ChatProviderError to survive it."""
+    handler = build_hosted_chat_handler(DATABRICKS)
+    monkeypatch.setattr(
+        hosted_provider_engine,
+        "resolve_hosted_request",
+        lambda record, **_kwargs: _resolution(),
+    )
+    _patch_transport(
+        monkeypatch,
+        {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "databricks-gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "reasoning_content": "thinking until the limit",
+                    },
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 64, "total_tokens": 69},
+        },
+    )
+    with pytest.raises(ChatProviderError) as caught:
+        handler(input_data=[{"role": "user", "content": "hi"}], api_key="secret")
+    assert caught.value.status_code == 400
+    assert "max-tokens limit before writing a reply" in str(caught.value)
+
+
+def test_streaming_reasoning_only_length_stop_reaches_caller_as_token_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = build_hosted_chat_handler(DATABRICKS)
+    monkeypatch.setattr(
+        hosted_provider_engine,
+        "resolve_hosted_request",
+        lambda record, **_kwargs: _resolution(streaming=True),
+    )
+    payloads = [
+        {"choices": [{"index": 0, "delta": {"role": "assistant"}}]},
+        {"choices": [{"index": 0, "delta": {"reasoning_content": "thinking"}}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]},
+        {"choices": [], "usage": {"prompt_tokens": 8, "completion_tokens": 64}},
+    ]
+    records = iter(
+        [SSERecord(event=None, data=json.dumps(item)) for item in payloads]
+        + [SSERecord(event=None, data="[DONE]")]
+    )
+    _patch_transport(monkeypatch, records)
+
+    stream = handler(
+        input_data=[{"role": "user", "content": "hi"}],
+        api_key="secret",
+        streaming=True,
+    )
+    with pytest.raises(ChatProviderError) as caught:
+        list(stream)
+    assert caught.value.status_code == 400
+    assert "max-tokens limit before writing a reply" in str(caught.value)

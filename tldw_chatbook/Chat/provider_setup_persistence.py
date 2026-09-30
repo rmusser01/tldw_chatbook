@@ -25,6 +25,7 @@ from ..config import (
     apply_settings_mutation_to_cli_config,
     is_valid_provider_api_key,
 )
+from ..provider_registry import ALL_RECORDS
 from .provider_endpoint_contract import (
     canonical_connection_identity,
     resolve_provider_endpoint,
@@ -135,6 +136,15 @@ _CANONICAL_PROVIDER_KEYS = frozenset(
         "zai",
     }
 )
+# Every engine preset owns ``api_settings.<key>`` with ``api_base_url``, like
+# Databricks above; derived from the registry so a new preset can never be
+# unsaveable again (TASK-33510). ``custom-hosted`` is an execution key, not a
+# provider a user sets up.
+_ENGINE_PRESETS = tuple(
+    record for record in ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+)
+_CANONICAL_PROVIDER_KEYS |= {record.key for record in _ENGINE_PRESETS}
 _CONFIG_SECTION_OVERRIDES = {
     "local_llm": "local-llm",
 }
@@ -182,6 +192,8 @@ _ALIASES = {
     "TabbyAPI": "tabbyapi",
     "vLLM": "vllm",
     "ZAI": "zai",
+    # Engine presets' display config keys ("Together", "OllamaCloud", ...).
+    **{record.config_key: record.key for record in _ENGINE_PRESETS},
 }
 
 

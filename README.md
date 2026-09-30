@@ -522,9 +522,16 @@ the inference-cloud keys `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`,
 `CEREBRAS_API_KEY`, `SAMBANOVA_API_KEY`, `NVIDIA_API_KEY`,
 `DEEPINFRA_API_KEY`, `NEBIUS_API_KEY`, `NOVITA_API_KEY`,
 `MINIMAX_API_KEY`, `MIMO_API_KEY` (Xiaomi MiMo), `TOKENHUB_API_KEY` (Tencent
-TokenHub), `ARK_API_KEY` (ByteDance Seed via BytePlus), and
-`STEPFUN_API_KEY` (model lists fill via **Discover models**; MiniMax, MiMo, and BytePlus ship a
-seeded list).
+TokenHub), `ARK_API_KEY` (ByteDance Seed via BytePlus), `STEPFUN_API_KEY`,
+`AI_GATEWAY_API_KEY` (Vercel), `ZENMUX_API_KEY`, `KILO_API_KEY`,
+`SILICONFLOW_API_KEY`, `BASETEN_API_KEY`, `GMI_API_KEY`, `OLLAMA_API_KEY`
+(Ollama Cloud), `UPSTAGE_API_KEY`, `ARCEE_API_KEY`, `QIANFAN_API_KEY`,
+`NOUS_API_KEY`, `VENICE_API_KEY`, `META_API_KEY`, `AZURE_OPENAI_API_KEY`
+(plus your resource URL), `WANDB_API_KEY`, `CLOUDFLARE_API_TOKEN` (plus your
+account URL), `OPENCODE_API_KEY` (OpenCode Zen), and `COMMANDCODE_API_KEY`
+(model lists fill via **Discover models**; MiniMax, MiMo, BytePlus, Upstage,
+Qianfan, Cloudflare, OpenCode Zen, and Command Code ship seeded lists, and
+Azure lists your deployment names).
 
 Do not commit keys to the repository. Config encryption and keyring-backed
 storage are available for supported paths; the wizard’s **Protect keys** step

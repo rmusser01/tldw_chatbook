@@ -80,6 +80,12 @@ jobs:
       # or shed equivalent bytes -- ADR-097), do NOT remove it from this
       # list: four review cycles of silent re-breaches are exactly what its
       # absence cost.
+      #
+      # test_screen_preimport_payload_budget.py joined with TASK-33260
+      # (2026-09-28). It was the one ADR-097 ratchet NOT listed here, and it
+      # went red on dev unseen (554/500 modules) -- the same silent re-breach
+      # story. Re-pinned at the measured value with TASK-33276 (PERF-17)
+      # owning the paydown; same rule as above: never remove it from here.
       - name: Run boot budget ratchets
         run: |
           pytest Tests/Performance/test_app_import_weight.py \
@@ -87,4 +93,16 @@ jobs:
             Tests/Performance/test_boot_worker_census.py \
             Tests/Performance/test_textual_css_fastpath.py \
             Tests/Performance/test_boot_css_byte_budget.py \
+            Tests/Performance/test_screen_preimport_payload_budget.py \
+            -v --timeout=300
+
+      # The Console storage-unit ratchet joined with TASK-33260 after review
+      # on #2888: without it here, a per-call admission or a per-connection
+      # SQLite helper merges with every perf guard green -- the failure the
+      # ratchet exists to catch. On this Linux runner it gates the admission
+      # and helper counts; its os.open ceilings are macOS measurements. Same
+      # rule as above: never remove it from here.
+      - name: Run Console storage-unit ratchet
+        run: |
+          pytest "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets" \
             -v --timeout=300

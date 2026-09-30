@@ -59,6 +59,7 @@ from tldw_chatbook.Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,
     fleet_unseen_conversation_ids,
 )
+from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Chat.console_runtime import leave_console_runtime
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE,
@@ -99,6 +100,7 @@ from .console_spend_projection import ConsoleDraftSpendRefresh
 from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
+from .hooks import ConsoleHooksController
 from .image import ConsoleImageController
 from .library_activity import ConsoleLibraryActivityController
 from .library_policy import ConsoleLibraryPolicyController
@@ -1470,6 +1472,16 @@ def build_console_controllers(
     #: docstring for the full map of what moved and why.
     screen._session = ConsoleSessionController(
         screen,
+        on_draft_session_changed=lambda: (
+            screen._hooks.cancel_pending(),
+            screen.call_after_refresh(
+                lambda: screen.run_worker(
+                    screen._refresh_console_hooks,
+                    group="console-hook-refresh",
+                    exclusive=True,
+                )
+            ),
+        ),
         app_instance=screen.app_instance,
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
         current_chat_store_accessor=lambda: screen._console_chat_store,
@@ -2270,6 +2282,24 @@ def build_console_controllers(
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
     )
+    screen._hooks = ConsoleHooksController(
+        hook_permissions_accessor=lambda: (
+            screen._console_runtime().ensure_hook_permissions()
+        ),
+        request_review=lambda snapshot, waiting, cancel: (
+            screen._request_console_hooks_review(snapshot, waiting, cancel)
+        ),
+        current_session=lambda: screen._console_visible_send_session_id(),
+        current_stash=lambda: (
+            screen._console_composer_or_none().capture_draft_for_send()
+            if screen._console_composer_or_none()
+            else None
+        ),
+        on_state=lambda snapshot: screen._apply_console_hooks_state(snapshot),
+        notify=lambda text, severity: screen.app_instance.notify(
+            text, severity=severity
+        ),
+    )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),
         agent_conversation_id_accessor=(
@@ -2329,4 +2359,41 @@ def build_console_controllers(
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
         sync_cost_chip=lambda: screen._sync_console_cost_chip(),
+    )
+
+
+def build_console_workbench_projection(self, control_state: ConsoleControlState):
+    from ..Screens import chat_screen as owner
+
+    blocker_copy = self._console_provider_blocker_copy()
+    composer = self._console_composer_or_none()
+    has_draft = bool(composer and composer.draft_text().strip())
+    controller = self._console_chat_controller
+    run_state = (
+        getattr(controller, "run_state", None) if controller is not None else None
+    )
+    store = self._console_chat_store
+    active_session_id = store.active_session_id if store is not None else None
+    image_edit_active = (
+        active_session_id is not None
+        and self._image._h3_image_edit_registry().active(active_session_id) is not None
+    )
+    can_stop = image_edit_active or bool(getattr(run_state, "is_stop_allowed", False))
+    run_allows_send = (
+        bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
+    )
+    can_send = (
+        has_draft and not bool(self._console_setup_blocked_reason()) and run_allows_send
+    )
+    return owner.build_console_workbench_state(
+        control_state=control_state,
+        provider_blocker_copy=blocker_copy,
+        can_send=can_send,
+        can_stop=can_stop,
+        density=self._console_workbench_density(),
+        run_active=self._console_run_active(),
+        ephemeral=self._console_active_session_is_ephemeral(),
+        hook_attention=getattr(
+            getattr(self, "_console_hook_review_snapshot", None), "pending_count", 0
+        ),
     )

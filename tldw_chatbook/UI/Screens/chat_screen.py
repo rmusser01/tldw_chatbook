@@ -48,6 +48,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Static, Select, Collapsible, Input
 
+from ..Console_Modules import hooks as hooks_view
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import (
@@ -162,7 +163,10 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules import console_spend_projection as spend
-from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules.wiring import (
+    build_console_controllers,
+    build_console_workbench_projection,
+)
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules.session import (
     _has_selected_text,
@@ -4729,6 +4733,12 @@ class ChatScreen(BaseAppScreen):
             await self._session._create_native_console_session_from_active_context()
         elif action_id == "settings":
             await self._open_console_settings(focus_model=False)
+        elif action_id == "hooks":
+            self.run_worker(
+                self._open_console_hooks_review,
+                group="console-hook-review",
+                exclusive=True,
+            )
         elif action_id == "attach-context":
             available_columns = self._console_rail_available_columns()
             rail_state = self._current_console_rail_state(
@@ -10817,6 +10827,8 @@ class ChatScreen(BaseAppScreen):
 
     @_console_visible_draft_session_id.setter
     def _console_visible_draft_session_id(self, value: str | None) -> None:
+        if self._session._console_visible_draft_session_id != value:
+            self._hooks.cancel_pending()
         self._session._console_visible_draft_session_id = value
 
     @property
@@ -15120,41 +15132,7 @@ class ChatScreen(BaseAppScreen):
             and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
         )
 
-    def _build_console_workbench_state(self, control_state: ConsoleControlState):
-        blocker_copy = self._console_provider_blocker_copy()
-        composer = self._console_composer_or_none()
-        has_draft = bool(composer and composer.draft_text().strip())
-        controller = self._console_chat_controller
-        run_state = (
-            getattr(controller, "run_state", None) if controller is not None else None
-        )
-        store = self._console_chat_store
-        active_session_id = store.active_session_id if store is not None else None
-        image_edit_active = (
-            active_session_id is not None
-            and self._image._h3_image_edit_registry().active(active_session_id)
-            is not None
-        )
-        can_stop = image_edit_active or bool(
-            getattr(run_state, "is_stop_allowed", False)
-        )
-        run_allows_send = (
-            bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
-        )
-        can_send = (
-            has_draft
-            and not bool(self._console_setup_blocked_reason())
-            and run_allows_send
-        )
-        return build_console_workbench_state(
-            control_state=control_state,
-            provider_blocker_copy=blocker_copy,
-            can_send=can_send,
-            can_stop=can_stop,
-            density=self._console_workbench_density(),
-            run_active=self._console_run_active(),
-            ephemeral=self._console_active_session_is_ephemeral(),
-        )
+    _build_console_workbench_state = build_console_workbench_projection
 
     def _console_provider_blocker_copy(
         self,
@@ -17114,6 +17092,7 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._hooks.cancel_pending()
         self._release_claimed_conversation_settings_return()
         runtime = self._console_runtime()
         generation = getattr(self, "_console_runtime_attachment_generation", None)
@@ -19263,27 +19242,15 @@ class ChatScreen(BaseAppScreen):
             draft, stash=stash, session_id=session_id
         )
 
-    async def _dispatch_console_draft_send(
-        self,
-        draft: str,
-        stash: "ConsoleDraftStash | None" = None,
-        *,
-        session_id: str | None = None,
-    ) -> bool:
-        """Compatibility delegate for the one typed queue-aware dispatcher."""
+    _request_console_hooks_review = hooks_view._request_console_hooks_review
 
-        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+    _open_console_hooks_review = hooks_view._open_console_hooks_review
 
-        async with send_diagnostic_scope(
-            "ui_dispatch", self._ui_responsiveness_monitor()
-        ) as diagnostic:
-            if session_id is None:
-                session_id = self._console_visible_send_session_id()
-            result = await self._prompt_queue.dispatch(
-                draft, session_id=session_id, stash=stash
-            )
-            diagnostic.outcome = result.status.value
-            return result.status is not ConsolePromptDispatchStatus.REFUSED
+    _refresh_console_hooks = hooks_view._refresh_console_hooks
+
+    _apply_console_hooks_state = hooks_view._apply_console_hooks_state
+
+    _dispatch_console_draft_send = hooks_view._dispatch_console_draft_send
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
@@ -22497,13 +22464,13 @@ class ChatScreen(BaseAppScreen):
         self._last_console_workspace_width_band = band
         try:
             self.query_one("#console-workspace-grid")
+            left_rail = self.query_one("#console-left-rail")
+            right_rail = self.query_one("#console-right-rail")
+            left_handle = self.query_one("#console-context-rail-handle")
+            right_handle = self.query_one("#console-inspector-rail-handle")
         except QueryError:
             return
         focused = self.app.focused
-        left_rail = self.query_one("#console-left-rail")
-        right_rail = self.query_one("#console-right-rail")
-        left_handle = self.query_one("#console-context-rail-handle")
-        right_handle = self.query_one("#console-inspector-rail-handle")
         focused_in_left_rail = self._is_descendant_or_self(focused, left_rail)
         focused_in_right_rail = self._is_descendant_or_self(focused, right_rail)
         focused_in_left_handle = self._is_descendant_or_self(focused, left_handle)
@@ -23623,6 +23590,8 @@ class ChatScreen(BaseAppScreen):
           install is idempotent), and the previews cache -- all correct to
           leave running/installed across a suspend.
         """
+        if not self._hooks.review_open:
+            self._hooks.cancel_pending()
         controller = self._console_chat_controller
         if controller is not None:
             controller.on_console_view_visibility_changed(False)
@@ -23687,6 +23656,13 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
+        self.call_after_refresh(
+            lambda: self.run_worker(
+                self._refresh_console_hooks,
+                group="console-hook-refresh",
+                exclusive=True,
+            )
+        )
         controller = self._console_chat_controller
         if controller is not None:
             controller.on_console_view_visibility_changed(True)

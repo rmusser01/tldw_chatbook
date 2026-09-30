@@ -21,7 +21,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, NoReturn
 
 from loguru import logger
 
@@ -91,9 +91,13 @@ class SessionStartError(Exception):
     """The session could not start.
 
     Attributes:
-        transport: True for transport-class failures (record in the status
-            cache, no one-shot retry); False for protocol-class ones (fall
-            back to the one-shot path for the rest of the run).
+        transport: True when the failure is the call's own result: it is
+            recorded in the status cache, there is no one-shot retry, and
+            the key stays enabled. That covers the transport-class kinds
+            (``_TRANSPORT_START_KINDS``) and also the post-answer budget
+            ``OP_TIMEOUT`` (see ``_stalled_after_answer``), which is not
+            transport-class in the ADR-181 sense. False for protocol-class
+            failures (fall back to the one-shot path for the rest of the run).
         failure: The typed failure when the taxonomy classified one.
     """
 
@@ -105,8 +109,9 @@ class SessionStartError(Exception):
 
 class SessionClosed(Exception):
     """The laptop closed this healthy session (idle reap, run end, app
-    exit) before the call's request was registered: nothing was sent, so
-    the caller may ask the registry again (TASK-33401)."""
+    exit) before the call's request was registered (TASK-33401) or before
+    any byte of it was written (TASK-33421): nothing was sent, so the
+    caller may ask the registry again."""
 
 
 class _HandshakeFailed(Exception):
@@ -125,6 +130,13 @@ class _WriteStalled(Exception):
 class _NotSent(Exception):
     """Internal: the write lock stayed busy until the deadline; nothing was
     written and the stream is intact."""
+
+
+class _StdinClosed(BrokenPipeError):
+    """Internal: none of this write's bytes went out -- stdin was already
+    closed (by ``close()``), or the pipe broke (``close()`` killed the host
+    while another writer held the lock) before any byte was accepted.
+    Distinct from an EPIPE after part of the frame went out."""
 
 
 def _checked_status(body: bytes) -> tuple[int | None, int | None]:
@@ -238,8 +250,11 @@ class RemoteSessionWorker:
         #: death (EOF / ssh exited), False when the laptop ended it.
         self._death_natural: bool | None = None
         self._death_code: int | None = None
-        #: True once close() closed a session that was alive at that moment
-        #: (TASK-33401): the caller's request never reached this session.
+        #: True once close() retired this session while it was alive
+        #: (TASK-33401). Alone it does not mean a call's request never
+        #: reached the session; together with the call finding the session
+        #: not alive at registration, or with the pre-send stdin check
+        #: (``_StdinClosed``), it means nothing of that call was sent.
         self._retired = False
         self._settled = threading.Event()  # set once _die has reaped
 
@@ -330,8 +345,17 @@ class RemoteSessionWorker:
             line = self._read_handshake_line(deadline)
             cache_hit = line != b"NEED " + bundle_hash.encode()
             if not cache_hit:
-                self._handshake_write(len(compressed).to_bytes(4, "big") + compressed, deadline)
-                line = self._read_handshake_line(deadline)
+                # The host answered NEED: from here a deadline is never
+                # transport-class (TASK-33420).
+                self._handshake_write(
+                    len(compressed).to_bytes(4, "big") + compressed, deadline, answered=True
+                )
+                try:
+                    line = self._read_handshake_line(deadline)
+                except _HandshakeFailed as ended:
+                    if ended.stalled:
+                        self._stalled_after_answer("handshake stalled after the host answered")
+                    raise
         except _HandshakeFailed as ended:
             self._fail_start(ended)
         if line != b"READY " + expected_bundle_stamp(artifact).encode():
@@ -387,12 +411,14 @@ class RemoteSessionWorker:
         except (OSError, ValueError):
             pass
 
-    def _handshake_write(self, data: bytes, deadline: float) -> None:
+    def _handshake_write(self, data: bytes, deadline: float, *, answered: bool = False) -> None:
         try:
             self._write(data, deadline)
         except OSError:
             pass  # the process died; the read below sees EOF and classifies it
         except (_WriteStalled, _NotSent):
+            if answered:
+                self._stalled_after_answer("handshake write stalled")
             self._kill_and_reap()
             raise SessionStartError(False, None, "handshake write stalled") from None
 
@@ -452,6 +478,25 @@ class RemoteSessionWorker:
             failure.kind in _TRANSPORT_START_KINDS, failure, f"session start failed: {failure.reason}"
         )
 
+    def _stalled_after_answer(self, reason: str) -> NoReturn:
+        """The host answered the handshake, then the deadline passed.
+
+        A live channel proves reachability, so this is never UNREACHABLE or
+        BLOCKED (ADR-181, R8). When the deadline was the call's own budget
+        (only when budget + grace is under the 30 s cap: a short tool
+        timeout, not the default 300 s budget), this call fails as
+        ``OP_TIMEOUT`` -- raised with ``transport=True`` only so it becomes
+        this call's result -- and the next call tries a session again. At
+        the 30 s cap it is protocol-class (``reason``), one-shot for the
+        run: a stuck loader, or an upload still progressing too slowly to
+        finish (``_write``'s deadline is absolute, not an inactivity window).
+        """
+        self._kill_and_reap()
+        if self._handshake_limit < _HANDSHAKE_TIMEOUT_S:
+            failure = TransportFailure(TransportFailureKind.OP_TIMEOUT, None, "operation timed out")
+            raise SessionStartError(True, failure, "session start ran out of the call's budget") from None
+        raise SessionStartError(False, None, reason) from None
+
     # -- steady state ------------------------------------------------------
 
     def _write(self, data: bytes, deadline: float) -> None:
@@ -465,11 +510,16 @@ class RemoteSessionWorker:
         Raises:
             _NotSent: The lock stayed busy (another caller's slow upload)
                 until the deadline: nothing written, the stream is intact.
-            _WriteStalled: Holding the lock, the pipe stopped draining for
-                the whole write window before the frame was out: the host is
-                not reading (and a partial frame corrupts the stream), so
-                the session must die.
-            OSError: The pipe broke (the process is gone).
+            _WriteStalled: Holding the lock, the frame was not fully out by
+                the absolute write deadline, ``max(deadline, now + grace)``
+                taken once the lock is held. Progress does not extend it, so
+                a write still draining slowly ends here too, not only a pipe
+                that stopped draining. A partial frame corrupts the stream,
+                so the session must die.
+            _StdinClosed: stdin was closed, or the pipe broke, before any
+                byte of ``data`` was accepted: nothing of it was sent.
+            OSError: The pipe broke after part of ``data`` went out, or
+                another write error (the process is gone).
         """
         if not self._write_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
             raise _NotSent()
@@ -479,20 +529,25 @@ class RemoteSessionWorker:
             # another thread's open) while this loop writes to it.
             stdin = self._proc.stdin  # type: ignore[union-attr]
             if stdin is None or stdin.closed:
-                raise BrokenPipeError("session stdin closed")
+                raise _StdinClosed("session stdin closed")
             fd = stdin.fileno()
             view = memoryview(data)
             write_deadline = max(deadline, time.monotonic() + self._transport.grace_seconds)
             while view:
                 if not _wait_fd(fd, selectors.EVENT_WRITE, write_deadline - time.monotonic()):
-                    # Holding the lock, the pipe took nothing (or stopped
-                    # mid-frame) for a full write window: the host is not
-                    # reading, so this is a stuck parent either way.
+                    # Holding the lock, the absolute write deadline passed
+                    # before the frame was out: the pipe took nothing, stopped
+                    # mid-frame, or drained too slowly. Progress never extends
+                    # the deadline; any partial frame kills the stream.
                     raise _WriteStalled()
                 try:
                     view = view[os.write(fd, view) :]
                 except BlockingIOError:
                     continue
+                except BrokenPipeError:
+                    if len(view) < len(data):
+                        raise  # part of the frame may have reached the host
+                    raise _StdinClosed("session pipe broke before any byte was written") from None
         finally:
             self._write_lock.release()
 
@@ -586,6 +641,11 @@ class RemoteSessionWorker:
         one-shot path's answer at once -- the worker's unadmitted
         ``invalid_request`` failure frame. The executor already refuses
         such requests while building them, so this is a defensive bound.
+
+        Raises:
+            SessionClosed: ``close()`` retired this healthy session before
+                any byte of the REQUEST was written (TASK-33401/33421); a
+                request that was written is never reported this way.
         """
         if len(request_bytes) > MAX_REQUEST_BYTES:
             return RemoteCallResult(False, _OVERSIZED_REQUEST_FRAME, None)
@@ -606,7 +666,17 @@ class RemoteSessionWorker:
         killed = False
         not_sent = False
         try:
-            self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
+            try:
+                self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
+            except _StdinClosed:
+                if self._retired:
+                    # close() retired this healthy session after the request
+                    # registered but before any REQUEST byte was written
+                    # (stdin already closed, or the pipe broke by close()'s
+                    # kill before a byte was accepted): nothing ran, so the
+                    # caller may ask again (TASK-33421, PR #2907 review).
+                    raise SessionClosed() from None
+                raise
             while not pending.done.is_set():
                 remaining = (pending.admitted_at or sent_at) + budget + grace - time.monotonic()
                 if remaining <= 0:
