@@ -35,6 +35,10 @@ from tldw_chatbook.Chat.console_conversation_hydration import (
 )
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 _TURNS = 5
 _CLEANUP_WARNING = "recovered-media reference cleanup is pending"
 

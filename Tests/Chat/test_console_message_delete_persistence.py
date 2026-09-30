@@ -12,6 +12,10 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _conversation(db: CharactersRAGDB, count: int = 4) -> tuple[str, list[str]]:
     conversation_id = db.add_conversation({"title": "Delete undo"})
