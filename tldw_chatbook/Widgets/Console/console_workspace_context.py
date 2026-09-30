@@ -624,6 +624,12 @@ class _ComposeReadView:
 class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
+    #: TASK-33621.12: a state sync (e.g. the one that follows closing a row
+    #: menu's Save .md… prompt) rebuilds every row; keep a focused row's
+    #: control focused across that rebuild instead of letting Textual's reset
+    #: strand it on a neighbour.
+    RECOMPOSE_KEEPS_FOCUS = True
+
     #: (row id, row key) pairs for the grouped-browser rows the last COMPLETED
     #: `compose()` built, or None when `compose` has not finished for this
     #: instance (never started, or abandoned part-way). Only

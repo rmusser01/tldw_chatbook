@@ -143,6 +143,12 @@ class ContextSectionDescriptor:
     max_content_lines: int
 
 
+#: TASK-33621.12: focus recovery waits for a rebuild of the lost control's
+#: own container by polling at this interval, at most this many times (2 s).
+_FOCUS_RECOVERY_REBUILD_POLL_SECONDS = 0.02
+_FOCUS_RECOVERY_REBUILD_MAX_POLLS = 100
+
+
 @dataclass(frozen=True, slots=True)
 class _ContextFocusRecoveryIncident:
     """Stable local-focus identity retained across one DOM mutation."""
@@ -930,8 +936,16 @@ class ConsoleLeftRail(Vertical):
         self,
         section_id: str,
         incident: _ContextFocusRecoveryIncident,
+        rebuild_polls: int = 0,
     ) -> None:
-        """Resolve one current incident against the section's current DOM."""
+        """Resolve one current incident against the section's current DOM.
+
+        Args:
+            section_id: The section whose focus is being recovered.
+            incident: The frozen identity of the control that lost focus.
+            rebuild_polls: How many times resolution has already waited for
+                an in-flight rebuild inside the section (TASK-33621.12).
+        """
 
         if self._pending_focus_recoveries.get(section_id) is not incident:
             return
@@ -948,6 +962,27 @@ class ConsoleLeftRail(Vertical):
             )
         except (NoMatches, QueryError):
             self._pending_focus_recoveries.pop(section_id, None)
+            return
+
+        # TASK-33621.12: the incident may come from a rebuild of the focused
+        # control's own container. Until that recompose has mounted the
+        # replacement, nothing matches the target's id and the index fallback
+        # strands focus on a neighbour -- live, "New conversation" after the
+        # Save .md prompt closed and the Conversations tray re-synced. Resolve
+        # once the rebuild is done. The incident stays pending meanwhile, so a
+        # newer incident or focus moving out of the rail still wins; the poll
+        # is bounded so a rebuild that never finishes cannot hold it forever.
+        if (
+            rebuild_polls < _FOCUS_RECOVERY_REBUILD_MAX_POLLS
+            and self._section_rebuild_in_flight(bounded)
+        ):
+            self.set_timer(
+                _FOCUS_RECOVERY_REBUILD_POLL_SECONDS,
+                lambda: self._recover_pending_focus(
+                    section_id, incident, rebuild_polls + 1
+                ),
+                name="console-rail-focus-recovery-rebuild-wait",
+            )
             return
 
         controls = self._focusable_body_controls(section_id)
@@ -1001,6 +1036,15 @@ class ConsoleLeftRail(Vertical):
         self._pending_focus_recoveries.pop(section_id, None)
         self._section_focus_history.pop(section_id, None)
         bounded._acknowledge_focus_recovery(None)
+
+    @staticmethod
+    def _section_rebuild_in_flight(bounded: ConsoleBoundedSection) -> bool:
+        """Whether a guarded container inside the section is mid-recompose."""
+
+        return any(
+            getattr(widget, "recompose_in_flight", False)
+            for widget in bounded.viewport.walk_children(Widget, with_self=True)
+        )
 
     def _commit_focus_recovery(
         self,
