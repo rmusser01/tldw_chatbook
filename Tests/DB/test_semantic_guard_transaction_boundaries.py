@@ -188,11 +188,11 @@ def test_commit_outside_python_method_is_seen_before_the_next_statement(
         db.close_connection()
 
 
-class _ObservedCursor(sqlite3.Cursor):
+class ObservedCursor(sqlite3.Cursor):
     """A caller's own cursor type, as Tests/Workflows passes to observe statements."""
 
 
-class _DirectCursor(sqlite3.Cursor):
+class DirectCursor(sqlite3.Cursor):
     """Overrides every statement entry point without calling ``super()``."""
 
     def execute(self, sql, parameters=()):  # noqa: D102
@@ -205,7 +205,7 @@ class _DirectCursor(sqlite3.Cursor):
         return sqlite3.Cursor.executescript(self, sql_script)
 
 
-@pytest.mark.parametrize("factory", [sqlite3.Cursor, _ObservedCursor, _DirectCursor])
+@pytest.mark.parametrize("factory", [sqlite3.Cursor, ObservedCursor, DirectCursor])
 def test_a_cursor_from_any_factory_still_reports_transaction_boundaries(
     tmp_path: Path, factory: type[sqlite3.Cursor]
 ) -> None:
@@ -246,14 +246,35 @@ def test_tracked_cursor_type_puts_the_tracked_cursor_first() -> None:
 
     assert compose(sqlite3.Cursor) is tracked
     assert compose(tracked) is tracked
-    composed = compose(_DirectCursor)
-    assert composed.__mro__[1:3] == (tracked, _DirectCursor)
+    composed = compose(DirectCursor)
+    assert composed.__mro__[1:3] == (tracked, DirectCursor)
     assert composed.execute is tracked.execute
     assert composed.executemany is tracked.executemany
     assert composed.executescript is tracked.executescript
-    assert compose(_DirectCursor) is composed  # cached, not a new class per call
+    assert compose(DirectCursor) is composed  # cached, not a new class per call
     with pytest.raises(TypeError):
         compose(object)  # type: ignore[arg-type]
+
+    class TrackedSubclass(tracked):
+        """Keeps the tracked statement methods, so it passes through."""
+
+    assert compose(TrackedSubclass) is TrackedSubclass
+
+
+@pytest.mark.parametrize("method", ["execute", "executemany", "executescript"])
+def test_a_tracked_subclass_replacing_a_statement_method_is_refused(method: str) -> None:
+    """The tracked cursor cannot be put ahead of its own subclass, so an override
+    that could skip boundary observation fails closed (Qodo, #2894).
+
+    Args:
+        method: The statement method the subclass replaces.
+    """
+    replacement = getattr(sqlite3.Cursor, method)
+    bypassing = type(
+        "Bypassing", (base_db._QuiescentSQLiteCursor,), {method: replacement}
+    )
+    with pytest.raises(TypeError):
+        base_db._tracked_cursor_type(bypassing)
 
 
 def test_a_non_class_cursor_factory_is_refused() -> None:

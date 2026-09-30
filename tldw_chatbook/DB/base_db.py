@@ -643,13 +643,23 @@ def _tracked_cursor_type(factory: type[sqlite3.Cursor]) -> type[sqlite3.Cursor]:
         overrides even when those skip ``super()``.
 
     Raises:
-        TypeError: ``factory`` is not a ``sqlite3.Cursor`` subclass, so it
-            cannot be made tracked; refusing fails closed.
+        TypeError: ``factory`` is not a ``sqlite3.Cursor`` subclass, or it is
+            a tracked subclass that replaces a statement method (the tracked
+            cursor cannot be put ahead of its own subclass). Either cannot be
+            made tracked, so refusing fails closed.
     """
 
     if not (isinstance(factory, type) and issubclass(factory, sqlite3.Cursor)):
         raise TypeError("cursor factory must be a sqlite3.Cursor subclass")
     if issubclass(factory, _QuiescentSQLiteCursor):
+        if any(
+            getattr(factory, name) is not getattr(_QuiescentSQLiteCursor, name)
+            for name in ("execute", "executemany", "executescript")
+        ):
+            raise TypeError(
+                "a tracked cursor subclass may not replace execute, "
+                "executemany or executescript"
+            )
         return factory
     if issubclass(_QuiescentSQLiteCursor, factory):
         return _QuiescentSQLiteCursor
