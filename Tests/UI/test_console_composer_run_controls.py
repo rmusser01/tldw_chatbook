@@ -1314,6 +1314,38 @@ async def test_paste_with_nothing_focused_lands_in_a_focused_draft(request):
         gateway.release.set()
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_typing_with_nothing_focused_focuses_the_draft_first(request):
+    """The keyboard twin of the paste case: with nothing focused, a printable
+    key used to land in a draft that showed no caret, and Backspace then
+    edited it unseen (PR #2934 round-2 review). A printable key now focuses
+    the draft and types there; an editing key alone leaves it untouched."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        composer.load_draft("hello")
+        console.set_focus(None)
+        await pilot.pause()
+        assert console.app.focused is None
+
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert composer.draft_text() == "hello", (
+            "Backspace edited a draft that shows no caret"
+        )
+
+        await pilot.press("k")
+        await _wait_for(
+            pilot, lambda: composer.draft_text() != "hello", "the key never landed"
+        )
+        assert composer.draft_text() == "hellok"
+        assert console.app.focused is composer, (
+            f"the key edited the draft but focus is {console.app.focused!r}"
+        )
+        gateway.release.set()
+
+
 # ---------------------------------------------------------------------------
 # Contract pins for the routes above (pure, no mounted app)
 # ---------------------------------------------------------------------------

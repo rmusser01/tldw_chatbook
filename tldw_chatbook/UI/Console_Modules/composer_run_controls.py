@@ -84,7 +84,7 @@ def route_composer_control_key(
     """Let a keyboard-focused composer-bar control own its key.
 
     The draft surface is the composer itself; its Buttons are descendants.
-    Only the draft (or nothing) is a text target. While a Button has focus:
+    Only the draft is a text target. While a Button has focus, or nothing has:
 
     * Enter and Space fall through unconsumed to the Button's own bindings
       (`ComposerControlButton` binds Space, the web/ARIA convention): they
@@ -107,12 +107,15 @@ def route_composer_control_key(
     """
 
     focused = screen.app.focused
-    if focused is None or focused is composer:
+    if focused is composer:
         return False
     if event.key in _CONTROL_PASSTHROUGH_KEYS:
         return False
     if event.key == "space" and isinstance(focused, Button):
         return True
+    # With nothing focused, the same rule as a Button: a printable key takes
+    # the draft's focus first, and an editing key alone (Backspace, Ctrl+W)
+    # never edits a draft that shows no caret (PR #2934 round-2 review).
     if ConsoleComposerBar.is_text_entry_key(event):
         composer.focus_draft_from(focused)
         if composer.draft_has_focus:
