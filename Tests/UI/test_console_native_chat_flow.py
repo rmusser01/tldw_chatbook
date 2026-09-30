@@ -8722,10 +8722,8 @@ async def test_console_more_delete_double_activation_stops_at_confirmation():
 
         assert store.messages_for_session(session.id) == [message]
         assert console._last_console_action.action_id == "delete"
-        assert (
-            console._last_console_action.visible_copy
-            == "Press Delete again to remove this message."
-        )
+        # TASK-33628.2: the pending copy states the real scope.
+        assert console._last_console_action.visible_copy == "Delete this message?"
 
 
 @pytest.mark.asyncio
@@ -8763,12 +8761,12 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
 
         assert store.messages_for_session(session.id) == [message]
         assert console._last_console_action.action_id == "delete"
-        assert (
-            console._last_console_action.visible_copy
-            == "Press Delete again to remove this message."
-        )
+        assert console._last_console_action.visible_copy == "Delete this message?"
 
-        await _choose_message_more_action(console, pilot, message.id, "delete")
+        # TASK-33628.2: the armed row itself carries the confirm control.
+        confirm = f"#console-message-action-delete-confirm-{message.id}"
+        await _wait_for_selector(console, pilot, confirm)
+        console.query_one(confirm, Button).press()
         await pilot.pause()
 
     assert store.messages_for_session(session.id) == []
@@ -8819,7 +8817,9 @@ async def test_console_original_attempt_delete_clears_parent_and_descendant_prev
         await console._sync_native_console_chat_ui()
         await _choose_message_more_action(console, pilot, parent.id, "delete")
         await pilot.pause()
-        await _choose_message_more_action(console, pilot, parent.id, "delete")
+        confirm = f"#console-message-action-delete-confirm-{parent.id}"
+        await _wait_for_selector(console, pilot, confirm)
+        console.query_one(confirm, Button).press()
         await pilot.pause()
 
         assert controller._original_attempts == {}
@@ -8861,9 +8861,8 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         await console._sync_native_console_chat_ui()
         await _choose_message_more_action(console, pilot, first_message.id, "delete")
         await pilot.pause()
-        assert (
-            console._last_console_action.visible_copy
-            == "Press Delete again to remove this message."
+        assert console._last_console_action.visible_copy == (
+            "Delete this message and 1 later message?"
         )
 
         transcript.select_message(second_message.id)
@@ -8878,9 +8877,8 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         second_message.id,
     ]
     assert console._last_console_action.action_id == "delete"
-    assert (
-        console._last_console_action.visible_copy
-        == "Press Delete again to remove this message."
+    assert console._last_console_action.visible_copy == (
+        "Delete this message and 1 later message?"
     )
 
 

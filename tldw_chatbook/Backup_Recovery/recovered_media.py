@@ -1663,6 +1663,30 @@ def message_reference_page(
         return result
 
 
+def message_references_exist(
+    root: Path, profile: str, message_ids: tuple[str, ...]
+) -> bool:
+    """Report whether any current-profile reference names these messages.
+
+    Passive, read-only inspection: a missing catalog means no references.
+    """
+    for message in message_ids:
+        _identity(profile, message, "inspect", "image/png")
+    if not message_ids or list_recovered_media(root, limit=1) is None:
+        return False
+    with _inspect_catalog(_existing_store(root)) as connection:
+        for start in range(0, len(message_ids), 200):
+            batch = message_ids[start : start + 200]
+            slots = ",".join("?" for _ in batch)
+            if connection.execute(
+                "SELECT 1 FROM refs WHERE profile=? "
+                f"AND message IN ({slots}) LIMIT 1",  # nosec B608: placeholders only
+                (profile, *batch),
+            ).fetchone():
+                return True
+    return False
+
+
 def release_message_references(
     root: Path, profile: str, message_ids: tuple[str, ...], *, expected_identity=None
 ) -> None:

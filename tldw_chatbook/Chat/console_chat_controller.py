@@ -24298,9 +24298,9 @@ class ConsoleChatController:
             )
 
     _IMAGE_REJECTION_RECOVERY_HINT = (
-        " This conversation includes an image attachment; if the model can't "
-        "accept images, remove that message (select it and use Delete) or "
-        "switch to a vision-capable model."
+        " This conversation includes an image attachment; if the model can't accept "
+        "images, switch to a vision-capable model, or type /rewind and restore to the "
+        "prompt that added the image (nothing is deleted; later turns stay a branch)."
     )
 
     def _session_history_carries_images(self, session_id: str) -> bool:

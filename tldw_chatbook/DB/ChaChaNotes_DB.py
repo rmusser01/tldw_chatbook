@@ -16094,6 +16094,67 @@ UPDATE db_schema_version
                 for row in rows
             ]
 
+    def restore_message_subtree(
+        self, tombstones: Sequence[tuple[str, int]]
+    ) -> List[Dict[str, Any]]:
+        """Atomically undelete exactly the tombstones one subtree delete wrote.
+
+        The Undo half of ``soft_delete_message_subtree`` (TASK-33628.2). Each
+        ``(message_id, version)`` must still be a tombstone at exactly that
+        version -- the version the delete returned -- or nothing is restored,
+        so an Undo can never resurrect a row something else changed since.
+        Content was never touched by the delete, so the ``messages_sync_
+        undelete`` trigger records an ordinary ``update`` intent.
+
+        Args:
+            tombstones: ``(message_id, tombstone_version)`` pairs.
+
+        Returns:
+            One ``message_id``/``conversation_id``/``version`` mapping per
+            restored row, carrying its new version.
+
+        Raises:
+            ConflictError: A row is missing, live, or at another version.
+        """
+        pairs = [(str(message_id), int(version)) for message_id, version in tombstones]
+        if not pairs:
+            return []
+        now = self._get_current_utc_timestamp_iso()
+        placeholders = ",".join("?" for _ in pairs)
+        with self.transaction(immediate=True) as conn:
+            current = {
+                row["id"]: row
+                for row in conn.execute(
+                    "SELECT id, conversation_id, version, deleted FROM messages "
+                    f"WHERE id IN ({placeholders})",  # nosec B608 - placeholders only
+                    tuple(message_id for message_id, _version in pairs),
+                ).fetchall()
+            }
+            for message_id, version in pairs:
+                row = current.get(message_id)
+                if row is None or not row["deleted"] or row["version"] != version:
+                    raise ConflictError(
+                        f"Message ID {message_id} changed after it was deleted.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+            for message_id, version in pairs:
+                conn.execute(
+                    "UPDATE messages SET deleted = 0, last_modified = ?, "
+                    "version = version + 1, client_id = ? "
+                    "WHERE id = ? AND version = ? AND deleted = 1",
+                    (now, self.client_id, message_id, version),
+                )
+            self._advance_semantic_graph_epoch(conn)
+        return [
+            {
+                "message_id": message_id,
+                "conversation_id": current[message_id]["conversation_id"],
+                "version": version + 1,
+            }
+            for message_id, version in pairs
+        ]
+
     @staticmethod
     def _chat_sync_payload_hash_from_row(row: Mapping[str, Any]) -> str:
         """Hash one valid live Chat record without retaining its private fields."""

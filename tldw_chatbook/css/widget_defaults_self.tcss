@@ -1396,6 +1396,10 @@
         max-height: 96%;
     }
 
+/* ===== WIDGET: ConsoleMessageDeleteReceiptModal (Widgets/Console/console_message_delete_receipt.py) ===== */
+
+    ConsoleMessageDeleteReceiptModal { align: center middle; }
+
 /* ===== WIDGET: ConsoleMessageMoreMenu (Widgets/Console/console_message_more_menu.py) ===== */
 
     ConsoleMessageMoreMenu {

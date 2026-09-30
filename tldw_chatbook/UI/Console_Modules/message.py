@@ -133,6 +133,7 @@ from ...Chat.console_chat_store import (
     ConsoleThinkingCompatibilityError,
 )
 from ...Chat.console_chat_fork import ConsoleForkEligibility
+from ...Chat.console_message_delete import ConsoleDeleteScope
 from ...Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -163,6 +164,12 @@ from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
+from .message_delete import (
+    CONSOLE_DELETE_ACTION_IDS,
+    handle_console_delete_action,
+    pending_delete_copy,
+    pending_delete_scope,
+)
 from ...Widgets.Console import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
@@ -419,6 +426,8 @@ class ConsoleMessageController:
         )
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
+        # TASK-33628.2: the scope the pending delete showed the user.
+        self._console_delete_scope: ConsoleDeleteScope | None = None
         self._console_original_attempt_previews: Dict[str, str] = {}
         self._console_speaking_message_id: str | None = None
         self._console_speech_states: dict[str, str] = {}
@@ -1461,8 +1470,10 @@ class ConsoleMessageController:
             )
             return True
 
-        if action_id != "delete":
+        if action_id not in CONSOLE_DELETE_ACTION_IDS:
             self._pending_console_delete_message_id = None
+        else:
+            return await handle_console_delete_action(self, action_id, message_id)
 
         if action_id == "save-as":
             destinations = self._console_save_as_destinations(message)
@@ -1805,39 +1816,6 @@ class ConsoleMessageController:
                 group="console-save-video",
             )
             return True
-        if action_id == "delete" and result.status == "completed":
-            if self._pending_console_delete_message_id != message_id:
-                self._pending_console_delete_message_id = message_id
-                self._last_console_action = ConsoleActionResult(
-                    action_id=action_id,
-                    status="blocked",
-                    visible_copy="Press Delete again to remove this message.",
-                    target_message_id=message_id,
-                )
-                await self._sync_native_console_chat_ui()
-                return True
-            self._pending_console_delete_message_id = None
-            session_id = store.session_id_for_message(message_id)
-            controller = self._ensure_console_chat_controller()
-            # Deletion is subtree-wide, so clear the owning session while
-            # descendant-to-session identity is still available.
-            controller.clear_original_attempts_for_session(session_id)
-            self._console_original_attempt_previews.clear()
-            subtree_ids = store.subtree_message_ids(message_id)
-            store.delete_message(message_id)
-            cleanup_warning = getattr(
-                store.persistence, "recovered_media_cleanup_warning", None
-            )
-            if cleanup_warning:
-                self.app_instance.notify(cleanup_warning, severity="warning")
-            self._invalidate_console_fork_image_selections(subtree_ids)
-            # TASK-251: a deleted message can change what the browser row
-            # shows for this conversation (title/updated_at) -- invalidate
-            # so the next sync reflects it immediately.
-            self._invalidate_console_persisted_rows_cache()
-            await self._sync_native_console_chat_ui()
-            self.app_instance.notify(result.visible_copy, severity="information")
-            return True
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
@@ -1874,7 +1852,15 @@ class ConsoleMessageController:
         )
         if selected_id is not None:
             transcript.set_fork_eligibilities({selected_id: eligibility})
+        set_delete_confirmation = getattr(transcript, "set_delete_confirmation", None)
+        if callable(set_delete_confirmation):
+            set_delete_confirmation(pending_delete_scope(self))
         return selected_id, eligibility
+
+    @property
+    def console_pending_delete_copy(self) -> str:
+        """Inspector copy for the pending, row-scoped delete confirmation."""
+        return pending_delete_copy(self)
 
     def _console_message_presentation(
         self, message: ConsoleChatMessage
@@ -2823,6 +2809,9 @@ class ConsoleMessageController:
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),
+            # The confirm/cancel pair must win over the bare delete prefix.
+            ("console-message-action-delete-confirm-", "delete-confirm"),
+            ("console-message-action-delete-cancel-", "delete-cancel"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
             # speak-stop MUST be checked before speak -- "speak-" is itself

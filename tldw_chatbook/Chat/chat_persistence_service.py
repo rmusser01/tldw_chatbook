@@ -2,6 +2,8 @@ import base64
 import json
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
@@ -256,6 +258,7 @@ class ChatPersistenceService:
         self.context_repository = ConsoleContextRepository(db)
         self.recovered_media_cleanup_pending = False
         self._recovered_messages = None
+        self._held_recovered_releases: list[str] | None = None
         try:
             from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
                 RecoveredMessageReferences,
@@ -282,17 +285,58 @@ class ChatPersistenceService:
 
         return CLEANUP_PENDING if self.recovered_media_cleanup_pending else None
 
-    def _release_recovered_messages(self, message_ids) -> None:
+    def _release_recovered_messages(self, message_ids) -> bool:
+        """Release references for committed tombstones; True if left pending."""
         if not message_ids:
-            return
+            return False
+        if self._held_recovered_releases is not None:
+            # An undoable delete: keep references until it becomes final.
+            self._held_recovered_releases.extend(message_ids)
+            return False
         try:
             if self._recovered_messages is None:
                 raise ValueError("recovered_message_source_unavailable")
             self._recovered_messages.release(message_ids)
         except Exception:  # noqa: BLE001 - preserve the already committed chat result
+            from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
+                references_absent,
+            )
+
+            if references_absent(self._recovered_messages, tuple(message_ids)):
+                # TASK-33628.2: positive evidence that no reference names
+                # these messages -- nothing is left to clean up, so a
+                # media-free delete must not report pending cleanup.
+                return False
             # Chat committed already. Retain refs for a positive-tombstone retry.
             self.recovered_media_cleanup_pending = True
             logger.warning("Recovered-media reference cleanup is pending.")
+            return True
+        return False
+
+    @contextmanager
+    def hold_recovered_media_release(self) -> Iterator[list[str]]:
+        """Hold reference releases for deletes that can still be undone.
+
+        Yields the list the held message ids accumulate in. Releasing them is
+        the caller's job once the delete is final
+        (:meth:`release_recovered_media_references`); a crash before that is
+        safe, because startup's positive-tombstone retry releases them.
+        """
+        previous = self._held_recovered_releases
+        held: list[str] = []
+        self._held_recovered_releases = held
+        try:
+            yield held
+        finally:
+            self._held_recovered_releases = previous
+
+    def release_recovered_media_references(self, message_ids: Sequence[str]) -> bool:
+        """Release held references for a now-final delete.
+
+        Returns:
+            True when this release left recovered-media cleanup pending.
+        """
+        return self._release_recovered_messages(list(message_ids))
 
     def retry_recovered_media_references(self) -> bool:
         try:
@@ -3241,6 +3285,36 @@ class ChatPersistenceService:
             expected_version=current_message["version"],
         )
         self._release_recovered_messages([row["message_id"] for row in rows])
+        return rows
+
+    def restore_message_subtree(
+        self,
+        *,
+        tombstones: Sequence[tuple[str, int]],
+        conversation_id: str | None = None,
+        active_cursor: tuple[str | None, str | None] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Undo one subtree delete: undelete its exact tombstones atomically.
+
+        Args:
+            tombstones: ``(message_id, tombstone_version)`` pairs the delete
+                committed; any drift refuses the whole restore.
+            conversation_id: Conversation whose cursor to put back.
+            active_cursor: ``(active_leaf_message_id, before_message_id)``
+                from before the delete, or ``None`` to leave the cursor.
+
+        Returns:
+            The restored rows with their new versions.
+        """
+        with self.db.transaction(immediate=True):
+            rows = self.db.restore_message_subtree(tombstones)
+            if conversation_id is not None and active_cursor is not None:
+                leaf, before = active_cursor
+                self.db.set_conversation_active_cursor(
+                    conversation_id,
+                    active_leaf_message_id=leaf,
+                    before_message_id=before,
+                )
         return rows
 
     def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:
