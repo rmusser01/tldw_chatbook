@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Connection                                                                                                                                                                     │     │
+ ───────────────│  Provider               █ llama.cpp                                                                                                                                             │     │
+ Workspaces     │                         Selected: llama.cpp                                                                                                                                     │     │
+ ───────────────│  Endpoint               │ http://127.0.0.1:9099                                           New endpoint…                                                                         │     │
+ Conversations  │  Model                  │ model-a                                                                                                                                               │     │
+        Archive │                         1 model available. Type to filter.                                                                                                                      │     │
+          Archiv│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
+        Search a│                         ▊ Saved fallback                               ▎                                                                                                        │     │
+   Chat 1       │                         ▊ model-a                                      ▎                                                                                                        │     │
+                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│  Saved fallback                                                                                                                                                                 │     │
+  ▊  Filter visi│                            Custom model    Test connection & list models                                                                                                        │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│  Tests this endpoint by listing models; this does not test generation.                                                                                                          │     │
+                │  Ready to send                                                                                                                                                                  │     │◂ Inspect
+   New conversat│  A send attempt is permitted with these settings.                                                                                                                               │     │
+  Chats         │  Credential · Not required                                                                                                                                                      │     │
+   Chat 1       │  Endpoint · Not tested                                                                                                                                                          │     │
+                │  Model · Selected — not verified at this endpoint                                                                                                                               │     │
+ ───────────────│  Generation · Not tested                                                                                                                                                        │     │
+ Character · No │   Test generation                                                                                                                                                               │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Model          │   ▶ Advanced generation                                                                                                                                                         │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Agent          │   ▶ Conversation identity                                                                                                                                                       │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Details        │   ▶ Request estimate                                                                                                                                                            │     │
+                │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                      Esc close   Cancel    Save as generation defaults  Make default for new chats  Use for this conversation   │rrent $0.00 · O
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

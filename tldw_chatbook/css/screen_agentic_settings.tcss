@@ -627,7 +627,7 @@ Button.settings-category-group-toggle:focus {
    settings screen sheet). TASK-33003.7 deleted the Scope Inspector's
    blank-row override (#settings-impact-pane .settings-detail-row, margin
    bottom 1): it cost 7 rows on Overview and cut the boundary note at the
-   211x44 fold, so inspector rows now keep the one-row rhythm (spec §6). */
+   211x44 fold, so inspector rows now sit without a blank row between them. */
 
 .settings-input-row {
     width: $ds-width-full;

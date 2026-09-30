@@ -160,8 +160,19 @@ def unsaved_labels(
     )
 
 
-def esc_hint_copy(count: int) -> str:
-    """Return the Esc hint for ``count`` unsaved edits (ADR-031 task-16211)."""
+def esc_hint_copy(count: int, *, pending: str | None = None) -> str:
+    """Return the Esc hint for ``count`` unsaved edits (ADR-031 task-16211).
+
+    Args:
+        count: How many fields are unsaved.
+        pending: The side-effect guard Esc opens first (memory reset,
+            compaction), which outranks the unsaved count.
+
+    Returns:
+        The hint copy.
+    """
+    if pending:
+        return f"Esc close (asks: {pending})"
     return f"Esc close (asks: {count} unsaved)" if count else "Esc close"
 
 
@@ -296,7 +307,13 @@ class ConsoleSettingsUnsavedGuardMixin:
             hint = self.query_one("#console-settings-esc-hint", Static)
         except (NoMatches, QueryError):
             return
-        hint.update(esc_hint_copy(len(self._unsaved_field_labels())))
+        # Same precedence as _request_settings_close: reset > compaction > unsaved.
+        pending = (
+            "memory reset"
+            if self._memory_reset_token is not None
+            else "compaction running" if self._compaction_is_active() else None
+        )
+        hint.update(esc_hint_copy(len(self._unsaved_field_labels()), pending=pending))
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Route Esc, backdrop and Cancel; in the prompt they keep editing."""

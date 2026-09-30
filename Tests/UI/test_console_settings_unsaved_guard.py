@@ -161,6 +161,8 @@ def test_unsaved_labels_follow_effective_values_and_carried_edits() -> None:
     assert unsaved_labels(invalid_context, committed) == ("Context and memory",)
     assert esc_hint_copy(0) == "Esc close"
     assert esc_hint_copy(2) == "Esc close (asks: 2 unsaved)"
+    # A side-effect guard Esc opens first outranks the unsaved count.
+    assert esc_hint_copy(2, pending="memory reset") == "Esc close (asks: memory reset)"
     prompt = unsaved_prompt_copy(("Model", "Temperature"))
     assert "Model, Temperature" in prompt
     assert _PROMPT_KEYS in prompt
@@ -202,6 +204,29 @@ def test_snapshot_carries_the_unsaved_baseline_and_refuses_a_malformed_one() -> 
             )
             is None
         )
+
+
+@pytest.mark.asyncio
+async def test_prompt_labels_match_the_labels_the_modal_renders() -> None:
+    """Final review M8/5.3: the prompt's labels are copies of the modal's
+    literals, so a renamed field label must not leave the prompt naming a
+    field the user cannot find."""
+    from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
+        _BASELINE_LABELS,
+        _CONTEXT_INVALID_LABEL,
+    )
+
+    app = _GuardHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        modal = _modal()
+        await _open(app, pilot, modal)
+        rendered = {
+            str(label.renderable)
+            for label in modal.query(".console-settings-modal-label")
+        }
+    assert _BASELINE_LABELS - {_CONTEXT_INVALID_LABEL} <= rendered, sorted(
+        _BASELINE_LABELS - {_CONTEXT_INVALID_LABEL} - rendered
+    )
 
 
 @pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
@@ -547,6 +572,56 @@ async def test_memory_reset_guard_comes_first_then_asks_about_edits(
         await pilot.press("d")
         await pilot.pause()
         assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_esc_hint_names_the_reset_and_compaction_guards_esc_opens() -> None:
+    """Final review I4 (ADR-031 task-16211): with no edits, a pending memory
+    reset or a running compaction still makes Esc ask first, so the hint must
+    say so, and must drop back to "Esc close" once undo or compaction ends."""
+    app = _SettingsCloseHarness()
+    release = asyncio.Event()
+
+    async def compact_now() -> tuple[bool, str]:
+        await release.wait()
+        return True, "Compaction complete."
+
+    modal = _settings_close_modal(
+        reset_current_memory=lambda: ("memory-1", 2),
+        undo_current_memory_reset=lambda _memory_id, _revision: True,
+        compact_now=compact_now,
+    )
+    hint = "#console-settings-esc-hint"
+    try:
+        async with app.run_test(size=(120, 42)) as pilot:
+            await app.push_screen(modal, callback=app.capture)
+            await _settle(pilot, modal)
+            assert _text(modal, hint) == "Esc close"
+
+            modal.query_one("#console-context-reset-current", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+            assert _text(modal, hint) == "Esc close (asks: memory reset)"
+            modal.query_one("#console-context-undo-reset", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+            assert _text(modal, hint) == "Esc close"
+
+            modal.query_one("#console-context-compact-now", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+            assert _text(modal, hint) == "Esc close (asks: compaction running)"
+            release.set()
+            for _ in range(20):
+                await pilot.pause()
+                if not modal._compaction_is_active():
+                    break
+            await pilot.pause()
+            await pilot.pause()
+            assert _text(modal, hint) == "Esc close"
+            assert app.results == []
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio

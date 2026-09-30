@@ -78,8 +78,8 @@ make intent visible:
 - `$ds-control-height-compact: 1` — tab bars, status lines, chip rows, and
   every control in a dense form. Chat settings (`ConsoleSettingsModal`) is a
   dense form (TASK-33003.2): its Inputs, Selects, in-form Buttons and view tabs
-  are one row, marked by the one-column left edge of DESIGN.md's dense-form
-  convention instead of a border box
+  are one row; the Inputs and Selects are marked by the one-column left edge
+  of DESIGN.md's dense-form convention instead of a border box
 - `$ds-tool-preview-max-height: 3` — collapsed tool-result rows, including
   their omission hint; clips resize frames until text is rewrapped
 - `$ds-textarea-min-height: 5` — multi-line text inputs

@@ -4700,8 +4700,9 @@ async def test_console_settings_modal_controls_render_one_row_tall(size) -> None
         ), selector
 
 
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
 @pytest.mark.asyncio
-async def test_console_settings_default_recovery_actions_render_one_row_tall() -> None:
+async def test_console_settings_default_recovery_actions_render_one_row_tall(size) -> None:
     """TASK-33003.2 AC#1: the default-save recovery actions are one row too."""
     from Tests.UI.test_console_resize_reflow import _failed_default_state
     from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultSavePhase
@@ -4711,7 +4712,7 @@ async def test_console_settings_default_recovery_actions_render_one_row_tall() -
     modal._default_durability_state = _failed_default_state(
         ConsoleDefaultSavePhase.BEFORE_REPLACE
     )
-    async with app.run_test(size=(211, 44)) as pilot:
+    async with app.run_test(size=size) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
         await pilot.pause()

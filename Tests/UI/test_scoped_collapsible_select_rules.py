@@ -5,7 +5,8 @@ bare `Collapsible`, `Collapsible > CollapsibleTitle` and `Select` type rules.
 Neither sheet's owning root is composed anywhere any more, so the rules only
 reached other screens: a 3-row title, a tall border, and a blank row plus a
 full-row width under every Select. These probes mount the two
-model-configuration surfaces at 211x44 under the production stylesheets.
+model-configuration surfaces at 211x44 (Chat settings also at 235x52) under
+the production stylesheets.
 """
 
 from typing import ClassVar
@@ -63,10 +64,11 @@ def _assert_no_leaked_geometry(screen) -> None:
         assert str(select.styles.width) != "100%", f"{select.id} claims 100%"
 
 
+@pytest.mark.parametrize("size", [SIZE, (235, 52)], ids=["211x44", "235x52"])
 @pytest.mark.asyncio
-async def test_chat_settings_collapsed_section_costs_two_rows_under_production_css():
+async def test_chat_settings_collapsed_section_costs_two_rows_under_production_css(size):
     app = StyledModalHarness()
-    async with app.run_test(size=SIZE) as pilot:
+    async with app.run_test(size=size) as pilot:
         await app.push_screen(
             ConsoleSettingsModal(
                 settings=ConsoleSessionSettings(
@@ -95,8 +97,10 @@ async def test_chat_settings_collapsed_section_costs_two_rows_under_production_c
         # Focus must not add a row either: the retired `height: 3` used to
         # absorb the app-wide focus rule's border-bottom (review round 1).
         for section in sections:
-            section.query_one(CollapsibleTitle).focus()
+            title = section.query_one(CollapsibleTitle)
+            title.focus()
             await pilot.pause()
+            assert app.focused is title, f"{section.id} title did not take focus"
             assert section.region.height == 1, f"focused {section.id}: {section.region}"
 
         screen.query_one("#console-settings-view-context").press()

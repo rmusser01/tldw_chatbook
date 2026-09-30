@@ -1038,12 +1038,15 @@ def test_console_settings_modal_select_current_preserves_visible_value_row():
 @pytest.mark.unit
 def test_console_settings_modal_select_overlay_is_readable():
     for _, text in (
-        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
+        (
+            "agentic family + list source sheets",
+            AGENTIC.read_text(encoding="utf-8") + LISTS.read_text(encoding="utf-8"),
+        ),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
         highlighted = css_block(
-            LISTS.read_text(encoding="utf-8") + text,
+            text,
             "ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted",
         )
 

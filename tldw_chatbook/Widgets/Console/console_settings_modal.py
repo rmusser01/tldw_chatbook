@@ -3373,6 +3373,7 @@ class ConsoleSettingsModal(
         """Refresh completion controls using the transactional default gates."""
 
         self._sync_default_readiness()
+        self._sync_unsaved_hint()  # compaction start/finish changes what Esc does
 
     def _sync_default_readiness(self) -> None:
         """Gate default actions on an exact model and future-chat readiness."""

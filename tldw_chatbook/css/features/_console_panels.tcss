@@ -118,7 +118,9 @@ ConsoleSettingsModal .console-context-action-row {
    Widths stay on the $ds-size-N scale until a second editor shares this row
    grammar (design-language.md §2.8). Bare ids, no ConsoleSettingsModal
    prefix: the boot CSS budget (ADR-097) sits bytes under its ceiling, and
-   deleting dead rules for retired Console widgets paid for these. */
+   deleting dead rules for retired Console widgets paid for these.
+   ponytail: the number width is by container, so a free-text Input added to
+   either container later also gets 12 columns; give it an id rule then. */
 #console-settings-generation-advanced Input,
 #console-settings-context-view Input {
     width: $ds-size-12;

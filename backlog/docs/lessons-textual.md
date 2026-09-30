@@ -1339,4 +1339,5 @@ highlights that value whichever way it opens. (Textual 8.2.8: a click only
 toggles `expanded`, whose watcher calls `overlay.select(None)` for a blank
 value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
 `action_first()`. Reproduced in a pilot probe on the modal's own Select
-construction in the TASK-33003.8 fix round 1 report.)
+construction; see the task-33003.8 Implementation Notes and the live captures
+in qa/model-config-p3-2026-09-28/task-8/.)
