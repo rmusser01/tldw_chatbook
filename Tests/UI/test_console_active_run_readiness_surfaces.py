@@ -52,6 +52,10 @@ from tldw_chatbook.Chat.console_prompt_queue import MAX_CONSOLE_QUEUE_ENTRIES
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 _SIZE = (235, 52)
 _SETTLE_TIMEOUT = 10.0
 _STRIP = "#console-send-disabled-reason"
@@ -87,20 +91,18 @@ def _provider_row(console) -> str:
 
 
 def _settings_readiness_line(console) -> str:
-    return _static_text(
-        console.query_one("#console-settings-readiness-row", Static)
-    )
+    return _static_text(console.query_one("#console-settings-readiness-row", Static))
 
 
 def _edge_badge(console) -> str:
-    return console.query_one(
-        "#console-inspector-rail-handle", ConsoleRailHandle
-    ).badge
+    return console.query_one("#console-inspector-rail-handle", ConsoleRailHandle).badge
 
 
 def _model_recovery_display(console) -> str:
     """The Context rail Model section's "Not ready" line (display value)."""
-    return str(console.query_one("#console-model-section-recovery", Static).styles.display)
+    return str(
+        console.query_one("#console-model-section-recovery", Static).styles.display
+    )
 
 
 def _right_rail_text(console) -> str:
@@ -168,7 +170,9 @@ def _composer_queue_violations(
     if expected not in reason:
         violations.append(f"AC#4 strip lacks queue copy {expected!r}: {reason!r}")
     if expected not in tooltip:
-        violations.append(f"AC#4 Send tooltip lacks queue copy {expected!r}: {tooltip!r}")
+        violations.append(
+            f"AC#4 Send tooltip lacks queue copy {expected!r}: {tooltip!r}"
+        )
     if composer.has_class("console-composer-setup-blocked"):
         violations.append("AC#4 strip is the setup-wizard link")
     return violations
@@ -328,9 +332,7 @@ async def test_held_regenerate_names_the_run_wait_not_a_queue_that_never_opens()
         await asyncio.wait_for(gateway.started.wait(), timeout=_SETTLE_TIMEOUT)
         await _settle(console, pilot)
         assert controller.run_state.status is ConsoleRunStatus.STREAMING
-        activity = controller.prompt_queue_coordinator.activity(
-            store.active_session_id
-        )
+        activity = controller.prompt_queue_coordinator.activity(store.active_session_id)
         assert activity.occupies_slot and not activity.accepted_live_turn
         violations = _composer_queue_violations(
             composer, expected="Wait for the current run to finish"
