@@ -1,7 +1,8 @@
 """Keep the first-run wizard usable when a step fails (TASK-33621.14).
 
-Review finding G3-01 (2026-09-29): on Quick setup ▸ Provider, highlighting any
-of 26 hosted-preset rows raised ``ValueError('Provider is not supported.')``.
+Review finding G3-01 (2026-09-29): on Quick setup ▸ Provider, highlighting a
+row setup persistence did not own (13 Cloud rows and Custom Hosted at review
+time) raised ``ValueError('Provider is not supported.')``.
 The app-level keep-alive handler kept the screen open, but Textual had already
 stopped the Provider step's message loop, so the step detached. That left a
 blank body, a focused widget that no longer existed (a dead keyboard), and a
@@ -10,8 +11,11 @@ Next that queried the detached step and quit the app. Two guards live here, so
 grow:
 
 * ``first_run_provider_catalog`` is the Provider step's list: the Settings
-  picker's set (``settings_provider_catalog``), which holds only providers
-  setup persistence owns, so a listed row can always be selected and saved.
+  picker's set (``settings_provider_catalog``) rather than the whole handler
+  catalog, so execution-only ``custom-hosted`` is not offered. Setup
+  persistence owns every key in that set (engine presets by registry
+  derivation, TASK-33510), and the tests sweep it, so a listed row can always
+  be selected and saved.
 * ``WizardErrorGuard`` and ``contain_advance_error`` handle any other error.
   A step handler that raises, or a Next whose commit raises, leaves the step
   on screen with an error line above the navigation. Keyboard focus stays
@@ -69,8 +73,8 @@ def first_run_provider_catalog() -> tuple[Any, ...]:
     """Return the Provider step's entries: exactly the Settings picker's set.
 
     Returns:
-        ``settings_provider_catalog()``: the providers provider setup can
-        persist, which Settings ▸ Providers & Models offers too.
+        ``settings_provider_catalog()``, which Settings ▸ Providers & Models
+        offers too; provider setup can persist every entry.
     """
     from tldw_chatbook.Chat.console_session_settings import settings_provider_catalog
 

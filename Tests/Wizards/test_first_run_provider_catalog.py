@@ -3,16 +3,18 @@
 Review finding G3-01 (2026-09-29): on Quick setup ▸ Provider the fourth Down
 arrow landed on the first Cloud row and raised ``ValueError('Provider is not
 supported.')`` from ``provider_setup_persistence._ownership_for`` -- the
-wizard listed the whole handler catalog, but setup persistence owned only a
-hand-kept subset of it. The step went blank, the keyboard went dead, and Next
-(or Back then Next) quit the app. A session resumed from "Continue setup?"
-also had Back disabled on the Provider step.
+wizard listed the whole ``chat_api_call`` handler catalog, but setup
+persistence owned only a hand-kept subset of it. The step went blank, the
+keyboard went dead, and Next (or Back then Next) quit the app. A session
+resumed from "Continue setup?" also had Back disabled on the Provider step.
 
-These cases drive the real ``FirstRunSetupWizard`` through real key presses.
-The per-provider case is parametrised over the Settings picker's provider set
-(``settings_provider_catalog()``, which ``SettingsScreen`` reads), so a
-provider preset added after this review gets its own case the day it lands in
-the catalog.
+TASK-33510 since made setup own every engine preset; the one handler key it
+still cannot own is execution-only ``custom_hosted``, which the wizard listed
+under Local. These cases drive the real ``FirstRunSetupWizard`` through real
+key presses. The per-provider case is parametrised over every provider the
+app can run (the live handler catalog plus the Settings picker's set), so a
+preset added after this review gets its own case the day it lands, and the
+pre-fix list (``custom_hosted`` included) fails it.
 """
 
 from __future__ import annotations
@@ -27,10 +29,14 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
+from tldw_chatbook.Chat.console_provider_support import (
+    supported_console_provider_catalog,
+)
 from tldw_chatbook.Chat.console_session_settings import settings_provider_catalog
 from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_DRAFT_VERSION,
+    STEP_MODEL,
     STEP_PROVIDER,
     STEP_WELCOME,
     TRACK_QUICK,
@@ -55,6 +61,17 @@ pytestmark = pytest.mark.bootstrap_profile
 def _settings_picker_provider_keys() -> tuple[str, ...]:
     """The Settings picker's provider set."""
     return tuple(entry.readiness_key for entry in settings_provider_catalog())
+
+
+def _candidate_provider_keys() -> tuple[str, ...]:
+    """Every provider the wizard could list: runnable handlers plus Settings'.
+
+    Enumerated live at collection, so a preset registered later gets a case,
+    and so does a handler key the wizard must NOT list (``custom_hosted``):
+    the pre-fix Provider step listed the whole handler catalog.
+    """
+    handlers = {entry.readiness_key for entry in supported_console_provider_catalog()}
+    return tuple(sorted(handlers | set(_settings_picker_provider_keys())))
 
 
 class _WizardHost(App):
@@ -198,14 +215,22 @@ async def test_wizard_provider_list_is_the_settings_picker_set():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", _settings_picker_provider_keys())
+@pytest.mark.parametrize("provider", _candidate_provider_keys())
 async def test_every_listed_provider_can_be_highlighted_and_selected(provider):
-    """AC#1/AC#5: arrow onto the row, select it; the step stays whole."""
+    """AC#1/AC#5: arrow onto the row, select it; the step stays whole.
+
+    A runnable provider the wizard does not list must be one the Settings
+    picker withholds too (AC#2). The headless host re-raises a handler error,
+    so a listed row whose selection raises fails its own case.
+    """
     wizard = _resumed_on_provider()
     app = _WizardHost(wizard)
     async with app.run_test(size=_SIZE) as pilot:
         await _wait_for_step(pilot, wizard, STEP_PROVIDER)
         _container, step = _current_step(wizard)
+        if provider not in _listed_provider_keys(step):
+            assert provider not in _settings_picker_provider_keys()
+            return
         choices = _provider_list(step)
         choices.focus()
         await pilot.pause()
@@ -227,6 +252,40 @@ async def test_every_listed_provider_can_be_highlighted_and_selected(provider):
         await pilot.pause()
         assert app.focused is not choices
         assert app.focused is not None and app.focused.is_attached
+
+
+@pytest.mark.asyncio
+async def test_arrowing_through_every_listed_row_keeps_the_step_live():
+    """AC#1: the finding's own gesture, over the whole list, in one session.
+
+    Down from the first row to the last, one real key press at a time, the
+    way a new user browses. Each row must select, keep the step and the
+    keyboard, and show no error line.
+    """
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, step = _current_step(wizard)
+        listed = _listed_provider_keys(step)
+        choices = _provider_list(step)
+        choices.focus()
+        await pilot.pause()
+        await _arrow_to(pilot, choices, listed[0])
+
+        visited = [choices.highlighted_option.provider_key]
+        for expected in listed[1:]:
+            await pilot.press("down")
+            await pilot.pause()
+            assert choices.highlighted_option.provider_key == expected
+            assert step.selected_provider_key == expected
+            assert _pinned_error(wizard) == "", expected
+            visited.append(expected)
+        _assert_step_is_live(app, wizard, step)
+        assert app.focused is choices
+
+    assert visited == listed
+    assert len(listed) == len(_settings_picker_provider_keys())
 
 
 def _fail_provider_secret_lookup(monkeypatch) -> None:
@@ -619,11 +678,14 @@ def _fresh_wizard() -> FirstRunSetupWizard:
 async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
     request,
 ):
-    """The finding's repro, fresh profile: Enter, Down past Popular, Back, Next.
+    """The finding's repro, fresh profile: Enter, Down x4, Back, Next, then on.
 
-    Pre-fix the first Cloud row blanked the step, and re-entering it quit the
-    app. Runs in a private profile because Next from Welcome writes the
-    setup checkpoint to that profile's config file.
+    Pre-fix the fourth Down (the first Cloud row) blanked the step, and
+    re-entering it quit the app. TASK-33510 made that row ownable, so after
+    Back, Next and a keyless Next the walk goes on to the last row: the
+    pre-fix list still carried Custom Hosted under Local. Runs in a private
+    profile because Next from Welcome writes the setup checkpoint to that
+    profile's config file.
     """
     wizard = _fresh_wizard()
     app = _WizardHost(wizard)
@@ -634,6 +696,7 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         _container, step = _current_step(wizard)
         choices = _provider_list(step)
         assert app.focused is choices
+        listed = _listed_provider_keys(step)
 
         for _ in range(4):  # OpenAI -> Anthropic -> Ollama -> llama.cpp -> Cloud
             await pilot.press("down")
@@ -643,6 +706,7 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         assert step.selected_provider_key == first_cloud
         _assert_step_is_live(app, wizard, step)
         assert _pinned_error(wizard) == ""
+
 
         await pilot.press("ctrl+b")
         await _wait_for_step(pilot, wizard, STEP_WELCOME)
@@ -657,3 +721,78 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         _container, current = _current_step(wizard)
         assert current is step
         assert "API key required" in _pinned_error(wizard)
+
+        # Then on through every remaining row, one press per row.
+        choices.focus()
+        await pilot.pause()
+        assert choices.highlighted_option.provider_key == listed[4] == first_cloud
+        for expected in listed[5:]:
+            await pilot.press("down")
+            await pilot.pause()
+            assert step.selected_provider_key == expected
+            assert "went wrong" not in _pinned_error(wizard), expected
+        _assert_step_is_live(app, wizard, step)
+        assert app.is_running and app._exception is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["byteplus", "deepinfra"])
+@private_profile_test
+async def test_a_newly_owned_hosted_preset_saves_through_the_wizard(
+    provider, request, monkeypatch
+):
+    """Review (major): a preset setup newly owns saves end to end from first run.
+
+    TASK-33510 made setup own every engine preset. BytePlus (``/api/v3``) and
+    DeepInfra (``/v1/openai``) are the two whose documented base URL a save
+    used to rewrite or refuse, so an earlier cut of this fix withheld them from
+    the list. Pick the row with the keyboard, type a key, Next, type a model,
+    Next: the Model step's commit writes the private profile's real config
+    file, and the shipped base URL must come back unchanged.
+    """
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    record = RECORDS_BY_KEY[provider]
+    assert record.default_base_url and record.api_key_env_var
+    monkeypatch.delenv(record.api_key_env_var, raising=False)
+    typed_key = f"sk-{provider}-wizard-save-0001"
+    model = f"{provider}-wizard-model"
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, step = _current_step(wizard)
+        choices = _provider_list(step)
+        choices.focus()
+        await pilot.pause()
+        await _arrow_to(pilot, choices, provider)
+        assert step.selected_provider_key == provider
+        key_input = step.query_one("#setup-provider-api-key", Input)
+        assert key_input.display, "the key field is hidden"
+        key_input.focus()
+        await pilot.pause()
+        await pilot.press(*typed_key)
+        await pilot.pause()
+
+        await pilot.press("ctrl+n")
+        await _wait_for_step(pilot, wizard, STEP_MODEL)
+        _container, model_step = _current_step(wizard)
+        custom = model_step.query_one("#setup-model-custom", Input)
+        custom.focus()
+        await pilot.pause()
+        await pilot.press(*model)
+        await pilot.pause()
+        await pilot.press("ctrl+n")
+        for _ in range(150):
+            if _current_step(wizard)[1] is not model_step:
+                break
+            await pilot.pause(0.05)
+        assert _current_step(wizard)[1] is not model_step, _pinned_error(wizard)
+        assert app.is_running and app._exception is None
+
+    saved = load_cli_config_and_ensure_existence(force_reload=True)
+    table = saved["api_settings"][provider]
+    assert table["api_key"] == typed_key
+    assert table["model"] == model
+    assert table["api_base_url"] == record.default_base_url

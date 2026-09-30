@@ -20,12 +20,14 @@ selected, together with any key you typed for it; a key is never carried over
 to a different provider.
 
 The Provider step lists the same providers as Settings ▸ Providers & Models:
-Popular first, then Cloud, Local and Other. Every row can be picked and set
-up here, including hosted presets such as Together, Fireworks and NVIDIA NIM.
-Four presets are not listed yet (BytePlus, Baidu Qianfan, Kilo Gateway and
-DeepInfra), because setup cannot save their API address. See
-[Settings ▸ Inference clouds](settings.md#inference-clouds) for how to use
-them.
+Popular first, then Cloud, Local and Other. Every row can be picked with the
+arrow keys and set up here, hosted presets included (Together, Fireworks,
+NVIDIA NIM, BytePlus, DeepInfra and the rest; see
+[Settings ▸ Inference clouds](settings.md#inference-clouds)). Setup saves each
+preset's key, model and documented base URL in its own
+`[api_settings.<provider>]` table. **Custom Hosted** is not listed: it is the
+internal engine route for custom endpoints, which you set up as **Custom
+OpenAI-compatible**.
 
 ## Keyboard
 
