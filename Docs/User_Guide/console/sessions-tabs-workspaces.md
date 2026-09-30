@@ -110,7 +110,7 @@ On a local-only setup the server lines collapse into one line:
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
 | Click a tab | Switches to it; a second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
-| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, queued prompts), the "Close Console session?" dialog lists it first: "Close" closes the tab, "Stay" keeps it |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), the "Close Console session?" dialog first shows what closing would discard: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
@@ -489,8 +489,13 @@ in a full accent box.
   saved history always stays in Library, so a saved, idle chat closes at
   once.
 - If a tab cannot be closed, it stays open and an error toast names it and
-  gives the reason — for example `Couldn't close tab "Weekly notes": it did
-  not finish closing. Try again in a moment.`
+  gives the reason — for example `Couldn't close tab "Weekly notes": The
+  close did not finish. Try again in a moment.` A Temporary chat with a
+  pending turn cannot close until you finish or discard that turn.
+- If the tab closed but the Console could not finish updating afterwards, a
+  warning says so (`Closed tab "Weekly notes", but the Console did not
+  finish updating`). Should the closed tab still be drawn, clicking its "✕"
+  clears it.
 - Tab titles truncate at about 19 characters. Hover the tab for the full
   title.
 - With more tabs than fit the strip's width, the strip scrolls horizontally

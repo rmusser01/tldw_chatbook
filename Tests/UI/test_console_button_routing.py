@@ -108,6 +108,28 @@ async def _wait_for_confirmation(
     raise AssertionError("Console close confirmation did not mount")
 
 
+async def _close_tab_button(console, pilot, session_id: str) -> Button:
+    """The session's tab ✕, once the strip has mounted it.
+
+    The strip mounts its buttons after `_sync_native_console_chat_ui`
+    returns, so a query straight after one `pilot.pause()` can run first
+    (`NoMatches`, seen in 1 of 18 runs in the TASK-33621.15 review).
+    """
+
+    selector = f"#console-close-session-tab-{session_id}"
+    await _wait_for_selector(console, pilot, selector, timeout=10.0)
+    return console.query_one(selector, Button)
+
+
+async def _await_session_closed(pilot, store, session_id: str) -> None:
+    """Let the real close worker drop ``session_id``; no fixed pause count."""
+
+    for _ in range(1000):
+        if session_id not in {session.id for session in store.sessions()}:
+            return
+        await pilot.pause(0.01)
+
+
 async def _sync_tray(console, pilot, state) -> ConsoleWorkspaceContextTray:
     tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
     tray.sync_state(state)
@@ -468,10 +490,9 @@ async def test_close_tab_button_drops_an_empty_session_without_confirmation():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        close = console.query_one(f"#console-close-session-tab-{doomed.id}", Button)
+        close = await _close_tab_button(console, pilot, doomed.id)
         close.press()
-        await pilot.pause()
-        await pilot.pause()
+        await _await_session_closed(pilot, store, doomed.id)
 
         assert doomed.id not in {session.id for session in store.sessions()}
         assert doomed.id not in console._console_undo_histories
@@ -503,9 +524,8 @@ async def test_close_tab_button_drops_an_idle_saved_session_without_confirmation
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        (await _close_tab_button(console, pilot, saved.id)).press()
+        await _await_session_closed(pilot, store, saved.id)
 
         assert saved.id not in {session.id for session in store.sessions()}
         assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
@@ -555,7 +575,7 @@ async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        (await _close_tab_button(console, pilot, saved.id)).press()
         dialog = await _wait_for_confirmation(host)
 
         assert "Temporary or unsaved messages: 1" in dialog.message
@@ -579,7 +599,7 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        close = console.query_one(f"#console-close-session-tab-{doomed.id}", Button)
+        close = await _close_tab_button(console, pilot, doomed.id)
         close.press()
         dialog = await _wait_for_confirmation(host)
 
@@ -591,8 +611,7 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
         assert doomed.id in {session.id for session in store.sessions()}
 
         dialog.query_one("#confirm-button", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        await _await_session_closed(pilot, store, doomed.id)
 
         assert doomed.id not in {session.id for session in store.sessions()}
 
@@ -635,7 +654,7 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
 
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
+        (await _close_tab_button(console, pilot, doomed.id)).press()
         dialog = await _wait_for_confirmation(host)
 
         assert "Temporary or unsaved messages: 0" in dialog.message
@@ -664,7 +683,7 @@ async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
+        (await _close_tab_button(console, pilot, doomed.id)).press()
         first = await _wait_for_confirmation(host)
         assert "Temporary or unsaved messages: 1" in first.message
 
@@ -858,7 +877,7 @@ async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_save
         store.switch_session(keeper)
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        (await _close_tab_button(console, pilot, saved.id)).press()
         dialog = await _wait_for_confirmation(host)
         assert "Saved history stays in Library" in dialog.message
         assert "Temporary or unsaved messages: 0" in dialog.message
@@ -867,7 +886,7 @@ async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_save
         dialog.query_one("#cancel-button", Button).press()
         await pilot.pause()
         assert store.session_draft(saved.id) == "private draft"
-        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        (await _close_tab_button(console, pilot, saved.id)).press()
         dialog = await _wait_for_confirmation(host)
         dialog.query_one("#confirm-button", Button).press()
         for _ in range(200):
@@ -898,7 +917,7 @@ async def test_close_draft_only_session_requires_confirmation():
         store.switch_session(keeper)
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        console.query_one(f"#console-close-session-tab-{draft.id}", Button).press()
+        (await _close_tab_button(console, pilot, draft.id)).press()
         dialog = await _wait_for_confirmation(host)
         assert "Unsent draft: yes" in dialog.message
         assert draft.id in {s.id for s in store.sessions()}

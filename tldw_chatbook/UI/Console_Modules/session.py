@@ -297,7 +297,14 @@ _PROJECT_INSTRUCTION_AUTHORITY_REFRESH_SECONDS = 2.0
 #: A close-failure toast names the tab; the full 500-character tab title
 #: would drown the reason.
 _SESSION_CLOSE_TITLE_MAX_CHARACTERS = 60
-_SESSION_CLOSE_REASON_MAX_CHARACTERS = 200
+#: Close refusals whose own text is copy the user can act on, raised by
+#: `ConsoleChatController.begin_session_close` and the store's close. Every
+#: other exception is shown only by its type: `RuntimeError` is also the
+#: generic defect type of Python, asyncio and Textual, and internal texts
+#: such as "Console session is closed." would contradict the open tab.
+_USER_ACTIONABLE_CLOSE_REFUSALS = frozenset(
+    {"Finish or discard the pending turn before closing this chat."}
+)
 
 
 class _SessionCloseIncomplete(RuntimeError):
@@ -307,19 +314,16 @@ class _SessionCloseIncomplete(RuntimeError):
 def _session_close_failure_reason(exc: Exception) -> str:
     """The reason a close-failure toast gives for ``exc``.
 
-    A ``RuntimeError`` is how the runtime, controller and store refuse a
-    close ("Finish or discard the pending turn before closing this chat."),
-    so its own message is the reason. Anything else is a defect: name only
-    its type, never its content.
+    Only this module's own ``_SessionCloseIncomplete`` and an allowlisted
+    refusal show their message; anything else names only its type, never
+    its content.
     """
 
-    if isinstance(exc, RuntimeError):
-        reason = sanitize_character_display_label(
-            str(exc), max_characters=_SESSION_CLOSE_REASON_MAX_CHARACTERS
-        )
-        if reason:
-            return reason
-    return f"an unexpected error occurred ({type(exc).__name__})."
+    if isinstance(exc, _SessionCloseIncomplete) or (
+        isinstance(exc, RuntimeError) and str(exc) in _USER_ACTIONABLE_CLOSE_REFUSALS
+    ):
+        return str(exc)
+    return f"An unexpected error occurred ({type(exc).__name__})."
 
 
 @dataclass(frozen=True, slots=True)
@@ -2836,7 +2840,7 @@ class ConsoleSessionController:
             # per-tab state below, and the caller reports the failure.
             if any(item.id == session_id for item in store.sessions()):
                 raise _SessionCloseIncomplete(
-                    "it did not finish closing. Try again in a moment."
+                    "The close did not finish. Try again in a moment."
                 )
             _state, cache = self._ensure_console_image_view()
             cache.evict_session(closing_ids)
@@ -2851,6 +2855,10 @@ class ConsoleSessionController:
         while True:
             impact = self._session_close_impact(session_id)
             if impact is None:
+                # Already gone from the store. A tab the strip still draws is
+                # stale (a close whose refresh failed): re-render it away, so
+                # its ✕ never does nothing.
+                await self._sync_native_console_chat_ui()
                 return
             if not impact.has_loss_risk:
                 if await _complete_close(impact):
@@ -2864,6 +2872,7 @@ class ConsoleSessionController:
                 return
             current = self._session_close_impact(session_id)
             if current is None:
+                await self._sync_native_console_chat_ui()
                 return
             if current == impact:
                 if await _complete_close(impact):
@@ -2892,7 +2901,7 @@ class ConsoleSessionController:
             try:
                 await self._close_console_session_tab(session_id)
             except Exception as exc:  # noqa: BLE001 -- reported, never silent
-                self._report_session_close_failure(title, exc)
+                await self._report_session_close_failure(session_id, title, exc)
             finally:
                 self._closing_session_requests.discard(session_id)
 
@@ -2911,7 +2920,7 @@ class ConsoleSessionController:
             # carries no bound fields, including the file-level module bind.
             loguru_logger.warning("Could not start Console session close flow")
             self._notify_session_close_failure(
-                title, "the close could not start. Try again in a moment."
+                title, "The close could not start. Try again in a moment."
             )
 
     def _session_close_display_title(self, session_id: str) -> str:
@@ -2932,20 +2941,50 @@ class ConsoleSessionController:
             or "Untitled"
         )
 
-    def _report_session_close_failure(self, title: str, exc: Exception) -> None:
-        """Log a failed close's classification and tell the user why.
+    async def _report_session_close_failure(
+        self, session_id: str, title: str, exc: Exception
+    ) -> None:
+        """Log a failed close's classification and tell the user the truth.
 
         Only the exception type and the function it was raised in are
-        logged (TASK-15103: never exception content).
+        logged (TASK-15103: never exception content). When the session is
+        already gone from the store, the close landed and only its teardown
+        (per-tab state, the strip refresh) failed: say so, and re-render the
+        strip once so the closed tab does not linger.
         """
 
+        closed = self._session_is_gone(session_id)
         frames = traceback.extract_tb(exc.__traceback__)
         logger.error(
-            "Console session close failed (error_type={}, origin={})",
+            "Console session close failed (stage={}, error_type={}, origin={})",
+            "teardown" if closed else "close",
             type(exc).__name__,
             frames[-1].name if frames else "unknown",
         )
-        self._notify_session_close_failure(title, _session_close_failure_reason(exc))
+        if not closed:
+            self._notify_session_close_failure(
+                title, _session_close_failure_reason(exc)
+            )
+            return
+        self.app_instance.notify(
+            f'Closed tab "{title}", but the Console did not finish updating '
+            f"({type(exc).__name__}).",
+            severity="warning",
+            markup=False,
+        )
+        try:
+            await self._sync_native_console_chat_ui()
+        except Exception:  # noqa: BLE001 -- already reported; the next ✕ re-renders
+            pass
+
+    def _session_is_gone(self, session_id: str) -> bool:
+        """Whether the store no longer holds ``session_id`` (its close landed)."""
+
+        try:
+            store = self._ensure_console_chat_store()
+            return all(item.id != session_id for item in store.sessions())
+        except Exception:  # noqa: BLE001 -- unknown means "not closed"
+            return False
 
     def _notify_session_close_failure(self, title: str, reason: str) -> None:
         # markup=False: the title is user text and must render literally.

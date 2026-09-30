@@ -38,6 +38,20 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
+    ConsoleDispatchReconstructability,
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
@@ -184,6 +198,12 @@ def _record_notifications(app) -> list[tuple[str, str]]:
     return notes
 
 
+def _failure_toasts(notes: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Error and warning toasts: a close that worked, or a Stay, shows none."""
+
+    return [note for note in notes if note[1] in {"error", "warning"}]
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_path):
@@ -191,6 +211,7 @@ async def test_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_
 
     app = _ready_app()
     db, conversation_id, message_id = _saved_conversation(app, tmp_path)
+    notes = _record_notifications(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
@@ -217,6 +238,7 @@ async def test_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_
         assert closed, "clicking ✕ on a blank never-sent tab left it open"
         await _await_tabs(console, pilot, {keeper})
         assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert _failure_toasts(notes) == []
     db.close_connection()
 
 
@@ -226,6 +248,7 @@ async def test_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it(request):
     """AC #2: Stay keeps the tab and its draft; Close really closes it."""
 
     app = _ready_app()
+    notes = _record_notifications(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
@@ -245,6 +268,7 @@ async def test_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it(request):
         )
         await _await_tabs(console, pilot, {keeper, drafted.id})
         assert store.session_draft(drafted.id) == "unsent draft"
+        assert _failure_toasts(notes) == [], "Stay is not a failed close"
 
         await _click(pilot, f"#console-close-session-tab-{drafted.id}")
         second = await _wait_for_confirmation(host, previous=first)
@@ -254,6 +278,7 @@ async def test_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it(request):
         await _await_tabs(console, pilot, {keeper})
         assert store.active_session_id == keeper
         assert second is not host.screen_stack[-1]
+        assert _failure_toasts(notes) == []
 
 
 @pytest.mark.asyncio
@@ -267,6 +292,7 @@ async def test_middle_click_closes_a_tab_without_switching_to_it(request):
     """
 
     app = _ready_app()
+    notes = _record_notifications(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
@@ -283,19 +309,27 @@ async def test_middle_click_closes_a_tab_without_switching_to_it(request):
         assert closed, "middle-clicking a tab left it open"
         assert store.active_session_id == keeper
         await _await_tabs(console, pilot, {keeper, other.id})
+        assert _failure_toasts(notes) == []
+
+        # A plain click still activates: the tab prevents Textual's default
+        # only after its own press has run.
+        await _click(pilot, f"#{_TAB_PREFIX}{other.id}")
+        assert await _settle(pilot, lambda: store.active_session_id == other.id)
+        assert set(_session_ids(store)) == {keeper, other.id}
 
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_refused_close_names_the_tab_and_reason_and_logs_the_error_type(
+async def test_internal_close_error_names_the_tab_but_never_the_error_text(
     request, tmp_path
 ):
-    """AC #4: a close the runtime refuses is shown and logged, never silent.
+    """AC #4: a close that fails inside the runtime is shown and logged.
 
-    The runtime refuses to close a session it has already fenced
-    (``Console session is closed.``). After the refusal the tab stays, the
-    user is told which tab and why, the log carries the exception type, and
-    the next ✕ press is not swallowed by the in-flight guard.
+    The runtime refuses to close a session it has already fenced with an
+    internal ``RuntimeError("Console session is closed.")`` -- text that
+    would contradict the still-open tab, so the toast names only the error
+    type, and the log carries the type and origin but never the text
+    (TASK-15103). The next ✕ press is not swallowed by the in-flight guard.
     """
 
     app = _ready_app()
@@ -317,15 +351,17 @@ async def test_refused_close_names_the_tab_and_reason_and_logs_the_error_type(
 
             await _click(pilot, f"#console-close-session-tab-{saved.id}")
             assert await _settle(pilot, lambda: bool(notes)), "refused close was silent"
-            message, severity = notes[-1]
-            assert f'"{_SAVED_TITLE}"' in message
-            assert "Console session is closed" in message
-            assert severity == "error"
+            assert notes[-1] == (
+                f'Couldn\'t close tab "{_SAVED_TITLE}": '
+                "An unexpected error occurred (RuntimeError).",
+                "error",
+            )
             assert any(
-                "Console session close failed" in record
+                "Console session close failed (stage=close," in record
                 and "error_type=RuntimeError" in record
                 for record in records
             ), records
+            assert not any("Console session is closed" in r for r in records)
             assert saved.id in _session_ids(store)
             await _await_tabs(console, pilot, {keeper, saved.id})
 
@@ -400,7 +436,7 @@ async def test_close_that_does_not_finish_is_reported_and_keeps_tab_state(
                 runtime._voice_promotion_owner = previous_owner
             message, severity = notes[-1]
             assert f'"{_SAVED_TITLE}"' in message
-            assert "did not finish closing" in message
+            assert "The close did not finish. Try again in a moment." in message
             assert severity == "error"
             assert owner.aborted == 1
             assert saved.id in _session_ids(store)
@@ -436,9 +472,11 @@ async def test_close_flow_that_cannot_start_tells_the_user(request, monkeypatch)
             assert await _settle(pilot, lambda: bool(notes)), (
                 "unstartable close was silent"
             )
-        message, severity = notes[-1]
-        assert f'"{blank_title}"' in message
-        assert severity == "error"
+        assert notes[-1] == (
+            f'Couldn\'t close tab "{blank_title}": '
+            "The close could not start. Try again in a moment.",
+            "error",
+        )
         assert blank.id in _session_ids(store)
         await _await_tabs(console, pilot, {keeper, blank.id})
 
@@ -446,3 +484,159 @@ async def test_close_flow_that_cannot_start_tells_the_user(request, monkeypatch)
         closed = await _settle(pilot, lambda: blank.id not in _session_ids(store))
         assert closed, "the retry after an unstartable close was dropped"
         await _await_tabs(console, pilot, {keeper})
+
+
+def _pending_temporary_turn(store) -> str:
+    """A Temporary chat whose accepted turn has not finished (no SQL rows).
+
+    The controller refuses to close it with copy the user can act on:
+    "Finish or discard the pending turn before closing this chat."
+    """
+
+    session = store.create_session(title="Temporary", ephemeral=True)
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hello", persist=False
+    )
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    store.register_ephemeral_dispatch_recovery(
+        session.id,
+        user_message_id=user.id,
+        assistant_message_id=assistant.id,
+        preparation_id="pending-preparation",
+        attempt_id="attempt-1",
+        checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+        origin="manual",
+        queue_entry_id=None,
+        frozen_authority=ConsoleTurnLibraryAuthority(
+            policy=ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=None,
+                source="temporary",
+            ),
+            direct_library_tools=False,
+            source_types=("notes", "media", "conversations"),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+                note_ids=(), media_ids=(), conversations_allowed=True
+            ),
+            provider_intent=ConsoleProviderIntent(
+                provider="llama_cpp",
+                model="test-model",
+                endpoint="http://127.0.0.1:9099",
+            ),
+            attempt_id="attempt-1",
+        ),
+        resolved_destination=ConsoleResolvedDestination(
+            provider="llama_cpp",
+            model="test-model",
+            endpoint_identity="http://127.0.0.1:9099",
+            egress_class=ConsoleEgressClass.ON_DEVICE,
+        ),
+        reconstructability=ConsoleDispatchReconstructability(
+            attachments_reconstructable=True,
+            evidence_reconstructable=True,
+            prefill_reconstructable=True,
+            opaque_reference="opaque:pending-turn",
+        ),
+    )
+    return session.id
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
+    """AC #4: a refusal meant for the user is shown in its own words."""
+
+    app = _ready_app()
+    notes = _record_notifications(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper = store.active_session_id
+        pending = _pending_temporary_turn(store)
+        store.switch_session(keeper)
+        await _show_tabs(console, pilot, {keeper, pending})
+
+        await _click(pilot, f"#console-close-session-tab-{pending}")
+        await _wait_for_confirmation(host)
+        await _click(pilot, "#confirm-button")
+        assert await _settle(pilot, lambda: bool(notes)), "refused close was silent"
+        assert notes[-1] == (
+            'Couldn\'t close tab "Temporary": '
+            "Finish or discard the pending turn before closing this chat.",
+            "error",
+        )
+        assert pending in _session_ids(store)
+        await _await_tabs(console, pilot, {keeper, pending})
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
+    request,
+):
+    """AC #4: a failure after the store closed the session is not a failed close.
+
+    The close landed, so "Couldn't close" would be false. The failure here is
+    the strip refresh itself, the teardown step a closed tab depends on to
+    disappear: once, the report's own re-render heals the strip; twice, the
+    closed tab's next ✕ re-renders it away instead of doing nothing.
+    """
+
+    app = _ready_app()
+    notes = _record_notifications(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper = store.active_session_id
+        healed = store.create_session()
+        stale = store.create_session()
+        store.switch_session(keeper)
+        await _show_tabs(console, pilot, {keeper, healed.id, stale.id})
+        titles = {session.id: session.title for session in store.sessions()}
+
+        controller = console._session
+        real_sync = controller._sync_native_console_chat_ui_fn
+        failures_left = [0]
+
+        def failing_sync():
+            if failures_left[0]:
+                failures_left[0] -= 1
+                raise ValueError("tab strip refresh failed")
+            return real_sync()
+
+        controller._sync_native_console_chat_ui_fn = failing_sync
+        try:
+            failures_left[0] = 1
+            await _click(pilot, f"#console-close-session-tab-{healed.id}")
+            assert await _settle(pilot, lambda: bool(notes)), (
+                "teardown failure was silent"
+            )
+            assert notes == [
+                (
+                    f'Closed tab "{titles[healed.id]}", but the Console did not '
+                    "finish updating (ValueError).",
+                    "warning",
+                )
+            ]
+            assert healed.id not in _session_ids(store)
+            await _await_tabs(console, pilot, {keeper, stale.id})
+
+            failures_left[0] = 2
+            await _click(pilot, f"#console-close-session-tab-{stale.id}")
+            assert await _settle(pilot, lambda: len(notes) == 2)
+            assert notes[-1][0].startswith(f'Closed tab "{titles[stale.id]}", but')
+            assert stale.id not in _session_ids(store)
+            await pilot.pause()
+            assert stale.id in _open_tab_ids(console), "strip healed unexpectedly"
+
+            await _click(pilot, f"#console-close-session-tab-{stale.id}")
+            await _await_tabs(console, pilot, {keeper})
+            assert len(notes) == 2, notes
+            assert failures_left[0] == 0
+        finally:
+            controller._sync_native_console_chat_ui_fn = real_sync
