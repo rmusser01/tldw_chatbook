@@ -112,6 +112,12 @@ def _future_iso(minutes: int) -> str:
     ).isoformat()
 
 
+def _past_iso(minutes: int = 1) -> str:
+    return (
+        datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    ).isoformat()
+
+
 def _attach_enabled_db(tmp_path, *, cooldown_rule_index: int | None = None,
                        cooldown_minutes: int = 30) -> GuardianDB:
     """A store with the three v1 seeds, optionally one cooldown armed."""
@@ -330,6 +336,49 @@ async def test_config_disable_during_cooldown_logged_once(request, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Read-only trend-key rows (final-review T3-1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_guardian_renders_read_only_trend_key_rows(request):
+    """T3-1: trend thresholds + retention display live config values.
+
+    The Dreams ``_DREAMS_READ_ONLY_KEYS`` idiom: each key renders as a
+    read-only detail row reading ``guardian_setting`` live, with the
+    "editable in config.toml only" hint the section banner promises. One
+    seeded override (doomloop 45 vs the default 20) proves the rows read
+    config, not the hardcoded defaults.
+    """
+    _seed_config(
+        '[general]\nusers_name = "t"\n\n[guardian]\nenabled = false\n'
+        'doomloop_hits_per_day = 45\n'
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_guardian_category(
+            pilot, host, selector="#settings-guardian-toggle"
+        )
+        screen = _active_destination_screen(host)
+        visible = _visible_text(screen)
+
+        # The hint matches the banner copy: read-only, config.toml only.
+        assert "read-only" in visible
+        assert "config.toml" in visible
+
+        for key, value in (
+            ("fixation_share_threshold", "0.6"),  # default
+            ("fixation_window_days", "7"),  # default
+            ("fixation_min_hits", "30"),  # default
+            ("doomloop_hits_per_day", "45"),  # the seeded override
+            ("alert_retention_days", "180"),  # default
+        ):
+            assert f"{key}: {value}" in visible, (key, value)
+
+
+# ---------------------------------------------------------------------------
 # Rule editor modal (bare-App harness, the DreamsGoalsModal test pattern)
 # ---------------------------------------------------------------------------
 
@@ -375,6 +424,40 @@ async def test_rule_editor_delete_removes_rule(tmp_path):
     async with app.run_test(size=(100, 46)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        modal.action_delete()
+        await pilot.pause()
+        assert db.get_rule(int(seed["id"])) is None
+
+
+@pytest.mark.asyncio
+async def test_rule_editor_delete_refused_while_cooldown_active(tmp_path):
+    """T3-2: delete is gated exactly like deactivation (refusal-total).
+
+    While the rule's own cooldown is future, delete refuses with the
+    "available in N min" copy and the rule survives; once the cooldown has
+    expired, the same action succeeds.
+    """
+    db = GuardianDB(tmp_path / "guardian.sqlite", "editor-test")
+    seed = db.list_rules()[1]
+    db.set_cooldown(int(seed["id"]), _future_iso(30))
+    app, modal = _modal_app(db)
+    modal.edit_rule(int(seed["id"]))
+    async with app.run_test(size=(100, 46)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.action_delete()
+        await pilot.pause()
+
+        status = str(modal.query_one("#grm-status", Static).renderable)
+        assert "available in" in status, status
+        assert "min" in status, status
+        assert db.get_rule(int(seed["id"])) is not None, (
+            "deletion must be refused while the rule's cooldown is active"
+        )
+
+        # After the cooldown expires, the same delete succeeds.
+        db.set_cooldown(int(seed["id"]), _past_iso())
         modal.action_delete()
         await pilot.pause()
         assert db.get_rule(int(seed["id"])) is None

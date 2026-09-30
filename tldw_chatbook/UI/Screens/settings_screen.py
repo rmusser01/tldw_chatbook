@@ -1539,6 +1539,17 @@ _GUARDIAN_DISPLAY_OPTIONS: tuple[tuple[str, str], ...] = tuple(
     (value, value)
     for value in ("inline_banner", "post_visit_summary", "silent_log")
 )
+#: [guardian] keys this section displays read-only (final-review T3-1):
+#: the trend thresholds and retention the section banner promises stay
+#: editable in TOML only (v1) -- everything in GUARDIAN_DEFAULTS except
+#: the one key the section owns: enabled.
+_GUARDIAN_READ_ONLY_KEYS: tuple[str, ...] = (
+    "fixation_share_threshold",
+    "fixation_window_days",
+    "fixation_min_hits",
+    "doomloop_hits_per_day",
+    "alert_retention_days",
+)
 
 
 def _guardian_cooldown_minutes_left(until_iso: str) -> int:
@@ -3340,6 +3351,20 @@ class GuardianRuleEditModal(ModalScreen[None]):
         db = self._db()
         if db is None:
             self._status("Guardian storage unavailable; nothing was deleted.")
+            return
+        until = self._cooldown_until(self._rule_id)
+        if until is not None:
+            # Contract 6 (final-review T3-2): deletion is gated exactly like
+            # deactivation -- refusal-total while the cooldown binds, so an
+            # escalated hold cannot be discarded on impulse. The rule can
+            # still be edited, and the config-file hatch (disable Guardian
+            # as a whole, logged as a bypass) remains the escape route.
+            self._status(
+                "This rule is in an escalated cooldown - deleting is "
+                f"available in {_guardian_cooldown_minutes_left(until)} "
+                "min. You can still edit it, or disable Guardian as a "
+                "whole in Advanced Config (logged as a bypass)."
+            )
             return
         try:
             db.delete_rule(self._rule_id)
@@ -30859,6 +30884,15 @@ class SettingsScreen(BaseAppScreen):
         return bool(guardian_setting("enabled", False))
 
     @staticmethod
+    def _format_guardian_value(value: object) -> str:
+        """Render one read-only [guardian] value the way TOML spells it."""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, str):
+            return f'"{value}"'
+        return str(value)
+
+    @staticmethod
     def _guardian_toggle_label(enabled: bool) -> str:
         return "Disable Guardian" if enabled else "Enable Guardian"
 
@@ -31008,6 +31042,19 @@ class SettingsScreen(BaseAppScreen):
             markup=False,
         )
         yield from self._render_guardian_rules()
+        # Final-review T3-1: the Dreams read-only idiom -- config keys the
+        # section never mutates render as detail rows read live, with the
+        # hint matching the banner copy ("stay editable in config.toml").
+        yield Static(
+            "Trend thresholds & retention "
+            "(read-only; edit [guardian] in config.toml)",
+            classes="destination-section",
+            markup=False,
+        )
+        for key in _GUARDIAN_READ_ONLY_KEYS:
+            yield self._detail_row(
+                key, self._format_guardian_value(guardian_setting(key))
+            )
 
     def _render_guardian_rules(self) -> ComposeResult:
         """The rules table (name · topic · action · severity · crisis?)."""

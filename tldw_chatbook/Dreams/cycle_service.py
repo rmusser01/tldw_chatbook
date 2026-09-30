@@ -377,7 +377,7 @@ def _preferred_sources(
 
     A topic the sources agree on keeps ONE row, so it needs one ``source``:
     the reader whose signal contributed the most weight wins, first-read
-    order (notes, media, personal context, guardian) breaking ties. The
+    order (notes, media, guardian, personal context) breaking ties. The
     reader's own ``source`` value is preferred when it sets one, with the
     origin name as the fallback.
     """
