@@ -147,6 +147,13 @@
         display: none;
     }
 
+
+    ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
 /* ===== WIDGET: TraceCallRecoveryCallout (UI/Console_Modules/provider_continuation_recovery.py) ===== */
 
 

@@ -448,7 +448,8 @@ of the next prompt, and **Manage** plus a state-specific action such as
   Remove them or wait and send the complete message normally.
 - Recognized slash commands still run immediately and are never queued.
 - Queued prompts are sent one after another, in order, for as long as each
-  turn succeeds.
+  turn succeeds. **Pause** takes effect once the turn in progress finishes;
+  it never cuts that turn short.
 - **Manage** opens a modal pinned to this tab. Prompts are numbered from 1
   and the queue's state is written at the top, for example
   `Queue 2/10 · Draining`. You can edit, move, remove, or clear waiting prompts; a prompt
@@ -458,12 +459,14 @@ of the next prompt, and **Manage** plus a state-specific action such as
   disabled action explains why when you hover it.
 - A failed turn pauses the queue and the shelf names it, for example
   `Turn failed: "Summarize the draft"`. **Retry** (or **Retry failed** in
-  Manage) runs that turn again and then keeps draining; **Resume next** leaves
-  it as it is and sends the next prompt. A stopped turn offers **Resume next**
-  and **Retry stopped**. A queue you paused, or one paused without a failed
-  turn behind it, shows `Paused` with **Resume**. A prompt that could not
-  start shows `Start refused` with **Try again**. Context changes require
-  **Review** followed by **Use current** before draining resumes.
+  Manage) runs that turn again and then keeps draining; **Resume next** in
+  Manage leaves it as it is and sends the next prompt. A stopped turn shows
+  `Turn stopped` with **Resume next**; Manage also offers **Retry stopped**
+  when the stopped reply is the latest one. A queue you paused, or one
+  paused without a failed turn behind it, shows `Paused` with **Resume**. A
+  prompt that could not start shows `Start refused` with **Try again**.
+  Context changes require **Review** followed by **Use current** before
+  draining resumes.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.

@@ -119,7 +119,12 @@ class ConsolePromptDispatchResult:
 
 @dataclass(frozen=True, slots=True)
 class ConsolePromptQueuePresentation:
-    """Body-free, immutable projection consumed by queue widgets."""
+    """Immutable projection consumed by queue widgets.
+
+    It never carries a full prompt body: ``next_preview`` and a failed turn's
+    name inside ``state_label`` are bounded one-line ``make_prompt_preview``
+    renderings only.
+    """
 
     revision: int
     count: int
@@ -147,12 +152,13 @@ def derive_prompt_queue_presentation(
     turn_recovery_id: str | None = None,
     failed_turn_preview: str | None = None,
 ) -> ConsolePromptQueuePresentation:
-    """Derive exact visible queue vocabulary without reading a prompt body.
+    """Derive exact visible queue vocabulary from bounded previews only.
 
-    ``failed_turn_preview`` is the one-line preview of the prompt whose turn
-    failed and paused the queue, or ``None`` when no failed turn exists. A
-    FAILED pause without one (every turn succeeded) offers Resume: a Retry
-    there could only refuse (TASK-33621.19).
+    No full prompt body is read here. ``failed_turn_preview`` is the bounded
+    one-line preview of the prompt whose turn failed and paused the queue
+    (the caller's ``make_prompt_preview``), or ``None`` when no failed turn
+    exists. A FAILED pause without one (every turn succeeded) offers Resume:
+    a Retry there could only refuse (TASK-33621.19).
     """
 
     count = snapshot.total_count
@@ -330,6 +336,14 @@ class ConsolePromptQueueRegion(Widget):
 
     ConsolePromptQueueRegion.-narrow #console-prompt-queue-preview {
         display: none;
+    }
+
+    /* TASK-33621.19: a narrow shelf's summary (the named 'Turn failed: "..."'
+       is its longest label) truncates instead of pushing Retry off-screen. */
+    ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
+        width: 1fr;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     """
 

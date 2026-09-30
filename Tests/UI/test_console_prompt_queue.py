@@ -339,6 +339,63 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 40)])
+@private_profile_test
+async def test_mounted_shelf_naming_a_failed_turn_keeps_retry_on_screen(
+    request, size
+) -> None:
+    """TASK-33621.19 review: the named 'Turn failed: "..."' summary is the
+    shelf's longest label; it truncates instead of pushing Retry off-screen."""
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    _app, host = _ready_host()
+    async with host.run_test(size=size) as pilot:
+        console = await _mounted_console(host, pilot)
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session_id = store.active_session_id
+        failed_prompt = "Summarise the attached quarterly report in five bullets"
+        store.append_message(
+            session_id, role=ConsoleMessageRole.USER, content=failed_prompt
+        )
+        reply = store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        store.mark_message_failed(reply.id)
+        registry = controller.prompt_queue_registry
+        snapshot = registry.begin_chain(
+            session_id,
+            context_epoch=store.conversation_context_epoch(session_id),
+            expected_revision=registry.snapshot(session_id).revision,
+        ).snapshot
+        snapshot = registry.admit(
+            session_id,
+            text="the next waiting prompt",
+            expected_revision=snapshot.revision,
+        ).snapshot
+        registry.pause(
+            session_id,
+            reason=PromptQueuePauseReason.FAILED,
+            expected_revision=snapshot.revision,
+        )
+        controller.prompt_queue_coordinator.publish_registry_change(session_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        region = console.query_one("#console-prompt-queue", ConsolePromptQueueRegion)
+        summary = region.query_one("#console-prompt-queue-summary")
+        manage = region.query_one("#console-prompt-queue-manage", Button)
+        retry = region.query_one("#console-prompt-queue-pause", Button)
+
+        assert str(retry.label) == "Retry"
+        assert "Turn failed" in str(summary.render())
+        assert summary.region.right <= manage.region.x
+        assert manage.region.right <= retry.region.x
+        assert retry.region.right <= region.region.right
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_navigation_confirmation_is_pure_and_preserves_manager_edit(
     request,
@@ -1474,3 +1531,191 @@ def test_stopped_pause_retry_target_is_the_stopped_turn_only() -> None:
     stopped = controller.recovery_turn("session-a", action="retry-stopped")
     assert stopped is not None and stopped.message_id == assistant_ids[-1]
     assert controller.recovery_turn("session-a", action="retry-failed") is None
+
+
+class _HeldQueueGateway:
+    """Ready local destination whose Nth reply streams only once released."""
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self.started = [asyncio.Event() for _ in range(5)]
+        self.release = [asyncio.Event() for _ in range(5)]
+        self.user_turns: list[str] = []
+
+    async def resolve_for_send(self, selection):
+        from Tests.console_provider_doubles import with_destination
+        from tldw_chatbook.Chat.console_provider_gateway import (
+            ConsoleProviderResolution,
+        )
+
+        return with_destination(
+            ConsoleProviderResolution(
+                provider=selection.provider,
+                base_url=selection.base_url or "",
+                model=(
+                    selection.explicit_model
+                    or selection.configured_model
+                    or "test-model"
+                ),
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+        )
+
+    async def stream_chat(self, _resolution, messages, **_kwargs):
+        call = len(self.user_turns)
+        self.user_turns.append(
+            next(
+                message["content"]
+                for message in reversed(messages)
+                if message.get("role") == "user"
+            )
+        )
+        self.started[call].set()
+        await self.release[call].wait()
+        yield f"reply-{call + 1}"
+
+
+async def _wait_until(pilot, predicate, *, timeout: float = 45.0) -> None:
+    # Generous: a mounted Console under a loaded xdist worker can take tens
+    # of seconds to stream one reply; the deadline only bounds a hang.
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await pilot.pause(0.02)
+    assert predicate()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_shelf_pause_after_shelf_resume_lets_the_queued_turn_finish(
+    request,
+) -> None:
+    """TASK-33621.19 review: a shelf Resume drains whole turns in its worker.
+
+    Pressing the shelf's own Pause while that queued turn is generating
+    means "pause after this turn". It used to start a second worker in the
+    same exclusive group, which cancelled the drain -- killing the turn in
+    flight and falling back to a paused queue.
+    """
+
+    import asyncio
+
+    from Tests.UI.app_factory import attach_chachanotes_db
+    from tldw_chatbook.Chat.chat_conversation_service import (
+        ChatConversationService,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMode
+
+    app, host = _ready_host()
+    # A real (in-memory) conversation DB: the persisted durable path is the
+    # one whose queued turns the reported sessions ran. The runtime checks
+    # the conversation's archive state before each queued send.
+    app.local_chat_conversation_service = ChatConversationService(
+        attach_chachanotes_db(app)
+    )
+    async with host.run_test(size=(120, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        controller = console._ensure_console_chat_controller()
+        gateway = _HeldQueueGateway()
+        controller.provider_gateway = gateway
+        controller._agent_runtime_enabled = False
+        session_id = controller.store.active_session_id
+        registry = controller.prompt_queue_registry
+        shelf = console.query_one("#console-prompt-queue", ConsolePromptQueueRegion)
+        shelf_button = shelf.query_one("#console-prompt-queue-pause", Button)
+
+        def shelf_is_current(label: str) -> bool:
+            # The shelf pins each press to the revision it last painted, and
+            # a UI sync that is already in flight coalesces a new request:
+            # press only once the painted revision is the live one. Presses
+            # go through Button.press() -- the shelf's own on_button_pressed
+            # -- because a coordinate click can land on a toast under load.
+            painted = shelf._presentation
+            return (
+                painted is not None
+                and painted.revision == registry.snapshot(session_id).revision
+                and str(shelf_button.label) == label
+            )
+
+        async def shelf_shows(label: str) -> None:
+            import time
+
+            deadline = time.monotonic() + 45.0
+            while time.monotonic() < deadline:
+                await console._sync_native_console_chat_ui()
+                if shelf_is_current(label):
+                    return
+                await pilot.pause(0.05)
+            assert shelf_is_current(label), (shelf._presentation, label)
+
+        owner = asyncio.create_task(
+            controller.run_prompt_chain("owner turn", session_id=session_id)
+        )
+        try:
+            await _wait_until(pilot, gateway.started[0].is_set)
+            snapshot = registry.snapshot(session_id)
+            for text in ("first queued", "second queued", "third queued"):
+                admitted = await controller.queue_prompt(
+                    session_id, text=text, expected_revision=snapshot.revision
+                )
+                assert admitted.applied, admitted
+                snapshot = admitted.snapshot
+            # Pause after the owner turn, from the shelf, so the queue holds
+            # three prompts behind a completed turn.
+            await shelf_shows("Pause")
+            shelf_button.press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    registry.snapshot(session_id).mode
+                    is PromptQueueMode.PAUSE_AFTER_TURN
+                ),
+            )
+            gateway.release[0].set()
+            await asyncio.wait_for(owner, timeout=45)
+            assert registry.snapshot(session_id).pause_reason is (
+                PromptQueuePauseReason.MANUAL
+            )
+
+            # Shelf Resume: the drain now runs inside the shelf's worker.
+            await shelf_shows("Resume")
+            shelf_button.press()
+            await _wait_until(pilot, gateway.started[1].is_set)
+            # Shelf Pause while that queued turn generates.
+            await shelf_shows("Pause")
+            shelf_button.press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    registry.snapshot(session_id).mode
+                    is PromptQueueMode.PAUSE_AFTER_TURN
+                ),
+            )
+            gateway.release[1].set()
+            await _wait_until(
+                pilot,
+                lambda: registry.snapshot(session_id).mode is PromptQueueMode.PAUSED,
+            )
+        finally:
+            for release in gateway.release:
+                release.set()
+            if not owner.done():
+                owner.cancel()
+
+        final = registry.snapshot(session_id)
+        assert final.pause_reason is PromptQueuePauseReason.MANUAL
+        assert final.waiting_count == 2
+        assert gateway.user_turns == ["owner turn", "first queued"]
+        replies = [
+            message
+            for message in controller.store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ]
+        assert [message.status for message in replies] == ["complete", "complete"]

@@ -49,6 +49,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueMode,
     PromptQueueReservation,
+    QueueMutationStatus,
 )
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_turn_context import (
@@ -1497,10 +1498,145 @@ async def test_queued_reclaim_thinking_refusal_returns_owner_to_recoverable_head
 
     assert recovered.accepted is True
     assert store.preparation_for_session(paused.session_id) is None
+    # TASK-33621.19: the reclaimed durable turn is acknowledged while its
+    # reclaim chain owns it, so the chain advances to the later entry exactly
+    # like the ephemeral twin
+    # (test_queued_recovery_reclaims_same_entry_then_advances_without_spin).
+    # This used to pin 2 calls with [second] left waiting: the false
+    # "Turn failed" pause the durable acknowledgement painted.
+    assert gateway.provider_calls == 3
+    _assert_reclaimed_queue_released(controller, paused.session_id)
+
+
+def _assert_reclaimed_queue_released(controller, session_id: str) -> None:
+    """The reclaim chain drained or finished: no live owner, no held slot."""
+
+    snapshot = controller.prompt_queue_registry.snapshot(session_id)
+    assert snapshot.total_count == 0
+    assert snapshot.claimed_count == 0
+    assert snapshot.reservation is PromptQueueReservation.RELEASED
+    assert snapshot.expected_context_epoch is None
+    activity = controller.activity_for(session_id)
+    assert activity.accepted_live_turn is False
+    assert activity.occupies_slot is False
+    assert activity.queue_paused is False
+    assert controller.prompt_queue_coordinator.controls_generation(session_id) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_work(
+    tmp_path, action
+):
+    """TASK-33621.19 review: the real-SQLite twin of the reclaim/advance contract.
+
+    A persisted chat acknowledges the reclaimed entry through the durable
+    post-commit ``queue_acknowledgement`` while the reclaim chain still owns
+    it. That acknowledgement must not strand the chain: the later entry is
+    sent, the queue ends empty with its slot released, and the next message
+    is a normal send rather than a prompt queued behind a dead chain.
+    """
+
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "reclaim.sqlite", client_id="task-33621-19")
+    (
+        controller,
+        store,
+        gateway,
+        service,
+        paused,
+        first,
+        second,
+    ) = await _paused_queued_send(persistence=ChatPersistenceService(db))
+    session_id = paused.session_id
+    assert (
+        next(row for row in store.sessions() if row.id == session_id).ephemeral is False
+    )
+    acknowledged: list[str] = []
+    coordinator = controller.prompt_queue_coordinator
+    original_ack = coordinator.acknowledge_durable_acceptance
+
+    def observe_ack(sid, **kwargs):
+        acknowledged.append(kwargs["entry_id"])
+        return original_ack(sid, **kwargs)
+
+    coordinator.acknowledge_durable_acceptance = observe_ack
+    service.error = None
+    service.result = {"results": []}
+
+    recovered = (
+        await controller.retry_library_preparation(paused.preparation_id)
+        if action == "retry"
+        else await controller.bypass_library_preparation(paused.preparation_id)
+    )
+
+    assert recovered.accepted is True
+    assert recovered.terminal_status is ConsoleRunStatus.COMPLETED
+    # The reclaimed entry AND the later one both crossed the real durable ack.
+    assert acknowledged == [first.entry_id, second.entry_id]
+    assert gateway.provider_calls == 3
+    assert store.preparation_for_session(session_id) is None
+    _assert_reclaimed_queue_released(controller, session_id)
+    persisted_users = [
+        row[0]
+        for row in db.get_connection().execute(
+            "SELECT content FROM messages WHERE sender = 'user' ORDER BY rowid"
+        )
+    ]
+    assert persisted_users == ["owner", "frozen queued", "later queued"]
+
+    after = controller.prompt_queue_registry.snapshot(session_id)
+    rerouted = await controller.queue_prompt(
+        session_id, text="next message", expected_revision=after.revision
+    )
+    assert rerouted.status is QueueMutationStatus.REROUTE_NORMAL_SEND
+    assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+
+
+@pytest.mark.asyncio
+async def test_durable_single_entry_reclaim_releases_its_chain(tmp_path):
+    """With nothing waiting, the reclaimed durable turn still ends its chain."""
+
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "reclaim-one.sqlite", client_id="task-33621-19")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    policy = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    store.library_policy_coordinator = policy
+    session = store.create_session(session_id="session-1")
+    assert session.ephemeral is False
+    gateway = _BlockingFirstFence()
+    service = _RagService(error=RuntimeError("queued retrieval failed"))
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.app = SimpleNamespace(library_rag_search_service=service)
+    chain = asyncio.create_task(
+        controller.run_prompt_chain("owner", session_id=session.id)
+    )
+    await gateway.started.wait()
+    snapshot = controller.prompt_queue_registry.snapshot(session.id)
+    only = await controller.queue_prompt(
+        session.id, text="only queued", expected_revision=snapshot.revision
+    )
+    policy.auto_retrieve = ConsoleAutoRetrieve.AUTOMATIC
+    gateway.release.set()
+    await chain
+    paused = store.preparation_for_session(session.id)
+    assert paused is not None and paused.queue_entry_id == only.entry_id
+    service.error = None
+
+    recovered = await controller.retry_library_preparation(paused.preparation_id)
+
+    assert recovered.accepted is True
     assert gateway.provider_calls == 2
-    recovered_snapshot = controller.prompt_queue_registry.snapshot(paused.session_id)
-    assert recovered_snapshot.claimed_count == 0
-    assert [entry.entry_id for entry in recovered_snapshot.entries] == [second.entry_id]
+    _assert_reclaimed_queue_released(controller, session.id)
+    after = controller.prompt_queue_registry.snapshot(session.id)
+    rerouted = await controller.queue_prompt(
+        session.id, text="next message", expected_revision=after.revision
+    )
+    assert rerouted.status is QueueMutationStatus.REROUTE_NORMAL_SEND
 
 
 @pytest.mark.asyncio

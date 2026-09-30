@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from textual import on
 from textual.app import ComposeResult
@@ -28,6 +28,11 @@ from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
     CancelConfirmationDialog,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+        ConsoleQueueRecoveryTurn,
+    )
 
 
 def _queue_state_text(
@@ -219,16 +224,49 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         self.set_interval(0.2, self._poll_snapshot)
 
     async def _poll_snapshot(self) -> None:
-        snapshot = self._queue_controller.snapshot(self.session_id)
-        if snapshot.revision != self._revision:
-            self._apply_snapshot(snapshot)
+        # Re-derive every tick: the retry target is transcript state that
+        # never bumps the queue revision (TASK-33621.19); the render key
+        # keeps an unchanged state a no-op.
+        self._apply_snapshot(self._queue_controller.snapshot(self.session_id))
+
+    def _recovery_turns(
+        self, snapshot: PromptQueueSnapshot
+    ) -> tuple[ConsoleQueueRecoveryTurn | None, ConsoleQueueRecoveryTurn | None]:
+        """Return the (failed, stopped) turn the paused queue can retry."""
+
+        reason = (
+            snapshot.pause_reason if snapshot.mode is PromptQueueMode.PAUSED else None
+        )
+        failed = (
+            self._queue_controller.recovery_turn(
+                self.session_id, action="retry-failed"
+            )
+            if reason is PromptQueuePauseReason.FAILED
+            else None
+        )
+        stopped = (
+            self._queue_controller.recovery_turn(
+                self.session_id, action="retry-stopped"
+            )
+            if reason is PromptQueuePauseReason.STOPPED
+            else None
+        )
+        return failed, stopped
 
     def _apply_snapshot(
         self, snapshot: PromptQueueSnapshot, *, force: bool = False
     ) -> None:
         """Render a new body-free revision while preserving entry identity."""
 
-        key = (snapshot.revision, snapshot.entries, snapshot.mode, snapshot.pause_reason)
+        failed_turn, stopped_turn = self._recovery_turns(snapshot)
+        key = (
+            snapshot.revision,
+            snapshot.entries,
+            snapshot.mode,
+            snapshot.pause_reason,
+            failed_turn,
+            stopped_turn,
+        )
         if not force and key == self._render_key:
             return
         if self._render_key is not None and snapshot.revision != self._revision:
@@ -274,22 +312,8 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         paused = snapshot.mode is PromptQueueMode.PAUSED
         reason = snapshot.pause_reason if paused else None
         # TASK-33621.19: Retry is offered only for the exact turn that
-        # paused the queue; a FAILED pause with no failed turn is a plain
-        # pause whose action is Resume.
-        failed_turn = (
-            self._queue_controller.recovery_turn(
-                self.session_id, action="retry-failed"
-            )
-            if reason is PromptQueuePauseReason.FAILED
-            else None
-        )
-        stopped_turn = (
-            self._queue_controller.recovery_turn(
-                self.session_id, action="retry-stopped"
-            )
-            if reason is PromptQueuePauseReason.STOPPED
-            else None
-        )
+        # paused the queue (``failed_turn``/``stopped_turn`` above); a FAILED
+        # pause with no failed turn is a plain pause whose action is Resume.
         state.update(
             f"Queue {snapshot.total_count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
             + _queue_state_text(

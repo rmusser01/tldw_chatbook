@@ -1334,7 +1334,11 @@ def test_live_chain_durable_ack_settles_its_claim_without_pausing_later_work():
     assert settled.mode is PromptQueueMode.DRAINING
     assert settled.pause_reason is None
     assert settled.reservation is PromptQueueReservation.HELD
-    assert chain.current_entry_id is None
+    # The live owner keeps its exact entry (as the ephemeral turn_accepted
+    # path does) so its own post-turn step -- the drain loop, or
+    # finish_recovered_entry for a reclaimed preparation -- still owns the
+    # advance; clearing it stranded reclaimed durable chains.
+    assert chain.current_entry_id == "accepted-entry"
     assert chain.accepted_live_turn is True
     # Re-delivery of the same committed acknowledgement stays idempotent.
     assert coordinator.acknowledge_durable_acceptance(

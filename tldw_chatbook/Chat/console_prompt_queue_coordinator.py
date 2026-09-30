@@ -550,13 +550,12 @@ class ConsolePromptQueueCoordinator:
         # EVERY queued turn while its live chain is still draining. That
         # chain advances the queue after the turn ends, so only a detached
         # acknowledgement (no exact live owner) may pause later work.
+        live_owner = chain is not None and chain.current_entry_id == entry_id
         result = self.registry.settle_durable_acceptance(
             session_id,
             entry_id=entry_id,
             preparation_id=preparation_id,
-            live_chain_owns_claim=(
-                chain is not None and chain.current_entry_id == entry_id
-            ),
+            live_chain_owns_claim=live_owner,
         )
         if result.status not in {
             QueueMutationStatus.APPLIED,
@@ -579,8 +578,12 @@ class ConsolePromptQueueCoordinator:
         if chain is not None:
             chain.accepted_live_turn = True
             chain.logical_outcome_id = f"queue-chain:{preparation_id}"
-            if chain.current_entry_id == entry_id:
-                chain.current_entry_id = None
+            # The live owner keeps ``current_entry_id`` exactly as the
+            # ephemeral ``turn_accepted`` path does: its own post-turn step
+            # (the drain loop, or ``finish_recovered_entry`` for a reclaimed
+            # preparation) must still recognise this turn to advance or
+            # finish the chain. Clearing it here left a reclaimed durable
+            # entry's chain DRAINING/HELD with nothing to drive it.
             self._changed(session_id)
         if result.status is QueueMutationStatus.APPLIED:
             callback = self.on_queued_accepted

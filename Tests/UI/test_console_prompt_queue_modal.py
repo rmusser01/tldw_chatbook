@@ -416,6 +416,40 @@ async def test_manager_names_a_real_failed_turn_and_offers_retry_and_resume_next
 
 
 @pytest.mark.asyncio
+async def test_manager_drops_retry_when_the_failed_turn_changes_while_open() -> None:
+    """The retry target is transcript state the queue revision never bumps.
+
+    While the manager is open, the named failed turn can stop being the
+    newest failed reply. Its "Retry failed" must not linger to refuse with
+    "No matching stopped or failed turn is available." (TASK-33621.19 AC#3).
+    """
+
+    facade = _QueueFacade(
+        pause_reason=PromptQueuePauseReason.FAILED,
+        recovery_turns={
+            "retry-failed": ConsoleQueueRecoveryTurn(
+                "assistant-2", "Answer with the word BRAVO."
+            )
+        },
+    )
+    revision = facade.snapshot("pinned-session").revision
+    app = App()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = await _open(app, pilot, facade)
+        assert "console-prompt-queue-retry-failed" in _labels(modal)
+
+        facade.recovery_turns.clear()
+        await pilot.pause(0.5)
+
+        assert facade.snapshot("pinned-session").revision == revision
+        assert _state_text(modal) == f"Queue 2/{MAX_CONSOLE_QUEUE_ENTRIES} · Paused"
+        labels = _labels(modal)
+        assert "console-prompt-queue-retry-failed" not in labels
+        assert labels["console-prompt-queue-toggle-pause"] == "Resume"
+
+
+@pytest.mark.asyncio
 async def test_manager_failed_pause_without_a_failed_turn_offers_resume() -> None:
     facade = _QueueFacade(pause_reason=PromptQueuePauseReason.FAILED)
     app = App()
@@ -522,3 +556,55 @@ async def test_closing_the_manager_does_not_cancel_a_resume_it_started() -> None
         await pilot.pause()
 
     assert outcome == ["drained"]
+
+
+@pytest.mark.asyncio
+async def test_closing_the_manager_does_not_cancel_a_retry_it_started() -> None:
+    """The Retry/Resume-next twin: recovery drains whole turns as well."""
+
+    import asyncio
+
+    facade = _QueueFacade(
+        pause_reason=PromptQueuePauseReason.FAILED,
+        recovery_turns={
+            "retry-failed": ConsoleQueueRecoveryTurn(
+                "assistant-2", "Answer with the word BRAVO."
+            )
+        },
+    )
+    release = asyncio.Event()
+    outcome: list[str] = []
+
+    async def recover(
+        session_id: str,
+        *,
+        action: str,
+        expected_revision: int,
+        reviewed_context_epoch: int | None = None,
+    ):
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            outcome.append("cancelled")
+            raise
+        outcome.append(action)
+        return PromptQueueMutationResult(
+            QueueMutationStatus.APPLIED, facade.snapshot(session_id)
+        )
+
+    facade.recover = recover
+    app = App()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = await _open(app, pilot, facade)
+        await pilot.click("#console-prompt-queue-retry-failed")
+        await pilot.pause()
+
+        app.pop_screen()
+        await pilot.pause()
+        assert not modal.is_attached
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert outcome == ["retry-failed"]
