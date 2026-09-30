@@ -239,6 +239,23 @@ def test_a_cursor_from_any_factory_still_reports_transaction_boundaries(
         db.close_connection()
 
 
+def test_tracked_cursor_type_puts_the_tracked_cursor_first() -> None:
+    """The composition rule, without a database: tracked methods run first."""
+    tracked = base_db._QuiescentSQLiteCursor
+    compose = base_db._tracked_cursor_type
+
+    assert compose(sqlite3.Cursor) is tracked
+    assert compose(tracked) is tracked
+    composed = compose(_DirectCursor)
+    assert composed.__mro__[1:3] == (tracked, _DirectCursor)
+    assert composed.execute is tracked.execute
+    assert composed.executemany is tracked.executemany
+    assert composed.executescript is tracked.executescript
+    assert compose(_DirectCursor) is composed  # cached, not a new class per call
+    with pytest.raises(TypeError):
+        compose(object)  # type: ignore[arg-type]
+
+
 def test_a_non_class_cursor_factory_is_refused() -> None:
     """A factory that cannot be made tracked fails closed rather than untracked."""
     conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
