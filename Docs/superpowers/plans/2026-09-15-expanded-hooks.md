@@ -150,7 +150,7 @@ git diff --check
 - Consumes: H1 normalized handlers/events/results; platform-qualified process termination already used by Agents/run_hooks.py.
 - Produces: HookEngine(definitions: tuple[HookHandler, ...], authority_check: Callable, budget_owner: HookBudgetOwner).fire(event: HookEvent) -> HookEventOutcome; async fire_async(event: HookEvent) -> HookEventOutcome; notify(event: HookEvent) -> bool; async close() -> None. HookEventOutcome records accepted effects, omissions, failures and outstanding cleanup. One application HookBudgetOwner supplies reserve(runtime_id: str, observation: bool) and exact execution/ticket/queue counters; context-manager tickets survive suspension. Inject HookProcessOwner with reserve_launch(event: HookEvent) -> str, publish_process(token: str, provenance: dict) -> None and settle_process(token: str, confirmed: bool) -> None. This protocol is defined in hooks_v2/ownership.py without importing Plugins; plugin composition supplies F2 runtime ownership, while standalone handlers retain their existing host owner.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 import pytest
@@ -164,9 +164,9 @@ async def test_command_success_and_disposal_use_same_entry(command_hook_case):
     assert case.live_children() == 0
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Agents/test_hooks_v2_execution.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Agents/test_hooks_v2_execution.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 from collections import deque
@@ -181,20 +181,20 @@ class ReadyRuntimes:
         return self.ready.popleft()
 ```
 
-  - [ ] 3.1. Build command_hook_case locally from a v2 command using sys.executable, a complete HookEvent and the real HookEngine; live_children reads retained owned process handles, not a fake idle counter.
-  - [ ] 3.2. Capture bounded stdin/stdout/stderr during I/O; run sync calls only on agent threads and use async entry from the event loop. Keep optional observation workers separate from controlling effects.
-  - [ ] 3.3. Implement app-owned reservation tickets, round-robin runtimes and FIFO per-runtime delivery. Release scarce execution slots during approval/nested waits while retaining lifetime tickets; refuse overflow under the event policy.
-  - [ ] 3.4. Retain launch and process ownership through cancel/timeout/reap. Close queue admission before draining; notification is at most 3 seconds and post-kill reap at most 5 seconds, with unresolved children still counted.
+  - [x] 3.1. Build command_hook_case locally from a v2 command using sys.executable, a complete HookEvent and the real HookEngine; live_children reads retained owned process handles, not a fake idle counter.
+  - [x] 3.2. Capture bounded stdin/stdout/stderr during I/O; run sync calls only on agent threads and use async entry from the event loop. Keep optional observation workers separate from controlling effects.
+  - [x] 3.3. Implement app-owned reservation tickets, round-robin runtimes and FIFO per-runtime delivery. Release scarce execution slots during approval/nested waits while retaining lifetime tickets; refuse overflow under the event policy.
+  - [x] 3.4. Retain launch and process ownership through cancel/timeout/reap. Close queue admission before draining; notification is at most 3 seconds and post-kill reap at most 5 seconds, with unresolved children still counted.
 
 **Failure and successful-control matrix:** Eight app/four runtime execution slots, 64/16 lifetime tickets, 128/64 observation deliveries with 8/4 workers, multiple runtimes, fairness, cancelled launch, caller cancellation during close, bounded output capture and positive real subprocess controls on each supported platform.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Agents/test_hooks_v2_execution.py Tests/Agents/test_hooks_v2_budgets.py Tests/Chat/test_console_runtime_shutdown.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32677 --plain

@@ -132,3 +132,58 @@ Package discovery and shared execution need separate module boundaries.
 - [Expanded hook runtime design](../../Docs/superpowers/specs/2026-09-15-expanded-hook-runtime-design.md)
 - [Managed plugins design](../../Docs/superpowers/specs/2026-09-15-managed-plugins-design.md)
 - [Hook implementation plan](../../Docs/superpowers/plans/2026-09-15-expanded-hooks.md)
+
+## H2 execution seam (TASK-32677, 2026-09-16)
+
+One `HookBudgetOwner`, created lazily on the running Console application loop,
+serves every immutable v2 engine from `ConsoleRuntime.ensure_hooks_v2`. Its
+thread-safe reservations retain queued, active and suspended lifetimes;
+`HookTicket.suspend()` frees only execution capacity and `acquire()` rejoins the
+fair queue. Observations have separate pending and active counts. No per-call
+loop or plugin import is introduced.
+
+`HookEngine.begin_event(event)` issues a read-only execution handle with engine-controlled private accounting, the
+original 180-second wall deadline and cumulative 60-second active allowance.
+`fire_handler_async(scope, handler_id, event)` and agent-thread `fire_handler`
+execute only an engine-owned definition with the same top-level event identity.
+H3 may change validated event data between invocations; it owns transformer
+ordering, argument validation, final permission review and atomic checkpoint/
+effect acceptance. Closing the scope irreversibly forbids reuse. Public construction, transfer and
+state reassignment are refused without retaining a new application registry. `fire` rejects calls from its owner loop; async producers
+use `fire_async`. `from_config` preserves the master switch and H1's scoped
+invalid-admission records rather than activating part of an invalid batch.
+
+`begin_close()` synchronously seals ordinary engine admission and fixes the
+teardown deadline once. `fire_teardown_async`/`notify_teardown` accept only
+still-authorized Interrupt/SessionEnd during that window; `close()` closes this
+last admission seam and shields its retained drain. Per-run Interrupt does not
+require closing a session engine. H4/H5 own actual event publication and per-run
+cancellation; an unrelated authorized runtime keeps its application allowance.
+Console disposal retains cleanup through cancelled callers, permits teardown
+until the fixed seal-plus-three deadline, then joins through seal-plus-eight.
+An unresolved owner keeps the disposed runtime attached rather than being
+mistaken for quiescence. Exact session closure also retains its fleet/wake
+fences while that session engine has unresolved delivery or process custody;
+a bounded close return alone cannot release them.
+
+The plugin-independent `HookProcessOwner` reserve/publish/settle protocol is
+adapted by plugin composition to F8's exact-root owner: all roots and dirty
+checkpoint custody precede launch. Pending launch tasks, actual transports,
+terminal callbacks and execution tickets remain owned across cancelled waiters
+and late publication. PID metadata alone is not restart identity; the adapter
+must record its platform-qualified identity. Only actual direct-child reap and
+absence of its POSIX group permit terminal settlement here. Signal attempts,
+pipe EOF and callback completion do not. A failed owner settlement retains the
+record and counters for explicit reconciliation. Darwin local process groups
+are qualified by controlled children; deliberately escaped descendants and
+Windows tree-terminal proof remain outside this qualification. R47 refuses
+Windows v2 commands with `unsupported_platform` before launch, root reservation
+or environment access; no execution/lifetime ticket leaks. Linux POSIX behavior
+remains unqualified until its own real controls run. Legacy hooks are unchanged.
+
+Authority callback exceptions become fixed `authority_check_failed` outcomes at
+admission and final acceptance. Dependency metadata failures become
+`dependency_check_failed` and retain conservative dependency-required state;
+this does not promote a dependency-only requirement into an owning-event veto.
+Explicit/event-control requiredness remains intact. Cancellation propagates
+through the retained cleanup path, never as a secret-bearing error message.

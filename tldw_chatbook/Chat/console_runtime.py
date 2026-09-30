@@ -1094,6 +1094,10 @@ class ConsoleRuntime:
         self._run_hooks_engine: Any = _UNSET
         self._run_hooks_lock = RLock()
         self._hook_permissions: HookPermissions | None = None
+        # V2 sessions share the app loop and budgets, including viewless work.
+        self._hooks_v2_budget_owner: Any = None
+        self._hooks_v2_engines: dict[str, Any] = {}
+        self._hooks_v2_cleanup_task: asyncio.Task[Any] | None = None
         #: The view (a `ChatScreen`) currently attached, or `None` while the
         #: runtime is VIEWLESS -- which is now a real, supported state, not
         #: a transient. Written only by `attach_view`/`detach_view`.
@@ -2913,6 +2917,91 @@ class ConsoleRuntime:
         with self._canvas_native_lock:
             self._canvas_disabled_latched = True
 
+    def ensure_hooks_v2(
+        self,
+        session_id: str,
+        definitions: tuple,
+        authority_check: Callable,
+        **owner_options: Any,
+    ) -> Any:
+        """Bind an immutable hook session on the application's running loop.
+
+        The admitted H4 session owner supplies definitions and captured current
+        authority. Re-entry reuses that snapshot; replacement is explicit close
+        and a new session identity. This does not publish lifecycle events.
+        """
+        from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+        from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+        self._raise_if_disposed_or_session_fenced(session_id)
+        loop = asyncio.get_running_loop()
+        with self._run_hooks_lock:
+            if self._disposed:
+                raise RuntimeError("Console runtime is disposed.")
+            if self._hooks_v2_budget_owner is None:
+                self._hooks_v2_budget_owner = HookBudgetOwner()
+            elif self._hooks_v2_budget_owner.loop is not loop:
+                raise RuntimeError("Console hooks belong to the application loop.")
+            existing = self._hooks_v2_engines.get(session_id)
+            if existing is not None:
+                if existing.definitions != tuple(definitions):
+                    raise RuntimeError("Hook session definitions are immutable.")
+                return existing
+            engine = HookEngine(
+                tuple(definitions),
+                authority_check,
+                self._hooks_v2_budget_owner,
+                **owner_options,
+            )
+            self._hooks_v2_engines[session_id] = engine
+            return engine
+
+    def _seal_hooks_v2(self, session_id: str | None = None) -> None:
+        with self._run_hooks_lock:
+            engines = (
+                tuple(self._hooks_v2_engines.values())
+                if session_id is None
+                else (self._hooks_v2_engines.get(session_id),)
+            )
+            for engine in engines:
+                if engine is not None:
+                    engine.begin_close()
+
+    @property
+    def hooks_v2_cleanup_pending(self) -> bool:
+        """Unresolved process/launch owners remain attached after disposal."""
+        return any(engine.cleanup_pending for engine in self._hooks_v2_engines.values())
+
+    async def close_hooks_v2(self, session_id: str | None = None) -> None:
+        """Join retained cleanup; caller cancellation cannot cancel the owner.
+
+        H4/H5 publish authorized teardown via the existing session engine before
+        this final close. Each engine's seal fixes the 3 + 5 second allowance;
+        waiting here does not reset it or admit ordinary work.
+        """
+        self._seal_hooks_v2(session_id)
+        if session_id is not None:
+            engine = self._hooks_v2_engines.get(session_id)
+            if engine is not None:
+                await engine.close()
+                if not engine.cleanup_pending:
+                    self._hooks_v2_engines.pop(session_id, None)
+            return
+        if self._hooks_v2_cleanup_task is None:
+
+            async def drain() -> None:
+                await asyncio.gather(
+                    *(
+                        engine.close()
+                        for engine in tuple(self._hooks_v2_engines.values())
+                    )
+                )
+
+            self._hooks_v2_cleanup_task = asyncio.create_task(
+                drain(), name="console-v2-hook-cleanup"
+            )
+        await asyncio.shield(self._hooks_v2_cleanup_task)
+
     def start_async_lifecycles(self) -> None:
         """Start loop-bound runtime work after the Textual loop is running.
 
@@ -4324,6 +4413,7 @@ class ConsoleRuntime:
             self._admission_fenced_sessions.discard(session_id)
             raise
 
+        self._seal_hooks_v2(session_id)
         if self._worktree_recovery is not None:
             self._worktree_recovery.cancel_session(session_id)
 
@@ -4384,8 +4474,17 @@ class ConsoleRuntime:
         for turn_id, record in tuple(self._turn_custody.items()):
             if record.session_id == session_id:
                 self._release_custody(turn_id)
+        hook_engine = self._hooks_v2_engines.get(session_id)
+        hook_drain = asyncio.create_task(self.close_hooks_v2(session_id))
+        while True:
+            try:
+                await asyncio.shield(hook_drain)
+                break
+            except asyncio.CancelledError:
+                cancel_requested = True
         closed = controller.finalize_session_close(ticket)
-        if not pending and fleet_drain_succeeded:
+        hook_drain_succeeded = hook_engine is None or not hook_engine.cleanup_pending
+        if not pending and fleet_drain_succeeded and hook_drain_succeeded:
             # The fence was provisional while this exact session scope
             # drained. With every task and delegated child terminal, no stale
             # producer remains, so a later resume of the saved conversation
@@ -4475,6 +4574,7 @@ class ConsoleRuntime:
         with self._execution_capacity_lock:
             with self._canvas_native_lock:
                 self._disposed = True
+        self._seal_hooks_v2()
         with self._run_hooks_lock:
             engine = self.run_hooks_engine
             if self._hook_permissions is not None:
@@ -4526,6 +4626,27 @@ class ConsoleRuntime:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, float(timeout_seconds))
 
+        # The hook owner survives a cancelled dispose caller. Teardown producers
+        # have the fixed notification window before final queue closure.
+        self._seal_hooks_v2()
+        if self._hooks_v2_cleanup_task is None and self._hooks_v2_engines:
+
+            async def hook_shutdown() -> None:
+                engines = tuple(self._hooks_v2_engines.values())
+                # Controller teardown runs concurrently. Admission stays sealed;
+                # only Interrupt/SessionEnd can enter this remaining window.
+                await asyncio.sleep(
+                    max(
+                        0.0,
+                        max(e.teardown_deadline for e in engines) - time.monotonic(),
+                    )
+                )
+                await asyncio.gather(*(e.close() for e in engines))
+
+            self._hooks_v2_cleanup_task = asyncio.create_task(
+                hook_shutdown(), name="console-v2-hook-cleanup"
+            )
+
         def remaining_seconds() -> float:
             return max(0.0, deadline - loop.time())
 
@@ -4535,6 +4656,7 @@ class ConsoleRuntime:
             with self._canvas_native_lock:
                 self._disposed = True
                 self._canvas_native_view_binding = None
+        self._seal_hooks_v2()
         with self._run_hooks_lock:
             engine = self.run_hooks_engine
             if self._hook_permissions is not None:
@@ -4728,6 +4850,7 @@ class ConsoleRuntime:
             # The child budget cannot end UI-owned provider/TTS/claimed work.
             # Keep its original owner loop and store until actual custody settles.
             await asyncio.shield(voice_cleanup)
+        await self.close_hooks_v2()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)
         if self._chat_store is not None:
@@ -4824,6 +4947,8 @@ class ConsoleRuntime:
         for task in cleanup_pending:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
+        if asyncio.current_task().cancelling():
+            raise asyncio.CancelledError
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
@@ -4961,4 +5086,5 @@ async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
     if view is not None and runtime.view is not None and runtime.view is not view:
         return
     await runtime.dispose()
-    _attach(app, None)
+    if not runtime.hooks_v2_cleanup_pending:
+        _attach(app, None)

@@ -39,9 +39,37 @@ apply. H1 self-review covers all four ACs. No full suite or live-provider run,
 new storage schema, dependency or permission owner is claimed. Command execution,
 tool pipelines, lifecycle events and plugin/MCP composition remain separate tasks.
 
+## TASK-32677 — bounded command ownership
+
+Reused reviewed H2 checkpoint `17ee201cec`. The runtime integration preserves
+current consent/recovery/voice owners and exact-session close fences. Shared
+budgets count queued, active, suspended and cleanup-pending deliveries; process
+custody survives cancellation and bounded shutdown. No lifecycle producer or
+plugin authority is activated by H2.
+
+Baseline shutdown/viewless: **48 passed**. Missing runtime registration RED:
+**1 failed, 1 passed**, with normalization as its same-run control. Integrated
+H2 core: **85 passed**. A capacity-pressure regression confirmed rejected runtime
+IDs retained empty counters (**2 failed, 4 passed**); reserve now inserts only
+successfully admitted counters.
+
+Final covering command:
+
+```sh
+.venv/bin/python -m pytest Tests/Agents/test_hooks_v2_execution.py Tests/Agents/test_hooks_v2_budgets.py Tests/Chat/test_console_runtime_shutdown.py Tests/Chat/test_console_viewless_hooks.py Tests/Agents/test_run_hooks.py Tests/Agents/test_hook_permissions.py Tests/Chat/test_run_hooks_metadata.py -q --timeout=120 --basetemp=/private/tmp/expanded-hooks-h2-qualified --junitxml=/private/tmp/expanded-hooks-h2-qualified.xml
+```
+
+**262 passed in 55.13s**, no skips. Seven new Python files pass full Ruff,
+eight authored/test files pass formatting, and changed/new files parse. Existing
+runtime/shutdown Ruff debt remains exactly 30/2 diagnostics; whitespace passes.
+Real child commands use the committed isolated-profile/provenance bootstrap.
+Darwin command execution was exercised; Windows remains explicitly unsupported,
+and Linux/live providers/full dependency resolution were not qualified.
+All four ACs self-reviewed. Existing ADR163/148/197 apply; H2 spec/ADR163
+interfaces are updated. No new dependency, storage or permission owner.
+
 ## Remaining requested order
 
-- TASK-32677: bounded command execution.
 - TASK-32678: input transformations and post-event barriers.
 - TASK-32679: session/child/compaction events.
 - TASK-32680: Stop continuations and teardown.

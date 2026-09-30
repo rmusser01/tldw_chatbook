@@ -884,3 +884,105 @@ Written-spec review is complete. The [hook implementation plan](../plans/2026-09
 and [delivery plan](../plans/2026-09-15-managed-plugins-delivery.md) carry the
 remaining work. This spec defines intended behavior and acceptance evidence;
 no implementation or runtime test success is asserted here.
+
+### H2 implemented owner interface
+
+The execution foundation is `Agents/hooks_v2/{budgets,ownership,command_executor,engine}.py`.
+The following APIs implement the accepted bounds without publishing the later
+H3–H6 events or installing plugin adapters:
+
+- `HookBudgetOwner()` binds the running application loop.
+  `reserve(runtime_id, observation)` refuses overflow synchronously and returns
+  a lifetime ticket. `await ticket.acquire()`, `ticket.suspend()` and
+  `ticket.release()` separate execution capacity from lifetime custody.
+  `snapshot(runtime_id=None)` exposes exact `execution`, `tickets`,
+  `observations` (pending) and `workers` (active observation) counts. Release
+  after actual process settlement; suspending a required nested/approval wait
+  never releases its lifetime ticket. Optional observations cannot suspend for
+  approval or nested work.
+- `HookEngine(definitions, authority_check, budget_owner, *, process_owner,
+  environment, host_environment, invalid_admissions, dependency_required,
+  enabled)` keeps an immutable definition tuple and one injected owner.
+  `authority_check(handler, event, stage)` runs outside admission locks at
+  admission, launch and result acceptance. `environment(handler, event)` resolves
+  declared reference names; `host_environment` sets `PLUGIN_ROOT`/`PLUGIN_DATA`
+  last. Ambient reserved roots are removed first. The dependency callback is a
+  synchronous host metadata accessor; active graph ownership stays with its host.
+  `from_config(config, authority_check, budget_owner, **options)` retains H1's
+  disabled and rejected-batch state. A rejected batch never launches any entry;
+  explicit/event-control records retain their event scopes, while optional or
+  unresolved entries do not become blanket requirements.
+- `fire(event)` is the worker-thread facade; `await fire_async(event)` is the
+  Console entry. `begin_event(event)` plus
+  `fire_handler_async(execution, handler_id, event)`/`fire_handler(...)` supports
+  H3's validated transformer chain on the same loop, budgets and process owner.
+  Only data may change in the same execution scope. Unknown definitions,
+  another engine's scope, changed host identity, concurrent use, expired or
+  closed scopes refuse. `execution.close()` retires the caller-owned scope;
+  the handle exposes read-only deadline/accounting/lifetime properties, cannot
+  be publicly constructed or reassigned, and carries private engine-issued
+  accounting without an unbounded registry of contexts. A caller cancellation
+  discards effects while retained command work finishes cleanup.
+- `HookEventOutcome` separates `accepted` `(handler_id, HookResult)` tuples,
+  `failures` (fixed metadata codes and owning-event/dependency requiredness),
+  `omissions` and `outstanding_cleanup`. `succeeded` is successful execution;
+  `allowed` applies owning-event failure/deny scope. Required checkpoint release,
+  aggregate context acceptance and downstream scheduling remain host actions.
+  `notify(event)` admits only optional effect-free deliveries and returns an
+  immediate admission boolean; overflow drops newest and increments the engine's
+  metadata-only `notification_omissions` count. Fixed failure codes from admitted
+  observations are counted in `notification_failures`; raw output is never
+  retained there.
+- `begin_close()` is the idempotent synchronous ordinary admission seal.
+  `fire_teardown_async(event)`/`notify_teardown(event)` provide the still-authorized
+  Interrupt/SessionEnd seam afterward. Their original event wall deadlines are
+  capped by seal + 3 seconds and cannot reset on repeated calls. `close()` seals
+  teardown admission and joins retained cleanup within seal + 8 seconds. Per-run
+  user Stop must use H5's run cancellation, not terminally close the session
+  engine. Revoked callbacks are refused by current authority even in teardown.
+- `ConsoleRuntime.ensure_hooks_v2(session_id, definitions, authority_check,
+  **owner_options)` lazily binds the app loop and shared budget independently
+  of views. Existing snapshots reject replacement definitions. Session close
+  seals only its engine; app disposal seals all before drain. `close_hooks_v2`
+  joins shielded ownership. Exact-session hook custody must be settled before
+  its fleet/wake fences can be released; a bounded close return is insufficient.
+  `hooks_v2_cleanup_pending` prevents detaching an unresolved disposed owner. Actual H4 lifecycle producers supply scoped IDs and
+  snapshots; no automatic SessionStart, Stop continuation or MCP dispatch is
+  added here.
+
+`HookProcessOwner.reserve_launch(event) -> str`,
+`publish_process(token, provenance) -> None` and
+`settle_process(token, confirmed) -> None` are plugin-independent. All root grants
+and protected dirty checkpoint publication must precede reserve returning.
+Publication receives non-secret process metadata; plugin composition must add
+native restart identity and use the final F8 owner, rather than infer identity
+from a PID. False settlement retains root/process ownership. The standalone
+host owner retains the same in-memory custody without a plugin runtime.
+
+Input is validated whole before JSON serialization. Capture drains both pipes,
+retains at most 16 KiB original stdout and 4 KiB stderr, and records stderr
+truncation as a separate marker; diagnostics do not expose raw bodies. Complete
+stdout alone reaches H1 `decode_result`; nonzero exit and partial/invalid output
+never supply effects. Launch tasks and actual transport handles outlive caller
+cancellation. POSIX cleanup requires a child exit callback/return code and an
+absent owned process group; transient signal errors do not substitute for that
+proof. Retained records may be explicitly checked again with
+`engine.processes.reap_pending()` after later host terminal evidence.
+
+Qualification is controlled local Darwin processes, including a live/exited
+leader, retained grandchildren, cancellation during launch/publication and
+refused kill/settlement. Deliberately escaped descendants are outside the group
+guarantee. R47 refuses Windows v2 commands before launch, root reservation or environment
+access, with a fixed `unsupported_platform` outcome and released host reservation.
+Linux POSIX behavior remains explicitly unqualified until its own controls run.
+Future Windows support requires a qualified whole-tree terminal-proof backend
+and real controls; legacy hooks remain unchanged. H6/M4 must likewise supply typed MCP outcomes and exact remote/local
+ownership; this command foundation does not infer them.
+
+H2 callback failures are protocol outcomes: `authority_check_failed` at admission
+or final acceptance, and `dependency_check_failed` for an unavailable dependency
+accessor (including while constructing another failure or considering optional
+notification). Unknown dependency state remains dependency-required for the
+owning capability coordinator; explicit/event-control failure scope is unchanged.
+These outcomes contain no exception text. `CancelledError` retains its original
+cancellation semantics and cannot release unsettled process custody.
