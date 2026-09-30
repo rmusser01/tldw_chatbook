@@ -423,3 +423,191 @@ def test_held_unbound_guard_is_not_persisted_as_affected_profile_scope(tmp_path)
         bootstrap_root=fixture[0],
         namespaces=("bootstrap.unbound",),
     )
+
+
+def shared_profiles(tmp_path):
+    """Use real paired publication, then model its per-profile namespace subsets.
+
+    The installed executor permits a shared generation through its journal. This
+    reader fixture publishes identical witnesses with the ordinary binding helper
+    first, then narrows each intact pair and its registry-derived profile roots to
+    the differing scopes proved by the actual multi-profile replacement.
+    """
+    from tldw_chatbook.Backup_Recovery import bootstrap as records
+
+    fixture = pending(tmp_path)
+    bootstrap, control, selector, authority = fixture
+    peer = tmp_path / "peer.toml"
+    peer.write_text("[general]\n")
+    peer.chmod(0o600)
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o700)
+    authority.register("peer", (peer,))
+    authority.register("shared", (shared,))
+    names = ("peer", "profile", "shared")
+    finish_pending(bootstrap)
+    for selected in (selector, peer):
+        bind_profile(bootstrap, selected, names, bootstrap / "admission")
+    register_pending(bootstrap, "op", names, control, (selector, peer))
+    with authority.maintenance(names, 2) as session:
+        for selected in (selector, peer):
+            bind_activation(
+                bootstrap, "op", selected, "g", ("sync", "schedules"), session=session
+            )
+    finish_pending(bootstrap)
+    registry = records._registry(bootstrap)
+    for selected, scopes in (
+        (selector, ["profile", "shared"]),
+        (peer, ["peer", "shared"]),
+    ):
+        for kind in ("profile", "activation"):
+            path = bootstrap / (kind + "-" + _key(str(selected)) + ".json")
+            record = json.loads(path.read_bytes())
+            record["activation"]["namespaces"] = scopes
+            if kind == "profile":
+                record["namespaces"] = scopes
+                record["roots"] = sorted(
+                    {root for name in scopes for root in registry[name]["roots"]}
+                )
+            path.write_text(json.dumps(record))
+    return fixture, peer, shared
+
+
+@pytest.mark.parametrize("selected_peer", [False, True])
+def test_shared_generation_keeps_full_profile_witnesses_and_requires_approval(
+    tmp_path, selected_peer
+):
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _paired_witnesses
+
+    fixture, peer, shared = shared_profiles(tmp_path)
+    bootstrap, control, selector, _ = fixture
+    selected = peer if selected_peer else selector
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    witnesses = _paired_witnesses(shared, bootstrap, ("shared",), selected)
+    assert sorted(w["namespaces"] for w in witnesses) == [
+        ["peer", "shared"],
+        ["profile", "shared"],
+    ]
+    assert not activation_permission(
+        "sync",
+        config_selector=selected,
+        bootstrap_root=bootstrap,
+        namespaces=("shared",),
+    )
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    ActivationStore(control / "activation").approve("g", "sync")
+    approved = {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    assert activation_permission(
+        "sync",
+        config_selector=selected,
+        bootstrap_root=bootstrap,
+        namespaces=("shared",),
+    )
+    assert _paired_witnesses(shared, bootstrap, ("shared",), selected) == witnesses
+    assert approved == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+
+
+@pytest.mark.parametrize(
+    "field", ["operation_id", "generation", "store_root", "owners"]
+)
+def test_shared_namespace_refuses_mixed_generation_identity(tmp_path, field):
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _paired_witnesses
+
+    fixture, peer, shared = shared_profiles(tmp_path)
+    bootstrap, control, selector, _ = fixture
+    store = ActivationStore(control / "activation")
+    store.approve("g", "sync")
+    value = {
+        "operation_id": "other",
+        "generation": "other",
+        "store_root": str(control / "other"),
+        "owners": ["sync"],
+    }[field]
+    if field in ("generation", "store_root"):
+        other = store if field == "generation" else ActivationStore(control / "other")
+        generation = "other" if field == "generation" else "g"
+        other.require(generation, ("schedules", "sync"))
+        other.approve(generation, "sync")
+    for kind in ("profile", "activation"):
+        path = bootstrap / (kind + "-" + _key(str(peer)) + ".json")
+        record = json.loads(path.read_bytes())
+        record["activation"][field] = value
+        path.write_text(json.dumps(record))
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    with pytest.raises(ValueError):
+        _paired_witnesses(shared, bootstrap, ("shared",), selector)
+    assert not allowed(fixture, namespaces=("shared",))
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+
+
+@pytest.mark.parametrize("selected_peer", [False, True])
+def test_shared_generation_activation_requires_actual_owner_approval(
+    tmp_path, selected_peer
+):
+    fixture, peer, _ = shared_profiles(tmp_path)
+    bootstrap, control, selector, _ = fixture
+    selected = peer if selected_peer else selector
+    assert not activation_permission(
+        "sync",
+        config_selector=selected,
+        bootstrap_root=bootstrap,
+        namespaces=("shared",),
+    )
+    ActivationStore(control / "activation").approve("g", "sync")
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    assert activation_permission(
+        "sync",
+        config_selector=selected,
+        bootstrap_root=bootstrap,
+        namespaces=("shared",),
+    )
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+
+
+@pytest.mark.parametrize(
+    "kind,damage",
+    [
+        (kind, damage)
+        for kind in ("profile", "activation")
+        for damage in ("missing", "corrupt", "mismatch")
+    ]
+    + [
+        ("profile", "roots"),
+        ("required", "missing"),
+        ("required", "corrupt"),
+        ("required", "owners"),
+    ],
+)
+def test_shared_generation_refuses_damaged_pair_roots_or_requirements(
+    tmp_path, kind, damage
+):
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _paired_witnesses
+
+    fixture, peer, shared = shared_profiles(tmp_path)
+    bootstrap, control, selector, _ = fixture
+    ActivationStore(control / "activation").approve("g", "sync")
+    path = (
+        next((control / "activation").rglob("required.json"))
+        if kind == "required"
+        else bootstrap / (kind + "-" + _key(str(peer)) + ".json")
+    )
+    if damage == "missing":
+        path.unlink()
+    elif damage == "corrupt":
+        path.write_bytes(b"{")
+    else:
+        record = json.loads(path.read_bytes())
+        if damage == "owners":
+            record["owners"] = ["sync"]
+        elif damage == "mismatch":
+            record["activation"]["operation_id"] = "other"
+        else:
+            path = bootstrap / ("profile-" + _key(str(peer)) + ".json")
+            record = json.loads(path.read_bytes())
+            record["roots"] = [str(peer)]
+        path.write_text(json.dumps(record))
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
+    with pytest.raises((ValueError, OSError)):
+        _paired_witnesses(shared, bootstrap, ("shared",), selector)
+    assert not allowed(fixture, namespaces=("shared",))
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*.json")}
