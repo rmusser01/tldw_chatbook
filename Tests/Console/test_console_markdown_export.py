@@ -113,8 +113,11 @@ async def test_two_saves_to_one_file_never_interleave(
     leaves the second export's head spliced onto the first one's tail. The
     first write is held open halfway through, as a stalled disk would; the
     second must not write until it finishes, and the file must end up exactly
-    the export confirmed last. ``through-symlinked-folder`` names the same file
-    by another path, which must still count as the same file.
+    one whole export -- here the second, which could only start once the
+    first was done. (Only that much is promised: the lock is not FIFO, so of
+    several overlapping saves the file keeps one, not necessarily the last
+    confirmed.) ``through-symlinked-folder`` names the same file by another
+    path, which must still count as the same file.
     """
     import asyncio
     from pathlib import Path

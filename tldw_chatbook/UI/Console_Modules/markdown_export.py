@@ -61,6 +61,17 @@ def _one_writer_per_file(path: Path) -> Iterator[None]:
     writes to other files never wait. Keyed by the real path, so ``~/x.md``,
     the absolute spelling, and a path through a symlinked folder share one
     lock. Blocks, so it runs on the write's worker thread, never the UI loop.
+
+    Limits, both accepted: ``realpath`` does not fold case, so on a
+    case-insensitive volume (macOS's default APFS) ``Chat.md`` and
+    ``chat.md`` are one file but two locks, and two hard links to one file
+    are two locks too. Keying by ``(st_dev, st_ino)`` would unify both, but a
+    file the first write is about to create has no inode yet -- a second
+    write arriving once it exists would take a different lock and overlap
+    it. And waiting is not a queue: ``threading.Lock`` is not FIFO, and
+    workers reach it in no guaranteed order, so when several saves to one
+    file overlap it ends up as exactly one of them, whole -- not necessarily
+    the one confirmed last.
     """
     key = os.path.realpath(path)
     with _file_locks_guard:
