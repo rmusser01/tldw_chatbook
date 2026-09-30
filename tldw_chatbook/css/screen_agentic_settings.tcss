@@ -335,6 +335,16 @@ $ds-conversation-menu-width: 30;
     overflow-x: hidden;
 }
 
+/* TASK-33003.7: the spec's Inspector width (36) as a floor wherever the
+   detail pane can spare it (the class is set from
+   SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH, settings_screen.py). Below ~186
+   columns the 2fr share is narrower: 25 at 140 columns, an 18-cell text
+   column that wrapped each row 4-5 times and pushed the Overview boundary
+   note below the fold. It never binds at 211 or 235 columns. */
+#settings-impact-pane.settings-inspector-floor {
+    min-width: $ds-size-36;
+}
+
 /* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {
@@ -614,15 +624,10 @@ Button.settings-category-group-toggle:focus {
    components/_forms.tcss (documented variant of form-row; consumed on TWO
    production surfaces -- the Settings workbench and the STTS speech
    settings pane -- so it rides the boot bundle instead of the lazy
-   settings screen sheet). The scoped override below stays with its
-   surface. */
-
-/* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
-   ~30 columns, so the blank line between rows earns its keep there (and
-   the F6 fold-geometry contract measures against it). */
-#settings-impact-pane .settings-detail-row {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
+   settings screen sheet). TASK-33003.7 deleted the Scope Inspector's
+   blank-row override (#settings-impact-pane .settings-detail-row, margin
+   bottom 1): it cost 7 rows on Overview and cut the boundary note at the
+   211x44 fold, so inspector rows now keep the one-row rhythm (spec §6). */
 
 .settings-input-row {
     width: $ds-width-full;

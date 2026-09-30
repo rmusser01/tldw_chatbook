@@ -1,0 +1,42 @@
+                                                                                                             ╭─────────────╮
+ ‹ le    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Re  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Overview | Runtime controls stay in MCP and ACP
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────────┐
+│                              │  │  │                                                            │  │  │                                  │
+│  Filter categories (/)       │  │  │  State: Read-only here | Review readiness across Settings  │  │  │  Scope Inspector                 │
+│  No filter | / focus         │  │  │  categories.                                               │  │  │                                  │
+│  category search             │  │  │                                                            │  │  │ Selected category: Overview      │
+│                              │  │  │  Overview                                                  │  │  │ No unsaved changes               │
+│  Core                        │  │  │  Backup & Restore                                          │  │  │  Guided edits: choose Providers  │
+│    > Overview (view)         │  │  │ ┌────────────────────────────────────────────────────────┐ │  │  │  or Console.                     │
+│      Providers & Models      │  │  │ │                                                        │ │  │  │  Open Theme picker               │
+│      Web Search              │  │  │ │  Status                                                │ │  │  │ Saves apply to your local config │
+│      Speech & TTS            │  │  │ │  Configuration: llama.cpp / model-a; Status: Ready     │ │  │  │ file. Nothing is sent to a       │
+│  Interface                   │  │  │ │  Open Providers & Models                               │ │  │  │ server unless you run Manual     │
+│      Appearance              │  │  │ │  Last connection test: Configuration check has not     │ │  │  │ sync yourself.                   │
+│      Theme                   │  │  │ │  run.                                                  │ │  │  │ Impact and boundaries            │
+│      Splash Screen           │  │  │ │  Storage & privacy: Config path: config.toml —         │ │  │  │ Readiness, storage, privacy,     │
+│      Console Behavior        │  │  │ │  override config, writable; Privacy: local config by   │ │  │  │ Console behavior, diagnostics.   │
+│  Data & Privacy              │  │  │ │  default; secret-looking diagnostics are redacted      │ │  │  │  Runtime owner: owning           │
+│      Storage                 │  │  │ │   Open Storage    Open Privacy & Security              │ │  │  │  destinations                    │
+│      Workspaces              │  │  │ │  Sync: blocked; pending outgoing: none                 │ │  │  │  Writes allowed: No              │
+│      Tool Profiles           │  │  │ │  Preview manual sync   Run manual sync                 │ │  │  │  Owns: global defaults           │
+│      Privacy & Security      │  │  │ │ ╭────────────────────────────────────────────────────╮ │ │  │  │  validation status               │
+│      Network                 │  │  │ │ │  ▶ Advanced / Diagnostics                          │ │ │  │  │  recovery guidance               │
+│      My Profile              │  │  │ │ │                                                    │ │ │  │  │  Read-only: Overview summarizes  │
+│  Troubleshooting             │  │  │ │ ╰────────────────────────────────────────────────────╯ │ │  │  │  status and ownership only.      │
+│      Diagnostics (view)      │  │  │ │                                                        │ │  │  │  Affected config: all Settings   │
+│      About (view)            │  │  │ │ ╭────────────────────────────────────────────────────╮ │ │  │  │  categories summarized for       │
+│      Agents                  │  │  │ │ │  ▶ Where changes happen                            │ │ │  │  │  readiness                       │
+│  Expert                      │  │  │ │ │                                                    │ │ │  │  │  Recovery: open the specific     │
+│      Internal Prompts        │  │  │ │ ╰────────────────────────────────────────────────────╯ │ │  │  │  category before changing        │
+│      Advanced Config         │  │  │ │                                                        │ │  │  │  values                          │
+│   Domain Defaults ▸ (11)     │  │  │ └────────────────────────────────────────────────────────┘ │  │  │  Boundary: runtime MCP, ACP,     │
+│                              │  │  │                                                            │  │  │  and tool control stay in their  │
+│                              │  │  │                                                            │  │  │  own destinations                │
+│                              │  │  │                                                            │  │  │                                  │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────┘  │  └──────────────────────────────────┘
+ Open dashboard, notifications, and active work.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

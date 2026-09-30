@@ -154,8 +154,9 @@ def compose_form(self):
   `$ds-text-primary`, one-row minimum, `$ds-space-inline` padding. Consumed on
   two production surfaces (Settings workbench + the STTS speech settings pane),
   so it lives in this owning sheet (boot bundle) rather than the lazily-loaded
-  settings screen sheet. `#settings-impact-pane .settings-detail-row` stays
-  with the Settings surface.
+  settings screen sheet. It has no Scope Inspector override: TASK-33003.7
+  deleted the inspector's blank-row margin, so inspector rows keep this
+  one-row rhythm.
 - `form-col` — equal-width (`1fr`) column inside a `form-row`; edge columns drop
   their outer `$ds-space-inline` padding.
 - `form-input` — single-line `Input`. Rest edge per §2.7 (the compact-field

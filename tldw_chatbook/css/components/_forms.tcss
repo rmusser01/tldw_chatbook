@@ -440,9 +440,8 @@ Switch:focus {
  * The Settings-screen-only siblings (settings-input-row,
  * settings-select-row, settings-status-row, settings-compact-select,
  * settings-focus-card) stay in the monolith for the task-10 feature carve,
- * as do the scoped overrides (#settings-impact-pane .settings-detail-row,
- * #settings-web-search-panel .settings-compact-input, ...) that belong to
- * their surfaces. */
+ * as do the scoped overrides (#settings-web-search-panel
+ * .settings-compact-input, ...) that belong to their surfaces. */
 .settings-detail-row {
     width: $ds-width-full;
     min-height: $ds-control-height-compact;

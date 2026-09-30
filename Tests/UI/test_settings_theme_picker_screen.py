@@ -2050,10 +2050,12 @@ async def test_editor_stacks_the_preview_when_too_narrow_for_two_columns(request
 
 # -- Fix round (review M-2): picker and editor stack at ONE threshold, measured
 # on the detail body so the scrollbar that stacking adds cannot hold the
-# stacked layout past it. At 44 rows a 180-col terminal gives a
-# 99-col body, 181 a 100-col body (the threshold).
+# stacked layout past it. At 44 rows a 181-col terminal gives a
+# 99-col body, 182 a 100-col body (the threshold). Rewritten on purpose for
+# TASK-33003.7: the Scope Inspector's 36-column floor takes one column from
+# the detail pane at 181 (it was 180/181); the one-threshold intent is kept.
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("width", "stacked"), [(180, True), (181, False)])
+@pytest.mark.parametrize(("width", "stacked"), [(181, True), (182, False)])
 @private_profile_test
 async def test_picker_and_editor_stack_together_at_one_threshold(request, width, stacked):
     host = _host()

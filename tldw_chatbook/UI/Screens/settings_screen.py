@@ -893,6 +893,11 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
+# TASK-33003.7: from this width the Scope Inspector keeps 36 columns
+# (.settings-inspector-floor) and the detail pane still keeps 56: a 24-cell
+# label plus a 20-cell field (test_settings_compact_fields). Rail and
+# gutters take 42.
+SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + 56 + 36
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
@@ -4366,6 +4371,9 @@ class SettingsScreen(BaseAppScreen):
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
 
+    def _inspector_floor_now(self) -> bool:
+        return self.size.width >= SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH
+
     def _sync_responsive_workbench(self) -> None:
         """Toggle compact workbench classes to match the terminal width.
 
@@ -4374,6 +4382,12 @@ class SettingsScreen(BaseAppScreen):
         recompose=True reactives cannot drop them; this sync only handles
         live resizes between recomposes.
         """
+        try:
+            self.query_one("#settings-impact-pane").set_class(
+                self._inspector_floor_now(), "settings-inspector-floor"
+            )
+        except QueryError:
+            pass
         compact = self._workbench_compact_now()
         if self._workbench_compact == compact:
             return
@@ -23359,6 +23373,9 @@ class SettingsScreen(BaseAppScreen):
                 # this the 1fr body below collapses to zero (StyledSettings
                 # harness caught it; the plain harness cannot).
                 impact_pane.add_class("h-full")
+                impact_pane.set_class(
+                    self._inspector_floor_now(), "settings-inspector-floor"
+                )
                 yield impact_pane
             # task-2835: keyboard-reachable mirror of the focused control's
             # hover-only tooltip; updated by handle_descendant_focus.
