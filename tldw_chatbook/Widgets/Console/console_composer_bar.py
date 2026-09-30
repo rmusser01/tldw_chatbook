@@ -891,7 +891,13 @@ class ConsoleComposerBar(Horizontal):
         fit after it; narrower rows keep the original Send/Dictate/Stop
         budget and reach Redirect through `/redirect` or the palette. Before
         the first layout the answer is no; `on_resize` re-derives it.
+
+        While collapsed the expanded row is hidden and measures 0 cells, so
+        the reservation is kept as it was, never re-derived from that 0;
+        `_rederive_redirect_budget` re-measures once expanding lays it out.
         """
+        if self._collapsed:
+            return self._redirect_budgeted
         try:
             row = self.query_one("#console-composer-expanded", Horizontal)
         except NoMatches:
@@ -3426,7 +3432,22 @@ class ConsoleComposerBar(Horizontal):
             self._apply_collapsed_geometry()
         else:
             self._refresh_visible_draft()
+            self.call_after_refresh(self._rederive_redirect_budget)
         self._sync_improvement_recovery()
+
+    def _rederive_redirect_budget(self) -> None:
+        """Re-measure Redirect's reservation once the expanded row is laid out.
+
+        The bar is one row collapsed and (with a one-line draft) one row
+        expanded, so expanding sends it no Resize and `on_resize` never runs;
+        a terminal resized while collapsed would otherwise leave the
+        reservation sized for the old width until some later action-state
+        sync widened the row and shifted Send and Dictate (PR #2934 review).
+        """
+        if self._collapsed or not self.is_mounted:
+            return
+        if self._redirect_fits() != self._redirect_budgeted:
+            self._sync_current_action_state()
 
     def _insert_literal_at_cursor(self, text: str) -> None:
         """Splice literal text into the draft at the caret, coalescing segments.

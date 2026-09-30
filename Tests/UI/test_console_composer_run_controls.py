@@ -1041,6 +1041,64 @@ async def test_palette_composer_actions_are_inert_while_setup_blocks(
             assert chosen == [], f"palette {expected!r} ran {chosen} under setup"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("collapsed_width", "redirect_shown"), [(220, True), (120, False)]
+)
+@private_profile_test
+async def test_redirect_reservation_survives_a_resize_while_collapsed(
+    collapsed_width, redirect_shown, request
+):
+    """A resize while collapsed measured the HIDDEN expanded row (0 cells)
+    and dropped Redirect's reservation. Expanding keeps the bar's one-row
+    size, so no resize re-derived it: the row widened later -- at the first
+    keystroke or run start -- and shifted Send and Dictate, the very row
+    contract the reservation exists to keep (Qodo, PR #2934). The narrow
+    case pins the other half: a reservation kept while collapsed must still
+    be dropped on expanding where Redirect no longer fits."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        send = composer.query_one("#console-send-message", Button)
+        dictate = composer.query_one("#console-dictation", Button)
+        redirect = composer.query_one("#console-redirect-generation", Button)
+        try:
+            console._set_console_composer_collapsed(True)
+            await _wait_for(pilot, lambda: composer.collapsed, "never collapsed")
+            await pilot.pause(0.2)
+            await pilot.resize_terminal(collapsed_width, 52)
+            await pilot.pause(0.3)
+            console._set_console_composer_collapsed(False)
+            await _wait_for(
+                pilot,
+                lambda: not composer.collapsed and send.region.width > 0,
+                "the composer never expanded",
+            )
+            await pilot.pause(0.3)
+            expanded_positions = (send.region.x, dictate.region.x)
+
+            await _start_held_run(console, composer, pilot)
+            if redirect_shown:
+                await _wait_for(
+                    pilot,
+                    lambda: redirect.display,
+                    f"Redirect never showed at {collapsed_width} columns",
+                )
+                await _settle(pilot, lambda: redirect.region.width > 0)
+            else:
+                assert not redirect.display, (
+                    f"Redirect shown at {collapsed_width} columns"
+                )
+            assert (send.region.x, dictate.region.x) == expanded_positions, (
+                "Send/Dictate shifted after expanding: Redirect's reservation "
+                f"was stale after the collapsed resize ({expanded_positions} -> "
+                f"{(send.region.x, dictate.region.x)})"
+            )
+        finally:
+            gateway.release.set()
+            await pilot.pause()
+
+
 # ---------------------------------------------------------------------------
 # Contract pins for the routes above (pure, no mounted app)
 # ---------------------------------------------------------------------------
