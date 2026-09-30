@@ -21,6 +21,10 @@ on the boot path.
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -31,12 +35,47 @@ SAVE_MARKDOWN_WORKER_GROUP = "console-save-markdown"
 
 #: Writes are never exclusive: a finished prompt's write must not be
 #: cancelled by a later one, and a cancelled write would vanish without a
-#: word (CancelledError is not an Exception).
+#: word (CancelledError is not an Exception). Two writes to the SAME file are
+#: serialized by ``_one_writer_per_file`` instead.
 WRITE_MARKDOWN_WORKER_GROUP = "console-save-markdown-write"
+
+#: Destination -> (lock, number of writes holding or waiting for it). An
+#: entry lives only while some write for that file is in flight.
+_file_locks: dict[str, tuple[threading.Lock, int]] = {}
+_file_locks_guard = threading.Lock()
 
 
 class MarkdownSaveError(Exception):
     """A markdown save that could not complete; the message is user-facing."""
+
+
+@contextmanager
+def _one_writer_per_file(path: Path) -> Iterator[None]:
+    """Hold the write lock for ``path`` until the block ends (Qodo #2932).
+
+    Each write opens its file with truncation and writes through its own
+    offset, so two overlapping writes to one file -- two confirmed prompts
+    naming it while a slow disk still has the first -- leave the second
+    export's head spliced onto the first one's tail. A write waits here for
+    any earlier write to the same file instead; it is never cancelled, and
+    writes to other files never wait. Keyed by the real path, so ``~/x.md``,
+    the absolute spelling, and a path through a symlinked folder share one
+    lock. Blocks, so it runs on the write's worker thread, never the UI loop.
+    """
+    key = os.path.realpath(path)
+    with _file_locks_guard:
+        lock, users = _file_locks.get(key, (threading.Lock(), 0))
+        _file_locks[key] = (lock, users + 1)
+    try:
+        with lock:
+            yield
+    finally:
+        with _file_locks_guard:
+            lock, users = _file_locks[key]
+            if users == 1:
+                del _file_locks[key]
+            else:
+                _file_locks[key] = (lock, users - 1)
 
 
 async def save_conversation_markdown(screen: Any, target: Any) -> None:
@@ -139,18 +178,19 @@ def _validate_and_write(path_text: str, markdown: str) -> Path:
     # Absolute, so the success message can say where a bare name landed.
     target_path = validated.absolute()
     parent = target_path.parent
-    if parent.exists() and not parent.is_dir():
-        raise MarkdownSaveError(
-            f"Could not save {target_path.name}: {parent} is a file, not a folder."
-        )
-    try:
-        parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(markdown, encoding="utf-8")
-    except OSError as exc:
-        reason = exc.strerror or type(exc).__name__
-        raise MarkdownSaveError(
-            f"Could not save {target_path.name} to {parent}: {reason}."
-        ) from exc
+    with _one_writer_per_file(target_path):
+        if parent.exists() and not parent.is_dir():
+            raise MarkdownSaveError(
+                f"Could not save {target_path.name}: {parent} is a file, not a folder."
+            )
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(markdown, encoding="utf-8")
+        except OSError as exc:
+            reason = exc.strerror or type(exc).__name__
+            raise MarkdownSaveError(
+                f"Could not save {target_path.name} to {parent}: {reason}."
+            ) from exc
     return target_path
 
 

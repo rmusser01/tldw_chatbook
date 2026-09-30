@@ -97,3 +97,115 @@ async def test_the_filesystem_work_runs_off_the_event_loop_thread(
 
     assert seen and seen[0] != threading.get_ident()
     assert (tmp_path / "chat.md").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_spelling", ["same", "through-symlinked-folder"])
+async def test_two_saves_to_one_file_never_interleave(
+    tmp_path, monkeypatch, second_spelling
+) -> None:
+    """Qodo #2932: a second save to the same file waits for the first.
+
+    Writes are deliberately not exclusive workers (a later save must not
+    cancel an earlier one), so two confirmed prompts naming one file can
+    overlap -- plausible on a slow external or network disk. Each ``write_text``
+    opens with truncation and writes through its own offset, so an overlap
+    leaves the second export's head spliced onto the first one's tail. The
+    first write is held open halfway through, as a stalled disk would; the
+    second must not write until it finishes, and the file must end up exactly
+    the export confirmed last. ``through-symlinked-folder`` names the same file
+    by another path, which must still count as the same file.
+    """
+    import asyncio
+    from pathlib import Path
+
+    folder = tmp_path / "exports"
+    folder.mkdir()
+    target = folder / "chat.md"
+    second_target = target
+    if second_spelling == "through-symlinked-folder":
+        link = tmp_path / "exports-link"
+        link.symlink_to(folder, target_is_directory=True)
+        second_target = link / "chat.md"
+    first = "# First export\n" + "a" * 4000
+    second = "# Later export\n" + "b" * 4000
+    assert len(first) == len(second)
+
+    halfway = threading.Event()
+    resume = threading.Event()
+    original_write_text = Path.write_text
+
+    def stalling_write_text(self, data, *args, **kwargs):
+        if data != first:
+            return original_write_text(self, data, *args, **kwargs)
+        with open(self, "w", encoding="utf-8") as handle:
+            handle.write(data[: len(data) // 2])
+            handle.flush()
+            halfway.set()
+            assert resume.wait(10), "the first write was never resumed"
+            handle.write(data[len(data) // 2 :])
+        return len(data)
+
+    monkeypatch.setattr(Path, "write_text", stalling_write_text)
+
+    first_save = asyncio.create_task(write_markdown_file(str(target), first))
+    try:
+        assert await asyncio.to_thread(halfway.wait, 10), "first write never started"
+        second_save = asyncio.create_task(
+            write_markdown_file(str(second_target), second)
+        )
+        finished, _pending = await asyncio.wait({second_save}, timeout=0.5)
+        second_finished_mid_first = bool(finished)
+    finally:
+        resume.set()
+    await first_save
+    await second_save
+
+    assert not second_finished_mid_first, (
+        "the second save wrote while the first was still writing"
+    )
+    assert target.read_text(encoding="utf-8") == second
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_save_does_not_hold_up_a_save_to_another_file(
+    tmp_path, monkeypatch
+) -> None:
+    """Only writes to the same file wait for each other.
+
+    A save stuck on a sleeping network disk must not stop a later save to a
+    local folder, and once both finish no per-file lock is left behind.
+    """
+    import asyncio
+    from pathlib import Path
+
+    stuck_target = tmp_path / "stuck" / "chat.md"
+    free_target = tmp_path / "free" / "chat.md"
+    stuck = "# Stuck export\n"
+
+    started = threading.Event()
+    resume = threading.Event()
+    original_write_text = Path.write_text
+
+    def stalling_write_text(self, data, *args, **kwargs):
+        if data == stuck:
+            started.set()
+            assert resume.wait(10), "the stalled write was never resumed"
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", stalling_write_text)
+
+    stuck_save = asyncio.create_task(write_markdown_file(str(stuck_target), stuck))
+    try:
+        assert await asyncio.to_thread(started.wait, 10), "stalled write never began"
+        saved = await asyncio.wait_for(
+            write_markdown_file(str(free_target), "# Free export\n"), timeout=5
+        )
+    finally:
+        resume.set()
+    await stuck_save
+
+    assert saved == free_target
+    assert free_target.read_text(encoding="utf-8") == "# Free export\n"
+    assert stuck_target.read_text(encoding="utf-8") == stuck
+    assert markdown_export._file_locks == {}
