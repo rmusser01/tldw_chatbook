@@ -22,6 +22,7 @@ render`` below is that test.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import types
@@ -354,6 +355,100 @@ async def test_project_recovery_uses_captured_session_and_replaces_panel_state()
         assert "State: Off" in " ".join(
             str(item.renderable) for item in panel.query(Static)
         )
+
+
+@pytest.mark.asyncio
+async def test_a_failing_project_recovery_is_reported_and_leaves_the_inspector_live():
+    """TASK-33621.13: the recovery runs in a worker. A failure there is one
+    panel action's -- reported without its message, never an app exit -- and
+    releases the one-decision-at-a-time guard so the user can retry."""
+    calls = []
+    enabled = build_console_project_instruction_state(
+        ProjectInstructionControlState.new_session()
+    )
+
+    async def recover(session_id, action):
+        calls.append(action)
+        raise RuntimeError("zq-private-recovery-failure")
+
+    app = RecoveryHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(
+            _inspector(
+                _empty_factory,
+                project_instruction_state=enabled,
+                project_instruction_session_id="captured-session",
+                project_instruction_recovery=recover,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+        for attempt in (1, 2):
+            await pilot.click("#console-project-instruction-disable")
+            for _ in range(40):
+                if len(calls) == attempt and not (
+                    modal._project_instruction_recovery_running
+                ):
+                    break
+                await pilot.pause(0.05)
+            assert calls == ["disable"] * attempt
+            assert not modal._project_instruction_recovery_running
+            await pilot.pause(0.3)  # a Button ignores clicks while "-active"
+        assert app.screen is modal and modal.is_running
+        assert app.recoveries == []  # handled by the Inspector, not bubbled
+        messages = [n.message for n in app._notifications]
+        assert (
+            messages.count(
+                "Couldn't update project instructions. Details are in the log file."
+            )
+            == 2
+        ), messages
+        assert all("zq-private-recovery-failure" not in m for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_a_second_project_recovery_request_while_one_runs_is_ignored():
+    """One decision at a time: a request that arrives while the picker flow is
+    still running is dropped, never queued behind it and never bubbled."""
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def recover(session_id, action):
+        calls.append(action)
+        started.set()
+        await release.wait()
+
+    app = RecoveryHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(
+            _inspector(
+                _empty_factory,
+                project_instruction_state=build_console_project_instruction_state(
+                    ProjectInstructionControlState.new_session()
+                ),
+                project_instruction_session_id="captured-session",
+                project_instruction_recovery=recover,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+        panel = modal.query_one(
+            "#console-context-project-instructions",
+            ConsoleProjectInstructionContextPanel,
+        )
+        for _ in range(2):
+            panel.post_message(panel.RecoveryRequested("captured-session", "disable"))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await pilot.pause(0.2)
+        assert calls == ["disable"]
+        assert app.recoveries == []
+        release.set()
+        for _ in range(40):
+            if not modal._project_instruction_recovery_running:
+                break
+            await pilot.pause(0.05)
+        assert not modal._project_instruction_recovery_running
+        assert calls == ["disable"]
 
 
 @pytest.mark.asyncio

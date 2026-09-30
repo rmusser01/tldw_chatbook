@@ -40,6 +40,7 @@ from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
 from tldw_chatbook.Widgets.Console.console_inspector_detail_pane import (
     ConsoleInspectorDetailPane,
 )
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 def pane(modal, view):
@@ -302,7 +303,7 @@ async def test_delayed_capture_cannot_restore_invalid_content(invalidate):
         elif invalidate == "dismiss":
             await pilot.press("escape")
         else:
-            await modal.action_viewer_profile()
+            modal.action_viewer_profile()
         release.set()
         await pilot.pause()
         assert not modal._exchange_capture_by_call_key
@@ -336,7 +337,7 @@ async def test_full_to_safe_clears_both_trace_views_and_export():
         modal.query_one(TabbedContent).active = TAB_EXCHANGE
         await choose(pilot, modal, "exchange", "turn:0", "m")
         await choose(pilot, modal, "exchange", "call:n1:0", "private prompt")
-        await modal.action_viewer_profile()
+        modal.action_viewer_profile()
         assert modal.viewer_profile is TraceViewerProfile.SAFE
         assert not modal._exchange_capture_by_call_key
         assert pane(modal, "usage").query_one(TextArea).text == ""
@@ -518,7 +519,7 @@ async def test_open_export_rechecks_parent_authority(invalidate):
         if invalidate == "target":
             valid = False
         else:
-            await modal.action_viewer_profile()
+            modal.action_viewer_profile()
         assert not export._revision_is_current()
 
 
@@ -583,3 +584,54 @@ async def test_historical_readers_stay_within_modal_at_supported_sizes(
             modal.query_one("#console-inspector-close").region
         )
         assert reader.is_on_screen
+
+
+@pytest.mark.asyncio
+async def test_trace_view_key_and_button_confirm_full_and_keep_the_inspector_live():
+    """TASK-33621.13 review: 'v' (Trace view) awaited its confirm dialog with
+    ``push_screen_wait`` straight from the action -- outside a worker, the
+    GAP4-01 defect class: Textual pushed the dialog, then raised
+    ``NoActiveWorker`` on the Inspector's side. The 'View: Safe' button had no
+    handler at all. Drive both through the real dialog."""
+    app = InspectorHarness(
+        **_default_kwargs(
+            capture_policy_bindings=_capture_policy_bindings_for_inspector()
+        )
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        button = modal.query_one("#console-inspector-viewer-profile", Button)
+        assert modal.viewer_profile is TraceViewerProfile.SAFE
+
+        await pilot.press("v")
+        await _wait_until(pilot, lambda: isinstance(app.screen, ConfirmationDialog))
+        await pilot.click("#confirm-button")
+        await _wait_until(
+            pilot,
+            lambda: (
+                app.screen is modal and modal.viewer_profile is TraceViewerProfile.FULL
+            ),
+        )
+        assert str(button.label) == "View: Full"
+        assert modal.is_running
+
+        # Full -> Safe never asks.
+        await pilot.click("#console-inspector-viewer-profile")
+        await _wait_until(
+            pilot, lambda: modal.viewer_profile is TraceViewerProfile.SAFE
+        )
+        assert app.screen is modal and str(button.label) == "View: Safe"
+
+        # Safe -> Full from the button asks too, and "Keep Safe" keeps Safe.
+        # (A Button ignores a click while its 0.2 s press effect is active.)
+        await pilot.pause(0.3)
+        assert not button.has_class("-active")
+        await pilot.click("#console-inspector-viewer-profile")
+        await _wait_until(pilot, lambda: isinstance(app.screen, ConfirmationDialog))
+        await pilot.press("escape")
+        await _wait_until(pilot, lambda: app.screen is modal)
+        await pilot.pause()
+        assert modal.viewer_profile is TraceViewerProfile.SAFE
+        assert str(button.label) == "View: Safe"
+        assert modal.is_running

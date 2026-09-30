@@ -108,6 +108,8 @@ _NEXT_SEND_WORKER_GROUP = "console-inspector-next-send"
 # may await the folder picker (``push_screen_wait``); its own group keeps it
 # out of the loaders' groups above.
 _PROJECT_INSTRUCTION_RECOVERY_WORKER_GROUP = "console-inspector-project-instructions"
+# Same reason for the Safe -> Full trace-view confirmation.
+_VIEWER_PROFILE_WORKER_GROUP = "console-inspector-viewer-profile"
 
 _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
     "Captured where Console hands the request to the provider adapter, not "
@@ -409,6 +411,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._project_instruction_session_id = project_instruction_session_id
         self._project_instruction_recovery = project_instruction_recovery
         self._project_instruction_recovery_running = False
+        self._viewer_profile_confirm_running = False
         self._target_session_id = target_session_id
         self._target_conversation_id = target_conversation_id
         self._capture_revision_provider = capture_revision_provider
@@ -895,6 +898,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         event.stop()
         self.action_capture_policy()
 
+    @on(Button.Pressed, f"#{VIEWER_PROFILE_BUTTON_ID}")
+    def _viewer_profile_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_viewer_profile()
+
     def on_mount(self) -> None:
         if self._initial_tab == TAB_NEXT_SEND:
             self._request_snapshot()
@@ -993,14 +1001,34 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
         return self._viewer_profile
 
-    async def action_viewer_profile(self) -> None:
-        """Switch disclosure profile, confirming every Safe-to-Full change."""
+    def action_viewer_profile(self) -> None:
+        """Switch disclosure profile, confirming every Safe-to-Full change.
+
+        Full to Safe applies at once. Safe to Full asks first, in a worker:
+        the dialog is awaited through ``push_screen_wait``, which Textual
+        allows only inside one (TASK-33621.13, the GAP4-01 defect class). A
+        second press while the dialog is up is ignored.
+        """
 
         from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
         if self._viewer_profile is TraceViewerProfile.FULL:
             self._viewer_profile = TraceViewerProfile.SAFE
-        else:
+            self._reset_view_projection()
+            return
+        if self._viewer_profile_confirm_running:
+            return
+        self._viewer_profile_confirm_running = True
+        self.run_worker(
+            self._confirm_full_viewer_profile(),
+            group=_VIEWER_PROFILE_WORKER_GROUP,
+            exit_on_error=False,
+        )
+
+    async def _confirm_full_viewer_profile(self) -> None:
+        from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+
+        try:
             confirmed = await self.app.push_screen_wait(
                 ConfirmationDialog(
                     title="View Full trace content?",
@@ -1014,12 +1042,15 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     cancel_label="Keep Safe",
                 )
             )
-            if not confirmed:
-                return
-            self._viewer_profile = TraceViewerProfile.FULL
-        await self._reset_view_projection()
+            if confirmed and self.is_attached:
+                self._viewer_profile = TraceViewerProfile.FULL
+                self._reset_view_projection()
+        except Exception as exc:  # noqa: BLE001 -- one panel action, not the app
+            logger.warning("Trace view change failed: {}", type(exc).__name__)
+        finally:
+            self._viewer_profile_confirm_running = False
 
-    async def _reset_view_projection(self) -> None:
+    def _reset_view_projection(self) -> None:
         self._clear_trace_details()
         self.query_one("#console-inspector-policy-status", Static).update(
             self._capture_policy_text()
@@ -1115,9 +1146,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if self._project_instruction_recovery_running:
             return
         self._project_instruction_recovery_running = True
+        # exit_on_error=False: a failure here is one panel action's, and the
+        # guard below reports it; it must never take the app down.
         self.run_worker(
             self._apply_project_instruction_recovery(event.session_id, event.action),
             group=_PROJECT_INSTRUCTION_RECOVERY_WORKER_GROUP,
+            exit_on_error=False,
         )
 
     async def _apply_project_instruction_recovery(
@@ -1130,6 +1164,15 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             if recovery is None:
                 return
             state = await recovery(session_id, action)
+            if state is None or not self._target_authority_is_current():
+                return
+            self._project_instruction_state = state
+            # No panel: the Inspector closed while the picker was open.
+            for panel in self.query("#console-context-project-instructions").results(
+                ConsoleProjectInstructionContextPanel
+            ):
+                panel.sync_state(state)
+            self.call_after_refresh(self._focus_initial_control)
         except Exception as exc:  # noqa: BLE001 -- one panel action, not the app
             logger.warning(
                 "Project instruction recovery failed: {}", type(exc).__name__
@@ -1139,21 +1182,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 severity="error",
                 markup=False,
             )
-            return
         finally:
             self._project_instruction_recovery_running = False
-        if state is None or not self._target_authority_is_current():
-            return
-        self._project_instruction_state = state
-        try:
-            panel = self.query_one(
-                "#console-context-project-instructions",
-                ConsoleProjectInstructionContextPanel,
-            )
-        except NoMatches:
-            return  # the Inspector closed while the picker was open
-        panel.sync_state(state)
-        self.call_after_refresh(self._focus_initial_control)
 
     @staticmethod
     def _format_row(row: ConsoleCostRow) -> str:

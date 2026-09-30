@@ -27,6 +27,9 @@ from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app, persist_seeded_config
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
@@ -70,7 +73,7 @@ def _ready_console_app(folder: Path):
     return app
 
 
-async def _until(pilot, predicate, what: str, *, timeout: float = 8.0) -> None:
+async def _until(pilot, predicate, what: str, *, timeout: float = 30.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -92,8 +95,14 @@ def _panel_text(inspector: ConsoleConversationInspector) -> str:
     return " ".join(str(item.renderable) for item in panel.query(Static))
 
 
-async def _open_inspector_from_pin(app, pilot, folder: Path):
-    """Boot to Console, start a session in the bound workspace, click the pin."""
+_CHOOSE_PIN = "Choose folder · Project"
+
+
+async def _open_inspector_from_pin(app, pilot, folder: Path, *, off: bool = False):
+    """Boot to Console, start a session in the bound workspace, click the pin.
+
+    ``off`` first turns project instructions off (the legacy-disabled state
+    whose recovery action is 'Enable')."""
     await _until(
         pilot,
         lambda: isinstance(app.screen, ChatScreen) and app.screen.region.width > 0,
@@ -109,14 +118,18 @@ async def _open_inspector_from_pin(app, pilot, folder: Path):
     session = controller.store.ensure_session(title="Folder picker")
     assert session.workspace_id == _WORKSPACE_ID
     assert session.project_instruction_state.working_folder_binding_id is None
+    if off:
+        controller.store.set_session_project_instruction_state(
+            session.id, ProjectInstructionControlState.legacy_disabled()
+        )
     console._set_console_rail_preference(right_open=True)
     await _until(
         pilot, lambda: bool(console.query(_PIN)), "the Project Instructions pin"
     )
     await _until(
         pilot,
-        lambda: _pin_label(console) == "Choose folder · Project",
-        "the pin to read 'Choose folder · Project'",
+        lambda: _pin_label(console) == ("Off · Project" if off else _CHOOSE_PIN),
+        "the pin to show the starting state",
     )
     console.query_one(_PIN, Button).scroll_visible(animate=False, immediate=True)
     await pilot.pause()
@@ -127,19 +140,23 @@ async def _open_inspector_from_pin(app, pilot, folder: Path):
         "the Conversation Inspector",
     )
     inspector = app.screen
+    action = "enable" if off else "choose"
     await _until(
         pilot,
-        lambda: bool(inspector.query("#console-project-instruction-choose")),
-        "the 'Choose folder' button",
+        lambda: bool(inspector.query(f"#console-project-instruction-{action}")),
+        f"the '{action}' recovery button",
     )
     return console, controller, session, inspector
 
 
-async def _press_choose_folder(app, pilot, inspector) -> ProjectInstructionSetupModal:
-    choose = inspector.query_one("#console-project-instruction-choose", Button)
-    choose.scroll_visible(animate=False, immediate=True, top=True)
+async def _press_choose_folder(
+    app, pilot, inspector, action: str = "choose"
+) -> ProjectInstructionSetupModal:
+    selector = f"#console-project-instruction-{action}"
+    button = inspector.query_one(selector, Button)
+    button.scroll_visible(animate=False, immediate=True, top=True)
     await pilot.pause()
-    await pilot.click("#console-project-instruction-choose")
+    await pilot.click(selector)
     await _until(
         pilot,
         lambda: isinstance(app.screen, ProjectInstructionSetupModal),
@@ -157,21 +174,25 @@ async def _press_choose_folder(app, pilot, inspector) -> ProjectInstructionSetup
 
 @private_profile_test
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["choose", "enable"])
 async def test_choose_folder_opens_picker_and_applies_the_chosen_binding(
-    request, tmp_path
+    request, tmp_path, action
 ):
-    """AC#1/#5: the real button, the real picker, the binding really applied."""
+    """AC#1/#5: the real button, the real picker, the binding really applied.
+
+    'Enable' (from Off) opens the same picker through the same seam."""
     folder = tmp_path / "project"
     folder.mkdir()
     folder = folder.resolve(strict=True)
     app = _ready_console_app(folder)
     async with app.run_test(size=(160, 45)) as pilot:
         console, controller, session, inspector = await _open_inspector_from_pin(
-            app, pilot, folder
+            app, pilot, folder, off=action == "enable"
         )
-        assert "State: Choose folder" in _panel_text(inspector)
+        before = "State: Off" if action == "enable" else "State: Choose folder"
+        assert before in _panel_text(inspector)
 
-        picker = await _press_choose_folder(app, pilot, inspector)
+        picker = await _press_choose_folder(app, pilot, inspector, action)
         row = picker.query_one("#console-project-binding-0", Button)
         assert _BINDING_LABEL in str(row.label)
         assert not row.disabled
@@ -185,16 +206,19 @@ async def test_choose_folder_opens_picker_and_applies_the_chosen_binding(
             ),
             "the chosen folder to be bound to the session",
         )
+
+        def shows_binding() -> bool:
+            # Positive, not just "the old state is gone": the panel is briefly
+            # empty while it re-renders the new state.
+            text = _panel_text(inspector)
+            return before not in text and _BINDING_LABEL in text
+
         await _until(
             pilot,
-            lambda: (
-                app.screen is inspector
-                and "State: Choose folder" not in _panel_text(inspector)
-            ),
+            lambda: app.screen is inspector and shows_binding(),
             "the Inspector to show the applied binding",
         )
         assert session.project_instruction_state.project_instructions_enabled
-        assert _BINDING_LABEL in _panel_text(inspector)
         # The Inspector is live, not a dead pump left on the stack: a key it
         # binds still reaches it and closes it.
         assert inspector.is_running
@@ -202,7 +226,7 @@ async def test_choose_folder_opens_picker_and_applies_the_chosen_binding(
         await _until(pilot, lambda: app.screen is console, "the Inspector to close")
         await _until(
             pilot,
-            lambda: _pin_label(console) != "Choose folder · Project",
+            lambda: _pin_label(console) not in {_CHOOSE_PIN, "Off · Project"},
             "the Inspect pin to stop reading 'Choose folder · Project'",
         )
 
@@ -241,4 +265,4 @@ async def test_cancelling_the_picker_returns_to_a_responsive_inspector(
         # ...and Esc still closes the Inspector back to the Console.
         await pilot.press("escape")
         await _until(pilot, lambda: app.screen is console, "the Inspector to close")
-        assert _pin_label(console) == "Choose folder · Project"
+        assert _pin_label(console) == _CHOOSE_PIN

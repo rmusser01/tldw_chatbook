@@ -41,6 +41,5 @@ tldw_chatbook/UI/Screens/tools_settings_screen.py::ToolsSettingsScreen.on_button
 tldw_chatbook/UI/Screens/trajectory_screen.py::TrajectoryScreen.action_open_trace	1
 tldw_chatbook/UI/Tools_Settings_Window.py::ToolsSettingsWindow.on_button_pressed	1
 tldw_chatbook/UI/Wizards/ChatbookImportWizard.py::FileSelectionStep.on_button_pressed	1
-tldw_chatbook/Widgets/Console/console_conversation_inspector.py::ConsoleConversationInspector.action_viewer_profile	1
 tldw_chatbook/Widgets/NewIngest/SmartFileDropZone.py::SmartFileDropZone._browse_files	1
 tldw_chatbook/app_entry.py::PasswordPromptApp.on_mount	1
