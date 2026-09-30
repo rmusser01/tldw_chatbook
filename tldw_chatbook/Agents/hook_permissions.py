@@ -383,7 +383,13 @@ class HookPermissions:
         ):
             path = cfg.config_path.parent / "hook_permissions.json"
             try:
-                path = default_hook_permissions_path()
+                if cfg.profile_data_dir is None:
+                    raise RecoveryRequired("raw_source_selection_changed")
+                path = cfg.profile_data_dir / "hook_permissions.json"
+                # Raw admission also checks this exact selected_read against the
+                # bound cache; a throttled previous profile must never supply grants.
+                if default_hook_permissions_path() != path:
+                    raise RecoveryRequired("raw_source_selection_changed")
                 stack.enter_context(self._store_lock(path))
             except (OSError, ValueError, TypeError, RecoveryRequired):
                 yield (
@@ -499,11 +505,33 @@ class HookPermissions:
     def approve(
         self, expected: HookReviewSnapshot, keys: Collection[str]
     ) -> HookReviewSnapshot:
-        """Approve only still-current selected definitions and epochs."""
+        """Approve only still-current selected definitions and epochs.
+
+        Args:
+            expected: Saved definitions and consent revision shown in review.
+            keys: Current enabled valid definition keys explicitly selected.
+
+        Returns:
+            Updated review state, including any persistence failure fence.
+
+        Raises:
+            HookReviewConflict: The snapshot or selected definitions changed.
+        """
         return self._decision(expected, keys, True)
 
     def revoke(self, expected: HookReviewSnapshot, key: str) -> HookReviewSnapshot:
-        """Validate the review, then fence launches before persisting revoke."""
+        """Validate the review, then fence launches before persisting revoke.
+
+        Args:
+            expected: Saved definitions and consent revision shown in review.
+            key: Current definition whose grant is being revoked.
+
+        Returns:
+            Updated review state; a failed write remains locally fenced.
+
+        Raises:
+            HookReviewConflict: The snapshot or selected definition changed.
+        """
         return self._decision(expected, [key], False)
 
     def disable(self, expected: HookReviewSnapshot, key: str) -> HookReviewSnapshot:
@@ -537,7 +565,7 @@ class HookPermissions:
         elif result.file_replaced:
             notice = "Hook disabled in saved configuration; runtime refresh pending. Retry refresh."
         else:
-            notice = "Disable was not saved; hook remains blocked in this app. Reload and retry."
+            notice = "Disable was not saved; hook remains blocked. Retry Disable or explicitly review to allow again."
         return replace(current, notice=notice)
 
     def save_configuration(

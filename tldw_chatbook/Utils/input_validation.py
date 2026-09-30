@@ -39,6 +39,14 @@ ConsoleHookEvent = Literal[
 ]
 CONSOLE_HOOK_TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
 CONSOLE_HOOK_DEFAULT_TIMEOUT_S = 10.0
+CONSOLE_HOOK_SWITCH_INPUT = TypeAdapter(bool, config=ConfigDict(strict=True))
+CONSOLE_HOOK_ID_INPUT = TypeAdapter(
+    Annotated[str, Field(min_length=1)], config=ConfigDict(strict=True)
+)
+CONSOLE_HOOK_ROWS_INPUT = TypeAdapter(list[object], config=ConfigDict(strict=True))
+CONSOLE_HOOK_CONTAINER_INPUT = TypeAdapter(
+    dict[str, object], config=ConfigDict(strict=True)
+)
 
 
 class ConsoleHookInput(BaseModel):

@@ -1,11 +1,11 @@
 ---
 id: TASK-33163
 title: Add Console hook settings and consent review
-status: Done
+status: In Progress
 assignee:
   - codex
 created_date: '2026-09-28 03:03'
-updated_date: '2026-09-30 02:38'
+updated_date: '2026-09-30 03:14'
 labels:
   - hooks
   - console
@@ -51,25 +51,9 @@ Renumbering provenance: CLI assigned TASK-33152; the live all-ref/history and 87
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the persistent Console Hooks action, expandable exact-command review, next-Send consent gate and canonical Settings → Expert → Hooks staged editor. Cancellation preserves the draft. Shared foreground/queued/durable/viewless admission and subprocess creation enforce persisted exact-definition authority. Guarded saves preserve unknown and invalid configuration, concurrent edits and complete unchanged legacy groups; revocation and failed refresh fence future launches.
+Implemented the persistent Console Hooks action, expandable exact-command review, next-Send consent gate, and canonical Settings → Expert → Hooks staged editor. Shared foreground, queued, recovered, durable, and viewless admission plus subprocess creation enforce persisted exact-definition consent; cancellation preserves drafts. Guarded saves preserve unknown fields and concurrent edits. Consent uses the existing narrow private-file owner and is excluded from portable backup/restore. ADR-197, ADR-126, ADR-148, ADR-150, and ADR-097 apply; no new ADR, dependency, or DB migration.
 
-Integrated only the hook design/plan and four implementation commits onto dev e5ac111967 on codex/hook-review-dev. Preserved dev's token compiler, responsive modal rules, runtime callbacks and Settings contracts. The concrete JSON/lock owner participates in ADR-126 nested raw-file admission while retaining the outer config lease and its narrow helper scope. Backup recognizes but excludes local consent and refuses restore input. Added resettable handling for decoder depth exceptions.
+Integrated the four implementation commits onto dev 857b3dd7d0 as codex/hook-review-current. Qodo fixes cover stale revoke/disable validation, invalid-master target publication, clean Settings reloads, central path validation, shared strict Pydantic execution/metadata validation, and API docs/typing. Raw profile selection is resolved under the config lease; stale bound-cache grants and same-file profile changes cannot authorize launches or Settings writes. Failed Disable remains fenced per ADR-197; explicit current review restores permission and is covered by regression. Post-await dismissal/shutdown guards and lazy hook imports/styles preserve original first-paint budgets.
 
-ADR check: direct implementation of backlog/decisions/197-console-hook-configuration-review.md and ADR-126; no new ADR, dependency or database migration. Original codex/hook-review and its earlier 417-case evidence remain historical. The shared modal/editor and dev adaptations form one final integration unit.
-
-Previous e5ac111967-based validation: 201 distinct feature and Settings metadata cases passed across targeted runs. Core runtime/config/admission/viewless run: 153 passed. Latest consent owner suite: 42 passed. Inventory: 27 passed. Mounted review/editor: 13 passed. Real Settings metadata: seven passed. All eight token and 29 CSS-integrity cases passed; styles rebuilt from source. Authored Ruff/format checks are clean across 48 changed Python files; all three QA scripts pass full Ruff/format checks. Real TldwCli passed six private-profile checks at actual 80×24 and 120×40 using a harmless real hook and recording gateway.
-
-Eleven broader failures reproduce on an untouched archive of the exact dev base. Interrupted exploratory bundles qualify only recorded completed cases. No full suite, real provider generation, push or merge was performed. The current branch's named results, captures, baseline comparisons and limits are in Docs/superpowers/reviews/2026-09-27-console-hook-settings-and-review.md and its QA artifacts.
-
-Self-review completed for launch/revocation ownership, narrow nested storage scope, excluded restore authority, callbacks, lossless Settings writes and generated styles. Changed core hook inventory/config transactions and consent authority, Console runtime/admission/UI routing, shared review modal, canonical Settings editor/registry/search, raw participant and private-path integration, backup declarations and targeted tests. Updated the guide, accepted plan/ADR and evidence-based lessons.
-
-Current-dev continuation (2026-09-29): carried only four implementation commits onto 857b3dd7d0 as codex/hook-review-current. Rebuilt CSS from current sources. Targeted evidence: 367 distinct passing cases including 201 feature/category cases; two Settings search assertions reproduce on current dev application sources. Real TldwCli passed all six private-profile checks at actual 80×24 and 120×40. QA now isolates the HOME-based recovery bootstrap; the queue-controller test module uses the existing bound-profile fixture. Authored-line Ruff/format checks and QA-script lint/format passed. See the updated implementation review and machine-readable QA results. No full suite, real provider generation, push or merge.
-
-PR #2922 review follow-up: resolved six verified Qodo findings and covered the non-reproducing absent-section report with an explicit TOML stamp and regression. Added stale mutation, clean/dirty reload, dismissal and runtime-disposal regressions. Shared Pydantic validation preserves raw unknown fields. Hook imports and indicator I/O stay after first paint; modal/editor styles reuse the lazy Settings sheet without raising boot budgets. Reviewed new diagnostic messages and the exact private lock sink before updating the inventory. Final targeted checks: 185 runtime, 26 mounted UI/admission, seven first-paint census, two CSS-budget and 37 token/CSS-integrity passes (overlapping cohorts). Authored Ruff/format and all QA scripts are clean. Native 80x24 and 120x40 checks pass and captures were inspected. ADR-197, ADR-126 and ADR-097 apply; no new ADR. Latest fetched dev remains 857b3dd7d0. Hosted required CI is queued; merge is pending. See the updated review and named QA records.
-
-Completed the exact CI boot-budget group after the final lazy import/style fixes: 21 passed with original limits unchanged. Local implementation, regression coverage, static checks, self-review and documentation are complete. PR review replies and hosted merge gates remain an integration follow-up.
-
-Fresh Qodo reviewer guide found invalid master values could publish previously granted notification targets. Reproduced all six lifecycle cases before the two-line shared projection fix; validating owner, admission and viewless paths before publishing a follow-up.
-
-Fresh Qodo finding fixed at the shared target projection: invalid containers mark enabled hooks invalid and publish no launch targets for any event. Six lifecycle regressions failed before the fix; all 78 consent owner/admission/viewless cases now pass, retaining epoch and failed-write checks. Authored Ruff/format remains clean. Modal focus emphasis inherits the existing shared Button rule; generated styles reproduce exactly. Review records and named QA results updated; hosted review/CI integration remains pending.
+Current targeted evidence: 194 runtime, 25 config/mounted UI, and 12 import/first-paint passes. Earlier complete 21-case boot and 37-case token/CSS groups cover unchanged portions; overlapping cohorts are separately named in QA. Authored-line Ruff/format is clean across 51 changed Python files, all three QA scripts pass full checks, generated CSS reproduces, and profile-path/diagnostic/worker/task governance passes. Real TldwCli passed all six private-profile groups at actual 80x24 and 120x40; four captures were visually inspected. Two broader Settings search assertions reproduce on current dev. Self-review and documentation are complete; no full suite or real provider generation ran. Named evidence, historical qualification, and limits are in Docs/superpowers/reviews/2026-09-27-console-hook-settings-and-review.md. PR #2922 review replies, hosted checks, latest-dev confirmation, and authorized merge remain pending.
 <!-- SECTION:NOTES:END -->

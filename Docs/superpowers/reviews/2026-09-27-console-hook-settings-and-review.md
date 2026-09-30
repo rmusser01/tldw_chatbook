@@ -159,3 +159,26 @@ Six lifecycle regressions failed before this two-line fix; all **78 consent
 owner/admission/viewless cases** then passed. Existing disable/re-enable epoch
 and failed-write behavior remains covered. The modal focus style also reuses
 the existing shared Button emphasis instead of duplicating its literal rule.
+
+
+The fresh agentic review found a reproducible same-file profile-selection race:
+raw username/data-root changes could retain cached grants during the one-second
+external-edit throttle. Hook snapshots now carry the profile data directory
+resolved from the same raw TOML under the config lease, using the existing pure
+profile-path helper. Consent refuses a mismatch with the bound cache before
+opening the exact selected permission store; guarded Settings saves also reject
+an intervening profile change. Both old-grant regressions failed before the fix.
+
+Shared strict Pydantic adapters now validate container/list, enabled and optional
+ID metadata alongside the execution model. Invalid raw rows and unknown fields
+remain available for repair. Loader and consent APIs have complete Google-style
+documentation. Failed Disable intentionally stays fenced after Recover, as
+ADR-197 requires; a new regression verifies explicit current review restores
+permission, and the failure notice states that recovery choice directly.
+
+Current follow-up checks pass: **194 runtime**, **25 config/mounted UI**, and
+**12 import/first-paint** cases. These overlap prior named cohorts and are not
+added to a distinct total. Authored-line Ruff and formatting remain clean across
+51 changed Python files. Existing boot budgets, styles and launch semantics are
+unchanged; the complete 21-case boot and 37-case CSS qualification above remains
+applicable to its unchanged portions. Hosted checks and merge remain pending.

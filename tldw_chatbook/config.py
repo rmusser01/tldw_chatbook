@@ -7402,6 +7402,7 @@ class HookConfigSnapshot:
     section_present: bool
     section: object = field(repr=False)
     section_stamp: str
+    profile_data_dir: Path | None = field(default=None, repr=False)
 
 
 def _hooks_config_snapshot(
@@ -7414,7 +7415,11 @@ def _hooks_config_snapshot(
         stamp["section"] = section
     encoded = toml.dumps(stamp).encode("utf-8")
     return HookConfigSnapshot(
-        config_path.resolve(), present, section, hashlib.sha256(encoded).hexdigest()
+        config_path.resolve(),
+        present,
+        section,
+        hashlib.sha256(encoded).hexdigest(),
+        profile_paths.user_data_dir(raw),
     )
 
 
@@ -7455,6 +7460,7 @@ def replace_hooks_config_snapshot(
         if (
             current.config_path != expected.config_path
             or current.section_stamp != expected.section_stamp
+            or current.profile_data_dir != expected.profile_data_dir
         ):
             raise ValueError("Hook configuration changed; reload before saving.")
         if current.section_present and not isinstance(current.section, Mapping):

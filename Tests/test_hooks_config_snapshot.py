@@ -173,3 +173,22 @@ def test_absent_hooks_section_is_readable_and_can_be_added(tmp_path, monkeypatch
     assert current.section_present and current.section == {"enabled": False}
     assert current.section_stamp != absent.section_stamp
     assert toml.loads(path.read_text())["other"]["value"] == 1
+
+
+def test_hooks_save_rejects_profile_change_inside_the_same_config(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "config.toml"
+    raw = {"general": {"users_name": "first"}, "hooks": {"enabled": False}}
+    path.write_text(toml.dumps(raw))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
+    original = config.read_hooks_config_snapshot()
+    raw["general"]["users_name"] = "second"
+    path.write_text(toml.dumps(raw))
+    before = path.read_bytes()
+    result = config.replace_hooks_config_snapshot(original, {"enabled": True})
+    assert not result.file_replaced
+    assert path.read_bytes() == before

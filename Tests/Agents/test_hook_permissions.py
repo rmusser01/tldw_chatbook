@@ -832,3 +832,42 @@ def test_invalid_master_refuses_cached_launch_and_publishes_no_targets(
     else:
         assert owner.targets(event, None) == ()
         assert owner.notification_targets(event, None) == ()
+
+
+@pytest.mark.parametrize("selection", ["name", "directory"])
+def test_raw_profile_change_cannot_use_a_throttled_previous_profile_grant(
+    hook_file, monkeypatch, selection
+):
+    owner = _owner()
+    _approve(owner)
+    old = owner.targets("PostToolUse", None)[0]
+    monkeypatch.setattr(config, "_external_edit_detected", lambda path: False)
+    raw = toml.loads(hook_file.read_text())
+    if selection == "name":
+        raw.setdefault("general", {})["users_name"] = "different_profile"
+    else:
+        raw.setdefault("paths", {})["data_dir"] = str(hook_file.parent / "other_data")
+    hook_file.write_text(toml.dumps(raw))
+    stale = owner.snapshot()
+    assert not stale.ready
+    assert owner.notification_targets("PostToolUse", None) == ()
+    from tldw_chatbook.Agents.run_hooks import HookLaunchRefused
+
+    with pytest.raises(HookLaunchRefused), owner.launch_guard(old, tool_name=None):
+        pytest.fail("previous profile consent admitted a new profile hook")
+
+
+def test_failed_disable_stays_fenced_until_explicit_review(hook_file, monkeypatch):
+    owner = _owner()
+    current = _approve(owner)
+    key = current.rows[0].entry.key
+    monkeypatch.setattr(
+        config,
+        "replace_hooks_config_snapshot",
+        lambda *_: config.LiteralConfigMutationResult(False, False, None, "write"),
+    )
+    assert not owner.disable(current, key).ready
+    assert not owner.recover().ready
+    assert owner.notification_targets("PostToolUse", None) == ()
+    assert owner.approve(owner.snapshot(), [key]).ready
+    assert owner.notification_targets("PostToolUse", None)

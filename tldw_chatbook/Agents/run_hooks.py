@@ -29,7 +29,11 @@ from pydantic import ValidationError
 
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Utils.input_validation import (
+    CONSOLE_HOOK_CONTAINER_INPUT,
     CONSOLE_HOOK_DEFAULT_TIMEOUT_S,
+    CONSOLE_HOOK_ID_INPUT,
+    CONSOLE_HOOK_ROWS_INPUT,
+    CONSOLE_HOOK_SWITCH_INPUT,
     CONSOLE_HOOK_TOOL_EVENTS,
     ConsoleHookEvent,
     ConsoleHookInput,
@@ -219,38 +223,51 @@ def inspect_hooks_config(config: Mapping[str, object]) -> HookInventory:
     if "hooks" not in config:
         return HookInventory(True, None)
     section = config["hooks"]
-    if not isinstance(section, Mapping):
+    try:
+        section = CONSOLE_HOOK_CONTAINER_INPUT.validate_python(
+            dict(section) if isinstance(section, Mapping) else section
+        )
+    except ValidationError:
         return HookInventory(
             None, "Hooks section must be a table; repair in Advanced Config."
         )
-    master = section.get("enabled", True)
     container_error = None
-    if type(master) is not bool:
+    try:
+        master = CONSOLE_HOOK_SWITCH_INPUT.validate_python(section.get("enabled", True))
+    except ValidationError:
         master = None
         container_error = "Hooks enabled must be a boolean."
-    raw_hooks = section.get("hook", [])
-    if not isinstance(raw_hooks, list):
+    try:
+        raw_hooks = CONSOLE_HOOK_ROWS_INPUT.validate_python(section.get("hook", []))
+    except ValidationError:
         return HookInventory(master, "Hooks list must be an array of tables.")
     ids: dict[str, int] = {}
+    identities = []
     for raw in raw_hooks:
-        if isinstance(raw, Mapping) and isinstance(raw.get("id"), str) and raw["id"]:
-            ids[raw["id"]] = ids.get(raw["id"], 0) + 1
+        hook_id = None
+        if isinstance(raw, Mapping) and "id" in raw:
+            try:
+                hook_id = CONSOLE_HOOK_ID_INPUT.validate_python(raw["id"])
+            except ValidationError:
+                pass  # The raw row remains visible with a repair error below.
+        identities.append(hook_id)
+        if hook_id is not None:
+            ids[hook_id] = ids.get(hook_id, 0) + 1
     occurrences: dict[str, int] = {}
     rows = []
     for index, raw in enumerate(raw_hooks):
         spec, error = validate_hook_definition(raw)
-        enabled = raw.get("enabled", True) if isinstance(raw, Mapping) else None
-        hook_id = raw.get("id") if isinstance(raw, Mapping) else None
-        if type(enabled) is not bool:
+        try:
+            enabled = CONSOLE_HOOK_SWITCH_INPUT.validate_python(
+                raw.get("enabled", True) if isinstance(raw, Mapping) else None
+            )
+        except ValidationError:
             enabled = None
             error = "Hook enabled must be a boolean."
-        if (
-            isinstance(raw, Mapping)
-            and "id" in raw
-            and (not isinstance(hook_id, str) or not hook_id)
-        ):
+        hook_id = identities[index]
+        if isinstance(raw, Mapping) and "id" in raw and hook_id is None:
             error = "Hook ID must be a nonempty string."
-        if isinstance(hook_id, str) and ids.get(hook_id, 0) > 1:
+        if hook_id is not None and ids.get(hook_id, 0) > 1:
             error = "Duplicate hook ID; assign distinct IDs."
         if error:
             spec = None
@@ -268,7 +285,15 @@ def inspect_hooks_config(config: Mapping[str, object]) -> HookInventory:
 
 
 def load_hooks_config(config: Mapping) -> RunHooksConfig:
-    """Project valid enabled rows; inventory remains the consent authority."""
+    """Project valid enabled rows; inventory remains the consent authority.
+
+    Args:
+        config: Saved configuration mapping with an optional Hooks section.
+
+    Returns:
+        Master switch and valid enabled execution definitions. Invalid raw
+        rows remain in the separate consent inventory for repair.
+    """
     inventory = inspect_hooks_config(config)
     if inventory.container_error:
         logger.warning("run-hooks: {}", inventory.container_error)

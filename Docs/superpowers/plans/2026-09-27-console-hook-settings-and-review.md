@@ -741,3 +741,12 @@ Reason: preserve the accepted consent and UI lifecycle contracts while resolving
 Local review qualification: 185 runtime, 26 mounted UI/admission, 21 complete boot-budget and 37 token/CSS integrity cases passed; overlapping cohorts are recorded separately. Authored-line Ruff/format, QA scripts, generated CSS, reviewed diagnostic inventory, worker contract and task-file hygiene pass. Updated native captures passed and were visually inspected. Hosted CI and the final merge remain pending.
 
 Fresh Qodo review follow-up: invalid master-switch target publication reproduced across all six events; the shared projection fix passes the 78-case owner/admission/viewless group. No new ADR is required.
+
+
+Agentic Qodo follow-up: raw profile selection now shares the hook snapshot's
+config lease and refuses stale bound-cache grants; same-file profile changes
+also invalidate Settings saves. Shared strict metadata adapters and loader/
+consent API docs complete the validation boundary. Failed Disable remains
+fenced per ADR-197; explicit current review is covered as recovery. Current
+194 runtime, 25 config/mounted UI and 12 import/first-paint cases pass, with
+clean authored Ruff/format checks. Named overlapping runs are retained in QA.
