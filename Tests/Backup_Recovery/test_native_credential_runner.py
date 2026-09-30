@@ -514,15 +514,17 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
     )
 
 
-def test_native_fixture_installs_owners_before_destination_discovery(
+def test_native_fixture_previews_owner_reads_under_protected_context(
     tmp_path, monkeypatch
 ):
     import tldw_chatbook
     from Tests.ProductionApp import test_native_credential_recovery as product
     from tldw_chatbook.Backup_Recovery import (
+        capture_service,
         inventory,
         owner_registry,
         recovery_service,
+        storage_admission,
     )
 
     class DiscoveryReached(Exception):
@@ -532,22 +534,40 @@ def test_native_fixture_installs_owners_before_destination_discovery(
     config = SimpleNamespace(set_encryption_password=lambda password: None)
     monkeypatch.setattr(tldw_chatbook, "config", config, raising=False)
     monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
-    monkeypatch.setattr(
-        recovery_service, "RecoveryService", lambda root: SimpleNamespace()
-    )
+    service = recovery_service.RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(recovery_service, "RecoveryService", lambda root: service)
     monkeypatch.setattr(recovery_service, "default_control_root", lambda: tmp_path)
+    selector = tmp_path / "config.toml"
+    selector.write_bytes(b"[general]\n")
+    selector.chmod(0o600)
+    monkeypatch.setattr(product, "_selectors", lambda: (selector,))
 
-    def discover(*args, **kwargs):
+    def discover(selectors, *, selections):
+        assert selectors == (selector,)
         assert "db.prompts.primary" in {
             row.owner_id for row in owner_registry.registered()
         }
+        assert storage_admission._local.preview_scope is not None
+        assert (
+            storage_admission._read_recovery_file("config", selector, max_bytes=1024)
+            == b"[general]\n"
+        )
         raise DiscoveryReached()
 
     source = tmp_path / "source-linux.age"
     source.with_suffix(".json").write_text(json.dumps({"system": "Linux"}))
-    monkeypatch.setattr(inventory, "discover", discover)
-    with pytest.raises(DiscoveryReached):
-        product._transfer(source)
+    monkeypatch.setattr(capture_service, "discover", discover)
+    monkeypatch.setattr(
+        inventory,
+        "discover",
+        lambda *args, **kwargs: pytest.fail("public_preview_required"),
+    )
+    try:
+        with pytest.raises(DiscoveryReached):
+            product._transfer(source)
+        assert storage_admission._local.preview_scope is None
+    finally:
+        service.close()
 
 
 @pytest.mark.parametrize("profile", ("default", "retargeted"))
@@ -587,7 +607,9 @@ def test_native_source_groups_cover_active_evals_and_keep_prompts_unselected(
     assert items[-1].logical_id not in scope.member_ids
 
 
-@pytest.mark.parametrize("stop_mode", ("isolated", "replace", "dependency-reviewed"))
+@pytest.mark.parametrize(
+    "stop_mode", ("isolated", "replace", "dependency-reviewed", "review-retries")
+)
 def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
     tmp_path, monkeypatch, stop_mode
 ):
@@ -625,7 +647,15 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
             SimpleNamespace(path=path, owner="db.prompts.primary", status="included")
         )
     initial_plan = dependency_plan(root)
-    previews = []
+    previews, reverse_previews, discoveries = [], [], []
+    acknowledgments = (
+        (),
+        ("credential_isolated_retention_required",),
+        (
+            "credential_isolated_retention_required",
+            "credential_manual_recovery_required:target-material",
+        ),
+    )
 
     class Service:
         def __init__(self, root):
@@ -639,6 +669,15 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
 
         def inspection(self, operation):
             return SimpleNamespace(path=source)
+
+        def preview_backup(self, selectors, *, options):
+            assert selectors == product._selectors() and options == {}, (
+                "local target inventory must include safety-only dependencies"
+            )
+            discoveries.append(selectors)
+            if len(discoveries) > 1:
+                return initial_plan.target
+            return SimpleNamespace(items=stores, complete=True)
 
         def preview_restore(self, inspection, **options):
             if options["mode"] == "isolated":
@@ -655,6 +694,18 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
                 for protected in (home, control, incoming):
                     assert setup != protected and protected not in setup.parents
                     assert setup not in protected.parents
+                if stop_mode == "review-retries":
+                    from dataclasses import replace
+
+                    assert options["target"] is initial_plan.target
+                    assert (
+                        options["acknowledged_credential_issues"]
+                        == acknowledgments[len(previews) // 2]
+                    )
+                    previews.append(options)
+                    return replace(
+                        initial_plan, safety_scope=options.get("safety_scope", ())
+                    )
                 assert options["acknowledged_credential_issues"] == ()
                 if stop_mode == "dependency-reviewed":
                     assert options["target"] is initial_plan.target
@@ -666,6 +717,21 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
                         "safety_scope": ("asset", "assets"),
                     }
             raise PreviewReached()
+
+        def preview_rollback(self, operation, **options):
+            assert operation == "original" and options["target"] is initial_plan.target
+            assert (
+                options["acknowledged_credential_issues"]
+                == acknowledgments[len(reverse_previews)]
+            )
+            reverse_previews.append(options)
+            return initial_plan
+
+        def recovery_copies(self):
+            return [SimpleNamespace(operation_id="original", status="verified")]
+
+        def start_copy_inspection(self, operation, **options):
+            return "copy-inspection"
 
         def start_restore(self, inspection, plan, **options):
             if options:
@@ -683,18 +749,11 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
     monkeypatch.setitem(sys.modules, "tldw_chatbook.config", config)
     monkeypatch.setattr(recovery_service, "RecoveryService", Service)
     monkeypatch.setattr(recovery_service, "default_control_root", lambda: control)
-    discoveries = []
-
-    def discover(selectors, **options):
-        assert not options, (
-            "local target inventory must include safety-only dependencies"
-        )
-        discoveries.append(selectors)
-        if stop_mode == "dependency-reviewed" and len(discoveries) > 1:
-            return initial_plan.target
-        return SimpleNamespace(items=stores, complete=True)
-
-    monkeypatch.setattr(inventory, "discover", discover)
+    monkeypatch.setattr(
+        inventory,
+        "discover",
+        lambda *args, **kwargs: pytest.fail("public_preview_required"),
+    )
     monkeypatch.setattr(
         archive_reader,
         "verify_sealed",
@@ -722,8 +781,26 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
     retained.mkdir(mode=0o700)
     (retained / "credentials.age").write_bytes(source.read_bytes())
     monkeypatch.setenv("HOME", str(home))
+    if stop_mode == "review-retries":
+        monkeypatch.setenv("TLDW_TEST_INSTALLED_PACKAGE", str(tmp_path / "installed"))
+        rounds = []
+
+        def review(current, preview, start):
+            rounds.append(
+                tuple(preview(acknowledged) for acknowledged in acknowledgments)
+            )
+            if len(rounds) == 2:
+                raise PreviewReached()
+            return {"result": {"journal_operation_id": "original"}}
+
+        monkeypatch.setattr(product, "_run_reviewed_replacement", review)
+        monkeypatch.setattr(product, "_child", lambda *args, **kwargs: None)
     with pytest.raises(PreviewReached):
         product._transfer(source)
+    if stop_mode == "review-retries":
+        assert (
+            len(discoveries) == 7 and len(previews) == 6 and len(reverse_previews) == 3
+        )
 
 
 @pytest.mark.parametrize(

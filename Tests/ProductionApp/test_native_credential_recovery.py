@@ -593,8 +593,6 @@ def _fresh_readback(source_system, *, rollback=False):
 def _transfer(source):
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import archive_reader
-    from tldw_chatbook.Backup_Recovery.inventory import discover
-    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
     from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
     from tldw_chatbook.Backup_Recovery.recovery_service import (
         RecoveryService,
@@ -604,13 +602,12 @@ def _transfer(source):
         required_rollback_dependencies,
     )
 
-    install_adapters()
     config.set_encryption_password(CONFIG_PASSWORD)
     source_system = json.loads(source.with_suffix(".json").read_text())["system"]
     service = _observe_workers(RecoveryService(default_control_root()))
     unselected = {
         item.path: _digest(item.path)
-        for item in discover(_selectors()).items
+        for item in service.preview_backup(_selectors(), options={}).items
         if item.owner == "db.prompts.primary" and item.status == "included"
     }
     assert len(unselected) == 2
@@ -694,7 +691,7 @@ def _transfer(source):
         setup_parent.mkdir(mode=0o700)
 
         def preview_replace(acknowledged):
-            target = discover(_selectors())
+            target = service.preview_backup(_selectors(), options={})
             assert target.complete
             choices = {
                 "mode": "replace",
@@ -734,7 +731,7 @@ def _transfer(source):
         _child(Path.cwd(), installed, "read", source=source)
 
         def preview_reverse(acknowledged):
-            target = discover(_selectors())
+            target = service.preview_backup(_selectors(), options={})
             assert target.complete
             return service.preview_rollback(
                 original,
