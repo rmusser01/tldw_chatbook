@@ -192,7 +192,20 @@ class _ObservedCursor(sqlite3.Cursor):
     """A caller's own cursor type, as Tests/Workflows passes to observe statements."""
 
 
-@pytest.mark.parametrize("factory", [sqlite3.Cursor, _ObservedCursor])
+class _DirectCursor(sqlite3.Cursor):
+    """Overrides every statement entry point without calling ``super()``."""
+
+    def execute(self, sql, parameters=()):  # noqa: D102
+        return sqlite3.Cursor.execute(self, sql, parameters)
+
+    def executemany(self, sql, seq_of_parameters):  # noqa: D102
+        return sqlite3.Cursor.executemany(self, sql, seq_of_parameters)
+
+    def executescript(self, sql_script):  # noqa: D102
+        return sqlite3.Cursor.executescript(self, sql_script)
+
+
+@pytest.mark.parametrize("factory", [sqlite3.Cursor, _ObservedCursor, _DirectCursor])
 def test_a_cursor_from_any_factory_still_reports_transaction_boundaries(
     tmp_path: Path, factory: type[sqlite3.Cursor]
 ) -> None:

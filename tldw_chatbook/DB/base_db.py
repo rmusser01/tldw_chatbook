@@ -638,7 +638,9 @@ def _tracked_cursor_type(factory: type[sqlite3.Cursor]) -> type[sqlite3.Cursor]:
 
     Returns:
         ``factory`` itself when it is already tracked, the tracked cursor for
-        a plain ``sqlite3.Cursor``, otherwise a subclass of both.
+        a plain ``sqlite3.Cursor``, otherwise a subclass of both with the
+        tracked cursor first, so its statement methods bracket the caller's
+        overrides even when those skip ``super()``.
 
     Raises:
         TypeError: ``factory`` is not a ``sqlite3.Cursor`` subclass, so it
@@ -651,7 +653,7 @@ def _tracked_cursor_type(factory: type[sqlite3.Cursor]) -> type[sqlite3.Cursor]:
         return factory
     if issubclass(_QuiescentSQLiteCursor, factory):
         return _QuiescentSQLiteCursor
-    return type(f"_Quiescent{factory.__name__}", (factory, _QuiescentSQLiteCursor), {})
+    return type(f"_Quiescent{factory.__name__}", (_QuiescentSQLiteCursor, factory), {})
 
 class _SemanticMutationAuthorization:
     """Connection-local authorization read by SQLite mutation triggers.
