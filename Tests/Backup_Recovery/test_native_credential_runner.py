@@ -307,6 +307,88 @@ def test_native_worker_observes_swallowed_sqlite_failure_and_restores_trace(
         service.close()
 
 
+@pytest.mark.parametrize("diagnostics", ("observe", "leave-tracer", "no-root"))
+def test_native_worker_observes_suppressed_archive_io_without_changing_inspection(
+    tmp_path, monkeypatch, diagnostics
+):
+    from contextlib import contextmanager
+
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Backup_Recovery import archive_reader
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Backup_Recovery.service_storage import work_root
+
+    private, artifacts = tmp_path / "private", tmp_path / "artifacts"
+    failure_root = private / "native-failures"
+    failure_root.mkdir(parents=True)
+    artifacts.mkdir()
+    if diagnostics == "no-root":
+        monkeypatch.delenv("TLDW_NATIVE_FAILURE_ROOT", raising=False)
+    else:
+        monkeypatch.setenv("TLDW_NATIVE_FAILURE_ROOT", str(failure_root))
+    source = tmp_path / "positive-native-secret.age"
+    source.write_bytes(b"age-encryption.org/v1\nsynthetic-encrypted-placeholder")
+    regular = archive_reader._regular
+
+    @contextmanager
+    def unavailable_input(path):
+        with regular(path) as incoming:
+
+            def failed_read(size):
+                if size == 20:
+                    return incoming.read(size)
+                raise OSError(5, "positive-native-secret", str(source))
+
+            yield SimpleNamespace(
+                read=failed_read, seek=incoming.seek, fileno=incoming.fileno
+            )
+
+    monkeypatch.setattr(archive_reader, "_regular", unavailable_input)
+    service = RecoveryService(tmp_path / "control")
+
+    def prior_trace(frame, event, argument):
+        return prior_trace
+
+    previous = prior_trace if diagnostics == "leave-tracer" else None
+    try:
+        service._executor.submit(sys.settrace, previous).result(timeout=5)
+        product._observe_workers(service)
+        operation = service.start_inspection(source, password=None)
+        state = service.wait(operation, timeout=5)
+        assert state["state"] == "failed"
+        assert state["issues"] == ("backup_operation_failed",)
+        assert service._executor.submit(sys.gettrace).result(timeout=5) is previous
+        work = work_root(service.control_root) / ("inspection-" + operation)
+        acquired = work / "acquired"
+        assert acquired.is_dir() and not any(acquired.iterdir())
+        with pytest.raises(ValueError, match="^archive_inspection_required$"):
+            service.inspection(operation)
+        runner._publish_native_failures(private, artifacts)
+        path = artifacts / "native-failures.json"
+        if diagnostics == "no-root":
+            assert not path.exists() and not any(failure_root.iterdir())
+        else:
+            text = path.read_text()
+            rows = json.loads(text)["failures"]
+            original = [row for row in rows if row["error_class"] == "OSError"]
+            assert bool(original) is (diagnostics == "observe")
+            assert any(row["error_class"] == "ValueError" for row in rows)
+            for row in original:
+                assert set(row) == {"error_class", "frames", "issue"}
+                assert any(
+                    frame["file"] == "archive_reader.py"
+                    and frame["function"] == "acquire"
+                    for frame in row["frames"]
+                )
+                assert any(
+                    frame["function"] == "failed_read" for frame in row["frames"]
+                )
+            assert "positive-native-secret" not in text and '"errno"' not in text
+    finally:
+        service.close()
+    assert not work.exists()
+
+
 def test_native_failure_optional_diagnostics_revalidate_fixed_values(tmp_path):
     private, artifacts = tmp_path / "private", tmp_path / "artifacts"
     failure_root = private / "native-failures"

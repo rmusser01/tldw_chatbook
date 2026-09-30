@@ -227,6 +227,7 @@ def _observe_workers(service):
     if not failure_root:
         return service
     from Tests.Backup_Recovery.run_platform_product import _record_native_failure
+    from tldw_chatbook.Backup_Recovery import archive_reader
     from tldw_chatbook.Backup_Recovery.sqlite_validation import (
         _validate_candidate,
         validated_schema_version,
@@ -236,6 +237,10 @@ def _observe_workers(service):
     start = service._start
 
     def observe_sqlite(frame, event, argument):
+        if frame.f_code is archive_reader.acquire.__code__:
+            if event == "exception" and isinstance(argument[1], OSError):
+                _record_native_failure(root, argument[1])
+            return observe_sqlite
         if frame.f_code is not _validate_candidate.__code__:
             return None
         if event == "exception":
