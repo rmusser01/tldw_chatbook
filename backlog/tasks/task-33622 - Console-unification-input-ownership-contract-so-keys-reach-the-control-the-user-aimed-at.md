@@ -33,7 +33,7 @@ Source: Console UX review 2026-09-29 — qa/console-ux-review-2026-09-29/report.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Enter or Space on any focused Console button activates that button and never sends the composer draft, verified by a Pilot test over every focusable composer and header control
-- [ ] #2 Printable keys typed while a non-text control has focus land in the composer, and no single-letter command fires outside an announced list mode, verified by Pilot tests
+- [ ] #2 Printable keys typed while a non-text control has focus land in the composer, and no single-letter command fires outside an announced list mode. Controls that own text input keep their keys: the focused Terminal viewport, inputs and text areas are never forwarded to the composer, and a Pilot test types a shell command into the focused Terminal and asserts none of it reaches the draft. Verified by Pilot tests
 - [ ] #3 A prompt submitted immediately after activating another tab, including during a live run, is sent to the visibly active tab's chat, and submit refuses when the bound session and the visible tab disagree
 - [ ] #4 Esc from the transcript returns focus to the composer, and closing any Console dialog or menu leaves focus where the next keystroke will be typed
 - [ ] #5 A first click outside an open menu or popover only dismisses it and does not activate the control underneath
