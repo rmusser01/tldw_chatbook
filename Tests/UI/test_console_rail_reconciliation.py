@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from types import MethodType, SimpleNamespace
@@ -33,7 +32,6 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
-from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
     WorkspaceTreeExpansionChanged,
@@ -47,6 +45,7 @@ from tldw_chatbook.Widgets.Console.console_settings_summary import (
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
 )
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     build_console_conversation_browser_state,
     console_rail_section_height_budget,
