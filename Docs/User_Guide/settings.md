@@ -437,7 +437,9 @@ model makers **Upstage**, **Arcee AI**, **Baidu Qianfan**, **Nous Research**,
 engine presets: each one is
 a provider registry record served through the shared strict hosted-provider
 engine (the same path Databricks uses), not a per-provider adapter. There is
-no API mode selector for any of them.
+no API mode selector for any of them. Save stores each one's key, model and
+base URL in its own `[api_settings.<provider>]` table, and the first-run
+setup wizard's Provider step offers the same presets.
 
 | Provider | Default base URL | Credential env var |
 |---|---|---|
