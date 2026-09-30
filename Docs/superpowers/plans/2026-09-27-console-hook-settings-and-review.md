@@ -739,3 +739,5 @@ Reason: preserve the accepted consent and UI lifecycle contracts while resolving
 - [ ] Verify the reviewed head and latest dev, then merge PR #2922 and record the result.
 
 Local review qualification: 185 runtime, 26 mounted UI/admission, 21 complete boot-budget and 37 token/CSS integrity cases passed; overlapping cohorts are recorded separately. Authored-line Ruff/format, QA scripts, generated CSS, reviewed diagnostic inventory, worker contract and task-file hygiene pass. Updated native captures passed and were visually inspected. Hosted CI and the final merge remain pending.
+
+Fresh Qodo review follow-up: invalid master-switch target publication reproduced across all six events; the shared projection fix passes the 78-case owner/admission/viewless group. No new ADR is required.

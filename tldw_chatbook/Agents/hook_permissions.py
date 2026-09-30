@@ -330,6 +330,8 @@ class HookPermissions:
                 )
             elif row.enabled is False or inventory.master_enabled is False:
                 status = "disabled"
+            elif inventory.container_error:
+                status = "invalid"
             elif (
                 grant
                 and grant["fingerprint"] == fingerprint_hook(row.spec)

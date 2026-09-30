@@ -1520,7 +1520,7 @@ Button.settings-category-group-toggle:focus {
     }
     .hook-review-action:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
     .hook-review-action:focus {
-        background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline;
+        background: $ds-focus-bg; color: $ds-focus-fg;
     }
     .hook-review-action:disabled {
         background: $ds-disabled-bg; color: $ds-text-disabled-readable;

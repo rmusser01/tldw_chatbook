@@ -798,3 +798,37 @@ def test_stale_mutation_leaves_current_approval_unsealed(hook_file, action):
     assert owner.recover().ready
     assert owner.notification_targets("PostToolUse", None)
     assert hook_file.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "ApprovalRequested",
+        "Stop",
+        "SubagentStop",
+    ],
+)
+def test_invalid_master_refuses_cached_launch_and_publishes_no_targets(
+    hook_file, event
+):
+    from tldw_chatbook.Agents.run_hooks import BLOCKING_EVENTS, HookLaunchRefused
+
+    _edit(hook_file, lambda section: section["hook"][0].update(event=event))
+    owner = _owner()
+    _approve(owner)
+    captured = owner.targets(event, None)[0]
+    _edit(hook_file, lambda section: section.update(enabled="true"))
+    with pytest.raises(HookLaunchRefused), owner.launch_guard(captured, tool_name=None):
+        pytest.fail("invalid master switch admitted a captured hook")
+    invalid = owner.snapshot()
+    assert not invalid.ready
+    assert not any(row.state == "approved" for row in invalid.rows)
+    if event in BLOCKING_EVENTS:
+        with pytest.raises(HookLaunchRefused):
+            owner.targets(event, None)
+    else:
+        assert owner.targets(event, None) == ()
+        assert owner.notification_targets(event, None) == ()

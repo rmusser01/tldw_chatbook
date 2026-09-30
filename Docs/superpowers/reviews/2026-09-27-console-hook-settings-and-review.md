@@ -150,3 +150,12 @@ all three QA scripts pass full checks. Generated sheets reproduce exactly.
 The worker contract admits no new unsafe lookup, and the reviewed diagnostic
 inventory matches the source tree. Named results and final native captures
 are retained in the linked QA artifacts.
+
+A fresh Qodo reviewer guide found one additional projection gap: an invalid
+master switch could publish previously granted notification targets. The shared
+snapshot now marks enabled rows invalid whenever the container is invalid,
+so no event receives a target and launch revalidation rejects captured work.
+Six lifecycle regressions failed before this two-line fix; all **78 consent
+owner/admission/viewless cases** then passed. Existing disable/re-enable epoch
+and failed-write behavior remains covered. The modal focus style also reuses
+the existing shared Button emphasis instead of duplicating its literal rule.

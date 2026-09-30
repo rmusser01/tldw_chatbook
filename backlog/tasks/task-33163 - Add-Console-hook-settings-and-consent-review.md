@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-28 03:03'
-updated_date: '2026-09-30 02:28'
+updated_date: '2026-09-30 02:38'
 labels:
   - hooks
   - console
@@ -68,4 +68,8 @@ Current-dev continuation (2026-09-29): carried only four implementation commits 
 PR #2922 review follow-up: resolved six verified Qodo findings and covered the non-reproducing absent-section report with an explicit TOML stamp and regression. Added stale mutation, clean/dirty reload, dismissal and runtime-disposal regressions. Shared Pydantic validation preserves raw unknown fields. Hook imports and indicator I/O stay after first paint; modal/editor styles reuse the lazy Settings sheet without raising boot budgets. Reviewed new diagnostic messages and the exact private lock sink before updating the inventory. Final targeted checks: 185 runtime, 26 mounted UI/admission, seven first-paint census, two CSS-budget and 37 token/CSS-integrity passes (overlapping cohorts). Authored Ruff/format and all QA scripts are clean. Native 80x24 and 120x40 checks pass and captures were inspected. ADR-197, ADR-126 and ADR-097 apply; no new ADR. Latest fetched dev remains 857b3dd7d0. Hosted required CI is queued; merge is pending. See the updated review and named QA records.
 
 Completed the exact CI boot-budget group after the final lazy import/style fixes: 21 passed with original limits unchanged. Local implementation, regression coverage, static checks, self-review and documentation are complete. PR review replies and hosted merge gates remain an integration follow-up.
+
+Fresh Qodo reviewer guide found invalid master values could publish previously granted notification targets. Reproduced all six lifecycle cases before the two-line shared projection fix; validating owner, admission and viewless paths before publishing a follow-up.
+
+Fresh Qodo finding fixed at the shared target projection: invalid containers mark enabled hooks invalid and publish no launch targets for any event. Six lifecycle regressions failed before the fix; all 78 consent owner/admission/viewless cases now pass, retaining epoch and failed-write checks. Authored Ruff/format remains clean. Modal focus emphasis inherits the existing shared Button rule; generated styles reproduce exactly. Review records and named QA results updated; hosted review/CI integration remains pending.
 <!-- SECTION:NOTES:END -->
