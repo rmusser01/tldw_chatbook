@@ -16944,3 +16944,18 @@ the exact isolated admission group then passed 123 cases with its existing xfail
 When changing shared mount/resume/unmount paths, include their ownership tests
 in the targeted run. Count callbacks by the owner contract being tested, rather
 than assuming every scheduled background callback is its retry.
+
+## 2026-09-30 — `pilot.click` misses silently; instrument the failure before fixing the guess (TASK-33211)
+
+The MCP workbench render-failure test flaked in the required PR Fast Lane for days
+(`expected an error toast naming the tool, got: []`). Two tasks guessed a
+worker-wait race, and the obvious fix -- poll longer for the toast -- would not have
+worked: in the failures the toast never arrived at all. Running 60 parametrized
+copies under xdist at load ~20 reproduced it (5%), and recording state per run showed
+`await pilot.click(run_button)` returned **False** every time: the button had moved
+(the test panel's preview worker and focus scroll shift it 7 rows) after the test
+aimed. `Pilot.click` returns whether the target was under the pointer; a miss raises
+nothing. Assert it (`assert await pilot.click(w)`), and after opening a panel wait for
+workers **and** `pilot.wait_for_scheduled_animations()` before aiming. Reproduce a
+flake with many parallel copies of the same test and log per-run state; a probe
+imported into a new module loses the original module's autouse fixtures.

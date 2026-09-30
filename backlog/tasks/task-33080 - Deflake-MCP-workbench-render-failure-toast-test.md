@@ -1,9 +1,10 @@
 ---
 id: TASK-33080
 title: Deflake MCP workbench render-failure toast test
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-27 18:30'
+updated_date: '2026-09-30 16:18'
 labels:
   - ci
   - flaky-test
@@ -21,7 +22,13 @@ The test clicks the tool's Run button, waits for workers to finish, and expects 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The root cause of the empty-toast failure is identified and recorded, with evidence (a reproduction under load or a traced event ordering)
-- [ ] #2 The test waits on the condition it asserts rather than on timing, and still fails if the render-failure toast is removed from production code
-- [ ] #3 The test passes 50 consecutive runs under CPU load (for example with pytest-repeat, or parallel runs on a loaded runner)
+- [x] #1 The root cause of the empty-toast failure is identified and recorded, with evidence (a reproduction under load or a traced event ordering)
+- [x] #2 The test waits on the condition it asserts rather than on timing, and still fails if the render-failure toast is removed from production code
+- [x] #3 The test passes 50 consecutive runs under CPU load (for example with pytest-repeat, or parallel runs on a loaded runner)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Duplicate of TASK-33211 (filed a day later for the same test); fixed there. Root cause with evidence is in TASK-33211's notes: `pilot.click` on Run returned False in every reproduced failure (the button moves while the test panel's preview and scroll settle), not a worker-wait race.
+<!-- SECTION:NOTES:END -->

@@ -6172,6 +6172,12 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
         await pilot.pause()
         await _select_tools_mode_row(app, pilot, 1)  # docs::search
         await pilot.click("#mcp-inspector-test-tool")
+        # Opening the panel moves Run (row 12 -> 5 at 120x40) while its
+        # preview worker and scroll settle. Clicking before then can miss the
+        # button entirely: TASK-33211 caught `pilot.click` returning False in
+        # every one of the CI flake's "got: []" failures.
+        await app.workers.wait_for_complete()
+        await pilot.wait_for_scheduled_animations()
         await pilot.pause()
         app.query_one("#mcp-schema-field-0", Input).value = "hello"
         run_button = app.query_one("#mcp-inspector-test-run", Button)
@@ -6191,9 +6197,14 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
             messages.append, level="WARNING", format="{message}"
         )
         try:
-            await pilot.click(run_button)
-            await app.workers.wait_for_complete()
-            await pilot.pause()
+            assert await pilot.click(run_button), "Run was not under the pointer"
+            # The run starts from a message chain (press -> inspector request
+            # -> workbench worker), so wait for the toast itself, bounded.
+            for _ in range(40):
+                await app.workers.wait_for_complete()
+                if any(severity == "error" for _, severity in notifications):
+                    break
+                await pilot.pause()
         finally:
             mcp_workbench_module.logger.remove(sink)
 
