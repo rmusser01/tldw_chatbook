@@ -129,7 +129,9 @@ def _environment(root, installed, *, role):
     return environment
 
 
-def _child(root, installed, route, *, role="retargeted", source=None):
+def _child(root, installed, route, *, role="retargeted", source=None, timeout=900):
+    if type(timeout) not in (int, float) or not 0 < timeout < float("inf"):
+        raise ValueError("native_child_timeout_invalid")
     environment = _environment(root, installed, role=role)
     arguments = [sys.executable, str(Path(__file__).resolve()), route, role]
     if source is not None:
@@ -143,7 +145,7 @@ def _child(root, installed, route, *, role="retargeted", source=None):
             env=environment,
             stdout=output,
             stderr=subprocess.STDOUT,
-            timeout=900,
+            timeout=timeout,
             check=False,
         )
     assert result.returncode == 0, f"native_child_failed:{route}:{result.returncode}"
@@ -1007,11 +1009,16 @@ def test_native_credential_source(tmp_path, native_package):
     )
 
 
-def test_native_credential_destinations(tmp_path, native_package):
+def test_native_credential_destinations(tmp_path, native_package, request):
     from Tests.Backup_Recovery.run_platform_product import (
         validate_native_credential_environment,
     )
 
+    timeout = request.config.getoption("timeout")
+    if timeout is None or type(timeout) in (int, float) and timeout == 0:
+        timeout = 900
+    if type(timeout) not in (int, float) or not 0 < timeout < float("inf"):
+        raise ValueError("native_child_timeout_invalid")
     validate_native_credential_environment()
     transfer = Path(os.environ["TLDW_CREDENTIAL_TRANSFER_ROOT"])
     sources = sorted(transfer.rglob("source-*.age"))
@@ -1037,8 +1044,8 @@ def test_native_credential_destinations(tmp_path, native_package):
         owned_sources.append(owned)
         for role in ("default", "retargeted"):
             _child(root, native_package, "setup", role=role)
-        _child(root, native_package, "transfer", source=owned)
-        _child(root, native_package, "rollback", source=owned)
+        _child(root, native_package, "transfer", source=owned, timeout=timeout)
+        _child(root, native_package, "rollback", source=owned, timeout=timeout)
         results.append(json.loads((root / "direction.json").read_text()))
     negative_root = tmp_path / "negative-checks"
     negative_root.mkdir(mode=0o700)

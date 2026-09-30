@@ -558,9 +558,23 @@ def test_native_capture_observes_incomplete_inventory_before_refusal(
     assert "positive-native-secret" not in path.read_text()
 
 
-@pytest.mark.parametrize("corrupt_copy", (None, "ciphertext", "receipt"))
+@pytest.mark.parametrize(
+    "corrupt_copy,phase_timeout,expected_timeout",
+    [
+        (None, 4800, 4800),
+        ("ciphertext", 4800, 4800),
+        ("receipt", 4800, 4800),
+        (None, None, 900),
+        (None, 0, 900),
+        (None, -1, None),
+        (None, float("nan"), None),
+        (None, float("inf"), None),
+        (None, "4800", None),
+        (None, False, None),
+    ],
+)
 def test_native_destinations_seed_retargeted_profile_before_negative_checks(
-    tmp_path, monkeypatch, corrupt_copy
+    tmp_path, monkeypatch, corrupt_copy, phase_timeout, expected_timeout
 ):
     import shutil
 
@@ -599,8 +613,11 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
     setups, completed_forward, reversed_roots = {}, set(), []
     children, owned_sources = [], {}
 
-    def child(root, installed, route, *, role="retargeted", source=None):
+    def child(root, installed, route, *, role="retargeted", source=None, timeout=900):
         children.append((route, role))
+        assert timeout == (
+            expected_timeout if route in {"transfer", "rollback"} else 900
+        )
         if source is not None:
             original = transfer / source.name
             assert source != original and source.read_bytes() == originals[original]
@@ -633,15 +650,38 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
             (root / "negative-results.json").write_text('{"negative_checks":7}')
 
     monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", str(transfer))
-    monkeypatch.setattr(runner, "validate_native_credential_environment", lambda: None)
+
+    def preflight():
+        assert expected_timeout is not None, "invalid timeout reached native preflight"
+
+    monkeypatch.setattr(runner, "validate_native_credential_environment", preflight)
     monkeypatch.setattr(product, "_child", child)
     monkeypatch.setattr(product, "_receipt", lambda installed, **extra: extra)
-    if corrupt_copy is not None:
+    request = SimpleNamespace(
+        config=SimpleNamespace(
+            getoption=lambda name: (
+                phase_timeout
+                if name == "timeout"
+                else pytest.fail("unexpected pytest option")
+            )
+        )
+    )
+    if expected_timeout is None:
+        with pytest.raises(ValueError, match="native_child_timeout_invalid"):
+            product.test_native_credential_destinations(
+                run, tmp_path / "installed", request
+            )
+        assert not children
+    elif corrupt_copy is not None:
         with pytest.raises(AssertionError):
-            product.test_native_credential_destinations(run, tmp_path / "installed")
+            product.test_native_credential_destinations(
+                run, tmp_path / "installed", request
+            )
         assert not children
     else:
-        product.test_native_credential_destinations(run, tmp_path / "installed")
+        product.test_native_credential_destinations(
+            run, tmp_path / "installed", request
+        )
         assert reversed_roots == [run / name for name in ("Darwin", "Linux", "Windows")]
         assert (
             json.loads((transfer / "outbound/destination-results.json").read_text())[
@@ -650,6 +690,93 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
             == 7
         )
     assert all(path.read_bytes() == before for path, before in originals.items())
+
+
+@pytest.mark.parametrize("timeout", [None, 4800.0], ids=["default", "phase"])
+@pytest.mark.parametrize("outcome", ["success", "nonzero", "timeout", "interrupt"])
+def test_native_child_deadline_preserves_failure_and_private_output(
+    tmp_path, monkeypatch, timeout, outcome
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    installed, source = tmp_path / "installed", root / "source.age"
+    environment = {"HOME": str(root / "home")}
+    calls, outputs = [], []
+    monkeypatch.setattr(product, "_environment", lambda *args, **kwargs: environment)
+
+    def run(arguments, **kwargs):
+        calls.append(kwargs["timeout"])
+        outputs.append(kwargs["stdout"])
+        assert arguments == [
+            sys.executable,
+            str(Path(product.__file__).resolve()),
+            "transfer",
+            "retargeted",
+            str(source),
+        ]
+        assert kwargs["cwd"] == root and kwargs["env"] == environment
+        assert kwargs["stderr"] == product.subprocess.STDOUT
+        assert kwargs["check"] is False
+        kwargs["stdout"].write("positive-native-secret\n")
+        if outcome == "timeout":
+            raise product.subprocess.TimeoutExpired(
+                arguments, kwargs["timeout"], output="positive-native-secret"
+            )
+        if outcome == "interrupt":
+            raise KeyboardInterrupt
+        return SimpleNamespace(returncode=int(outcome == "nonzero"))
+
+    monkeypatch.setattr(product.subprocess, "run", run)
+
+    def child():
+        return product._child(
+            root,
+            installed,
+            "transfer",
+            source=source,
+            **({} if timeout is None else {"timeout": timeout}),
+        )
+
+    if outcome == "success":
+        assert child() is None
+    else:
+        failure = {
+            "nonzero": AssertionError,
+            "timeout": product.subprocess.TimeoutExpired,
+            "interrupt": KeyboardInterrupt,
+        }[outcome]
+        with pytest.raises(failure) as caught:
+            child()
+        assert "positive-native-secret" not in str(caught.value)
+        if outcome == "nonzero":
+            assert str(caught.value).startswith("native_child_failed:transfer:1")
+    assert calls == [900 if timeout is None else timeout]
+    assert all(output.closed for output in outputs)
+    log = root / "transfer-retargeted.log"
+    assert log.read_text() == "positive-native-secret\n"
+    assert list(root.iterdir()) == [log]
+
+
+@pytest.mark.parametrize(
+    "timeout", [-1, 0, None, float("nan"), float("inf"), "4800", False]
+)
+def test_native_child_refuses_invalid_deadline_before_environment(
+    tmp_path, monkeypatch, timeout
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    root = tmp_path / "native-child-private"
+    root.mkdir(mode=0o700)
+    monkeypatch.setattr(
+        product,
+        "_environment",
+        lambda *args, **kwargs: pytest.fail("invalid timeout touched environment"),
+    )
+    with pytest.raises(ValueError, match="native_child_timeout_invalid"):
+        product._child(root, tmp_path / "installed", "transfer", timeout=timeout)
+    assert not list(root.iterdir())
 
 
 def test_native_rollback_child_diagnostics_keep_only_safe_frames(tmp_path):
