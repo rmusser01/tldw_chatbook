@@ -24,6 +24,8 @@ from uuid import uuid4
 import pytest
 
 from Tests.Chat.test_console_first_send_atomicity import _controller as _base_controller
+from Tests.Chat.test_console_provider_continuation import _active_checkpoint
+from tldw_chatbook.Agents.agent_models import ContinuationEventContext, ToolBatchReady
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
@@ -318,15 +320,15 @@ async def test_fork_commit_recheck_walks_past_saved_system_rows_only(
     )
 
 
-def _fail_first_provider_call(gateway) -> None:
-    """Make the first provider stream fail the way a dropped request does."""
+def _fail_provider_call(gateway, failing_call: int) -> None:
+    """Make one provider stream fail the way a dropped request does."""
     stream = gateway.stream_chat
     calls = 0
 
     async def stream_chat(resolution, messages, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 1:
+        if calls == failing_call:
             raise RuntimeError("provider dropped the request")
         async for chunk in stream(resolution, messages, **kwargs):
             yield chunk
@@ -344,7 +346,7 @@ async def test_refusal_names_the_blocking_row_and_the_nearest_boundary(
     not a generic sentence about the selected message.
     """
     _db, store, controller, gateway = _controller(tmp_path)
-    _fail_first_provider_call(gateway)
+    _fail_provider_call(gateway, 1)
 
     await controller.submit_draft("first question", session_id=_SESSION)
     failed = _last(store, ConsoleMessageRole.ASSISTANT)
@@ -367,6 +369,166 @@ async def test_refusal_names_the_blocking_row_and_the_nearest_boundary(
     assert store.fork_eligibility(_active_messages(store)[0].id) == (
         ConsoleForkEligibility(True)
     )
+    # Selecting the blocking row itself names the same fallback: the reason
+    # alone ("no content") would leave the user with no next step.
+    assert store.fork_eligibility(failed.id) == ConsoleForkEligibility(
+        False,
+        "This partial response has no content to fork. "
+        'Fork from the User message "first question" instead.',
+    )
+
+
+@pytest.mark.asyncio
+async def test_refusal_names_the_nearest_boundary_not_the_first(tmp_path) -> None:
+    _db, store, controller, gateway = _controller(tmp_path)
+    _fail_provider_call(gateway, 2)
+
+    await _send(controller, "first question")
+    await controller.submit_draft("second question", session_id=_SESSION)
+    failed = _last(store, ConsoleMessageRole.ASSISTANT)
+    assert (failed.status, failed.content) == ("failed", "")
+    await _send(controller, "third question")
+
+    assert store.fork_eligibility(
+        _last(store, ConsoleMessageRole.ASSISTANT).id
+    ) == ConsoleForkEligibility(
+        False,
+        "The failed Assistant reply above this message has no text to copy. "
+        'Fork from the User message "second question" instead.',
+    )
+
+
+def test_discarded_reply_is_named_by_its_state_not_its_placeholder_text() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+        ephemeral=True,
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
+    discarded = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Response discarded."
+    )
+    store._nodes_by_session[session.id][discarded.id].status = "discarded"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+    later = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a2"
+    )
+
+    assert store.fork_eligibility(later.id) == ConsoleForkEligibility(
+        False,
+        "The discarded Assistant reply above this message can't be copied into "
+        'a fork. Fork from the User message "q1" instead.',
+    )
+    assert store.fork_eligibility(discarded.id) == ConsoleForkEligibility(
+        False,
+        'Discarded messages cannot be forked. Fork from the User message "q1" '
+        "instead.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_temporary_chat_help_between_turns_forks_the_whole_exchange(
+    tmp_path,
+) -> None:
+    """AC#2 covers temporary chats too: the note is left out, never a blocker."""
+    _db, store, _controller_, _gateway = _controller(tmp_path)
+    session = store.create_session(
+        session_id="temporary-1",
+        title="Temporary",
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", model="test-model", streaming=False
+        ),
+        ephemeral=True,
+    )
+    for role, content in (
+        (ConsoleMessageRole.USER, "q1"),
+        (ConsoleMessageRole.ASSISTANT, "a1"),
+        (ConsoleMessageRole.SYSTEM, _HELP_NOTE),
+        (ConsoleMessageRole.USER, "q2"),
+        (ConsoleMessageRole.ASSISTANT, "a2"),
+    ):
+        boundary = store.append_message(session.id, role=role, content=content)
+
+    assert store.fork_eligibility(boundary.id) == ConsoleForkEligibility(True)
+    snapshot = store.stage_fork_snapshot(
+        store.issue_fork_fence(boundary.id),
+        title="Fork",
+        fork_session_id=str(uuid4()),
+        fork_conversation_id=None,
+    )
+    fork = store.register_fork_snapshot(snapshot, activate=False)
+
+    assert [
+        (store.get_message(native_id).role, store.get_message(native_id).content)
+        for native_id in store.active_path_message_ids(fork.id)
+    ] == [
+        (ConsoleMessageRole.USER, "q1"),
+        (ConsoleMessageRole.ASSISTANT, "a1"),
+        (ConsoleMessageRole.USER, "q2"),
+        (ConsoleMessageRole.ASSISTANT, "a2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_help_between_sends_leaves_one_parent_chain_for_compaction(
+    tmp_path,
+) -> None:
+    """The same missing live lineage broke automatic compaction (GAP2-01)."""
+    _db, store, controller, _gateway = _controller(tmp_path)
+
+    await _send(controller, "first question")
+    _append_help_note(store)
+    await _send(controller, "second question")
+    snapshots = controller._durable_context_snapshots(_SESSION)
+
+    assert snapshots is not None
+    assert [snapshot.role for snapshot in snapshots] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert snapshots[0].parent_message_id is None
+    for parent, child in zip(snapshots, snapshots[1:]):
+        assert child.parent_message_id == parent.message_id
+
+
+@pytest.mark.asyncio
+async def test_continuation_owner_saved_by_its_first_tool_batch_mirrors_its_parent(
+    tmp_path,
+) -> None:
+    """The other first-save path (a tool batch before any text) links too."""
+    db = CharactersRAGDB(tmp_path / "continuation.sqlite", "fork-continuation")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(
+            title="Durable continuation",
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+        )
+        user = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Use it", persist=True
+        )
+        owner = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        assert owner.persisted_message_id is None
+        store.persist_provider_continuation_event(
+            ToolBatchReady(
+                ContinuationEventContext(owner.id, "run", "primary", "persistent"),
+                _active_checkpoint(),
+                None,
+            )
+        )
+
+        live = store.get_message(owner.id)
+        assert live.persisted_message_id == owner.id
+        assert live.parent_message_id == user.persisted_message_id
+        assert (
+            db.get_message_by_id(owner.id)["parent_message_id"]
+            == user.persisted_message_id
+        )
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -386,18 +548,29 @@ async def test_eligibility_refuses_whatever_the_fence_would_refuse(tmp_path) -> 
     store._nodes_by_session[_SESSION][later.id].parent_message_id = None
 
     boundary = store.fork_eligibility(later.id)
-    assert boundary.eligible is False
-    assert "saved history" in boundary.reason
-    with pytest.raises(ValueError, match="saved history"):
+    # Plain language, no "reopen the chat" promise a reload cannot keep (a
+    # legacy flat-parent chat reloads with the same missing link).
+    assert boundary == ConsoleForkEligibility(
+        False,
+        "This message isn't linked to the message before it in the saved chat, "
+        "so it can't be forked. No earlier message can be forked.",
+    )
+    with pytest.raises(ValueError) as refused:
         store.issue_fork_fence(later.id)
-    # An earlier boundary walks the broken link on its way to the saved leaf.
-    assert store.fork_eligibility(first_answer.id).eligible is False
+    assert str(refused.value) == boundary.reason
+    # An earlier boundary walks the broken link on its way to the saved leaf;
+    # the refusal names that row rather than "saved active leaf lineage".
+    assert store.fork_eligibility(first_answer.id) == ConsoleForkEligibility(
+        False,
+        "The Assistant reply \"done\" further down isn't linked to the message "
+        "before it in the saved chat, so no message up to it can be forked.",
+    )
 
 
 def test_guide_never_advertises_a_refused_fork() -> None:
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
-    reason = 'The System note "x" above this message can\'t be copied into a fork.'
+    reason = "The failed Assistant reply above this message has no text to copy."
 
     refused = action_row_guide(
         service.available_actions(

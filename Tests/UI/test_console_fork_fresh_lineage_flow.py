@@ -110,7 +110,8 @@ def _guide(console) -> str:
     return " ".join(_visible_text(console).split())
 
 
-async def _press_f_opens_fork_dialog(host, console, pilot, message) -> None:
+async def _press_f_opens_fork_dialog(host, console, pilot, message):
+    """Press ``f`` on ``message`` and return the Fork dialog's summary."""
     transcript = await _select(console, pilot, message)
     fork = console.query_one(f"#console-message-action-fork-{message.id}", Button)
     assert not fork.disabled, fork.tooltip
@@ -136,6 +137,7 @@ async def _press_f_opens_fork_dialog(host, console, pilot, message) -> None:
             raise AssertionError(f"Fork dialog did not open; notices={notices!r}")
     finally:
         console.app_instance.notify = original_notify
+    summary = host.screen_stack[-1].summary
     await pilot.press("escape")
     for _ in range(80):
         if not isinstance(host.screen_stack[-1], ConsoleForkChatModal):
@@ -143,6 +145,7 @@ async def _press_f_opens_fork_dialog(host, console, pilot, message) -> None:
         await pilot.pause(0.05)
     else:
         raise AssertionError("Fork dialog did not close on Escape")
+    return summary
 
 
 @pytest.mark.asyncio
@@ -192,13 +195,30 @@ async def test_help_then_send_then_fork_opens_the_fork_dialog():
         await _send(console, pilot, "Reply with exactly: hello there friend")
         # The /help output is still on the active path above the new turn.
         assert _active(console)[0].role is ConsoleMessageRole.SYSTEM
+        # The dialog's facts (image choices, attachment/citation/video flags)
+        # are captured over the rows the fork copies, never the /help note.
+        session_controller = console._session
+        capture = session_controller._capture_fork_image_selections_fn
+        captured: list[tuple[ConsoleMessageRole, ...]] = []
 
-        await _press_f_opens_fork_dialog(
+        def spy(prefix):
+            captured.append(tuple(message.role for message in prefix))
+            return capture(prefix)
+
+        session_controller._capture_fork_image_selections_fn = spy
+
+        summary = await _press_f_opens_fork_dialog(
             host, console, pilot, _last(console, ConsoleMessageRole.ASSISTANT)
         )
-        await _press_f_opens_fork_dialog(
+        assert summary.message_count == 2
+        summary = await _press_f_opens_fork_dialog(
             host, console, pilot, _last(console, ConsoleMessageRole.USER)
         )
+        assert summary.message_count == 1
+        assert captured == [
+            (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT),
+            (ConsoleMessageRole.USER,),
+        ]
 
 
 @pytest.mark.asyncio
@@ -278,3 +298,15 @@ async def test_refused_fork_is_not_advertised_and_names_the_blocking_row():
         await pilot.pause()
         assert not isinstance(host.screen_stack[-1], ConsoleForkChatModal)
         assert notices == [store.fork_eligibility(later.id).reason]
+
+        # The blocking row itself also says where the user CAN fork from.
+        failed = replies[-1]
+        await _select(console, pilot, failed)
+        fork = console.query_one(f"#console-message-action-fork-{failed.id}", Button)
+        guide = _guide(console)
+        assert fork.disabled
+        assert "f Fork" not in guide
+        assert (
+            "Fork unavailable — This partial response has no content to fork. "
+            'Fork from the User message "first question" instead.'
+        ) in guide

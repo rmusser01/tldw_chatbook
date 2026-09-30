@@ -1331,6 +1331,11 @@ class ConsoleMessageActionService:
     ) -> str:
         if message.status in {"pending", "streaming"}:
             return "Wait for this message to finish before forking."
+        if not eligibility.eligible:
+            # The store's refusal names the blocking row and the nearest
+            # boundary to fork from instead (TASK-33621.10); the generic
+            # state reasons below only cover a caller with no store verdict.
+            return eligibility.reason or "This message cannot be forked."
         if message.status == "discarded":
             return "Discarded messages cannot be forked."
         if message.status in {"stopped", "failed"} and not message.content.strip():
@@ -1340,6 +1345,4 @@ class ConsoleMessageActionService:
             and not ConsoleMessageActionService._is_assistant_message(message)
         ):
             return "Only complete user messages can be forked."
-        if not eligibility.eligible:
-            return eligibility.reason or "This message cannot be forked."
         return ""

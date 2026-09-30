@@ -89,8 +89,9 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedGeneration,
     ConsoleForkProjectedMessage,
     ConsoleForkProjectedVideoTombstone,
+    CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE,
+    check_console_fork_saved_tail,
     console_fork_prefix_refusal,
-    console_fork_skips,
     console_fork_source_ids,
     encode_console_fork_message_metadata,
     fingerprint_console_fork_configuration,
@@ -713,6 +714,7 @@ class ConsoleDurableTurnCommit:
     assistant_message_id: str
     assistant_message_version: int
     checkpoint: ConsoleDispatchCheckpoint
+    user_parent_message_id: str | None
     first_persist: bool = False
     generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None
     generation_revision: int = 0
@@ -6248,6 +6250,7 @@ class ConsoleChatStore:
                 assistant_message_id=owners.assistant_message_id,
                 assistant_message_version=checkpoint.assistant_message_version,
                 checkpoint=checkpoint,
+                user_parent_message_id=acceptance.parent_message_id,
                 first_persist=first_persist,
                 generation_snapshot=generation_snapshot,
                 generation_revision=generation_revision,
@@ -6869,9 +6872,8 @@ class ConsoleChatStore:
         if self._message_session_index.get(user.id) != session_id:
             raise RuntimeError("Committed USER owner changed sessions.")
         user.persisted_message_id = commit.user_message_id
-        # TASK-33621.10: mirror the committed rows' parents as reload does (the
-        # USER row was written via ``durable_parent_for_message``'s same walk).
-        user.parent_message_id = self._nearest_persisted_ancestor_id(session_id, user)
+        # TASK-33621.10: mirror the parents the commit wrote, as reload does.
+        user.parent_message_id = commit.user_parent_message_id
         # The atomic acceptance transaction creates the durable USER row, but
         # the optimistic live echo accumulated its trajectory observations
         # before it had that durable identity. Publish the sidecar owner now so
@@ -7270,37 +7272,16 @@ class ConsoleChatStore:
         conversation_id = session.persisted_conversation_id
         reader = getattr(self.persistence, "get_console_fork_active_leaf", None)
         if conversation_id is None or not callable(reader):
-            raise ValueError("Saved active leaf is unavailable.")
+            raise ValueError(CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE)
         active_leaf_id = reader(conversation_id)
         if type(active_leaf_id) is not str or not active_leaf_id:
-            raise ValueError("Saved active leaf is unavailable.")
-        active_path = self.active_path_message_ids(session_id)
-        boundary_index = active_path.index(boundary_message_id)
-        try:
-            leaf_index = next(
-                index
-                for index, native_id in enumerate(active_path)
-                if self._nodes_by_session[session_id][native_id].persisted_message_id
-                == active_leaf_id
-            )
-        except StopIteration as exc:
-            raise ValueError("Saved active leaf lineage is unavailable.") from exc
-        if leaf_index < boundary_index:
-            raise ValueError("Saved active leaf lineage is unavailable.")
-        previous_id = self._nodes_by_session[session_id][
-            boundary_message_id
-        ].persisted_message_id
-        for native_id in active_path[boundary_index + 1 : leaf_index + 1]:
-            message = self._nodes_by_session[session_id][native_id]
-            if console_fork_skips(message) and message.persisted_message_id is None:
-                continue
-            if (
-                type(message.persisted_message_id) is not str
-                or not message.persisted_message_id
-                or message.parent_message_id != previous_id
-            ):
-                raise ValueError("Saved active leaf lineage is unavailable.")
-            previous_id = message.persisted_message_id
+            raise ValueError(CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE)
+        check_console_fork_saved_tail(
+            self.active_path_message_ids(session_id),
+            self._nodes_by_session[session_id],
+            boundary_message_id,
+            active_leaf_id,
+        )
         return active_leaf_id
 
     def _fork_lineage(
@@ -21183,14 +21164,16 @@ class ConsoleChatStore:
             creator = getattr(database, "create_assistant_with_continuation", None)
             if not callable(creator):
                 raise RuntimeError("Durable continuation storage is unavailable.")
+            parent_message_id = self._previous_persisted_message_id(message)
             creator(
                 message_id=message.id,
                 conversation_id=conversation_id,
-                parent_message_id=self._previous_persisted_message_id(message),
+                parent_message_id=parent_message_id,
                 content=content,
                 provider_continuation_json=private_json,
             )
             message.persisted_message_id = message.id
+            message.parent_message_id = parent_message_id
             self._pending_persistence_message_ids.discard(message.id)
             message_version = 1
         else:
