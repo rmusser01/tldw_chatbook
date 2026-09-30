@@ -67,7 +67,8 @@ Clean version; the path starts as a file named after the chat in
 names the file and the folder it went to (a bare file name is saved in the
 folder the app was started from). Esc, **Cancel**, or a click outside the
 prompt closes it without writing, and focus returns to the row you opened the
-menu from. If the file cannot be written — for example the folder is
+menu from — that chat's row even if the list reordered meanwhile, or the row
+now in its place if the chat has left the list. If the file cannot be written — for example the folder is
 read-only, or part of the path is a file — a notification names the path and
 the problem, and the Console stays open.
 

@@ -260,3 +260,90 @@ async def test_a_move_queued_behind_a_busy_app_still_wins() -> None:
 
         assert rows.recompose_in_flight is False
         assert app.focused is elsewhere, app.focused
+
+
+# ---- A prompt opened from a list row (Qodo #2932, checkpoint review) --------
+#
+# A modal restores focus to the widget that was focused under it, and falls
+# back to that widget's DOM id when a rebuild has replaced it. A list row's id
+# is positional, so a rebuild that reordered the list while the prompt was up
+# sent focus to whichever item now held the slot. A row carrying its own
+# `focus_identity` is found again by that identity, or -- when its item left
+# the list -- replaced by the stand-in `resolve_focus_anchor` picks.
+
+
+class _KeyedRows(RecomposeCaptureGuard, Vertical):
+    RECOMPOSE_KEEPS_FOCUS = True
+    DEFAULT_CSS = "_KeyedRows { height: auto; }"
+
+    def __init__(self, keys: tuple[str, ...]) -> None:
+        super().__init__()
+        self.keys = keys
+
+    def compose(self) -> ComposeResult:
+        for index, key in enumerate(self.keys):
+            row = Button(key, id=f"keyed-row-{index}")
+            row.focus_identity = f"keyed-row:{key}"
+            row.row_key = key
+            yield row
+
+
+def _prompt_class():
+    from textual.screen import ModalScreen
+
+    from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
+    class _Prompt(SafeModalDismissMixin, ModalScreen[None]):
+        SAFE_MODAL_CONTENT = "#prompt-box"
+        BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="prompt-box"):
+                yield Button("OK", id="prompt-ok")
+
+    return _Prompt
+
+
+class _PromptHost(App[None]):
+    def compose(self) -> ComposeResult:
+        yield Button("Outside", id="outside")
+        yield _KeyedRows(("a", "b", "c"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("focused_key", "keys_after", "expected_key"),
+    [
+        ("b", ("c", "a", "b"), "b"),  # reordered: its own row, wherever it went
+        ("b", ("a", "c"), "c"),  # left the list: the row now in its place
+        ("c", ("a", "b"), "b"),  # the last row left: the nearest row
+    ],
+    ids=["reordered", "left-the-list", "last-row-left"],
+)
+async def test_closing_a_prompt_returns_focus_to_the_openers_item(
+    focused_key, keys_after, expected_key
+) -> None:
+    app = _PromptHost()
+    async with app.run_test() as pilot:
+        main = app.screen
+        rows = app.query_one(_KeyedRows)
+        (opener,) = [row for row in rows.query(Button) if row.row_key == focused_key]
+        opener.focus()
+        await pilot.pause()
+        app.push_screen(_prompt_class()())
+        await pilot.pause(0.2)
+        assert app.screen is not main
+
+        rows.keys = keys_after
+        rows.refresh(recompose=True)
+        await pilot.pause(0.6)
+        assert not opener.is_attached and not rows.recompose_in_flight
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+
+        assert app.screen is main
+        focused = app.focused
+        assert focused is not None and focused.is_attached, focused
+        assert getattr(focused, "row_key", None) == expected_key, (
+            f"focus went to {focused.id} (item {getattr(focused, 'row_key', None)!r})"
+        )

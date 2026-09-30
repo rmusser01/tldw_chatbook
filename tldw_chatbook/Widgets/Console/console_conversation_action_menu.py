@@ -53,6 +53,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from textual.app import AwaitRemove
     from textual.screen import Screen
 
+    from tldw_chatbook.Widgets.recompose_capture_guard import FocusAnchor
+
 MENU_ID = "console-conversation-action-menu"
 MENU_ITEM_PREFIX = "console-conversation-action-"
 
@@ -97,6 +99,7 @@ class ConversationActionChosen(Message):
         target: ConversationMenuTarget,
         *,
         opener_id: str = "",
+        opener_anchor: FocusAnchor | None = None,
     ) -> None:
         """Create the message.
 
@@ -110,11 +113,14 @@ class ConversationActionChosen(Message):
                 the prompt returns the user to the row they started from
                 (TASK-33621.12) instead of wherever the menu's removal
                 dropped focus.
+            opener_anchor: The opener's stable identity, preferred over
+                ``opener_id`` -- see ``ConsoleConversationActionMenu``.
         """
         super().__init__()
         self.action_id = action_id
         self.target = target
         self.opener_id = opener_id
+        self.opener_anchor = opener_anchor
 
 
 class ConversationActionMenuDismissed(Message):
@@ -127,7 +133,13 @@ class ConversationActionMenuDismissed(Message):
     only correct when the menu itself held focus (its own Escape path).
     """
 
-    def __init__(self, opener_id: str, *, restore_focus: bool = True) -> None:
+    def __init__(
+        self,
+        opener_id: str,
+        *,
+        restore_focus: bool = True,
+        opener_anchor: FocusAnchor | None = None,
+    ) -> None:
         """Create the message.
 
         Args:
@@ -135,10 +147,13 @@ class ConversationActionMenuDismissed(Message):
                 can be restored deterministically.
             restore_focus: Whether the screen handler should return focus to
                 the opener.
+            opener_anchor: The opener's stable identity, preferred over
+                ``opener_id`` -- see ``ConsoleConversationActionMenu``.
         """
         super().__init__()
         self.opener_id = opener_id
         self.restore_focus = restore_focus
+        self.opener_anchor = opener_anchor
 
 
 class ConsoleConversationActionMenu(VerticalScroll):
@@ -201,6 +216,7 @@ class ConsoleConversationActionMenu(VerticalScroll):
         opener_id: str,
         screen_x: int,
         screen_y: int,
+        opener_anchor: FocusAnchor | None = None,
     ) -> None:
         """Create a menu bound immutably to one row.
 
@@ -210,10 +226,16 @@ class ConsoleConversationActionMenu(VerticalScroll):
             opener_id: DOM id of the asterisk that opened this menu.
             screen_x: Absolute column to anchor at.
             screen_y: Absolute row to anchor at.
+            opener_anchor: The opener's stable identity and place, captured
+                as the menu opened. A row's DOM id is positional, so a tray
+                rebuild while the menu (or a prompt it opens) is up can hand
+                ``opener_id`` to another chat; focus goes back through this
+                instead when present (Qodo #2932).
         """
         super().__init__(id=MENU_ID)
         self._target = target
         self._opener_id = opener_id
+        self._opener_anchor = opener_anchor
         self._anchor = (screen_x, screen_y)
         self._page: MenuPage = "root"
         self._claimed = False
@@ -302,7 +324,11 @@ class ConsoleConversationActionMenu(VerticalScroll):
             return
         self._claimed = True
         if restore_focus:
-            self.post_message(ConversationActionMenuDismissed(self._opener_id))
+            self.post_message(
+                ConversationActionMenuDismissed(
+                    self._opener_id, opener_anchor=self._opener_anchor
+                )
+            )
         self._detach()
 
     async def await_detachment(self) -> None:
@@ -367,7 +393,10 @@ class ConsoleConversationActionMenu(VerticalScroll):
         self._claimed = True
         self.post_message(
             ConversationActionChosen(
-                action_id, self._target, opener_id=self._opener_id
+                action_id,
+                self._target,
+                opener_id=self._opener_id,
+                opener_anchor=self._opener_anchor,
             )
         )
         self._detach()

@@ -689,6 +689,100 @@ async def test_save_prompt_closes_without_writing_and_restores_focus(
         )
 
 
+async def _make_newest(pilot, chat_screen, session_id: str, opener_id: str) -> None:
+    """Give ``session_id`` a new message, so it rises to the top of the rail.
+
+    Waits until the rail has re-synced and ``opener_id`` -- its old slot --
+    belongs to another chat.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    store = chat_screen._ensure_console_chat_store()
+    store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="a newer question"
+    )
+    chat_screen._sync_console_workspace_context()
+    tray = chat_screen.query_one("#console-workspace-context")
+
+    def _slot_moved_on() -> bool:
+        slot = next(iter(chat_screen.query(f"#{opener_id}")), None)
+        return (
+            slot is not None
+            and not tray.recompose_in_flight
+            and getattr(slot, "row_key", None) not in (None, f"native:{session_id}")
+        )
+
+    assert await _wait_until(pilot, _slot_moved_on), (
+        "the chat never moved: its old slot still names it"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reorder_while", ["menu-open", "prompt-open"])
+@private_profile_test
+async def test_a_reorder_during_save_md_returns_focus_to_the_same_chat(
+    request, reorder_while
+) -> None:
+    """Checkpoint review of Qodo #2932: the opener is its chat, not its slot.
+
+    Row ids are positional. The menu captured its opener's id when it
+    opened, and the Save .md prompt captured the same id under it, so a tray
+    rebuild that reordered the chats while either was open sent focus to the
+    chat that now held that slot -- the next Enter or ``m`` acted on the
+    wrong chat. Two open chats; the menu is opened from the older one's
+    row, that chat then gets a message (so it moves to the top), and Esc
+    closes the prompt.
+    """
+    from Tests.UI.test_console_tray_rebuild_focus import _open_second_tab
+
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        chat_screen = pilot.app.screen
+        await _seed_row_zero_messages(pilot)
+        store = chat_screen._ensure_console_chat_store()
+        first_id = store.active_session_id
+        first_key = f"native:{first_id}"
+        await _open_second_tab(chat_screen, store, pilot)
+        (opener,) = [
+            button
+            for button in chat_screen.query(Button)
+            if str(button.id or "").startswith("console-conversation-actions-")
+            and getattr(button, "row_key", None) == first_key
+        ]
+        opener_id = str(opener.id)
+
+        opener.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        menu = chat_screen.query_one(ConsoleConversationActionMenu)
+        _menu_button(menu, "page:copy").focus()
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        if reorder_while == "menu-open":
+            await _make_newest(pilot, chat_screen, first_id, opener_id)
+        _menu_button(menu, "save-markdown").focus()
+        await pilot.press("enter")
+        assert await _wait_until(
+            pilot, lambda: _ready_save_prompt(pilot) is not None
+        ), f"no prompt; app exception: {pilot.app._exception!r}"
+        if reorder_while == "prompt-open":
+            await _make_newest(pilot, chat_screen, first_id, opener_id)
+
+        await pilot.press("escape")
+        assert await _wait_until(pilot, lambda: pilot.app.screen is chat_screen)
+        await pilot.pause(0.5)
+        _assert_app_alive(pilot)
+
+        focused = pilot.app.focused
+        assert focused is not None and str(focused.id or "").startswith(
+            "console-conversation-actions-"
+        ), f"focus landed on {focused!r}"
+        assert getattr(focused, "row_key", None) == first_key, (
+            f"focus followed the opener's old slot to chat "
+            f"{getattr(focused, 'row_key', None)!r}, not {first_key!r}"
+        )
+
+
 def _parent_is_a_file(tmp_path):
     blocker = tmp_path / "not-a-folder"
     blocker.write_text("occupied", encoding="utf-8")
