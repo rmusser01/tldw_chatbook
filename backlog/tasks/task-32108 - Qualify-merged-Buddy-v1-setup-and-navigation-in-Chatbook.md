@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-09-30 05:19'
+updated_date: '2026-09-30 05:48'
 labels: []
 dependencies: []
 priority: high
@@ -65,4 +65,6 @@ PR2910 provider-control dev rebase onto 5216de505826f2fb2036ccbb740fd667802d5b90
 2026-09-30 provider-preset dev rebase onto 2a74675eea24bc2d96b40bf1da2d6550043a58a1: all seven preceding PR patches remain identical. At tested source ce02e03442986d706e73455536626700cf52422c, 187 targeted cases passed in 66.55s (16 Buddy and 171 provider-preset/setup/env/catalog cases); all 11 preflight guards passed. Fresh/schema69 upgrade profiles retain schema73, ownership, workspace-default and Static/Dynamic assertions. Separate sanitized preset-dev-20260930/verification.json records exact source and local-log/profile hashes; older evidence attribution is unchanged. No full sweep or paid providers. Native/physical voice acceptance remains open; task stays In Progress. ADR required: no; existing ADR126 and ADR139 apply.
 
 2026-09-30 server-session character-boundary dev rebase onto 5980da9c12aa8257db2b3176bd5962b6b6ce00db: all eight preceding PR patches remain identical. At tested source ba3831f6e46218fabe0a24635c8e917b22287e0d, 113 targeted cases passed in 64.77s (16 Buddy qualification, 96 MCP-provider/Console-character cases including the nine incoming boundary cases, and one MCP toast regression); all 11 preflight guards passed. Fresh/schema69 upgrade profiles retain schema73, ownership, workspace-default and Static/Dynamic assertions. Separate sanitized character-dev-20260930/verification.json records exact source and local-log/profile hashes; older evidence attribution is unchanged. No full sweep or paid providers. Native/physical voice acceptance remains open; task stays In Progress. ADR required: no; existing ADR126 and ADR139 apply.
+
+PR2910 Qodo coverage finding on b6860cf13f was reproduced: serial/xdist child-only hits were absent, with two coverage failures and two standalone/disabled controls passing. Tests/private_profile.py now conditionally records child coverage with existing pytest-cov and hands unique parallel datasets to native parent combination, retaining source/config/branch/context options and the parent report threshold. No standalone/profile/timeout guard change. At fixed source b007dd43cf70408d88093ec983bf9702a800cb08, four real coverage probes plus 16 Buddy cases passed 20 total in 237.45s; fresh and upgrade each contribute 987 app run-context lines to parent data, with 1,074 hit app lines in XML. All 11 preflight guards and scoped Ruff/format/diff checks pass. Sanitized source-bound receipt: Docs/Reviews/artifacts/buddy-v1-32108/qodo-coverage-20260930/verification.json. Raw logs/XML/data remain local, older attribution is unchanged, and native/physical voice acceptance stays open. Task remains In Progress. ADR required: no; existing ADR126 applies.
 <!-- SECTION:NOTES:END -->

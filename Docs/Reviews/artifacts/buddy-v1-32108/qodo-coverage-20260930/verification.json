@@ -1,0 +1,128 @@
+{
+  "tested_source": "b007dd43cf70408d88093ec983bf9702a800cb08",
+  "dev_base": "5980da9c12aa8257db2b3176bd5962b6b6ce00db",
+  "finding": "private-profile child coverage omitted from parent report",
+  "app_run_context_lines_by_profile": {
+    "fresh": 987,
+    "upgrade": 987
+  },
+  "app_xml_lines_with_hits": 1074,
+  "tests_passed": 20,
+  "elapsed_seconds": 237.45,
+  "preflight_guards_passed": 11,
+  "pytest_cov_version": "7.1.0",
+  "coverage_version": "7.16.0",
+  "buddy_cases_passed": 16,
+  "coverage_regression_cases_passed": 4,
+  "red_regression_failed": 2,
+  "red_controls_passed": 2,
+  "serial_and_xdist_child_branches_included": true,
+  "standalone_and_no_cov_unchanged": true,
+  "parent_report_gate_unchanged": true,
+  "full_suite_run": false,
+  "paid_provider_calls": false,
+  "log_sha256": "e7654efb66173f73db2e301929742160a0518291a0a6c81e68e60d7821ae1322",
+  "preflight_log_sha256": "48a7e70be9ce3535b7457bb830f85382a32287d733c002ed0c44ccba3f747f5b",
+  "red_log_sha256": "a38ef233e2f46e235d101f4ab0577df8127e717661fca7d061025bc25af0b546",
+  "coverage_xml_sha256": "61b9dffcc1c9fc4aaef2ce535065fa856e6b785b71a0719d666a2cfea6894f9a",
+  "helper_sha256": "0e67da6536e5faf07a0ac4e2e33a2ab20107e59fd7bb65fc9a484e5a67f688e1",
+  "regression_sha256": "da316bf1979e72ff53d906e9478e7e09964ef694e98337664b5435d28eccddaa",
+  "profiles": {
+    "fresh": {
+      "profile": "fresh",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "b007dd43cf70408d88093ec983bf9702a800cb08",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    },
+    "upgrade": {
+      "profile": "upgrade",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "b007dd43cf70408d88093ec983bf9702a800cb08",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    }
+  },
+  "profile_receipt_sha256": {
+    "fresh": "1b9849e735fae8326a864a55d54192363f4fd5949497a8d29ca0c4e88dcf15f6",
+    "upgrade": "039f78d4baf24bf382198ae7d288a25ecd85438c48df79f7a9cd7a379de1ebae"
+  }
+}
