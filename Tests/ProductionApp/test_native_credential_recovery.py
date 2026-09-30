@@ -534,7 +534,7 @@ async def _capture():
         await app.tts_service.wait_closed()
 
 
-def _fresh_readback(source_system, *, rollback=False):
+def _fresh_readback(source_system, *, role, rollback=False):
     import keyring
 
     from tldw_chatbook.Backup_Recovery.credential_policies import GENERATION_KEYRINGS
@@ -545,44 +545,44 @@ def _fresh_readback(source_system, *, rollback=False):
     from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
     from tldw_chatbook.Utils.config_encryption import ConfigEncryption
 
-    for role, selector in zip(("default", "retargeted"), _selectors(), strict=True):
-        data = tomllib.loads(selector.read_text())
-        seed = json.loads((Path.cwd() / f"seed-{role}.json").read_text())
-        assert (
-            hashlib.sha256(
-                KeyringCitationFingerprintKeyProvider().load_key(seed["citation_id"])
-            ).hexdigest()
-            == seed["citation_sha256"]
+    selector = _selectors()[role == "retargeted"]
+    data = tomllib.loads(selector.read_text())
+    seed = json.loads((Path.cwd() / f"seed-{role}.json").read_text())
+    assert (
+        hashlib.sha256(
+            KeyringCitationFingerprintKeyProvider().load_key(seed["citation_id"])
+        ).hexdigest()
+        == seed["citation_sha256"]
+    )
+    if rollback:
+        assert ConfigEncryption().decrypt_value(
+            data["API"]["openai_api_key"], CONFIG_PASSWORD
+        ) == _value(platform.system(), role, "encrypted_config")
+    else:
+        assert "openai_api_key" not in data.get("API", {})
+    targets = ConfiguredServerTargetStore(
+        user_data_dir(data) / "mcp_server_targets.json"
+    ).list_targets()
+    assert len(targets) == 4
+    provider = _provider(selector)
+    for target, purpose in zip(
+        sorted(targets, key=lambda row: row.server_id),
+        sorted(PURPOSES),
+        strict=True,
+    ):
+        value, _ = provider._resolve_auth_token(
+            target.server_id, target, allow_legacy_config=False
         )
-        if rollback:
-            assert ConfigEncryption().decrypt_value(
-                data["API"]["openai_api_key"], CONFIG_PASSWORD
-            ) == _value(platform.system(), role, "encrypted_config")
-        else:
-            assert "openai_api_key" not in data.get("API", {})
-        targets = ConfiguredServerTargetStore(
-            user_data_dir(data) / "mcp_server_targets.json"
-        ).list_targets()
-        assert len(targets) == 4
-        provider = _provider(selector)
-        for target, purpose in zip(
-            sorted(targets, key=lambda row: row.server_id),
-            sorted(PURPOSES),
-            strict=True,
-        ):
-            value, _ = provider._resolve_auth_token(
-                target.server_id, target, allow_legacy_config=False
-            )
-            assert value == _value(
-                platform.system() if rollback else source_system, role, purpose
-            )
-            assert provider._get_credential_secret(target.server_id, purpose) == _value(
-                platform.system(), role, purpose
-            )
-            if role == "retargeted":
-                assert _provider(_selectors()[0])._get_credential_secret(
-                    target.server_id, purpose
-                ) == _value(platform.system(), "foreign", purpose)
+        assert value == _value(
+            platform.system() if rollback else source_system, role, purpose
+        )
+        assert provider._get_credential_secret(target.server_id, purpose) == _value(
+            platform.system(), role, purpose
+        )
+        if role == "retargeted":
+            assert _provider(_selectors()[0])._get_credential_secret(
+                target.server_id, purpose
+            ) == _value(platform.system(), "foreign", purpose)
     for _, service, names in GENERATION_KEYRINGS:
         for name in names:
             assert keyring.get_password(service, name) == _value(
@@ -728,7 +728,8 @@ def _transfer(source):
         assert service.wait(inspect_copy, timeout=120)["state"] == "succeeded"
         assert _material(service.inspection(inspect_copy))
         installed = Path(os.environ["TLDW_TEST_INSTALLED_PACKAGE"])
-        _child(Path.cwd(), installed, "read", source=source)
+        for role in ("default", "retargeted"):
+            _child(Path.cwd(), installed, "read", role=role, source=source)
 
         def preview_reverse(acknowledged):
             target = service.preview_backup(_selectors(), options={})
@@ -747,7 +748,8 @@ def _transfer(source):
                 original, plan, old_password=PASSWORD, new_password=PASSWORD
             ),
         )
-        _child(Path.cwd(), installed, "read-rollback", source=source)
+        for role in ("default", "retargeted"):
+            _child(Path.cwd(), installed, "read-rollback", role=role, source=source)
         assert all(_digest(path) == digest for path, digest in unselected.items())
         result = {
             "source_system": source_system,
@@ -1051,7 +1053,7 @@ def _main():
             source_system = json.loads(
                 Path(sys.argv[3]).with_suffix(".json").read_text()
             )["system"]
-            _fresh_readback(source_system, rollback=route == "read-rollback")
+            _fresh_readback(source_system, role=role, rollback=route == "read-rollback")
         assert not blocked_attempts(), "native_fixture_network_attempt"
     finally:
         stop_observer(stop)

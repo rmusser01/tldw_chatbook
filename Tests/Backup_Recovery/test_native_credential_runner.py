@@ -514,6 +514,89 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
     )
 
 
+@pytest.mark.parametrize("role", ("default", "retargeted"))
+@pytest.mark.parametrize("rollback", (False, True))
+def test_native_fresh_reader_opens_only_its_selected_profile(
+    tmp_path, monkeypatch, role, rollback
+):
+    import keyring
+
+    from Tests.ProductionApp import test_native_credential_recovery as product
+    from tldw_chatbook.Chat import citation_trace_identity
+    from tldw_chatbook.MCP import server_target_store
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    selector = product._selectors()[role == "retargeted"]
+    selector.parent.mkdir(mode=0o700, parents=True)
+    selector.write_text(
+        f'[general]\nusers_name="native_{role}"\n'
+        + ('[API]\nopenai_api_key="synthetic-encrypted"\n' if rollback else "")
+    )
+    key = b"synthetic-citation-key"
+    (tmp_path / f"seed-{role}.json").write_text(
+        json.dumps(
+            {
+                "citation_id": "synthetic",
+                "citation_sha256": hashlib.sha256(key).hexdigest(),
+            }
+        )
+    )
+    monkeypatch.setattr(
+        citation_trace_identity,
+        "KeyringCitationFingerprintKeyProvider",
+        lambda: SimpleNamespace(load_key=lambda key_id: key),
+    )
+    monkeypatch.setattr(
+        ConfigEncryption,
+        "decrypt_value",
+        lambda self, value, password: product._value(
+            product.platform.system(), role, "encrypted_config"
+        ),
+    )
+    opened = []
+    targets = [SimpleNamespace(server_id=purpose) for purpose in product.PURPOSES]
+
+    def store(path):
+        assert (
+            path.name == "mcp_server_targets.json"
+            and path.parent.name == "native_" + role
+        )
+        opened.append(path)
+        return SimpleNamespace(list_targets=lambda: targets)
+
+    def provider(path):
+        assert (
+            path == selector or role == "retargeted" and path == product._selectors()[0]
+        )
+        return SimpleNamespace(
+            _resolve_auth_token=lambda origin, target, **kwargs: (
+                product._value(
+                    product.platform.system() if rollback else "source", role, origin
+                ),
+                "synthetic",
+            ),
+            _get_credential_secret=lambda origin, purpose: product._value(
+                product.platform.system(),
+                role if path == selector else "foreign",
+                purpose,
+            ),
+        )
+
+    monkeypatch.setattr(server_target_store, "ConfiguredServerTargetStore", store)
+    monkeypatch.setattr(product, "_provider", provider)
+    monkeypatch.setattr(
+        keyring,
+        "get_password",
+        lambda service, name: product._value(
+            product.platform.system(), "generation", name
+        ),
+    )
+    product._fresh_readback("source", role=role, rollback=rollback)
+    assert len(opened) == 1
+
+
 def test_native_fixture_previews_owner_reads_under_protected_context(
     tmp_path, monkeypatch
 ):
@@ -789,15 +872,28 @@ def test_native_previews_keep_mode_specific_review_and_private_setup_parent(
             rounds.append(
                 tuple(preview(acknowledged) for acknowledged in acknowledgments)
             )
-            if len(rounds) == 2:
-                raise PreviewReached()
             return {"result": {"journal_operation_id": "original"}}
 
         monkeypatch.setattr(product, "_run_reviewed_replacement", review)
-        monkeypatch.setattr(product, "_child", lambda *args, **kwargs: None)
-    with pytest.raises(PreviewReached):
+        children = []
+        monkeypatch.setattr(
+            product,
+            "_child",
+            lambda root, installed, route, *, role="retargeted", source: (
+                children.append((route, role))
+            ),
+        )
         product._transfer(source)
+    else:
+        with pytest.raises(PreviewReached):
+            product._transfer(source)
     if stop_mode == "review-retries":
+        assert children == [
+            ("read", "default"),
+            ("read", "retargeted"),
+            ("read-rollback", "default"),
+            ("read-rollback", "retargeted"),
+        ]
         assert (
             len(discoveries) == 7 and len(previews) == 6 and len(reverse_previews) == 3
         )
