@@ -1523,6 +1523,7 @@ def _assert_reclaimed_queue_released(controller, session_id: str) -> None:
     assert controller.prompt_queue_coordinator.controls_generation(session_id) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "bypass"])
 async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_work(
@@ -1595,6 +1596,7 @@ async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_wor
     assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_durable_single_entry_reclaim_releases_its_chain(tmp_path):
     """With nothing waiting, the reclaimed durable turn still ends its chain."""
