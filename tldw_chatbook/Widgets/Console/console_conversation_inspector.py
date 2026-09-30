@@ -1532,6 +1532,47 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     # reuses that one @staticmethod rather than duplicating it a second
     # time.
 
+    async def _name_unchecked_project_folder(self, generation: int) -> None:
+        """Resolve a chosen folder's name before the slower preview (TASK-33621.13).
+
+        The Inspector opens with project state built without I/O, so a chat
+        whose folder was never resolved in this run -- one reopened after a
+        restart -- read 'Binding: <raw binding id> · Locator: not checked'
+        until the next-send preview finished, which takes seconds live. Only
+        that unresolved state is fetched early; the post-preview refresh in
+        ``_load_snapshot`` still runs, because source rows need the preview.
+        A failure here is left to that refresh, never to the preview.
+
+        Args:
+            generation: The snapshot load this resolution belongs to.
+        """
+        state = self._project_instruction_state
+        factory = self._project_instruction_state_factory
+        if (
+            factory is None
+            or state is None
+            or not (state.enabled and state.binding_label)
+            or state.locator_match != "not checked"
+        ):
+            return
+        try:
+            resolved = await factory()
+        except Exception:  # noqa: BLE001 -- the post-preview call re-raises and reports it
+            return
+        if (
+            generation != self._snapshot_generation
+            or not self.is_mounted
+            or self._project_instruction_state is not state
+            or not self._target_authority_is_current()
+        ):
+            return
+        self._project_instruction_state = resolved
+        for panel in self.query("#console-context-project-instructions").results(
+            ConsoleProjectInstructionContextPanel
+        ):
+            panel.sync_state(resolved)
+        self.call_after_refresh(self._focus_initial_control)
+
     async def _load_snapshot(self) -> None:
         if not self._target_authority_is_current():
             return
@@ -1542,6 +1583,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             "Refreshing preview…" if self._snapshot_ready else "Preparing preview…"
         )
         try:
+            await self._name_unchecked_project_folder(generation)
             new_snapshot = await self._snapshot_factory()
             if (
                 generation != self._snapshot_generation

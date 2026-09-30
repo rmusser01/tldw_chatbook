@@ -19,6 +19,7 @@ under ``run_test`` the keep-alive is off, so on the pre-fix code the
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 
@@ -27,6 +28,9 @@ from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app, persist_seeded_config
+from tldw_chatbook.Chat.console_chat_controller import (
+    list_project_instruction_bindings,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -266,3 +270,91 @@ async def test_cancelling_the_picker_returns_to_a_responsive_inspector(
         await pilot.press("escape")
         await _until(pilot, lambda: app.screen is console, "the Inspector to close")
         assert _pin_label(console) == _CHOOSE_PIN
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_inspector_names_a_saved_folder_before_its_preview_is_ready(
+    request, tmp_path, monkeypatch
+):
+    """AC#1 live re-verification: a chat reopened after a restart showed
+    'Binding: <raw binding id> · Locator: not checked' for as long as the
+    next-send preview took (seconds, live), because the Inspector resolved
+    the folder only AFTER that preview. It must name the folder at once.
+
+    The chat's state is what a restart restores: a chosen folder, never
+    resolved in this run. The real preview is held behind a gate so "before
+    the preview is ready" is deterministic; the folder lookup is not stubbed.
+    """
+    folder = tmp_path / "project"
+    folder.mkdir()
+    folder = folder.resolve(strict=True)
+    app = _ready_console_app(folder)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await _until(
+            pilot,
+            lambda: isinstance(app.screen, ChatScreen) and app.screen.region.width > 0,
+            "the production Console screen",
+        )
+        console = app.screen
+        await _until(
+            pilot,
+            lambda: bool(console.query("#console-native-composer")),
+            "the Console composer",
+        )
+        controller = console._ensure_console_chat_controller()
+        session = controller.store.ensure_session(title="Saved folder")
+        (selection,) = list_project_instruction_bindings(
+            session, app.workspace_registry_service
+        )
+        controller.store.set_session_project_instruction_state(
+            session.id,
+            ProjectInstructionControlState(
+                project_instructions_enabled=True,
+                working_folder_binding_id=_BINDING_ID,
+                working_folder_locator_fingerprint=selection.locator_fingerprint,
+                project_instruction_notice_key=None,
+            ),
+        )
+        preview_gate = asyncio.Event()
+        build_factories = console._console_inspector_next_send_factories
+
+        def held_preview(chat_controller, session_id):
+            factory, *rest = build_factories(chat_controller, session_id)
+
+            async def after_gate():
+                await preview_gate.wait()
+                return await factory()
+
+            return (after_gate, *rest)
+
+        monkeypatch.setattr(
+            console, "_console_inspector_next_send_factories", held_preview
+        )
+        console._set_console_rail_preference(right_open=True)
+        await _until(
+            pilot, lambda: bool(console.query(_PIN)), "the Project Instructions pin"
+        )
+        console.query_one(_PIN, Button).scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        await pilot.click(_PIN)
+        await _until(
+            pilot,
+            lambda: isinstance(app.screen, ConsoleConversationInspector),
+            "the Conversation Inspector",
+        )
+        inspector = app.screen
+        named = f"Binding: {_BINDING_LABEL} · Locator: match"
+        await _until(
+            pilot,
+            lambda: named in _panel_text(inspector),
+            "the folder's name while the preview is still preparing",
+            timeout=10.0,
+        )
+        assert not inspector._snapshot_ready
+        assert _BINDING_ID not in _panel_text(inspector)
+
+        preview_gate.set()
+        await _until(pilot, lambda: inspector._snapshot_ready, "the preview")
+        assert named in _panel_text(inspector)
+        assert inspector.is_running
