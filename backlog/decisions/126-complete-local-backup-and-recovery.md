@@ -984,9 +984,12 @@ The amendment keeps detecting exactly those.
    - execution selection and maintenance thread;
    - hold readiness.
 
-The lease is counted before a final content-stamp check, which keeps today's
-"counted before the final permission read" ordering. The reuse path never enters
-`initializing`.
+The lease is counted before a final re-observation of every stamp and the
+epoch, which keeps today's "counted before the final permission read" ordering:
+a change landing between the first look and the count is still seen. The reuse
+path never enters `initializing`. (The first implementation re-read only
+content stamps after counting, and stamped the selector only when bound; both
+were narrowed to this text after review on #2919.)
 
 **Recording rule.** Evidence is recorded only when all of these hold:
 - the unmodified derivation *allowed* the call;
