@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-09-30 03:44'
+updated_date: '2026-09-30 05:08'
 labels: []
 dependencies: []
 priority: high
@@ -61,4 +61,6 @@ PR2910 provider-control dev rebase onto 5216de505826f2fb2036ccbb740fd667802d5b90
 2026-09-30 approval-boundary dev rebase onto857b3dd7: all six prior PR commits remain patch-identical. At tested source3730c33cf3,16 fresh/upgrade Buddy cases plus11 incoming built-in/MCP/local sibling-approval refusal and audit cases passed27 total in67.86s. Profiles still reach schema73 with unchanged ownership/default/Static-Dynamic assertions. Separate sanitized approval-dev-20260929/verification.json retains exact source and local-log/profile hashes; prior evidence attribution is unchanged. No full sweep or paid providers. Native and physical voice acceptance remains open.
 
 2026-09-30 provider-preset dev rebase onto 2a74675eea24bc2d96b40bf1da2d6550043a58a1: all seven preceding PR patches remain identical. At tested source ce02e03442986d706e73455536626700cf52422c, 187 targeted cases passed in 66.55s (16 Buddy and 171 provider-preset/setup/env/catalog cases); all 11 preflight guards passed. Fresh/schema69 upgrade profiles retain schema73, ownership, workspace-default and Static/Dynamic assertions. Separate sanitized preset-dev-20260930/verification.json records exact source and local-log/profile hashes; older evidence attribution is unchanged. No full sweep or paid providers. Native/physical voice acceptance remains open; task stays In Progress. ADR required: no; existing ADR126 and ADR139 apply.
+
+2026-09-30 server-session character-boundary dev rebase onto 5980da9c12aa8257db2b3176bd5962b6b6ce00db: all eight preceding PR patches remain identical. At tested source ba3831f6e46218fabe0a24635c8e917b22287e0d, 113 targeted cases passed in 64.77s (16 Buddy qualification, 96 MCP-provider/Console-character cases including the nine incoming boundary cases, and one MCP toast regression); all 11 preflight guards passed. Fresh/schema69 upgrade profiles retain schema73, ownership, workspace-default and Static/Dynamic assertions. Separate sanitized character-dev-20260930/verification.json records exact source and local-log/profile hashes; older evidence attribution is unchanged. No full sweep or paid providers. Native/physical voice acceptance remains open; task stays In Progress. ADR required: no; existing ADR126 and ADR139 apply.
 <!-- SECTION:NOTES:END -->
