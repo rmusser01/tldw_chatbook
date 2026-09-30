@@ -59,7 +59,15 @@ _MENU_ACTION_ABSENT_COPY = {
 
 
 def _composer(screen: Any) -> ConsoleComposerBar | None:
-    """Return the mounted Console composer, or None (class/stub safe)."""
+    """Return the mounted Console composer, or None (class/stub safe).
+
+    Args:
+        screen: The Console screen, the ChatScreen class, or an inert stub.
+
+    Returns:
+        The mounted composer, or None when ``screen`` is not a mounted DOM
+        node or holds no composer.
+    """
 
     if not isinstance(screen, DOMNode):
         return None
@@ -123,7 +131,15 @@ def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:
 
 
 def stop_available(screen: Any) -> bool:
-    """Whether the stop key applies now -- exactly when Stop is shown."""
+    """Whether the stop key applies now -- exactly when Stop is shown.
+
+    Args:
+        screen: The Console screen (or a class/stub: then False).
+
+    Returns:
+        True while the viewed tab's run is active and the setup card does
+        not block the Console; False otherwise.
+    """
 
     composer = _composer(screen)
     if composer is None or not composer.run_active:
@@ -139,6 +155,16 @@ def with_stop_shortcut(
     Prepended, not appended: the footer degrades by dropping hints from the
     END as width runs out, and the stop key is the one hint a running tab
     must never lose.
+
+    Args:
+        screen: The Console screen whose footer hints are being built.
+        shortcuts: The footer's ``(key label, description)`` hints, in the
+            order the footer shows them.
+
+    Returns:
+        ``shortcuts`` unchanged when `stop_available` is False; otherwise a
+        new tuple with `STOP_RUN_FOOTER_HINT` first and ``shortcuts`` after
+        it in their original order.
     """
 
     if not stop_available(screen):
@@ -151,6 +177,10 @@ def sync_stop_affordances(screen: Any) -> None:
 
     Keyed on `stop_available` -- run state AND the setup-modal gate -- not
     on run state alone, so the footer hint never outlives the key.
+
+    Args:
+        screen: The Console screen whose footer hints and bindings follow
+            the stop key's availability.
     """
 
     available = stop_available(screen)
@@ -162,7 +192,11 @@ def sync_stop_affordances(screen: Any) -> None:
 
 
 async def stop_this_tab_run(screen: Any) -> None:
-    """Stop the viewed tab's run through the same path as the Stop button."""
+    """Stop the viewed tab's run through the same path as the Stop button.
+
+    Args:
+        screen: The Console screen whose viewed tab's run is stopped.
+    """
 
     if screen._console_setup_modal_blocking():
         return
@@ -177,6 +211,13 @@ async def stop_command(screen: Any, parse: Any) -> bool:
     Clears its own draft first, like ``/steer`` (review I-3 there): dispatch
     restores the stash before the handler, so ``/stop`` would otherwise sit
     in the composer after the run it stopped.
+
+    Args:
+        screen: The Console screen dispatching the command.
+        parse: The command parse (unused: ``/stop`` takes no arguments).
+
+    Returns:
+        True: the command is always handled.
     """
 
     del parse  # takes no arguments
@@ -190,6 +231,9 @@ async def redirect_from_draft(screen: Any) -> None:
 
     Moved verbatim from the Redirect button's handler so the palette entry
     shares it. An empty draft is a prompt to type one, not a no-op.
+
+    Args:
+        screen: The Console screen whose viewed tab's run is redirected.
     """
 
     if screen._console_setup_modal_blocking():
@@ -212,7 +256,15 @@ async def redirect_from_draft(screen: Any) -> None:
 
 
 def composer_menu_state(screen: Any) -> dict[str, Any]:
-    """Return the inputs the Composer menu renders its entries from."""
+    """Return the inputs the Composer menu renders its entries from.
+
+    Args:
+        screen: The Console screen the menu is opened (or consulted) for.
+
+    Returns:
+        Keyword arguments for `ConsoleComposerMenuModal` and
+        `build_composer_menu_entries`.
+    """
 
     composer = screen._console_composer_or_none()
     return {
