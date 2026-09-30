@@ -911,10 +911,10 @@ class LifecycleMixin:
                 for module, function, _line in frames
             )
         )
-        # TASK-33621.13 (GAP4-01): the dead pump must not stay in charge of
-        # input. `retire_dead_pump` pops a dead SCREEN and everything above it,
-        # or moves focus off a dead widget; None (no live screen left) exits.
-        if keep_alive and (kind := retire_dead_pump(self, pump)) is not None:
+        # TASK-33621.13 (GAP4-01): a pump whose loop the error ENDED must not
+        # stay in charge of input: `retire_dead_pump` pops a dead SCREEN (and
+        # above), or refocuses off a dead widget; None (nothing live left) exits.
+        if keep_alive and (kind := retire_dead_pump(self, pump, frames)) is not None:
             try:
                 self.bell()
                 self.notify(

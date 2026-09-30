@@ -112,9 +112,10 @@ An internal error inside one panel or dialog does not close the app. Chatbook
 shows a red **Something went wrong in …** notice and writes the details to the
 log file. A failed panel may stop responding until you reopen it. A failed
 dialog or overlay is closed, along with anything it opened, so the screen
-underneath takes your keys and clicks again. **Ctrl+Q** still quits. If the
-main screen itself fails, the app exits and reports the error instead of
-leaving a screen that ignores input.
+underneath takes your keys and clicks again. A screen that fails while you are
+on another one is rebuilt fresh the next time you open it. **Ctrl+Q** still
+quits. If the main screen itself fails, the app exits and reports the error
+instead of leaving a screen that ignores input.
 
 <a id="console-agent-runs-are-screen-scoped"></a>
 ## Console runs continue during navigation

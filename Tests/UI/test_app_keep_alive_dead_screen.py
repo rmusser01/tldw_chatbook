@@ -26,7 +26,7 @@ import time
 
 import pytest
 from textual import on
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.pilot import WaitForScreenTimeout
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button
@@ -81,6 +81,22 @@ class _RaisingButton(Button):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         raise RuntimeError(_CANARY)
+
+
+class _PlainModal(ModalScreen[None]):
+    """A live modal with nothing of its own to fail."""
+
+    BINDINGS = [("escape", "close", "Close")]
+
+    def compose(self) -> ComposeResult:
+        yield Button("ok", id="zq-plain-ok")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+def _boom() -> None:
+    raise RuntimeError(_CANARY)
 
 
 class _RecordSink(logging.Handler):
@@ -237,6 +253,117 @@ async def test_a_screen_handler_error_leaves_only_live_screens_on_the_stack(
 
 @private_profile_test
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("where", "how"),
+    [("content", "call_after_refresh"), ("modal", "call_next")],
+    ids=["content-call-after-refresh", "modal-call-next"],
+)
+async def test_a_callback_error_on_a_live_screen_keeps_that_screen(
+    request, crash_records, where, how
+):
+    """Only a failed DISPATCH (or mount) ends a pump's message loop. A failed
+    ``call_after_refresh``/``call_next`` callback leaves an inner loop and the
+    screen keeps running, so the keep-alive must neither pop it nor exit the
+    app (the TASK-32533 contract; Console alone has dozens of such callbacks).
+    """
+    app = _build_test_app()
+    app._keep_screen_alive_on_handler_error = True
+    async with app.run_test(size=(140, 44)) as pilot:
+        content = await _ready(app, pilot)
+        target = content
+        if where == "modal":
+            target = _PlainModal()
+            await app.push_screen(target)
+            assert await _poll(lambda: app.screen is target)
+            await pilot.pause()
+        stack_before = list(app.screen_stack)
+        getattr(target, how)(_boom)
+        assert await _poll(lambda: bool(_crashes(crash_records))), (
+            "the callback never raised"
+        )
+        await asyncio.sleep(0.3)
+        assert app.is_running and not app._exit and app._exception is None
+        assert list(app.screen_stack) == stack_before, _stack(app)
+        assert target.is_running and _dead_screens(app) == []
+        messages = [n.message for n in app._notifications]
+        assert any("kept running" in m for m in messages), messages
+        assert not any("was closed" in m for m in messages), messages
+        assert all(_CANARY not in m for m in messages)
+        if where == "modal":
+            # Still live: it handles its own key. (A live modal also keeps
+            # the App's non-priority Ctrl+Q out of the chain, as it always has.)
+            await _press(pilot, "escape")
+            assert await _poll(lambda: app.screen is content), _stack(app)
+        await _assert_ctrl_q_quits(app, pilot)
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_a_dead_content_screen_takes_textuals_loud_exit(request, crash_records):
+    """The content screen's own dispatch failed and only Textual's blank
+    placeholder is beneath it: nothing live could be left in charge, so the
+    app exits the way Textual always did instead of freezing."""
+    app = _build_test_app()
+    app._keep_screen_alive_on_handler_error = True
+    with pytest.raises(RuntimeError, match=_CANARY):
+        async with app.run_test(size=(140, 44)) as pilot:
+            content = await _ready(app, pilot)
+            content.call_later(_boom)
+            assert await _poll(lambda: app._exception is not None, timeout=10)
+    assert _crashes(crash_records)
+    assert app.return_code == 1
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_a_suspended_reusable_screen_that_dies_is_rebuilt_on_the_next_visit(
+    request, crash_records
+):
+    """Console is a reusable route: its installed instance survives navigation
+    and keeps processing messages while suspended. If it dies there, the
+    cache must not hand the dead instance back -- that is the GAP4-01 wedge
+    again (focus on a detached widget, Ctrl+Q ignored)."""
+    app = _build_test_app()
+    app._keep_screen_alive_on_handler_error = True
+    async with app.run_test(size=(170, 48)) as pilot:
+        console = await _ready(app, pilot)
+        assert type(console).__name__ == "ChatScreen"
+        await _press(pilot, "ctrl+1")
+        assert await _poll(
+            lambda: app.screen is not console and app.screen.is_running, timeout=20
+        ), _stack(app)
+        await asyncio.sleep(0.5)
+        assert console.is_running and app.is_screen_installed(console)
+
+        console.call_later(_boom)
+        assert await _poll(lambda: bool(_crashes(crash_records)))
+        assert await _poll(lambda: not console.is_running)
+        assert app.is_running and app._exception is None
+        assert not app.is_screen_installed(console)
+        cache = getattr(app, "_reusable_screen_instances", {})
+        assert all(screen is not console for _identity, screen in cache.values())
+
+        await _press(pilot, "ctrl+2")
+        assert await _poll(
+            lambda: (
+                type(app.screen).__name__ == "ChatScreen" and app.screen is not console
+            ),
+            timeout=20,
+        ), _stack(app)
+        fresh = app.screen
+        assert await _poll(
+            lambda: fresh.is_running and bool(fresh.query("#console-native-composer")),
+            timeout=20,
+        )
+        assert _dead_screens(app) == []
+        focused = fresh.focused
+        assert focused is None or focused.is_attached
+        assert any(node is app for node, _ in fresh._binding_chain)
+        await _assert_ctrl_q_quits(app, pilot)
+
+
+@private_profile_test
+@pytest.mark.asyncio
 async def test_a_focused_widget_handler_error_keeps_ctrl_q_reachable(
     request, crash_records
 ):
@@ -272,12 +399,18 @@ class _Plain(Screen):
         yield Button("plain")
 
 
+#: The traceback head ``_handle_exception`` sees when a pump's own message
+#: dispatch raised: the loop that caught it, then the dispatch it called.
+_DISPATCH_DEATH = [
+    ("textual.message_pump", "_process_messages_loop", 1),
+    ("textual.message_pump", "_dispatch_message", 2),
+]
+
+
 @pytest.mark.asyncio
 async def test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_exit():
     """Nothing live would be left in charge, so the keep-alive must not keep
     the app alive: `None` sends ``_handle_exception`` to Textual's exit."""
-    from textual.app import App
-
     from tldw_chatbook.app_keep_alive import retire_dead_pump
 
     app = App()
@@ -285,7 +418,7 @@ async def test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_ex
         content = _Plain()
         await app.push_screen(content)
         await pilot.pause()
-        assert retire_dead_pump(app, content) is None
+        assert retire_dead_pump(app, content, _DISPATCH_DEATH) is None
         assert app.screen is content
 
 
@@ -294,8 +427,6 @@ async def test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_i
     """Screens above the dead one are popped with their pending result
     resolved to ``None`` -- a ``push_screen_wait`` in a worker resumes with
     the ordinary cancel value instead of hanging forever."""
-    from textual.app import App
-
     from tldw_chatbook.app_keep_alive import retire_dead_pump
 
     app = App()
@@ -312,9 +443,63 @@ async def test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_i
 
         worker = app.run_worker(ask())
         assert await _poll(lambda: isinstance(app.screen, _PickerModal))
-        assert retire_dead_pump(app, dead) == "screen"
+        assert retire_dead_pump(app, dead, _DISPATCH_DEATH) == "screen"
         await asyncio.wait_for(worker.wait(), timeout=5)
         await pilot.pause()
         assert results == [None]
         assert app.screen is content
         assert dead not in app.screen_stack
+
+
+class _MountRaiser(Button):
+    def on_mount(self) -> None:
+        raise RuntimeError(_CANARY)
+
+
+class _RecordingApp(App):
+    """Records every error's pump and frames, and keeps running."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.errors: list[tuple[object, list]] = []
+
+    def _handle_exception(self, error: Exception) -> None:
+        from textual.message_pump import active_message_pump
+
+        from tldw_chatbook.app_lifecycle import _exception_frames
+
+        self.errors.append((active_message_pump.get(None), _exception_frames(error)))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("how", "ends"),
+    [
+        ("call_later", True),
+        ("mount", True),
+        ("call_next", False),
+        ("call_after_refresh", False),
+    ],
+)
+async def test_pump_loop_ended_matches_what_textual_does_to_the_pump(how, ends):
+    """``pump_loop_ended`` reads the traceback; this pins it to what Textual
+    actually does. A handler error in dispatch (``call_later`` runs through
+    ``_dispatch_message``) or in mount ends the pump; a ``call_next`` or
+    ``call_after_refresh`` callback error leaves it running. If a Textual
+    upgrade moves where the loop catches, this is the test that says so."""
+    from tldw_chatbook.app_keep_alive import pump_loop_ended
+
+    app = _RecordingApp()
+    async with app.run_test() as pilot:
+        screen = _Plain()
+        await app.push_screen(screen)
+        await pilot.pause()
+        if how == "mount":
+            await screen.mount(_MountRaiser("mount"))
+        else:
+            getattr(screen.query_one(Button), how)(_boom)
+        assert await _poll(lambda: bool(app.errors))
+        await asyncio.sleep(0.2)
+        pump, frames = app.errors[0]
+        assert pump_loop_ended(frames) is ends, frames
+        assert pump.is_running is (not ends)

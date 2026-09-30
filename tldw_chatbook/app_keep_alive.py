@@ -22,10 +22,16 @@ or moves focus off the dead widget's subtree. When neither is possible -- the
 dead screen is the content screen itself, with only Textual's blank
 placeholder beneath it -- it returns ``None`` and the caller takes Textual's
 loud exit: a crash is better than a frozen app that cannot even quit.
+
+Not every kept-alive error kills its pump. :func:`pump_loop_ended` reads the
+traceback to tell the two apart, so a failed ``call_next`` or
+``call_after_refresh`` callback -- which leaves the pump running -- never
+closes a live screen or exits the app.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from textual.screen import Screen
@@ -37,25 +43,67 @@ from textual.widget import Widget
 #: never a screen to hand the user back to.
 _TEXTUAL_PLACEHOLDER_SCREEN_ID = "_default"
 
-DeadPumpKind = Literal["screen", "widget"]
+#: Textual's own module, as ``_exception_frames`` in ``app_lifecycle`` names it.
+_PUMP_MODULE = "textual.message_pump"
+
+DeadPumpKind = Literal["screen", "widget", "alive"]
 
 
-def retire_dead_pump(app: Any, pump: Any) -> DeadPumpKind | None:
+def pump_loop_ended(frames: Sequence[tuple[str, str, int | None]]) -> bool:
+    """Whether the error that reached ``_handle_exception`` ended its pump.
+
+    ``frames`` is the traceback, outermost first, so ``frames[0]`` is the
+    frame that caught the error. In Textual 8.2.8 (``message_pump.py``) only
+    two catches end the pump's message loop: ``_pre_process`` (mount never
+    finished) and ``_process_messages_loop`` after a failed
+    ``_dispatch_message``, which ``break``s. A failed ``call_next`` or
+    ``call_after_refresh`` callback (caught in ``_flush_next_callbacks``) or
+    ``on_idle`` handler (caught in the loop, but around ``invoke``) only
+    leaves an inner loop, and the pump keeps running.
+    ``test_pump_loop_ended_matches_what_textual_does_to_the_pump`` pins this
+    against the installed Textual.
+
+    Args:
+        frames: ``(module, function, line)`` per traceback frame.
+
+    Returns:
+        True only for the two loop-ending catches; False for anything else.
+    """
+    if not frames or frames[0][0] != _PUMP_MODULE:
+        return False
+    if frames[0][1] == "_pre_process":
+        return True
+    return (
+        frames[0][1] == "_process_messages_loop"
+        and len(frames) > 1
+        and frames[1][:2] == (_PUMP_MODULE, "_dispatch_message")
+    )
+
+
+def retire_dead_pump(
+    app: Any, pump: Any, frames: Sequence[tuple[str, str, int | None]]
+) -> DeadPumpKind | None:
     """Leave no dead pump in charge of input once the keep-alive returns.
 
     Called synchronously from ``_handle_exception`` while ``pump`` is still the
-    active message pump; Textual breaks its loop (and detaches it) right
-    after that call returns.
+    active message pump; when the error ended its loop (:func:`pump_loop_ended`)
+    Textual breaks the loop (and detaches the pump) right after that call
+    returns.
 
     Args:
         app: The running ``TldwCli``.
         pump: The widget or screen whose own handler raised.
+        frames: The error's traceback frames, outermost first.
 
     Returns:
-        ``"screen"`` when a dead screen was taken off the stack, ``"widget"``
-        when the app can stay up around a dead widget, or ``None`` when no
-        live screen would be left in charge -- the caller must then exit.
+        ``"alive"`` when the error did not end the pump (nothing to retire),
+        ``"screen"`` when a dead screen was taken off the stack (or out of the
+        reusable-screen cache), ``"widget"`` when the app can stay up around a
+        dead widget, or ``None`` when no live screen would be left in charge
+        -- the caller must then exit.
     """
+    if not pump_loop_ended(frames):
+        return "alive"
     try:
         if isinstance(pump, Screen):
             return "screen" if _discard_dead_screen(app, pump) else None
@@ -87,6 +135,11 @@ def keep_alive_notice(
         where = type(pump).__name__ + (f"#{pump_id}" if pump_id else "")
     else:
         where = site[1] or type(raised).__name__
+    if kind == "alive":
+        return (
+            f"Something went wrong in {where} — the app kept running; "
+            "details are in the log file."
+        )
     if kind == "screen":
         return (
             f"Something went wrong in {where} — that view was closed so the "
@@ -113,13 +166,18 @@ def _discard_dead_screen(app: Any, screen: Screen) -> bool:
     ``dismiss()`` already deliver -- so a worker awaiting one of them through
     ``push_screen_wait`` resumes instead of hanging forever
     (``_dismiss_navigation_overlays`` in ``app_navigation.py`` has the same
-    reasoning for navigation).
+    reasoning for navigation). A dead screen already off the stack (a
+    suspended reusable screen) is only forgotten, never popped.
     """
     stack = app._screen_stack
     if screen not in stack:
-        # Already off the current stack: nothing dead is in charge here --
-        # unless another mode's stack still holds it, which we cannot fix.
-        return not any(screen in other for other in app._screen_stacks.values())
+        # Already off the current stack (a suspended screen): nothing dead is
+        # in charge now -- unless another mode's stack still holds it, which
+        # we cannot fix -- but it must not come back on the next visit.
+        if any(screen in other for other in app._screen_stacks.values()):
+            return False
+        _forget_dead_screen(app, screen)
+        return True
     index = stack.index(screen)
     floor = 2 if stack and stack[0].id == _TEXTUAL_PLACEHOLDER_SCREEN_ID else 1
     if index < floor or not _is_live(stack[index - 1]):
@@ -127,7 +185,29 @@ def _discard_dead_screen(app: Any, screen: Screen) -> bool:
     for doomed in reversed(stack[index:]):
         _release_pending_result(doomed)
         app.pop_screen()
+    _forget_dead_screen(app, screen)
     return True
+
+
+def _forget_dead_screen(app: Any, screen: Screen) -> None:
+    """Make sure no later navigation hands the dead screen back.
+
+    Reusable routes (``ScreenRoute.reusable``: Home, Console, Library) keep
+    one INSTALLED instance in ``app._reusable_screen_instances`` that survives
+    navigation and keeps processing messages while suspended
+    (``_reusable_navigation_screen`` in ``app_navigation.py``). If that
+    instance dies, returning to the route would restart the dead instance with
+    focus still on a detached widget: the GAP4-01 wedge, Ctrl+Q ignored. Drop
+    it from the cache and uninstall it, so the next visit builds a fresh one.
+    Only called once ``screen`` is on no stack (``uninstall_screen`` raises
+    otherwise, and that raise takes the loud exit).
+    """
+    cache = getattr(app, "_reusable_screen_instances", None) or {}
+    for route, (_identity, cached) in list(cache.items()):
+        if cached is screen:
+            cache.pop(route, None)
+    if app.is_screen_installed(screen):
+        app.uninstall_screen(screen)
 
 
 def _release_pending_result(screen: Screen) -> None:
