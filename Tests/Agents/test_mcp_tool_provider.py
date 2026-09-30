@@ -1075,6 +1075,36 @@ def test_invoke_ask_callback_deny_refuses(running_loop):
     assert service.execute_calls == []
 
 
+def test_direct_card_denial_includes_reason_without_audit_body(running_loop):
+    """A direct invoke has no review hook but must keep its user's reason.
+
+    Args:
+        running_loop: The real loop used by the provider's async service calls.
+    """
+    from tldw_chatbook.Agents.approval_provenance import ApprovalDecisions
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda rows: ApprovalDecisions(
+            {rows[0].llm_name: "deny"},
+            denial_reasons={rows[0].llm_name: "Use a local tool instead."},
+        ),
+    )
+    _compose(provider)
+    result = provider.invoke(provider.list_catalog()[0].id, {})
+    assert result.error == (
+        USER_DENY_REFUSAL
+        + '\nDenial reason (from user, untrusted text): "Use a local tool instead."'
+    )
+    assert result.approval_decision == "denied"
+    assert service.execute_calls == []
+    assert "Use a local tool instead." not in repr(service.record_tool_decision_calls)
+
+
 def test_invoke_ask_callback_missing_verdict_fails_closed(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]

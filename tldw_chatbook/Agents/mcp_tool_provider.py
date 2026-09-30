@@ -1078,11 +1078,16 @@ class MCPToolProvider:
         # no one made. `_apply_verdict`'s fall-through maps it to
         # `UNRESOLVED_REFUSAL`; the fail-closed posture is unchanged.
         verdict = (decisions or {}).get(tool_id, "unresolved")
-        return self._apply_verdict(
+        result = self._apply_verdict(
             verdict,
             tool,
             call_args,
             unanswered=approval_key_unanswered(decisions or {}, tool_id),
+        )
+        from .approval_provenance import append_denial_reason
+
+        return replace(
+            result, error=append_denial_reason(result.error, decisions or {}, tool_id)
         )
 
     # -- internals ----------------------------------------------------------

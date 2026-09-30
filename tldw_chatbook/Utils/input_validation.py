@@ -2027,3 +2027,35 @@ def escape_markup(value: object) -> str:
         The same text with every ``[`` backslash-escaped.
     """
     return str(value).replace("[", "\\[")
+
+
+MAX_APPROVAL_DENIAL_REASON_CHARS = 1000
+_DENIAL_REASON_TRUNCATION = " [reason truncated]"
+
+
+def normalize_approval_denial_reason(value: object) -> str:
+    """Bound untrusted denial text and remove terminal and directional controls.
+
+    Args:
+        value: Optional user text; other input shapes carry no reason.
+
+    Returns:
+        At most 1,000 characters, with an explicit note when text was truncated.
+    """
+    if not isinstance(value, str):
+        return ""
+    # Bound work before inspecting individual characters of an external payload.
+    truncated = len(value) > MAX_APPROVAL_DENIAL_REASON_CHARS
+    text = sanitize_string(value, MAX_APPROVAL_DENIAL_REASON_CHARS)
+    text = "".join(
+        character
+        for character in text
+        if character in "\n\t"
+        or unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+    ).strip()
+    if truncated and text:
+        text = (
+            text[: MAX_APPROVAL_DENIAL_REASON_CHARS - len(_DENIAL_REASON_TRUNCATION)]
+            + _DENIAL_REASON_TRUNCATION
+        )
+    return text

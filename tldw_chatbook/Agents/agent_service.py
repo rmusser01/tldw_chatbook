@@ -1964,7 +1964,10 @@ def _call_with_timeout(
     from .automatic_work_budget import AutomaticWorkRefused
     from .automatic_work_runtime import current_automatic_work
 
+    from .tool_output import bind_tool_output_sink, current_tool_output_sink
+
     automatic_work = current_automatic_work()
+    output_sink = current_tool_output_sink()
     try:
         if automatic_work is not None:
             automatic_work.check()
@@ -1980,7 +1983,8 @@ def _call_with_timeout(
     def _runner() -> None:
         try:
             with (
-                automatic_work.scope() if automatic_work else contextlib.nullcontext()
+                automatic_work.scope() if automatic_work else contextlib.nullcontext(),
+                bind_tool_output_sink(output_sink),
             ):
                 if automatic_work is not None:
                     automatic_work.check()

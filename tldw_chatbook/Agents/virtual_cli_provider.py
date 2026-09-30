@@ -430,6 +430,10 @@ class VirtualCliProvider:
                         ),
                     )
 
+    def record_user_denial(self, command: str) -> None:
+        """Record an explicit card denial settled before provider dispatch."""
+        self._record(self.hub_tool_for(command), "denied")
+
     def _pop_stamp(self, run_id: str, command: str) -> str | None:
         stamp = self._pop_stamp_detail(run_id, command)
         return stamp.decision if stamp is not None else None
@@ -491,6 +495,7 @@ class VirtualCliProvider:
             self._record(hub, POLICY_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_DENY_REFUSAL, approval_decision="denied")
         fact = None
+        denial_refusal = ""
         if state.state == "allow":
             verdict = "allow"
         elif self._arg_rule_allows_safe(hub, args):
@@ -502,6 +507,7 @@ class VirtualCliProvider:
             detail = self._ask_verdict_detail(hub, command, args)
             verdict = detail.decision
             fact = detail.approval_decision
+            denial_refusal = detail.denial_refusal
         if verdict != "allow":
             self._record(hub, "denied-timeout" if verdict == "timeout" else "denied")
             # Qodo #7: same split as `LocalToolProvider._invoke_detailed` --
@@ -512,7 +518,7 @@ class VirtualCliProvider:
             refusal = (
                 LOCAL_TIMEOUT_REFUSAL
                 if verdict == "timeout"
-                else LOCAL_USER_DENY_REFUSAL
+                else (denial_refusal or LOCAL_USER_DENY_REFUSAL)
             )
             return ToolResult.blocked(refusal, approval_decision=fact)
 
@@ -637,12 +643,19 @@ class VirtualCliProvider:
                 "allow_matching",
             ),
         ).approval_decision
+        from .approval_provenance import append_denial_reason
+
         return ApprovalStamp(
             "allow"
             if decision
             in ("approve_once", "approve_session", "always_allow", "allow_matching")
             else decision,
             fact,
+            append_denial_reason(
+                LOCAL_USER_DENY_REFUSAL, decisions, pending.call_id or pending.llm_name
+            )
+            if decision == "deny"
+            else "",
         )
 
     def _root_is_valid(self) -> bool:

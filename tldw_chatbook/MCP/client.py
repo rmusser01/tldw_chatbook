@@ -19,6 +19,7 @@ from time import monotonic as _monotonic
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from loguru import logger
 
@@ -350,6 +351,8 @@ class _StdioJSONRPCConnection:
 
         self._request_ids = count(1)
         self._pending_requests: Dict[int, asyncio.Future[Dict[str, Any]]] = {}
+        self._progress_observers: dict[str, tuple[Callable, float]] = {}
+        self._progress_tokens: dict[int, str] = {}
         # TASK-26029/lane-6 I2: in-flight server-request handler tasks, run
         # off the read loop so a slow completion can't stall frame draining.
         self._dispatch_tasks: set[asyncio.Task[None]] = set()
@@ -490,13 +493,22 @@ class _StdioJSONRPCConnection:
 
         from tldw_chatbook.Utils.input_validation import MCPToolResultInput
 
-        result = await self.request(
-            "tools/call",
-            {
-                "name": tool_name,
-                "arguments": arguments,
-            },
-        )
+        from tldw_chatbook.Agents.tool_output import current_tool_output_sink
+
+        sink = current_tool_output_sink()
+        params = {"name": tool_name, "arguments": arguments}
+        token = uuid4().hex if sink is not None else None
+        observers = getattr(self, "_progress_observers", None)
+        if observers is None:
+            observers = self._progress_observers = {}
+        if token is not None:
+            params["_meta"] = {"progressToken": token}
+            observers[token] = (sink, float("-inf"))
+        try:
+            result = await self.request("tools/call", params)
+        finally:
+            if token is not None:
+                observers.pop(token, None)
         try:
             validated = MCPToolResultInput.model_validate(result)
         except ValidationError:
@@ -555,6 +567,13 @@ class _StdioJSONRPCConnection:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Dict[str, Any]] = loop.create_future()
         self._pending_requests[request_id] = future
+        metadata = params.get("_meta", {}) if params is not None else {}
+        token = metadata.get("progressToken") if isinstance(metadata, dict) else None
+        progress_tokens = getattr(self, "_progress_tokens", None)
+        if progress_tokens is None:
+            progress_tokens = self._progress_tokens = {}
+        if isinstance(token, str) and token in getattr(self, "_progress_observers", {}):
+            progress_tokens[request_id] = token
 
         try:
             await self._send_message(
@@ -589,6 +608,9 @@ class _StdioJSONRPCConnection:
             raise
         finally:
             self._pending_requests.pop(request_id, None)
+            completed_token = progress_tokens.pop(request_id, None)
+            if completed_token is not None:
+                self._progress_observers.pop(completed_token, None)
             if not future.done():
                 future.cancel()
 
@@ -856,6 +878,9 @@ class _StdioJSONRPCConnection:
             return
 
         if "method" in payload:
+            if payload["method"] == "notifications/progress":
+                self._handle_progress(payload.get("params"))
+                return
             logger.debug("Ignoring MCP server notification")
             return
 
@@ -864,6 +889,40 @@ class _StdioJSONRPCConnection:
             return
 
         logger.debug("Ignoring unrecognized MCP payload")
+
+    def _handle_progress(self, params: object) -> None:
+        """Deliver valid progress only to its still-active request observer."""
+        if not isinstance(params, dict):
+            return
+        token = params.get("progressToken")
+        if not isinstance(token, str):
+            return
+        observers = getattr(self, "_progress_observers", {})
+        observer = observers.get(token)
+        progress = params.get("progress")
+        total = params.get("total")
+        if observer is None or type(progress) not in (int, float):
+            return
+        try:
+            if not math.isfinite(progress) or progress <= observer[1]:
+                return
+            if total is not None and (
+                type(total) not in (int, float) or not math.isfinite(total)
+            ):
+                return
+        except (OverflowError, ValueError):
+            return
+        message = params.get("message", "")
+        if not isinstance(message, str):
+            return
+        observers[token] = (observer[0], progress)
+        text = f"{progress:g}" + (f" / {total:g}" if total is not None else "")
+        if message:
+            text += " — " + message[:16_000]
+        try:
+            observer[0]("progress", text)
+        except Exception:  # noqa: BLE001, S110 — best-effort display, no body logging
+            pass  # optional display must never settle or fail a request
 
     async def _handle_server_request(self, payload: Dict[str, Any]) -> None:
         request_id = payload.get("id")
@@ -967,6 +1026,9 @@ class _StdioJSONRPCConnection:
             logger.debug("Ignoring MCP response with invalid id")
             return
 
+        token = getattr(self, "_progress_tokens", {}).pop(request_id, None)
+        if token is not None:
+            self._progress_observers.pop(token, None)
         future = self._pending_requests.pop(request_id, None)
         if future is None:
             logger.debug("Ignoring MCP response for unknown request id: {}", request_id)
@@ -982,6 +1044,8 @@ class _StdioJSONRPCConnection:
         future.set_result(dict(payload.get("result") or {}))
 
     def _fail_pending_requests(self, exc: Exception) -> None:
+        getattr(self, "_progress_observers", {}).clear()
+        getattr(self, "_progress_tokens", {}).clear()
         for request_id, future in list(self._pending_requests.items()):
             self._pending_requests.pop(request_id, None)
             if future.done():

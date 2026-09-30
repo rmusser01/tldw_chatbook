@@ -659,9 +659,10 @@ async def test_success_status_rest_contrast_in_every_shipped_theme() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(120, 32), (42, 24)])
 @pytest.mark.parametrize("with_diff", [False, True])
+@pytest.mark.parametrize("status", ["running", "success"])
 @pytest.mark.bootstrap_profile
 async def test_live_tool_preview_and_expanded_body_update_without_remount(
-    terminal_size, with_diff
+    terminal_size, with_diff, status
 ):
     """Catch unbounded wrapped previews and disappearing focused live details."""
     from dataclasses import replace
@@ -697,11 +698,11 @@ async def test_live_tool_preview_and_expanded_body_update_without_remount(
         tool = replace(
             tool,
             content="⚙ fs_read → " + output,
-            tool_output_full=output,
+            tool_output_full=output if status == "success" else None,
             tool_diff=("README.md", "before\n", "after\n") if with_diff else None,
             activity_presentation=replace(
                 presentation,
-                status="success",
+                status=status,
                 result_preview=output,
                 elapsed_seconds=0.2,
             ),

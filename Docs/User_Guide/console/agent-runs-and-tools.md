@@ -319,6 +319,17 @@ Each pending tool call gets its own row, one full-width line at a time: the
 controls, and — under the controls — a line spelling out what the decision
 you have highlighted actually commits you to.
 
+While a call runs, supported skill scripts show stdout/stderr and native MCP stdio tools show their progress messages. The existing three-line preview and expandable **Live output** details refresh without replacing the row. MCP progress is status information, not a partial result. Other tools continue to show their result when they finish.
+
+Live text is bounded and kept only in the current session. The final result replaces it; Stop or timeout keeps captured partial text in the expanded details with the interruption outcome. A stopped Console wait does not claim that an abandoned worker was killed.
+
+Expand **Reason if denied (optional)** on a row to add a reason. Enter up to 1,000 characters
+before using the row's fast **Deny** button, or select **Deny** and **Submit**.
+**Deny all** keeps each row's own reason; review the rows and then **Submit**.
+The model receives the reason as quoted, explicitly user-authored text in that
+call's refusal. Leaving it empty keeps the existing refusal. A reason does not
+change permissions, apply to an approved sibling, or create a new audit log.
+
 The five decisions, with the scope line each one shows:
 
 | Decision | Scope line |

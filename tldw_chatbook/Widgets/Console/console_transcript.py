@@ -7476,7 +7476,12 @@ class ConsoleTranscript(VerticalScroll):
             detail = (
                 f"Arguments\n{presentation.arguments or 'Not retained'}\n\n"
                 + metadata
-                + "Result\n"
+                + (
+                    "Live output\n"
+                    if presentation.status == "running"
+                    and presentation.result_preview is not None
+                    else "Result\n"
+                )
                 + (
                     activity.tool_output_full
                     or (

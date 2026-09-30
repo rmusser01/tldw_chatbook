@@ -425,6 +425,7 @@ class _LocalGateDecision:
     approval_consumed: bool
     refusal_reason: LocalToolInvocationReason | None = None
     approval_decision: ApprovalDecision | None = None
+    denial_refusal: str = ""
 
 
 @dataclass(frozen=True)
@@ -2490,7 +2491,7 @@ class LocalToolProvider:
             result = ToolResult.blocked(
                 LOCAL_DENY_REFUSAL
                 if reason is LocalToolInvocationReason.PERMISSION_OFF
-                else LOCAL_USER_DENY_REFUSAL
+                else (gate.denial_refusal or LOCAL_USER_DENY_REFUSAL)
             )
         return LocalToolInvocationResult(
             result=replace(result, approval_decision=gate.approval_decision),
@@ -3360,9 +3361,16 @@ class LocalToolProvider:
                         decision, unanswered=approval_key_unanswered(decisions, name)
                     ).approval_decision,
                 )
+            from .approval_provenance import append_denial_reason
+
             final_verdict = decision if isinstance(decision, str) else "deny"
             return _LocalGateDecision(
                 verdict=final_verdict,
+                denial_refusal=(
+                    append_denial_reason(LOCAL_USER_DENY_REFUSAL, decisions or {}, name)
+                    if decision == "deny"
+                    else ""
+                ),
                 approval_decision=approval_stamp(
                     decision, unanswered=approval_key_unanswered(decisions or {}, name)
                 ).approval_decision,
