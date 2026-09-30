@@ -202,7 +202,7 @@ def _run_reviewed_replacement(service, preview, start):
     for attempt in range(3):
         plan = preview(acknowledged)
         operation = start(plan)
-        state = service.wait(operation, timeout=300)
+        state = service.wait(operation)
         if state["state"] == "succeeded":
             return state
         assert attempt < 2 and state["review_issues"], "native_replacement_failed"

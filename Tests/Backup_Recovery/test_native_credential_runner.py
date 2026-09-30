@@ -44,10 +44,11 @@ def test_native_review_repreviews_exact_notices_and_aborts_only_linked_copy(fail
     ]
     if failure == "unrelated":
         notices[1]["review_issues"] = ("credential_missing:unavailable",)
-    previews, aborts = [], []
+    previews, aborts, waits = [], [], []
 
     class Service:
-        def wait(self, operation, *, timeout):
+        def wait(self, operation, *, timeout=None):
+            waits.append((operation, timeout))
             if operation == "abort":
                 return {"state": "succeeded", "result": {"aborted": True}}
             return notices.pop(0)
@@ -76,10 +77,17 @@ def test_native_review_repreviews_exact_notices_and_aborts_only_linked_copy(fail
         with pytest.raises((AssertionError, KeyError)):
             run()
         assert len(previews) == 2
+        assert waits == [("restore", None), ("restore", None)]
     else:
         assert run()["state"] == "succeeded"
         assert previews == [(), retention, (*retention, *manual)]
         assert aborts == ["linked"]
+        assert waits == [
+            ("restore", None),
+            ("restore", None),
+            ("abort", 120),
+            ("restore", None),
+        ]
 
 
 @pytest.mark.parametrize("failed", (False, True), ids=("success", "failure"))
