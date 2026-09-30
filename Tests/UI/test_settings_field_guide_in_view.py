@@ -21,23 +21,21 @@ from textual.containers import VerticalScroll
 from textual.css.query import QueryError
 from textual.widgets import Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen, _build_test_app
 from Tests.UI.test_settings_configuration_hub import (
     StyledSettingsDestinationHarness,
     _open_settings_category,
     _settle_settings_mount_storm,
 )
-from tldw_chatbook.Chat.console_provider_support import (
-    GENERATION_FIELD_REQUEST_KEYS,
-    MODEL_CONFIG_FIELDS,
+from tldw_chatbook.Chat.console_provider_support import MODEL_CONFIG_FIELDS
+from tldw_chatbook.UI.Screens.settings_screen import (
+    CONSOLE_DEFAULT_FIELD_NAMES,
+    PROVIDER_MODEL_PROFILE_FIELD_KEYS,
 )
-from tldw_chatbook.UI.Screens.settings_screen import PROVIDER_MODEL_PROFILE_FIELD_KEYS
 
 SIZES = ((211, 44), (235, 52))
-CONSOLE_FALLBACKS = {
-    f"settings-console-default-{name.replace('_', '-')}": name
-    for name in GENERATION_FIELD_REQUEST_KEYS
-}
+CONSOLE_FALLBACKS = CONSOLE_DEFAULT_FIELD_NAMES
 MODEL_DEFAULTS = {
     f"settings-{key.replace('_', '-')}": name
     for key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
@@ -57,6 +55,14 @@ def _assert_guide_in_view(screen, prefix: str, fields: dict[str, str], route: st
     """Every guide row, "Focused setting" to "Validation", lies in the view."""
     focused = str(getattr(screen.app.focused, "id", "") or "")
     label = MODEL_CONFIG_FIELDS[fields[focused]].label
+    texts = _assert_rows_in_view(screen, prefix, route)
+    assert texts[0] == f"Focused setting: {label}", (route, texts)
+    assert texts[-1].startswith("Validation: "), (route, texts)
+
+
+def _assert_rows_in_view(screen, prefix: str, route: str) -> list[str]:
+    """Every row of the category's guide lies inside the inspector view."""
+    focused = str(getattr(screen.app.focused, "id", "") or "")
     body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
     view = body.scrollable_content_region
     rows = []
@@ -68,8 +74,7 @@ def _assert_guide_in_view(screen, prefix: str, fields: dict[str, str], route: st
         except QueryError:
             break
     texts = [str(row.renderable) for row in rows]
-    assert texts[0] == f"Focused setting: {label}", (route, texts)
-    assert texts[-1].startswith("Validation: "), (route, texts)
+    assert texts, (route, prefix)
     clipped = [
         (text.split(":")[0], row.region.y, row.region.bottom)
         for row, text in zip(rows, texts)
@@ -79,6 +84,7 @@ def _assert_guide_in_view(screen, prefix: str, fields: dict[str, str], route: st
         f"{route}: {focused}'s guide rows outside the inspector view "
         f"{view.y}..{view.bottom} (scroll_y={body.scroll_y}): {clipped}"
     )
+    return texts
 
 
 def _usable(screen, field_id: str) -> bool:
@@ -142,7 +148,10 @@ async def _resize_both_ways(pilot, screen, prefix, fields, route, size):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
-async def test_console_behavior_fallback_guide_stays_in_the_inspector_view(size):
+@private_profile_test
+async def test_console_behavior_fallback_guide_stays_in_the_inspector_view(
+    request, size
+):
     """AC#2/AC#4: click, Tab and search landing, then a resize (the capture)."""
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
@@ -191,7 +200,8 @@ async def test_console_behavior_fallback_guide_stays_in_the_inspector_view(size)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
-async def test_model_default_guide_stays_in_the_inspector_view(size):
+@private_profile_test
+async def test_model_default_guide_stays_in_the_inspector_view(request, size):
     """AC#3/AC#4: "/" search, click and Tab, then a resize."""
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
@@ -234,3 +244,74 @@ async def test_model_default_guide_stays_in_the_inspector_view(size):
         screen.query_one("#settings-model-profile-temperature").focus()
         await _settle(pilot)
         await _resize_both_ways(pilot, screen, "provider", MODEL_DEFAULTS, route, size)
+
+
+# One guided field per category whose guide the fix reaches only through the
+# shared hook (``_reveal_settings_focus_after_refresh``): (category, field,
+# the guide's first row for that field).
+SHARED_HOOK_CASES = (
+    (
+        "appearance",
+        "settings-appearance-palette-theme-limit",
+        "Focused setting: Palette limit",
+    ),
+    (
+        "storage",
+        "settings-storage-chachanotes-db-path",
+        "Focused setting: ChaChaNotes DB",
+    ),
+    (
+        # A fresh profile's built-in RAG profile is read-only, so its
+        # retrieval fields are disabled; the profile picker stays usable.
+        "library-rag",
+        "settings-library-rag-profile-select",
+        "Focused group: Profiles",
+    ),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
+@pytest.mark.parametrize(
+    "category, field_id, first_row",
+    SHARED_HOOK_CASES,
+    ids=[case[0] for case in SHARED_HOOK_CASES],
+)
+@private_profile_test
+async def test_other_guided_categories_keep_the_guide_in_view_on_resize(
+    request, category, field_id, first_row, size
+):
+    """Appearance, Storage and Library/RAG: focus a guided field, resize both ways."""
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        await _open_settings_category(pilot, f"#settings-category-{category}")
+        await _settle(pilot)
+        screen = _active_destination_screen(host)
+        assert _usable(screen, field_id), field_id
+        screen.query_one(f"#{field_id}").focus()
+        await _settle(pilot)
+        assert _focused_id(pilot) == field_id
+        assert screen._active_settings_field_id == field_id
+        texts = _assert_rows_in_view(screen, category, f"{category} focus")
+        assert texts[0].startswith(first_row), texts
+        body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        first = screen.query_one(f"#settings-{category}-field-guide-0")
+        other = SIZES[1] if size == SIZES[0] else SIZES[0]
+        for step in (other, size):
+            await pilot.resize_terminal(*step)
+            await _settle(pilot, 5)
+            route = f"{category} resized to {step[0]}x{step[1]}"
+            _assert_rows_in_view(screen, category, route)
+            # These guides stay in view without the re-pin; this shows the
+            # shared hook reaches them: the guide heads the view again, as
+            # focus left it, unless the pane cannot scroll that far.
+            view_top = body.scrollable_content_region.y
+            assert first.region.y == view_top or body.scroll_y == body.max_scroll_y, (
+                route,
+                first.region.y,
+                view_top,
+                body.scroll_y,
+                body.max_scroll_y,
+            )
