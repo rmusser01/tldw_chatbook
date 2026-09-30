@@ -1331,6 +1331,12 @@ should be a `Label` (its own `DEFAULT_CSS` is `width: auto`), not a `Static`.
 Prove a row paints with `screen._compositor.render_strips()` text at the
 control's region, after real key presses, not by reading `.value`
 (`test_console_settings_choice_rows_paint_their_select`). Live-driver trap:
-a mouse click opens a Select's list with **nothing** highlighted, so the
-first Down lands on the blank prompt. Opening it with Enter highlights the
-current value instead, and a single Down is then enough, as the pilot tests do.
+a mouse click opens a **blank** Select's list with **nothing** highlighted, so
+the first Down lands on the blank prompt and a second Down reaches the first
+choice. Opening it with Enter highlights the blank prompt row, so a single
+Down is enough, as the pilot tests do. A Select that already holds a value
+highlights that value whichever way it opens. (Textual 8.2.8: a click only
+toggles `expanded`, whose watcher calls `overlay.select(None)` for a blank
+value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
+`action_first()`. Reproduced in a pilot probe on the modal's own Select
+construction in the TASK-33003.8 fix round 1 report.)
