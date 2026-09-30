@@ -14,6 +14,142 @@ import pytest
 from Tests.Backup_Recovery import run_platform_product as runner
 
 
+@pytest.mark.parametrize("system", ["posix", "nt"], ids=["unix", "windows"])
+@pytest.mark.parametrize("job", ["source", "destination"])
+@pytest.mark.skipif(os.name == "nt", reason="POSIX sandbox models Windows ancestry")
+def test_native_workflow_prepares_trusted_transfer_before_download_and_qualification(
+    tmp_path, monkeypatch, system, job
+):
+    import re
+    import runpy
+
+    import yaml
+
+    from tldw_chatbook.Backup_Recovery.archive_reader import _regular
+    from tldw_chatbook.Utils import windows_files
+
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github/workflows/native-credential-backup.yml"
+    )
+    steps = yaml.safe_load(workflow.read_text())["jobs"][job]["steps"]
+    preparations = [step for step in steps if step.get("id") == "credential-transfer"]
+    assert len(preparations) == 1, "private_transfer_preparation_required"
+    preparation = preparations[0]
+    dependencies = next(
+        step
+        for step in steps
+        if step.get("name") == "Install core application and test dependencies"
+    )
+    assert steps.index(dependencies) < steps.index(preparation)
+    home = tmp_path / "home"
+    trusted_temp = home / "AppData/Local/Temp"
+    trusted_temp.mkdir(parents=True, mode=0o700)
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir(mode=0o700)
+    if system == "nt":
+        runner_temp.chmod(0o777)
+    output = tmp_path / "step-output"
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(workflow.parents[2]))
+    monkeypatch.syspath_prepend(str(workflow.parents[2]))
+    monkeypatch.setenv("RUNNER_TEMP", str(runner_temp))
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(runner, "os", SimpleNamespace(name=system, getpid=os.getpid))
+    monkeypatch.setattr(
+        windows_files,
+        "WindowsOS",
+        lambda: SimpleNamespace(
+            mkdir=lambda path, mode: path.mkdir(mode=mode),
+            stat=lambda path: path.lstat(),
+            geteuid=os.getuid,
+        ),
+    )
+    assert preparation["shell"] == "python"
+    script = tmp_path / "prepare-transfer.py"
+    script.write_text(preparation["run"])
+    runpy.run_path(str(script))
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    transfer = Path(outputs["path"])
+    expected_parent = (
+        trusted_temp / f"tldw-backup-platform-{os.getpid()}"
+        if system == "nt"
+        else runner_temp / f"native-credential-incoming-{os.getpid()}" / "private"
+    )
+    assert transfer == expected_parent / "transfer"
+    assert transfer.lstat().st_uid == os.getuid()
+    assert stat.S_IMODE(transfer.lstat().st_mode) == 0o700
+    source = transfer / "source-linux.age"
+    source.write_bytes(b"synthetic-encrypted-placeholder")
+    with _regular(source) as stream:
+        assert stream.read() == b"synthetic-encrypted-placeholder"
+    consumers = [
+        (step, step["env"]["TLDW_CREDENTIAL_TRANSFER_ROOT"])
+        for step in steps
+        if "TLDW_CREDENTIAL_TRANSFER_ROOT" in step.get("env", {})
+    ]
+    consumers.extend(
+        (step, step["with"]["path"])
+        for step in steps
+        if step.get("uses", "").startswith("actions/download-artifact@")
+    )
+    assert len(consumers) == (2 if job == "destination" else 1)
+    for consumer, expression in consumers:
+        assert steps.index(preparation) < steps.index(consumer)
+        selected = re.sub(
+            r"\$\{\{\s*steps\.([\w-]+)\.outputs\.(\w+)\s*\}\}",
+            lambda match: {preparation["id"]: outputs}[match[1]][match[2]],
+            expression,
+        )
+        assert selected == str(transfer)
+    before = output.read_bytes()
+    with pytest.raises(FileExistsError):
+        runpy.run_path(str(script))
+    assert output.read_bytes() == before
+    assert source.read_bytes() == b"synthetic-encrypted-placeholder"
+    if system == "nt":
+        assert not list(runner_temp.iterdir())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="entry imports use private POSIX sandbox")
+def test_native_workflow_saved_script_imports_checkout_without_pythonpath(
+    tmp_path,
+):
+    import yaml
+
+    workspace = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load(
+        (workspace / ".github/workflows/native-credential-backup.yml").read_text()
+    )
+    preparation = next(
+        step
+        for step in workflow["jobs"]["source"]["steps"]
+        if step.get("id") == "credential-transfer"
+    )
+    root = tmp_path / "entry-private"
+    root.mkdir(mode=0o700)
+    environment = runner._private_environment(workspace, root)
+    environment.pop("PYTHONPATH", None)
+    environment.update(GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(root))
+    output = root / "step-output"
+    environment["GITHUB_OUTPUT"] = str(output)
+    script = root / "prepare-transfer.py"
+    script.write_text(preparation["run"])
+    result = runner.subprocess.run(  # nosec B603 - fixed interpreter/owned workflow script
+        [sys.executable, str(script)],
+        cwd=workspace,
+        env=environment,
+        stdout=runner.subprocess.DEVNULL,
+        stderr=runner.subprocess.DEVNULL,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, "workflow_checkout_import_required"
+    transfer = Path(output.read_text().strip().split("=", 1)[1])
+    assert transfer.is_dir() and transfer.is_relative_to(root)
+    assert stat.S_IMODE(transfer.lstat().st_mode) == 0o700
+
+
 def test_native_worker_observer_is_optional(monkeypatch):
     from Tests.ProductionApp import test_native_credential_recovery as product
 
@@ -812,19 +948,26 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
             )
         )
     originals = {path: path.read_bytes() for path in transfer.iterdir()}
-    copyfile = shutil.copyfile
+    copyfileobj = shutil.copyfileobj
 
     def copied(source, destination):
-        result = copyfile(source, destination)
-        if corrupt_copy == "ciphertext" and destination.suffix == ".age":
-            destination.write_bytes(b"changed ciphertext")
-        elif corrupt_copy == "receipt" and destination.suffix == ".json":
-            receipt = json.loads(destination.read_text())
+        is_receipt = source.read(1) == b"{"
+        source.seek(0)
+        result = copyfileobj(source, destination)
+        if corrupt_copy == "ciphertext" and not is_receipt:
+            destination.seek(0)
+            destination.truncate()
+            destination.write(b"changed ciphertext")
+        elif corrupt_copy == "receipt" and is_receipt:
+            source.seek(0)
+            receipt = json.loads(source.read())
             receipt["status"] = "failed"
-            destination.write_text(json.dumps(receipt))
+            destination.seek(0)
+            destination.truncate()
+            destination.write(json.dumps(receipt).encode())
         return result
 
-    monkeypatch.setattr(shutil, "copyfile", copied)
+    monkeypatch.setattr(shutil, "copyfileobj", copied)
     setups, completed_forward, reversed_roots = {}, set(), []
     children, owned_sources = [], {}
 
@@ -907,9 +1050,67 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
     assert all(path.read_bytes() == before for path, before in originals.items())
 
 
+@pytest.mark.parametrize("linked", ["archive", "receipt", "parent", "root"])
+def test_native_destinations_refuse_transfer_links_before_reads_or_effects(
+    tmp_path, monkeypatch, linked
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    parent = tmp_path / "incoming"
+    transfer = parent / "transfer"
+    transfer.mkdir(parents=True, mode=0o700)
+    run = tmp_path / "run"
+    run.mkdir(mode=0o700)
+    for system in ("Darwin", "Linux", "Windows"):
+        source = transfer / f"source-{system.lower()}.age"
+        source.write_bytes(b"synthetic-encrypted-placeholder")
+        source.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "system": system,
+                    "status": "passed",
+                    "archive_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                }
+            )
+        )
+    outside = tmp_path / "outside"
+    if linked in {"archive", "receipt"}:
+        source = transfer / (
+            "source-windows.age" if linked == "archive" else "source-windows.json"
+        )
+        source.rename(outside)
+        source.symlink_to(outside)
+        originals = {outside: outside.read_bytes()}
+    else:
+        selected = parent if linked == "parent" else transfer
+        selected.rename(outside)
+        selected.symlink_to(outside, target_is_directory=True)
+        originals = {
+            path: path.read_bytes() for path in outside.rglob("*") if path.is_file()
+        }
+    effects = []
+    monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", str(transfer))
+    monkeypatch.setattr(
+        runner,
+        "validate_native_credential_environment",
+        lambda: effects.append("native-preflight"),
+    )
+    monkeypatch.setattr(
+        product, "_child", lambda *args, **kwargs: effects.append("native-child")
+    )
+    request = SimpleNamespace(config=SimpleNamespace(getoption=lambda name: 900))
+    with pytest.raises((OSError, ValueError, AssertionError)):
+        product.test_native_credential_destinations(
+            run, tmp_path / "installed", request
+        )
+    assert not effects
+    assert not list(run.iterdir())
+    assert all(path.read_bytes() == before for path, before in originals.items())
+
+
 @pytest.mark.parametrize("timeout", [None, 4800.0], ids=["default", "phase"])
 @pytest.mark.parametrize("outcome", ["success", "nonzero", "timeout", "interrupt"])
-def test_native_child_deadline_preserves_failure_and_private_output(
+def test_native_child_deadline_preserves_failure_and_discards_output(
     tmp_path, monkeypatch, timeout, outcome
 ):
     from Tests.ProductionApp import test_native_credential_recovery as product
@@ -918,12 +1119,11 @@ def test_native_child_deadline_preserves_failure_and_private_output(
     root.mkdir(mode=0o700)
     installed, source = tmp_path / "installed", root / "source.age"
     environment = {"HOME": str(root / "home")}
-    calls, outputs = [], []
+    calls = []
     monkeypatch.setattr(product, "_environment", lambda *args, **kwargs: environment)
 
     def run(arguments, **kwargs):
         calls.append(kwargs["timeout"])
-        outputs.append(kwargs["stdout"])
         assert arguments == [
             sys.executable,
             str(Path(product.__file__).resolve()),
@@ -933,8 +1133,8 @@ def test_native_child_deadline_preserves_failure_and_private_output(
         ]
         assert kwargs["cwd"] == root and kwargs["env"] == environment
         assert kwargs["stderr"] == product.subprocess.STDOUT
+        assert kwargs["stdout"] == product.subprocess.DEVNULL
         assert kwargs["check"] is False
-        kwargs["stdout"].write("positive-native-secret\n")
         if outcome == "timeout":
             raise product.subprocess.TimeoutExpired(
                 arguments, kwargs["timeout"], output="positive-native-secret"
@@ -968,10 +1168,58 @@ def test_native_child_deadline_preserves_failure_and_private_output(
         if outcome == "nonzero":
             assert str(caught.value).startswith("native_child_failed:transfer:1")
     assert calls == [900 if timeout is None else timeout]
-    assert all(output.closed for output in outputs)
-    log = root / "transfer-retargeted.log"
-    assert log.read_text() == "positive-native-secret\n"
-    assert list(root.iterdir()) == [log]
+    assert not list(root.iterdir())
+
+
+@pytest.mark.parametrize("outcome", ["success", "nonzero", "timeout"])
+def test_native_child_canary_streams_are_never_persisted_or_exported(
+    tmp_path, monkeypatch, capfd, outcome
+):
+    from Tests.ProductionApp import test_native_credential_recovery as product
+
+    script = tmp_path / "emit-canary.py"
+    script.write_text(
+        "import sys,time\nfrom pathlib import Path\n"
+        "print('positive-native-secret',flush=True)\n"
+        "print('positive-native-secret',file=sys.stderr,flush=True)\n"
+        "Path(sys.argv[3]).touch()\n"
+        + ("time.sleep(30)\n" if outcome == "timeout" else "")
+        + f"sys.exit({int(outcome == 'nonzero')})\n"
+    )
+    root = tmp_path / "private" / "product-pytest" / "child"
+    root.mkdir(parents=True, mode=0o700)
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    monkeypatch.setattr(product, "__file__", str(script))
+    monkeypatch.setattr(
+        product, "_environment", lambda *args, **kwargs: os.environ.copy()
+    )
+    failure = {
+        "nonzero": AssertionError,
+        "timeout": product.subprocess.TimeoutExpired,
+    }.get(outcome)
+    ready = tmp_path / "emitted"
+
+    def child():
+        product._child(
+            root,
+            tmp_path / "installed",
+            "transfer",
+            source=ready,
+            timeout=2 if outcome == "timeout" else 30,
+        )
+
+    if failure is None:
+        child()
+    else:
+        with pytest.raises(failure):
+            child()
+    assert ready.is_file()
+    captured = capfd.readouterr()
+    assert "positive-native-secret" not in captured.out + captured.err
+    assert not list(root.iterdir())
+    assert runner._collect_safe_logs(tmp_path / "private", artifacts) == 0
+    assert not list(artifacts.iterdir())
 
 
 @pytest.mark.parametrize(

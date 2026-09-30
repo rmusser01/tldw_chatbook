@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from threading import Event, Thread, current_thread
 
 import pytest
 
@@ -113,6 +114,9 @@ def test_failed_native_index_write_preserves_previous_index(failure):
         store.set_scoped_secret(scope, f"disposable-{number}")
     index_key = (DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")
     previous = fake.values[index_key]
+    previous_parts = {
+        key for key in fake.values if key[1].startswith("__credential_refs__:")
+    }
     if failure == "part":
         fake.fail_part_after = fake.part_writes + 1
     else:
@@ -122,6 +126,9 @@ def test_failed_native_index_write_preserves_previous_index(failure):
         store.set_scoped_secret(_native_index_scopes(9)[-1], "new-disposable")
 
     assert fake.values[index_key] == previous
+    assert {
+        key for key in fake.values if key[1].startswith("__credential_refs__:")
+    } == previous_parts
     fake.fail_root = False
     fake.fail_part_after = None
     fresh = KeyringServerCredentialStore(keyring_backend=fake)
@@ -131,6 +138,65 @@ def test_failed_native_index_write_preserves_previous_index(failure):
         assert not any(
             username.startswith("__credential_refs__") for _, username in fake.values
         )
+
+
+def test_native_index_failed_initial_root_publication_removes_written_parts():
+    fake = BlobLimitedKeyring()
+    fake.fail_root = True
+
+    with pytest.raises(RuntimeError, match="index_write_failed"):
+        KeyringServerCredentialStore(keyring_backend=fake)._save_index(
+            _native_index_scopes(8)
+        )
+
+    assert fake.values == {}
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_native_index_unavailable_root_readback_retains_new_parts(committed):
+    class UnavailableReadbackKeyring(BlobLimitedKeyring):
+        root_write_failed = False
+        unavailable_readback = True
+
+        def set_password(self, service_name, username, password):
+            try:
+                super().set_password(service_name, username, password)
+            except RuntimeError:
+                if username == "__credential_refs__":
+                    self.root_write_failed = True
+                raise
+
+        def get_password(self, service_name, username):
+            if (
+                username == "__credential_refs__"
+                and self.root_write_failed
+                and self.unavailable_readback
+            ):
+                raise RuntimeError("index_readback_unavailable")
+            return super().get_password(service_name, username)
+
+    fake = UnavailableReadbackKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scopes = _native_index_scopes(9)
+    for scope in scopes[:-1]:
+        store.set_scoped_secret(scope, "disposable")
+    previous_parts = {
+        key for key in fake.values if key[1].startswith("__credential_refs__:")
+    }
+    fake.fail_root = not committed
+    fake.commit_root_then_raise = committed
+
+    with pytest.raises(
+        RuntimeError,
+        match="index_write_uncertain" if committed else "index_write_failed",
+    ):
+        store.set_scoped_secret(scopes[-1], "new-disposable")
+
+    assert previous_parts < {
+        key for key in fake.values if key[1].startswith("__credential_refs__:")
+    }
+    fake.unavailable_readback = False
+    assert set(store._load_index()) == set(scopes if committed else scopes[:-1])
 
 
 def test_native_index_root_commit_then_error_keeps_published_index_readable():
@@ -198,6 +264,193 @@ def test_damaged_native_index_part_refuses_clear_before_any_credential_delete(da
         KeyringServerCredentialStore(keyring_backend=fake).clear_all()
 
     assert fake.values == previous
+
+
+@pytest.mark.parametrize("parts", [16_385, 1_000_001])
+def test_native_index_oversized_header_refuses_work_before_part_reads(parts):
+    fake = FakeKeyring()
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")] = json.dumps(
+        {"version": 2, "generation": "a" * 32, "parts": parts}
+    )
+    requested = []
+    original_get = fake.get_password
+
+    def get_password(service_name, username):
+        requested.append(username)
+        return original_get(service_name, username)
+
+    fake.get_password = get_password
+
+    with pytest.raises(CredentialStoreUnavailable):
+        KeyringServerCredentialStore(keyring_backend=fake).clear_all()
+
+    assert requested == ["__credential_refs__"]
+    assert fake.deleted == []
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [None, "", "x" * 1025, 1],
+    ids=["missing", "empty", "oversized", "nonstring"],
+)
+def test_native_index_invalid_first_chunk_stops_before_later_part_reads(chunk):
+    fake = FakeKeyring()
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")] = json.dumps(
+        {"version": 2, "generation": "a" * 32, "parts": 3}
+    )
+    first_part = "__credential_refs__:" + "a" * 32 + ":0"
+    if chunk is not None:
+        fake.values[(DEFAULT_KEYRING_SERVICE_NAME, first_part)] = chunk
+    requested = []
+    original_get = fake.get_password
+
+    def get_password(service_name, username):
+        requested.append(username)
+        return original_get(service_name, username)
+
+    fake.get_password = get_password
+
+    with pytest.raises(CredentialStoreUnavailable):
+        KeyringServerCredentialStore(keyring_backend=fake).clear_all()
+
+    assert requested == ["__credential_refs__", first_part]
+    assert fake.deleted == []
+
+
+def test_native_index_oversized_save_refuses_before_part_writes():
+    fake = BlobLimitedKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope = ServerCredentialScope(
+        server_profile_id="p" * (9 * 1024**2),
+        normalized_origin="https://disposable.invalid",
+        credential_type=SERVER_CREDENTIAL_API_KEY,
+    )
+
+    with pytest.raises(CredentialStoreUnavailable):
+        store._save_index([scope])
+
+    assert fake.values == {}
+
+
+def test_native_index_oversized_legacy_payload_refuses_before_deletion():
+    fake = FakeKeyring()
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")] = "[]" + " " * (
+        16 * 1024**2 - 1
+    )
+
+    with pytest.raises(CredentialStoreUnavailable):
+        KeyringServerCredentialStore(keyring_backend=fake).clear_all()
+
+    assert fake.values
+    assert fake.deleted == []
+
+
+@pytest.mark.parametrize("operation", ["delete", "clear_server", "clear_all"])
+def test_native_index_destructive_transactions_wait_for_scoped_write(
+    operation, monkeypatch
+):
+    from tldw_chatbook.runtime_policy import server_credentials
+
+    paused = Event()
+    resume = Event()
+    contender_boundary = Event()
+    contender_done = Event()
+    contender_read = Event()
+    contender_lock = Event()
+    errors = []
+    existing_lock = server_credentials._RECOVERY_SCOPE_LOCK
+
+    class ObservedLock:
+        def __enter__(self):
+            if current_thread().name == "index-contender":
+                contender_lock.set()
+                contender_boundary.set()
+            existing_lock.acquire()
+            return self
+
+        def __exit__(self, *args):
+            existing_lock.release()
+
+    class PausingKeyring(BlobLimitedKeyring):
+        pause_owner = False
+
+        def get_password(self, service_name, username):
+            value = super().get_password(service_name, username)
+            if username == "__credential_refs__":
+                if current_thread().name == "index-owner" and self.pause_owner:
+                    self.pause_owner = False
+                    paused.set()
+                    if not resume.wait(10):
+                        raise RuntimeError("test_barrier_timeout")
+                elif current_thread().name == "index-contender":
+                    contender_read.set()
+                    contender_boundary.set()
+            return value
+
+    monkeypatch.setattr(server_credentials, "_RECOVERY_SCOPE_LOCK", ObservedLock())
+    fake = PausingKeyring()
+    scopes = _native_index_scopes(9)
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    for scope in scopes[:-1]:
+        store.set_scoped_secret(scope, "disposable")
+    other_store = KeyringServerCredentialStore(keyring_backend=fake)
+    fake.pause_owner = True
+
+    def write():
+        try:
+            store.set_scoped_secret(scopes[-1], "new-disposable")
+        except Exception as error:  # noqa: BLE001 - retain thread failures for the owner assertion.
+            errors.append(type(error).__name__)
+
+    def destroy():
+        try:
+            if operation == "delete":
+                other_store.delete_scoped_secret(scopes[0])
+            elif operation == "clear_server":
+                other_store.clear_server(scopes[0].server_profile_id)
+            else:
+                other_store.clear_all()
+        except Exception as error:  # noqa: BLE001 - retain thread failures for the owner assertion.
+            errors.append(type(error).__name__)
+        finally:
+            contender_done.set()
+
+    owner = Thread(target=write, name="index-owner")
+    contender = Thread(target=destroy, name="index-contender")
+    owner.start()
+    try:
+        assert paused.wait(10)
+        contender.start()
+        assert contender_boundary.wait(10)
+        if not contender_lock.is_set():
+            assert contender_done.wait(10)
+        read_before_release = contender_read.is_set()
+    finally:
+        resume.set()
+        owner.join(10)
+        if contender.ident is not None:
+            contender.join(10)
+
+    assert not owner.is_alive() and not contender.is_alive()
+    assert not read_before_release
+    assert errors == []
+    fresh = KeyringServerCredentialStore(keyring_backend=fake)
+    remaining = (
+        []
+        if operation == "clear_all"
+        else [
+            scope
+            for scope in scopes
+            if (
+                scope != scopes[0]
+                if operation == "delete"
+                else scope.server_profile_id != scopes[0].server_profile_id
+            )
+        ]
+    )
+    assert set(fresh._load_index()) == set(remaining)
+    if operation == "clear_all":
+        assert fake.values == {}
 
 
 def test_native_index_cleanup_failure_keeps_committed_credentials_readable():

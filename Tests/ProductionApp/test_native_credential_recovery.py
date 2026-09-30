@@ -137,17 +137,16 @@ def _child(root, installed, route, *, role="retargeted", source=None, timeout=90
     if source is not None:
         arguments.append(str(source))
     # Output can contain native backend exception text or credential values.
-    # It remains in private storage and never forms an assertion message.
-    with (root / f"{route}-{role}.log").open("w") as output:
-        result = subprocess.run(  # nosec B603 - fixed interpreter/owned fixture
-            arguments,
-            cwd=root,
-            env=environment,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            check=False,
-        )
+    # Bounded value-free failure hooks and thread samples retain diagnostics.
+    result = subprocess.run(  # nosec B603 - fixed interpreter/owned fixture
+        arguments,
+        cwd=root,
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        timeout=timeout,
+        check=False,
+    )
     assert result.returncode == 0, f"native_child_failed:{route}:{result.returncode}"
 
 
@@ -1013,32 +1012,51 @@ def test_native_credential_destinations(tmp_path, native_package, request):
     from Tests.Backup_Recovery.run_platform_product import (
         validate_native_credential_environment,
     )
+    from tldw_chatbook.Backup_Recovery.archive_reader import _regular
+    from tldw_chatbook.Backup_Recovery.native_files import (
+        create_private_file,
+        pinned_directory,
+    )
 
     timeout = request.config.getoption("timeout")
     if timeout is None or type(timeout) in (int, float) and timeout == 0:
         timeout = 900
     if type(timeout) not in (int, float) or not 0 < timeout < float("inf"):
         raise ValueError("native_child_timeout_invalid")
-    validate_native_credential_environment()
     transfer = Path(os.environ["TLDW_CREDENTIAL_TRANSFER_ROOT"])
-    sources = sorted(transfer.rglob("source-*.age"))
+    with pinned_directory(transfer):
+        sources = sorted(transfer.rglob("source-*.age"))
     assert len(sources) == 3, "three_qualified_sources_required"
-    assert {
-        json.loads(source.with_suffix(".json").read_text())["system"]
-        for source in sources
-    } == {"Darwin", "Linux", "Windows"}
-    results, owned_sources = [], []
+    qualified = []
     for source in sources:
-        receipt_bytes = source.with_suffix(".json").read_bytes()
+        with _regular(source.with_suffix(".json")) as stream:
+            receipt_bytes = stream.read()
         receipt = json.loads(receipt_bytes)
-        assert receipt["status"] == "passed" and receipt["archive_sha256"] == _digest(
-            source
-        )
+        with _regular(source) as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        assert receipt["status"] == "passed" and receipt["archive_sha256"] == digest
+        qualified.append((source, receipt, receipt_bytes))
+    assert {receipt["system"] for _, receipt, _ in qualified} == {
+        "Darwin",
+        "Linux",
+        "Windows",
+    }
+    validate_native_credential_environment()
+    results, owned_sources = [], []
+    for source, receipt, receipt_bytes in qualified:
         root = tmp_path / receipt["system"]
         root.mkdir(mode=0o700)
         owned = root / source.name
-        shutil.copyfile(source, owned)
-        shutil.copyfile(source.with_suffix(".json"), owned.with_suffix(".json"))
+        for incoming, destination in (
+            (source, owned),
+            (source.with_suffix(".json"), owned.with_suffix(".json")),
+        ):
+            with (
+                _regular(incoming) as stream,
+                create_private_file(destination) as fd,
+                os.fdopen(fd, "wb", closefd=False) as output,
+            ):
+                shutil.copyfileobj(stream, output)
         assert _digest(owned) == receipt["archive_sha256"]
         assert owned.with_suffix(".json").read_bytes() == receipt_bytes
         owned_sources.append(owned)

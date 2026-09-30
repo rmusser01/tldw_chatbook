@@ -74,7 +74,15 @@ def _planned_record(record, plan):
 
 
 def profile_credential_scopes(inventory: Inventory) -> dict[str, str | None]:
-    """Derive credential namespaces only from locally verified config selectors."""
+    """Derive credential namespaces from locally verified config selectors.
+
+    Args:
+        inventory: Inventory containing locally verified config declarations.
+
+    Returns:
+        Profile IDs mapped to credential selectors. None selects the implicit
+        default profile; strings select the config path for explicit profiles.
+    """
     from .profile_paths import default_config_path, effective_config_path, lexical_path
 
     return {
