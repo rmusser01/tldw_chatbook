@@ -11,10 +11,14 @@ import asyncio
 import json
 import threading
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_conversation_hydration import hydrate_console_session
 from tldw_chatbook.Chat.console_generation_settings_metadata import (
     merge_console_generation_settings,
     snapshot_from_session_settings,
@@ -114,7 +118,7 @@ def test_persisted_pairs_fail_closed_on_bad_snapshots(memory_db) -> None:
         workspace_id="ws-1",
     )
 
-    uses = list(persisted_model_pair_uses(db).values())
+    uses = persisted_model_pair_uses(db)
 
     assert _pairs(uses) == [("openai", "gpt-5.1")]
     assert uses[0].last_used == NOW - timedelta(days=3)
@@ -141,7 +145,7 @@ def test_persisted_read_is_bounded_to_fifty_with_one_metadata_batch(memory_db) -
     db.list_all_active_conversations = spy_list
     db.get_conversations_metadata_by_ids = spy_meta
 
-    uses = persisted_model_pair_uses(db).values()
+    uses = persisted_model_pair_uses(db)
 
     assert RECENT_CONVERSATION_LIMIT == 50
     assert calls["list"] == [((), {"limit": 50})]
@@ -156,8 +160,7 @@ async def test_recents_merge_open_sessions_newest_first_and_distinct(file_db) ->
     _add(db, _owned("deepseek", "deepseek-reasoner"), age=timedelta(days=5))
     open_id = _add(db, _owned("openai", "stale-model"), age=timedelta(hours=1))
     sessions = [
-        # An open chat whose pair changed adds its live pair at the session's
-        # time; its stored pair keeps the row's time.
+        # An open persisted chat contributes only through its live session.
         _session(
             "ollama", "qwen3:32b", age=timedelta(minutes=1), conversation_id=open_id
         ),
@@ -173,34 +176,65 @@ async def test_recents_merge_open_sessions_newest_first_and_distinct(file_db) ->
 
     assert _pairs(uses) == [
         ("ollama", "qwen3:32b"),
-        ("openai", "stale-model"),
         ("anthropic", "claude-sonnet-4-5"),
         ("openai", "gpt-5.1"),
         ("deepseek", "deepseek-reasoner"),
     ]
-    assert uses[1].last_used == NOW - timedelta(hours=1)
-    assert uses[3].last_used == NOW - timedelta(days=1)
+    assert uses[2].last_used == NOW - timedelta(days=1)
+
+
+async def test_an_open_chat_with_an_unchanged_pair_counts_at_its_live_use(
+    file_db,
+) -> None:
+    """AC#1/#2: a message sent in an open saved chat is a use of its pair.
+
+    Sending moves the session's ``updated_at`` but never the row's
+    ``last_modified`` (``add_message`` does not touch ``conversations``), so
+    while a chat is open its live session is the only truth about its last
+    use, even when its pair still equals the stored snapshot.
+    """
+    db = file_db
+    open_id = _add(db, _owned("openai", "gpt-5.1"), age=timedelta(days=1))
+    _add(db, _owned("anthropic", "claude-sonnet-4-5"), age=timedelta(hours=3))
+    live = [
+        _session("openai", "gpt-5.1", age=timedelta(minutes=1), conversation_id=open_id)
+    ]
+
+    uses = await read_recent_model_pairs(db, live)
+
+    assert _pairs(uses) == [("openai", "gpt-5.1"), ("anthropic", "claude-sonnet-4-5")]
+    assert uses[0].used_label(NOW) == "used 1m ago"
+    chat_c = ("ollama", "qwen3:32b")
+    assert PreviousPairMemory().previous("chat-c", chat_c, uses).pair == (
+        "openai",
+        "gpt-5.1",
+    )
 
 
 async def test_a_chat_reopened_from_sessions_keeps_its_stored_last_use(file_db) -> None:
     """AC#1: opening an old chat is not a use of its pair.
 
-    A chat reopened from Sessions is built with the default ``updated_at``
-    (the time it was opened, like ``create_session``). While its pair still
-    matches its stored row, the row's real ``last_modified`` is its last use,
-    so it neither jumps to the top of RECENT nor becomes another chat's
-    PREVIOUS fallback.
+    The real reopen path (Sessions, launch wake) stamps the new session's
+    ``updated_at`` from the row's ``last_modified``, as a chat restored at
+    startup keeps its saved ``updated_at``. The reopened chat therefore
+    neither jumps to the top of RECENT nor becomes another chat's PREVIOUS
+    fallback.
     """
     db = file_db
     old_id = _add(db, _owned("openai", "gpt-5.1"), age=timedelta(days=3))
     _add(db, _owned("deepseek", "deepseek-reasoner"), age=timedelta(days=1))
-    reopened = ConsoleChatSession(
-        settings=ConsoleSessionSettings(provider="openai", model="gpt-5.1"),
-        persisted_conversation_id=old_id,
-    )
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
 
+    reopened = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=db),
+        store=store,
+        conversation_id=old_id,
+        tree=ChatConversationService(db).get_conversation_tree(old_id),
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5.1"),
+    )
     uses = await read_recent_model_pairs(db, [reopened])
 
+    assert datetime.fromisoformat(reopened.updated_at) == NOW - timedelta(days=3)
     assert _pairs(uses) == [("deepseek", "deepseek-reasoner"), ("openai", "gpt-5.1")]
     assert uses[1].last_used == NOW - timedelta(days=3)
     other_chat = ("anthropic", "claude-sonnet-4-5")

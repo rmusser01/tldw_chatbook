@@ -2,9 +2,9 @@
 
 Spec §4 rule 6 forbids a new store, so recents come only from data that
 already exists: the open Console sessions (temporary chats included) and the
-ADR-095 snapshots of the 50 most recently modified global-scope chats. A
-workspace chat is never listed, so it appears only while it is open. PREVIOUS
-per chat lives in process memory.
+ADR-095 snapshots of the 50 most recently modified global-scope chats. An open
+chat contributes only through its live session, so a workspace chat appears
+only while it is open. PREVIOUS per chat lives in process memory.
 
 ADR-097: import this module lazily from the switcher's openers only; it is not
 on the boot path.
@@ -12,7 +12,7 @@ on the boot path.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -74,41 +74,30 @@ def _utc(value: object) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def live_model_pair_uses(
-    sessions: Iterable[ConsoleChatSession],
-    stored: Mapping[str, ModelPairUse] | None = None,
-) -> list[ModelPairUse]:
+def live_model_pair_uses(sessions: Iterable[ConsoleChatSession]) -> list[ModelPairUse]:
     """Return the pairs of open Console sessions. UI thread only.
 
-    A chat reopened from Sessions carries the time it was opened as
-    ``updated_at``, which is not a use. While its pair still matches its stored
-    row (``stored``, keyed by conversation id) the row's ``last_modified``
-    stands, so the session adds nothing; its own time counts once the pair
-    changed.
+    A session's ``updated_at`` is its chat's last use: sending moves it, while
+    ``add_message`` never touches the row's ``last_modified``. A reopened chat
+    starts from its row's ``last_modified`` (``hydrate_console_session``), and
+    a chat restored at startup from its saved ``updated_at``.
     """
-    stored = stored or {}
     uses = []
     for session in sessions:
         settings = session.settings
-        if settings is None or not settings.model:
-            continue
-        pair = (settings.provider, settings.model)
-        conversation_id = session.persisted_conversation_id
-        kept = stored.get(str(conversation_id)) if conversation_id else None
-        if kept is not None and kept.pair == pair:
-            continue
-        # ponytail: a reopened chat whose row was not read (workspace scope,
-        # older than the 50th, no valid snapshot) still shows its open time;
-        # stamp updated_at from the row in restore_persisted_session if that
-        # matters in testing.
         when = _utc(session.updated_at)
-        if when is not None:
-            uses.append(ModelPairUse(*pair, when))
+        if settings is None or not settings.model or when is None:
+            continue
+        uses.append(ModelPairUse(settings.provider, settings.model, when))
     return uses
 
 
-def persisted_model_pair_uses(db: CharactersRAGDB) -> dict[str, ModelPairUse]:
-    """Return the newest global-scope chats' pairs by conversation id. Blocking: run off the loop.
+def persisted_model_pair_uses(
+    db: CharactersRAGDB,
+    *,
+    skip_conversation_ids: frozenset[str] = frozenset(),
+) -> list[ModelPairUse]:
+    """Return the pairs of the newest global-scope chats. Blocking: run off the loop.
 
     One listing capped at 50 and one batched metadata read. Snapshots
     that are malformed, missing, from a newer version or carry no model are
@@ -117,10 +106,10 @@ def persisted_model_pair_uses(db: CharactersRAGDB) -> dict[str, ModelPairUse]:
     rows = [
         row
         for row in db.list_all_active_conversations(limit=RECENT_CONVERSATION_LIMIT)
-        if row.get("id")
+        if row.get("id") and str(row["id"]) not in skip_conversation_ids
     ]
     metadata = db.get_conversations_metadata_by_ids([str(row["id"]) for row in rows])
-    uses = {}
+    uses = []
     for row in rows:
         conversation_id = str(row["id"])
         if conversation_id not in metadata:
@@ -129,7 +118,7 @@ def persisted_model_pair_uses(db: CharactersRAGDB) -> dict[str, ModelPairUse]:
         when = _utc(row.get("last_modified"))
         if snapshot is None or not snapshot.model or when is None:
             continue
-        uses[conversation_id] = ModelPairUse(snapshot.provider, snapshot.model, when)
+        uses.append(ModelPairUse(snapshot.provider, snapshot.model, when))
     return uses
 
 
@@ -149,18 +138,29 @@ async def read_recent_model_pairs(
 ) -> list[ModelPairUse]:
     """Return RECENT: open sessions plus the newest global chats, off the UI thread.
 
-    The database read runs in a worker thread; the live sessions are read on
-    the caller's (UI) thread once it returns. A failed read keeps the open
-    sessions' pairs.
+    The live sessions are read before the first await, on the caller's (UI)
+    thread; the database read runs in a worker thread. A failed read keeps
+    the open sessions' pairs.
     """
     sessions = list(sessions)
-    stored: dict[str, ModelPairUse] = {}
-    if db is not None:
-        try:
-            stored = await run_owned_db_call(db, persisted_model_pair_uses, db)
-        except Exception as exc:  # noqa: BLE001 - DB adapters have no shared error base.
-            logger.debug("Recent model pairs read skipped: {}", type(exc).__name__)
-    return newest_distinct([*live_model_pair_uses(sessions, stored), *stored.values()])
+    uses = live_model_pair_uses(sessions)
+    if db is None:
+        return newest_distinct(uses)
+    open_ids = frozenset(
+        str(session.persisted_conversation_id)
+        for session in sessions
+        if session.persisted_conversation_id
+    )
+    try:
+        uses += await run_owned_db_call(
+            db,
+            persisted_model_pair_uses,
+            db,
+            skip_conversation_ids=open_ids,
+        )
+    except Exception as exc:  # noqa: BLE001 - DB adapters have no shared error base.
+        logger.debug("Recent model pairs read skipped: {}", type(exc).__name__)
+    return newest_distinct(uses)
 
 
 class PreviousPairMemory:
