@@ -508,10 +508,21 @@ async def _census_idle_and_visit(
         try:
             await body()
             await _settle(pilot, passes=20)
-            # Not WorkerManager.wait_for_complete: an empty list means "all".
-            waits = [worker.wait() for worker in started]
-            await asyncio.wait_for(asyncio.gather(*waits, return_exceptions=True), 60)
-            await _settle(pilot, passes=4)
+            # Drain every worker the phase started, including workers those
+            # workers start while being awaited, so nothing leaks into (and is
+            # billed to) the next phase. Not WorkerManager.wait_for_complete:
+            # an empty list means "all". Bounded: a self-rearming worker ends
+            # the drain instead of hanging it.
+            drained = 0
+            for _ in range(20):
+                if drained == len(started):
+                    break
+                waits = [worker.wait() for worker in started[drained:]]
+                drained = len(started)
+                await asyncio.wait_for(
+                    asyncio.gather(*waits, return_exceptions=True), 60
+                )
+                await _settle(pilot, passes=4)
         finally:
             counting["on"] = False
         if name is not None:
@@ -545,8 +556,14 @@ async def _census_idle_and_visit(
         # that production stopped routing through reads 0 here, not a
         # green "paid down" everywhere else.
         from tldw_chatbook.config import get_user_data_dir
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
-        get_user_data_dir()
+        # One private-SQLite open always starts a helper (ADR-125): proof the
+        # HelperLease.start seam still counts, so helper ceilings can't pass
+        # at a silent zero.
+        connect_private_sqlite(
+            "db.base", Path(get_user_data_dir()) / "census_canary.db"
+        ).close()
 
     worker_manager.WorkerManager._new_worker = recording_new_worker
     try:
@@ -762,14 +779,16 @@ MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK = {
 }
 #: Visit admissions re-measured when #2888 was rebased onto dev 6423c4fbd1
 #: (2026-09-29; pinned 37/107 at 9cd9aad65f). Config admissions are steady at
-#: 39. Storage admissions read 110-115 across runs: the 1 Hz legacy
-#: trace-maintenance tick and the credential poll land a varying number of
-#: ticks inside the visit window, so the pin is the observed maximum + 1.
-#: PERF-10 (parks trace maintenance) and PERF-06 (warm config reads) remove
-#: those sources and tighten both numbers.
+#: 39. Storage admissions read 110-115 across runs while workers started
+#: during a phase could leak into the next; with every phase fully drained
+#: they read 107-111, and the pin is that maximum + 1. The remaining jitter
+#: is the 1 Hz legacy trace-maintenance tick and the credential poll landing
+#: a varying number of ticks inside the visit window; PERF-10 (parks trace
+#: maintenance) and PERF-06 (warm config reads) remove those sources and
+#: tighten both numbers.
 MAX_VISIT_STORAGE_UNITS = {
     "config_admissions": 39,
-    "storage_admissions": 116,
+    "storage_admissions": 112,
     "helper_spawns": 9,
     "os_opens": 35_351,
 }
@@ -822,10 +841,11 @@ async def test_console_storage_units_stay_within_their_ratchets(
     request.node.user_properties.append(
         ("storage_units", json.dumps({k: v[0] for k, v in measured.items()}))
     )
-    for unit in ("config_admissions", "storage_admissions", "os_opens"):
+    for unit in IO_UNITS:
         assert counts[f"canary:{unit}"] >= 1, (
-            f"census is blind: a guarded get_user_data_dir() counted 0 {unit}; "
-            "the seam _count_storage_units wraps is no longer on the config "
+            f"census is blind: the canary (a guarded get_user_data_dir() plus "
+            f"one private-SQLite open) counted 0 {unit}; the seam "
+            "_count_storage_units wraps for it is no longer on the production "
             "path, so every ceiling below would pass vacuously."
         )
     slack = {"os_opens": OS_OPENS_JITTER_SLACK}
