@@ -11653,6 +11653,13 @@ def test_prepare_workspace_runtime_enabled_waits_for_real_ready_snapshot(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.xfail(
+    reason="TASK-33372: the mounted sample now reaches its real flow (the "
+    "ScriptedGateway context-window API was added), but MCP compose_catalog "
+    "fails in the harness, so the scripted load_tools -> fs_write turn never "
+    "completes and the sample times out. Remove this mark with that fix.",
+    strict=True,
+)
 async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
     tmp_path: Path,
 ) -> None:
