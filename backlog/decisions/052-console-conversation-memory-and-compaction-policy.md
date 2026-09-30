@@ -290,6 +290,29 @@ shows user-turn bounds at the same selected prompt. The model-generated body
 is reviewable only in the existing Context & memory surface and never becomes
 a transcript/tree node.
 
+### 2026-09-30 amendment: failed attempts are explained and not re-billed (TASK-33621.3)
+
+The durable lineage fence is built from the parent each row was **written
+with**, not from the live node's parent mirror. Turns created by an ordinary
+durable send never set that mirror, so every automatic compaction in a live
+session failed its commit fence after a billed summary call. Only a restart,
+which reloads parents from the database, hid the fault.
+
+A non-successful attempt records its content-free reason code on the
+auxiliary-call ledger row (`failure_reason`, schema v74) and in the log.
+User copy names that cause and the failed call's reported token spend (with
+its cost when the model is priced). It says whether the message was sent and
+gives a next step. It never claims "the provider request was not sent".
+
+A FAILED automatic attempt latches per conversation. Later automatic attempts
+(sends, Retry, micro-compaction) make no provider call while two things hold:
+the settings digest is unchanged (provider, model, prompt, policy other than
+failure behavior, model window, effective memory), and the durable history
+before the failed request is an unchanged prefix. Compact now is explicit and
+bypasses the latch; a success clears it. A stale result (the conversation
+moved under the call) does not latch. This restores TASK-14811.2.1's "at most
+one automatic summary call per send, without retry loops".
+
 ## Context
 
 The Console already has manual rewind summarization, persisted

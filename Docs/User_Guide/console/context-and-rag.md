@@ -103,6 +103,40 @@ turns the feature off entirely. Each fold rewrites the memory row, which
 breaks the provider prompt cache from that row onward — the cadence bounds
 that to 1 in N turns.
 
+### When compaction fails
+
+A compaction that cannot finish says why, in the transcript and in the run
+status. The note names the cause, for example "the model returned an empty,
+oversized or malformed summary" or "the summary plus the recent turns kept
+with it would still be over the target size". It also says what the failed
+summary call spent, as input and output tokens, with its cost when the model
+is priced. Before a send, the note starts with "Your message was not sent". A
+failed **Compact now** starts with "Compaction failed and nothing changed".
+
+Every note ends with a next step. In **Conversation settings > Context and
+memory** you can raise **Conversation max tokens**, set **If compaction
+fails** to **Omit older context** (the message is then sent without
+compacting), or set **When limit nears** to **Off**. You can also start a new
+chat. In a saved chat, the unsent turn stays in response recovery, so you can
+**Retry response** or **Discard** it once you have changed something.
+
+After a failed automatic attempt, automatic compaction pauses for that chat. A
+Retry, a new send, or a micro-compaction tick makes no further summary call,
+so nothing more is billed. Instead, the note says "automatic compaction is
+paused … No new summary call was made". The pause lifts when the chat's
+compaction settings change (budget, **When limit nears**, **Reduce context
+to**, **Summary response max**, **Keep after compaction**, representation, or
+model) or when an earlier message changes (edit, delete, branch switch, or
+memory reset). Changing only **If compaction fails** keeps the pause in place,
+so the chat goes out without compacting. **Compact now** is an explicit retry
+and always makes one summary call. If the conversation changed while it was
+being summarized, the note asks you to send again, and automatic compaction
+is not paused. No send makes more than one automatic summary call.
+
+The compaction attempt ledger records the reason code in its `failure_reason`
+column, and the app log writes `console_compaction_failed reason=…`. Neither
+contains transcript or summary text.
+
 ### Upstream model catalog (models.dev)
 
 `[model_catalog] use_models_dev` lets the app fill in unknown models'
