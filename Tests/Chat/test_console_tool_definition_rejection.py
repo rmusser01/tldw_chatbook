@@ -22,7 +22,7 @@ import asyncio
 import json
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -479,9 +479,49 @@ def test_openai_tool_definition_rejection_names_the_tool_not_the_model(tmp_path)
 # ---------------------------------------------------------------------------
 
 
-def _logged_anthropic_bad_request(api_key: str, message: str) -> str:
+@contextmanager
+def _claude_subscription(token: str) -> Iterator[None]:
+    """Run ``chat_with_anthropic`` on the Claude-subscription path with ``token``.
+
+    Only the credential source is replaced: the real settings are loaded and
+    ``auth_source`` is set where the real loader keeps it
+    (``api_settings.anthropic``), and the borrowed credential is the real
+    ``SubscriptionCredential`` type with no expiry recorded.
+    """
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls as api_calls
+    from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
+
+    real_load_settings = api_calls.load_settings
+
+    def load_settings_with_subscription(*args: Any, **kwargs: Any) -> dict:
+        settings = dict(real_load_settings(*args, **kwargs) or {})
+        api_settings = dict(settings.get("api_settings") or {})
+        anthropic = dict(api_settings.get("anthropic") or {})
+        anthropic["auth_source"] = "claude_subscription"
+        api_settings["anthropic"] = anthropic
+        settings["api_settings"] = api_settings
+        return settings
+
+    credential = subscription.SubscriptionCredential(access_token=token)
+    with patch.object(api_calls, "load_settings", load_settings_with_subscription):
+        with patch.object(
+            subscription,
+            "read_claude_code_credential",
+            lambda *args, **kwargs: credential,
+        ):
+            yield
+
+
+def _logged_anthropic_bad_request(
+    api_key: str, message: str, *, subscription_token: str | None = None
+) -> str:
     """Send one Anthropic request that fails 400 with ``message``; return the
-    ERROR-level log text it produced."""
+    ERROR-level log text it produced.
+
+    With ``subscription_token`` the request runs on the Claude-subscription
+    path, so ``chat_with_anthropic`` holds both credentials, as it does when a
+    configured API key stays in place after ``auth_source`` is switched.
+    """
     body = json.dumps(
         {
             "type": "error",
@@ -496,9 +536,14 @@ def _logged_anthropic_bad_request(api_key: str, message: str) -> str:
         response=response
     )
     captured: list[str] = []
+    credential_source = (
+        _claude_subscription(subscription_token)
+        if subscription_token is not None
+        else nullcontext()
+    )
     sink = logger.add(lambda record: captured.append(str(record)), level="ERROR")
     try:
-        with patch("requests.Session.post", return_value=response):
+        with credential_source, patch("requests.Session.post", return_value=response):
             with pytest.raises(ChatBadRequestError):
                 chat_api_call(
                     "anthropic",
@@ -510,6 +555,14 @@ def _logged_anthropic_bad_request(api_key: str, message: str) -> str:
     finally:
         logger.remove(sink)
     return "\n".join(captured)
+
+
+def _logged_detail(log: str) -> str:
+    """Return the ``detail=`` text of the Anthropic failure line in ``log``."""
+    line = next(
+        entry for entry in log.splitlines() if "Anthropic request failed" in entry
+    )
+    return line.split("detail=", 1)[1]
 
 
 def test_anthropic_bad_request_logs_the_redacted_provider_message():
@@ -546,6 +599,117 @@ def test_anthropic_bad_request_log_masks_a_short_echoed_key():
     assert "Anthropic request failed; status=400" in log
     assert "invalid x-api-key" in log
     assert api_key not in log
+
+
+#: A 4-character key -- the shortest value still masked -- that sits inside the
+#: subscription token, near its head.
+_EMBEDDED_KEY = "Nq5v"
+_TOKEN_BODY = "Kd8" + _EMBEDDED_KEY + "Wm3Rt6Yp9Lq2Xv5Bn7Hj4Fs1Gc0Za8Ue6Io3Py7T"
+
+
+@pytest.mark.parametrize(
+    "subscription_token",
+    [
+        # The real shape. The key fragments it into a head too short for the
+        # redactor's sk-ant-oat pattern and a tail that matches nothing.
+        "sk-ant-oat01-" + _TOKEN_BODY,
+        # An opaque token: only the literal mask can hide it, so this case
+        # also pins that the call site passes the subscription token at all.
+        _TOKEN_BODY,
+    ],
+    ids=["sk-ant-oat01-token", "opaque-token"],
+)
+def test_anthropic_bad_request_log_masks_a_token_containing_the_key(
+    subscription_token,
+):
+    """A key inside the subscription token must not fragment the token.
+
+    The call site passes the API key first. Masking one credential at a time
+    replaced the key inside the token before the token was looked for, so the
+    token no longer matched and everything around the key reached the log.
+    The key is also echoed on its own: at 4 characters it is the shortest
+    value that is still masked.
+    """
+    assert _EMBEDDED_KEY in subscription_token
+
+    log = _logged_anthropic_bad_request(
+        _EMBEDDED_KEY,
+        f"the credential {subscription_token} (sent with {_EMBEDDED_KEY}) "
+        "was not accepted here",
+        subscription_token=subscription_token,
+    )
+
+    assert "Anthropic request failed; status=400" in log
+    assert "was not accepted here" in log
+    leaked = sorted(
+        {
+            subscription_token[start : start + 4]
+            for start in range(len(subscription_token) - 3)
+            if subscription_token[start : start + 4] in log
+        }
+    )
+    assert leaked == [], f"subscription token fragments in the log: {leaked}"
+
+
+def test_anthropic_bad_request_log_masks_a_token_whose_head_the_key_overlaps():
+    """Masking longest-first is not enough when the key starts before the token.
+
+    Here the echoed key ends with the token's first four characters and runs
+    straight into it. A scan that takes the earliest match consumes the key,
+    and with it the token's head, so the token never matches. Every span that
+    any credential covers in the original text is masked.
+    """
+    token = _TOKEN_BODY
+    api_key = "Jw" + token[:4]
+
+    log = _logged_anthropic_bad_request(
+        api_key,
+        f"the credential Jw{token} was not accepted here",
+        subscription_token=token,
+    )
+
+    assert "was not accepted here" in log
+    leaked = sorted(
+        {
+            token[start : start + 4]
+            for start in range(len(token) - 3)
+            if token[start : start + 4] in log
+        }
+    )
+    assert leaked == [], f"subscription token fragments in the log: {leaked}"
+
+
+def test_anthropic_bad_request_log_masks_the_stripped_form_of_a_padded_key():
+    """A key read with padding is sent as-is; the provider may echo it trimmed."""
+    core = "Wv3kQ9pLm2"
+    padded_key = f"  {core}\t"
+
+    log = _logged_anthropic_bad_request(
+        padded_key, f"invalid x-api-key {core} for this workspace"
+    )
+
+    assert "invalid x-api-key" in log
+    assert core not in log
+
+
+@pytest.mark.parametrize("api_key", ["o", "top"], ids=["1-char", "3-char"])
+def test_anthropic_bad_request_log_keeps_the_message_for_a_too_short_key(api_key):
+    """A 1-3 character key is not a usable secret; masking it shreds AC#5.
+
+    Anthropic-compatible proxies reached through ``api_base_url`` accept a
+    dummy key. Masking every occurrence of one or three letters would cut the
+    provider's own message -- the diagnostic this log exists to keep -- into
+    fragments.
+    """
+    message = (
+        "tools.34.custom.input_schema: input_schema does not support oneOf, "
+        "allOf, or anyOf at the top level"
+    )
+    assert api_key in message
+
+    detail = _logged_detail(_logged_anthropic_bad_request(api_key, message))
+
+    assert message in detail, detail
 
 
 def test_anthropic_bad_request_log_is_bounded_and_off_for_sensitive_requests():

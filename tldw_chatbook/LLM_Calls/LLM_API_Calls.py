@@ -1235,35 +1235,71 @@ def _contains_extended_ttl(obj: Any) -> bool:
     return False
 
 
+#: The shortest credential form ``_credential_redacted_detail`` masks literally.
+#: A 1-3 character value is not a usable secret (Anthropic-compatible proxies
+#: reached through ``api_base_url`` accept a dummy key like ``"x"``), and
+#: masking every occurrence of it would shred the provider message the log
+#: exists to keep.
+_MIN_MASKED_CREDENTIAL_CHARS = 4
+
+
 def _credential_redacted_detail(detail: object, *known_credentials: object) -> str:
     """Return provider error detail that is safe to write to a log.
 
     TASK-33621.1: the Anthropic 400 path logged only the exception class, so a
     request the provider refused (e.g. a tool schema) left no provider message
-    anywhere. The credential this request used is masked literally -- a
-    provider may echo it back -- and every recognized credential shape is
+    anywhere. The credentials this request held are masked literally -- a
+    provider may echo one back -- and every recognized credential shape is
     masked by the same redactor the log sinks use.
 
-    Every non-empty credential is masked whatever its length, like
-    ``CredentialSanitizer``'s known values (Qodo #2931): the request sends any
-    non-empty key, and a short one matches none of the redactor's shapes.
+    Each credential is masked as sent and in its stripped form, since a
+    provider may echo a padded key trimmed. A short key matches none of the
+    redactor's shapes, so any form of ``_MIN_MASKED_CREDENTIAL_CHARS`` or more
+    is masked however short (Qodo #2931); a shorter one is not a secret.
+
+    Every occurrence of every form is located in the ORIGINAL text and the
+    union of those spans is masked in one pass. Masking one credential at a
+    time let a key found inside the subscription token be replaced first,
+    splitting the token so that it no longer matched and its remaining
+    characters reached the log. Longest-first ordering alone is not enough
+    either: a key echoed just before the token, overlapping its head, would
+    still be consumed first. The union does not depend on order.
 
     Args:
         detail: Provider error body or message (already sensitive-mode safe).
-        *known_credentials: The API key / subscription token this request sent.
+        *known_credentials: The API key / subscription token this request held.
 
     Returns:
         The detail with known and recognizable credentials masked.
     """
     text = str(detail or "")
-    for credential in known_credentials:
-        if not isinstance(credential, str):
-            continue
-        # Longest first, so a padded value is masked whole before its core.
-        for literal in sorted({credential, credential.strip()}, key=len, reverse=True):
-            if literal:
-                text = text.replace(literal, REDACTION_MARKER)
-    return redact_log_line(text)
+    forms = {
+        form
+        for credential in known_credentials
+        if isinstance(credential, str)
+        for form in (credential, credential.strip())
+        if len(form) >= _MIN_MASKED_CREDENTIAL_CHARS
+    }
+    spans: list[tuple[int, int]] = []
+    for form in forms:
+        start = text.find(form)
+        while start != -1:
+            spans.append((start, start + len(form)))
+            start = text.find(form, start + 1)
+    if not spans:
+        return redact_log_line(text)
+    pieces: list[str] = []
+    cursor = 0
+    masked_until = -1
+    for start, end in sorted(spans):
+        if start > masked_until:
+            # A new masked run: keep the text before it, open one marker.
+            pieces.append(text[cursor:start])
+            pieces.append(REDACTION_MARKER)
+        masked_until = max(masked_until, end)
+        cursor = masked_until
+    pieces.append(text[cursor:])
+    return redact_log_line("".join(pieces))
 
 
 def _anthropic_tools_payload(tools: list) -> list:
