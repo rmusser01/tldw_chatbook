@@ -479,20 +479,13 @@ def test_openai_tool_definition_rejection_names_the_tool_not_the_model(tmp_path)
 # ---------------------------------------------------------------------------
 
 
-def test_anthropic_bad_request_logs_the_redacted_provider_message():
-    api_key = "anthropic-canary-credential-7f3e9a1c2b"
-    pattern_key = "sk-ant-api03-" + "Q" * 40
+def _logged_anthropic_bad_request(api_key: str, message: str) -> str:
+    """Send one Anthropic request that fails 400 with ``message``; return the
+    ERROR-level log text it produced."""
     body = json.dumps(
         {
             "type": "error",
-            "error": {
-                "type": "invalid_request_error",
-                "message": (
-                    "tools.34.custom.input_schema: input_schema does not support "
-                    f"oneOf, allOf, or anyOf at the top level (key {api_key}; "
-                    f"also {pattern_key})"
-                ),
-            },
+            "error": {"type": "invalid_request_error", "message": message},
             "request_id": "req_logging",
         }
     )
@@ -503,7 +496,7 @@ def test_anthropic_bad_request_logs_the_redacted_provider_message():
         response=response
     )
     captured: list[str] = []
-    sink = logger.add(lambda message: captured.append(str(message)), level="ERROR")
+    sink = logger.add(lambda record: captured.append(str(record)), level="ERROR")
     try:
         with patch("requests.Session.post", return_value=response):
             with pytest.raises(ChatBadRequestError):
@@ -516,10 +509,40 @@ def test_anthropic_bad_request_logs_the_redacted_provider_message():
                 )
     finally:
         logger.remove(sink)
+    return "\n".join(captured)
 
-    log = "\n".join(captured)
+
+def test_anthropic_bad_request_logs_the_redacted_provider_message():
+    api_key = "anthropic-canary-credential-7f3e9a1c2b"
+    pattern_key = "sk-ant-api03-" + "Q" * 40
+
+    log = _logged_anthropic_bad_request(
+        api_key,
+        "tools.34.custom.input_schema: input_schema does not support "
+        f"oneOf, allOf, or anyOf at the top level (key {api_key}; "
+        f"also {pattern_key})",
+    )
+
     assert "Anthropic request failed; status=400" in log
     assert "input_schema does not support oneOf, allOf, or anyOf" in log
     assert "req_logging" in log
     assert api_key not in log
     assert pattern_key not in log
+
+
+def test_anthropic_bad_request_log_masks_a_short_echoed_key():
+    """Qodo #2931: the request's own key is masked however short it is.
+
+    ``chat_with_anthropic`` sends any non-empty key, and a key this short
+    matches none of ``redact_log_line``'s credential shapes, so only the
+    literal mask stands between an echoing endpoint and the log.
+    """
+    api_key = "Zq7xKw"
+
+    log = _logged_anthropic_bad_request(
+        api_key, f"invalid x-api-key {api_key} for this workspace"
+    )
+
+    assert "Anthropic request failed; status=400" in log
+    assert "invalid x-api-key" in log
+    assert api_key not in log

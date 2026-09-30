@@ -1244,6 +1244,10 @@ def _credential_redacted_detail(detail: object, *known_credentials: object) -> s
     provider may echo it back -- and every recognized credential shape is
     masked by the same redactor the log sinks use.
 
+    Every non-empty credential is masked whatever its length, like
+    ``CredentialSanitizer``'s known values (Qodo #2931): the request sends any
+    non-empty key, and a short one matches none of the redactor's shapes.
+
     Args:
         detail: Provider error body or message (already sensitive-mode safe).
         *known_credentials: The API key / subscription token this request sent.
@@ -1253,8 +1257,12 @@ def _credential_redacted_detail(detail: object, *known_credentials: object) -> s
     """
     text = str(detail or "")
     for credential in known_credentials:
-        if isinstance(credential, str) and len(credential.strip()) >= 8:
-            text = text.replace(credential, REDACTION_MARKER)
+        if not isinstance(credential, str):
+            continue
+        # Longest first, so a padded value is masked whole before its core.
+        for literal in sorted({credential, credential.strip()}, key=len, reverse=True):
+            if literal:
+                text = text.replace(literal, REDACTION_MARKER)
     return redact_log_line(text)
 
 
