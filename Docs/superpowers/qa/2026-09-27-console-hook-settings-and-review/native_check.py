@@ -47,6 +47,10 @@ else:
 
 root = Path(tempfile.mkdtemp(prefix="hook-review-native-", dir="/private/tmp"))
 root.chmod(0o700)
+# The app recovery bootstrap is rooted under HOME; isolate it with this QA profile.
+qa_home = root / "home"
+qa_home.mkdir(mode=0o700)
+os.environ["HOME"] = str(qa_home)
 data = root / "data"
 data.mkdir(mode=0o700)
 os.environ["TLDW_CONFIG_PATH"] = str(root / "config.toml")

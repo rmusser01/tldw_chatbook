@@ -612,7 +612,7 @@ Verify Settings-first modal geometry/style, guided ID transfer, unknown fields, 
 
 - [x] **Step 4: Verify the complete feature with isolated live state and update guidance.** Run the new focused suites plus any still-unrun existing checks named above. Repeat a passed suite only after a relevant change/failure. Run Ruff/format checks on changed Python files using explicit paths. Rebuild CSS and compare outputs; do not edit generated sheets by hand.
 
-For a live terminal run, create a private temporary config with `[paths] data_dir` pointing to an already-created private temporary directory and a hook using `sys.executable` that writes a temporary marker. Set only `TLDW_CONFIG_PATH` for that process; do not repurpose HOME or the user's config/data. Run `.venv/bin/python -m tldw_chatbook.app` through the repository's terminal verification workflow, keep stderr attached, and verify toolbar/modal/Settings at 80 and 120 columns. Assert config/data resolution before sending, and prove no writes touch the user's real paths.
+For a live terminal run, create a private temporary config with `[paths] data_dir` pointing to an already-created private temporary directory and a hook using `sys.executable` that writes a temporary marker. Set `TLDW_CONFIG_PATH` and give the isolated QA child a private HOME because current dev roots recovery admission there; do not use the user's config/data. Run `.venv/bin/python -m tldw_chatbook.app` through the repository's terminal verification workflow, keep stderr attached, and verify toolbar/modal/Settings at 80 and 120 columns. Assert config/data resolution before sending, and prove no writes touch the user's real paths.
 
 Record evidence for: pending Send keeps text and creates no marker; explicit approval sends once and creates the marker; restart keeps approval; editing argv/matcher/event/timeout requires review; revoke blocks future launches; selective approval leaves other rows pending; disabled/master-off allows Send; cancelled Settings navigation retains text; and queued/viewless refusals retain their recovery owner. Test background behavior through its real controller/coordinator, not a UI-only fake. No provider/network sweep is required; use the existing fake gateway for admission tests and a qualified isolated provider only for the live Send if configured safely.
 
@@ -702,9 +702,27 @@ raw-file ownership; no new storage or security decision.
 - [x] Fetch current dev and inspect the branch and conflict surface.
 - [x] Carry the four implementation commits and resolve documentation against
   the design documents already on dev.
-- [ ] Rebuild generated CSS from current sources and check the merged runtime,
+- [x] Rebuild generated CSS from current sources and check the merged runtime,
   Settings and Console caller contracts.
-- [ ] Run targeted feature, native-width and governance checks on this tree;
+- [x] Run targeted feature, native-width and governance checks on this tree;
   compare any failures to the current dev base.
-- [ ] Update current-tree evidence, complete TASK-33163 and commit locally.
+- [x] Update current-tree evidence, complete TASK-33163 and commit locally.
   Publishing or merging remains a separate integration decision.
+
+## Current-dev closeout — 2026-09-29
+
+The four implementation commits are on codex/hook-review-current from
+857b3dd7d0; previously landed design/plan commits were not duplicated.
+Current source CSS rebuilt without a diff. Targeted checks recorded 367
+distinct passing cases, including 201 feature/category cases; two Settings
+search failures reproduce against current dev application sources. Actual
+80×24 and 120×40 native runs passed after isolating the QA child's
+HOME-based recovery bootstrap. The broader 45-second exploratory queue run
+was superseded by a complete 120-second UI run and direct queue-controller
+cases. Authored Ruff/format and QA-script checks passed. See the current
+implementation review for exact qualified evidence and limits.
+
+No new ADR is required; this directly implements ADR-197 and existing
+ADR-126 raw-file ownership. No full suite or real provider generation ran.
+The work is ready for an integration decision; publication and merge have
+not been performed.

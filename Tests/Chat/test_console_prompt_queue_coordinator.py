@@ -44,6 +44,9 @@ from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class ConsoleChatStore(_ConsoleChatStore):
     """Test store whose intentionally db-less sessions are explicitly ephemeral."""
 

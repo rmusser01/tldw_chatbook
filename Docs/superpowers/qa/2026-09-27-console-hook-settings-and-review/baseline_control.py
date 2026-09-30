@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 root = pathlib.Path.cwd()
-ref = "e5ac111967bd7310e6e97dec043a559d07e97d30"
+ref = "857b3dd7d0"
 paths = subprocess.check_output(
     ["git", "diff", "--name-only", ref, "--", "tldw_chatbook"], text=True
 ).splitlines()

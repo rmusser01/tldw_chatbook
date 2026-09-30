@@ -16919,3 +16919,14 @@ but the tool transport resized the terminal to 80×24 after yielding. A later
 interaction assertion caught the mismatch. The native QA wrapper now owns its
 child PTY, sets its dimensions directly, and asserts the application's size after
 interactions. Requested dimensions alone are not evidence of a wide-layout check.
+
+## 2026-09-29 — An isolated config is not an isolated recovery startup (TASK-33163)
+
+The current-dev native Hooks check selected a fresh `TLDW_CONFIG_PATH` but
+failed before app import with `recovery_scope_uncertain`. Tracing
+`acquire_storage()` showed that startup admission still used the existing
+HOME-based recovery authority, which could not enroll that new selector.
+The QA child now has its own private HOME as well as private config/data;
+the real app then passed both terminal sizes. Native tests of startup
+boundaries must isolate every root that participates in admission, not only
+the config file.

@@ -1,11 +1,11 @@
 ---
 id: TASK-33163
 title: Add Console hook settings and consent review
-status: In Progress
+status: Done
 assignee:
   - codex
 created_date: '2026-09-28 03:03'
-updated_date: '2026-09-29'
+updated_date: '2026-09-30 01:27'
 labels:
   - hooks
   - console
@@ -31,7 +31,7 @@ Let Console users inspect and approve hook commands before execution, and manage
 - [x] #2 Existing, new, and changed enabled hooks require persisted exact-definition review on the next Send; cancelling or navigating preserves drafts and stale callbacks cannot send twice or into another chat.
 - [x] #3 Shared foreground, queued, durable, recovered, and viewless admission and subprocess launches enforce consent, including revocation races, failed persistence, legacy duplicates, and notification target ownership.
 - [x] #4 Canonical Settings provides staged hook add/edit/enable/disable/remove and Save/Revert, validation and impact copy, permission review and deep links, preserving concurrent edits and unknown configuration fields.
-- [ ] #5 Targeted runtime and UI checks, private storage and sensitive-path checks, portable-backup exclusion of hook consent, design-token and generated-style checks, and isolated live verification pass with documented limits and updated user guidance.
+- [x] #5 Targeted runtime and UI checks, private storage and sensitive-path checks, portable-backup exclusion of hook consent, design-token and generated-style checks, and isolated live verification pass with documented limits and updated user guidance.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,13 +57,11 @@ Integrated only the hook design/plan and four implementation commits onto dev e5
 
 ADR check: direct implementation of backlog/decisions/197-console-hook-configuration-review.md and ADR-126; no new ADR, dependency or database migration. Original codex/hook-review and its earlier 417-case evidence remain historical. The shared modal/editor and dev adaptations form one final integration unit.
 
-Validation: 201 distinct feature and Settings metadata cases passed across targeted runs. Core runtime/config/admission/viewless run: 153 passed. Latest consent owner suite: 42 passed. Inventory: 27 passed. Mounted review/editor: 13 passed. Real Settings metadata: seven passed. All eight token and 29 CSS-integrity cases passed; styles rebuilt from source. Authored Ruff/format checks are clean across 48 changed Python files; all three QA scripts pass full Ruff/format checks. Real TldwCli passed six private-profile checks at actual 80×24 and 120×40 using a harmless real hook and recording gateway.
+Previous e5ac111967-based validation: 201 distinct feature and Settings metadata cases passed across targeted runs. Core runtime/config/admission/viewless run: 153 passed. Latest consent owner suite: 42 passed. Inventory: 27 passed. Mounted review/editor: 13 passed. Real Settings metadata: seven passed. All eight token and 29 CSS-integrity cases passed; styles rebuilt from source. Authored Ruff/format checks are clean across 48 changed Python files; all three QA scripts pass full Ruff/format checks. Real TldwCli passed six private-profile checks at actual 80×24 and 120×40 using a harmless real hook and recording gateway.
 
-Eleven broader failures reproduce on an untouched archive of the exact dev base. Interrupted exploratory bundles qualify only recorded completed cases. No full suite, real provider generation, push or merge was performed. Current named results, captures, baseline comparisons and limits are in Docs/superpowers/reviews/2026-09-27-console-hook-settings-and-review.md and its QA artifacts.
+Eleven broader failures reproduce on an untouched archive of the exact dev base. Interrupted exploratory bundles qualify only recorded completed cases. No full suite, real provider generation, push or merge was performed. The current branch's named results, captures, baseline comparisons and limits are in Docs/superpowers/reviews/2026-09-27-console-hook-settings-and-review.md and its QA artifacts.
 
 Self-review completed for launch/revocation ownership, narrow nested storage scope, excluded restore authority, callbacks, lossless Settings writes and generated styles. Changed core hook inventory/config transactions and consent authority, Console runtime/admission/UI routing, shared review modal, canonical Settings editor/registry/search, raw participant and private-path integration, backup declarations and targeted tests. Updated the guide, accepted plan/ADR and evidence-based lessons.
-<!-- SECTION:NOTES:END -->
 
-Current-dev continuation (2026-09-29): the implementation has been carried
-onto 857b3dd7d0. Prior validation and the 201-case count in these notes refer
-to the e5ac111967-based integration and will be refreshed before Done.
+Current-dev continuation (2026-09-29): carried only four implementation commits onto 857b3dd7d0 as codex/hook-review-current. Rebuilt CSS from current sources. Targeted evidence: 367 distinct passing cases including 201 feature/category cases; two Settings search assertions reproduce on current dev application sources. Real TldwCli passed all six private-profile checks at actual 80×24 and 120×40. QA now isolates the HOME-based recovery bootstrap; the queue-controller test module uses the existing bound-profile fixture. Authored-line Ruff/format checks and QA-script lint/format passed. See the updated implementation review and machine-readable QA results. No full suite, real provider generation, push or merge.
+<!-- SECTION:NOTES:END -->
