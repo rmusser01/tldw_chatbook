@@ -2461,7 +2461,8 @@ async def test_settings_inspector_floor_yields_to_the_detail_pane_when_narrow():
     SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH. At 120 columns a static floor cut
     the detail pane from 57 to 42 columns and left the Network CA path 7
     editable cells (test_settings_compact_fields); a live resize must move
-    the class both ways."""
+    the class both ways. The threshold is pinned at its edge: it hard-codes
+    the rail and gutters (42), so a wider rail must turn this red."""
     app = _build_test_app()
     host = _ProductionDestinationHarness(app, "settings")
     async with host.run_test(size=(140, 42)) as pilot:
@@ -2469,24 +2470,36 @@ async def test_settings_inspector_floor_yields_to_the_detail_pane_when_narrow():
         await _wait_for_selector(screen, pilot, "#settings-impact-pane")
         inspector = screen.query_one("#settings-impact-pane")
         detail = screen.query_one("#settings-detail-pane")
-        for width, floor in ((140, 36), (120, None), (140, 36)):
+        from tldw_chatbook.UI.Screens.settings_screen import (
+            SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH as edge,
+        )
+
+        for width, floor in (
+            (140, 36),
+            (120, None),
+            (edge - 1, None),
+            (edge, 36),
+            (140, 36),
+        ):
             await pilot.resize_terminal(width, 42)
             await pilot.pause()
             await pilot.pause()
+            assert detail.region.width >= 56, (width, detail.region)
             if floor:
                 assert inspector.region.width == floor, (width, inspector.region)
             else:
                 assert inspector.region.width < 36, (width, inspector.region)
-                assert detail.region.width >= 56, (width, detail.region)
 
 
-@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.parametrize("size", [(140, 42), (211, 44), (235, 52)])
 @pytest.mark.asyncio
 async def test_settings_inspector_rows_stay_reachable_in_every_category(size):
     """TASK-33003.7 AC#3: the pane clips (overflow hidden), so a pinned
     header row that does not fit, or any row wider than the pane, is lost
     for good; body rows are reachable only if the body keeps a window and
-    scrolls to its last row."""
+    scrolls to its last row. 140x42 carries AC#1 into every category (the
+    note is a body row): red at base, where the 25-column pane clipped
+    Providers & Models' 23-column Save button in its 21-column interior."""
     app = _build_test_app()
     host = _ProductionDestinationHarness(app, "settings")
     async with host.run_test(size=size) as pilot:
