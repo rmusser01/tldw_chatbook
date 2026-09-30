@@ -29,6 +29,81 @@ from pydantic import (
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .reasoning_config import REASONING_HISTORY_MODES
 
+ConsoleHookEvent = Literal[
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "ApprovalRequested",
+    "Stop",
+    "SubagentStop",
+]
+CONSOLE_HOOK_TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
+CONSOLE_HOOK_DEFAULT_TIMEOUT_S = 10.0
+CONSOLE_HOOK_SWITCH_INPUT = TypeAdapter(bool, config=ConfigDict(strict=True))
+CONSOLE_HOOK_ID_INPUT = TypeAdapter(
+    Annotated[str, Field(min_length=1)], config=ConfigDict(strict=True)
+)
+CONSOLE_HOOK_ROWS_INPUT = TypeAdapter(list[object], config=ConfigDict(strict=True))
+CONSOLE_HOOK_CONTAINER_INPUT = TypeAdapter(
+    dict[str, object], config=ConfigDict(strict=True)
+)
+
+
+class ConsoleHookInput(BaseModel):
+    """Strict execution fields; unknown saved fields remain outside this projection."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    event: ConsoleHookEvent
+    command: list[str] = Field(min_length=1)
+    matcher: str | None = None
+    timeout_s: float = Field(
+        default=CONSOLE_HOOK_DEFAULT_TIMEOUT_S, gt=0, allow_inf_nan=False
+    )
+
+    @field_validator("command")
+    @classmethod
+    def valid_command(cls, value: list[str]) -> list[str]:
+        """Reject empty executable names and NUL bytes.
+
+        Args:
+            value: Strictly typed nonempty argv list.
+
+        Returns:
+            The unchanged argv list.
+
+        Raises:
+            ValueError: The executable is empty or an argument contains NUL.
+        """
+        if not value[0] or any("\x00" in arg for arg in value):
+            raise ValueError(
+                "Command must be a nonempty argv list of NUL-free strings."
+            )
+        return value
+
+    @field_validator("matcher")
+    @classmethod
+    def valid_matcher(cls, value: str | None, info: ValidationInfo) -> str | None:
+        """Restrict nonempty matchers to tool events.
+
+        Args:
+            value: Optional tool-name glob.
+            info: Validated fields, including the selected event.
+
+        Returns:
+            The unchanged matcher.
+
+        Raises:
+            ValueError: The matcher is empty or belongs to a non-tool event.
+        """
+        if value is not None:
+            if info.data.get("event") not in CONSOLE_HOOK_TOOL_EVENTS:
+                raise ValueError("Matcher is only valid for PreToolUse or PostToolUse.")
+            if not value:
+                raise ValueError("Matcher must be a nonempty glob string.")
+        return value
+
+
 _BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
     Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
 )

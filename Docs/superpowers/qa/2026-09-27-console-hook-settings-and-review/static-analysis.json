@@ -1,0 +1,20 @@
+{
+  "base": "5980da9c12",
+  "checked_files": 52,
+  "new_files": [
+    "Tests/Agents/hook_test_utils.py",
+    "Tests/Agents/test_hook_config_inventory.py",
+    "Tests/Agents/test_hook_permissions.py",
+    "Tests/Chat/test_console_hook_admission.py",
+    "Tests/UI/test_console_hooks_review.py",
+    "Tests/UI/test_settings_hooks.py",
+    "Tests/test_hooks_config_snapshot.py",
+    "tldw_chatbook/Agents/hook_permissions.py",
+    "tldw_chatbook/UI/Console_Modules/hooks.py",
+    "tldw_chatbook/UI/Screens/settings_hooks.py",
+    "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py"
+  ],
+  "all_diagnostics": 880,
+  "diagnostics_on_authored_lines": [],
+  "authored_range_format_failures": []
+}

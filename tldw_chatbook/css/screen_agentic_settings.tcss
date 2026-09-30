@@ -1548,3 +1548,59 @@ Button.settings-category-group-toggle:focus {
 .settings-imagegen-key-source-neutral {
     color: $ds-text-muted;
 }
+
+
+.settings-hooks-review-modal { align: center middle; }
+    #console-hooks-review {
+        width: $ds-percent-90; max-width: $ds-size-110; height: $ds-percent-90;
+        background: $ds-surface-panel; border: round $ds-grid-line;
+        padding: $ds-space-inset;
+    }
+    #console-hooks-title { height: auto; text-style: $ds-text-strong; }
+    #console-hooks-notice { height: auto; color: $ds-status-warning; }
+    #console-hooks-tabs, #console-hooks-actions {
+        height: $ds-control-height; width: $ds-width-full;
+    }
+    #console-hooks-list { height: $ds-height-fill; }
+    .hook-review-row {
+        height: auto; border: round $ds-grid-line;
+        margin-bottom: $ds-space-stack; padding: $ds-space-0 $ds-space-inset;
+    }
+    .hook-review-heading, .hook-review-controls { height: $ds-control-height; }
+    .hook-review-select { width: $ds-width-fill; }
+    .hook-review-details { min-width: $ds-size-9; width: auto; }
+    .hook-review-state, .hook-review-detail { height: auto; }
+    .hook-review-state { color: $ds-text-muted; }
+    .hook-review-detail { background: $ds-surface-sunken; padding: $ds-space-inset; }
+    .hook-review-action {
+        width: auto; min-width: $ds-size-9; height: $ds-control-height;
+        margin-right: $ds-space-inline;
+        background: $ds-surface-raised; color: $ds-text-primary;
+    }
+    .hook-review-action:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
+    .hook-review-action:focus {
+        background: $ds-focus-bg; color: $ds-focus-fg;
+    }
+    .hook-review-action:disabled {
+        background: $ds-disabled-bg; color: $ds-text-disabled-readable;
+    }
+    #console-hooks-review #console-hooks-settings { height: $ds-control-height-compact; border: none; }
+
+.settings-hooks-panel { height: auto; }
+    .settings-hooks-panel .settings-hooks-actions {
+        height: auto; margin-bottom: $ds-space-1; }
+    .settings-hooks-panel .settings-hooks-actions .settings-hooks-action {
+        min-width: $ds-size-9; margin-right: $ds-space-1; }
+    .settings-hooks-panel #settings-hooks-list { height: $ds-size-6; margin-bottom: $ds-space-1; }
+    .settings-hooks-panel #settings-hooks-editor { height: auto; }
+    .settings-hooks-panel #settings-hooks-command { height: $ds-textarea-min-height; margin-bottom: $ds-space-1; }
+    .settings-hooks-panel .settings-hooks-field {
+        margin-bottom: $ds-space-1; }
+    .settings-hooks-panel .settings-hooks-copy {
+        height: auto; color: $ds-text-muted; margin-bottom: $ds-space-1; }
+
+/* Hook review follows the existing wide modal cap ladder. */
+App.-wide-viewport #console-hooks-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}

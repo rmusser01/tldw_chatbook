@@ -12,7 +12,6 @@ import datetime
 import fnmatch
 import hashlib
 import json
-import math
 import os
 import signal
 import subprocess
@@ -21,27 +20,30 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
-from typing import Any
+from contextlib import AbstractContextManager, ExitStack
+from dataclasses import dataclass, field
+from typing import Any, get_args
 
 from loguru import logger
+from pydantic import ValidationError
 
 from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Utils.input_validation import (
+    CONSOLE_HOOK_CONTAINER_INPUT,
+    CONSOLE_HOOK_DEFAULT_TIMEOUT_S,
+    CONSOLE_HOOK_ID_INPUT,
+    CONSOLE_HOOK_ROWS_INPUT,
+    CONSOLE_HOOK_SWITCH_INPUT,
+    CONSOLE_HOOK_TOOL_EVENTS,
+    ConsoleHookEvent,
+    ConsoleHookInput,
+)
 from tldw_chatbook.Utils.path_validation import validate_existing_absolute_directory
 
-HOOK_EVENTS: frozenset[str] = frozenset(
-    {
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PostToolUse",
-        "ApprovalRequested",
-        "Stop",
-        "SubagentStop",
-    }
-)
-TOOL_NAME_EVENTS: frozenset[str] = frozenset({"PreToolUse", "PostToolUse"})
+HOOK_EVENTS: frozenset[str] = frozenset(get_args(ConsoleHookEvent))
+TOOL_NAME_EVENTS: frozenset[str] = CONSOLE_HOOK_TOOL_EVENTS
 HOOK_IO_BUDGET_CHARS: int = 4000
-HOOK_DEFAULT_TIMEOUT_S: float = 10.0
+HOOK_DEFAULT_TIMEOUT_S: float = CONSOLE_HOOK_DEFAULT_TIMEOUT_S
 # Bound retained stream bytes, including four-byte UTF-8 characters.
 HOOK_IO_BUDGET_BYTES = HOOK_IO_BUDGET_CHARS * 4
 HOOK_NOTIFY_CAPACITY = 64
@@ -86,6 +88,26 @@ class HookSpec:
         return fnmatch.fnmatchcase(tool_name, self.matcher)
 
 
+@dataclass(frozen=True, slots=True)
+class HookTarget:
+    """An exact definition and grant epoch captured for one firing."""
+
+    config_scope: str
+    key: str
+    fingerprint: str
+    spec: HookSpec = field(repr=False)
+    approval_token: str | None
+
+
+class HookLaunchRefused(Exception):
+    """Consent refusal, distinct from an execution error that may fail open."""
+
+    def __init__(self, reason: str, skip: bool = False) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.skip = skip
+
+
 @dataclass(frozen=True)
 class RunHooksConfig:
     """Validated user configuration.
@@ -99,79 +121,193 @@ class RunHooksConfig:
     hooks: tuple[HookSpec, ...] = ()
 
 
-def _parse_hook(raw: object) -> HookSpec | None:
-    if not isinstance(raw, dict):
-        logger.warning("run-hooks: hook entry is not a table; disabled")
-        return None
-    event = raw.get("event")
-    if not isinstance(event, str) or event not in HOOK_EVENTS:
-        logger.warning("run-hooks: unknown event; hook disabled")
-        return None
-    command = raw.get("command")
-    if (
-        not isinstance(command, list)
-        or not command
-        or not all(isinstance(a, str) and "\x00" not in a for a in command)
-        or not command[0]
-    ):
-        logger.warning(
-            "run-hooks: command must be a non-empty list of strings; hook disabled"
+@dataclass(frozen=True, slots=True)
+class HookInventoryRow:
+    """One source row; invalid definitions remain visible for repair."""
+
+    index: int
+    key: str
+    spec: HookSpec | None
+    enabled: bool | None
+    error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HookInventory:
+    """Lossless inventory, independent of the executable projection."""
+
+    master_enabled: bool | None
+    container_error: str | None
+    rows: tuple[HookInventoryRow, ...] = ()
+
+    @property
+    def requires_authority(self) -> bool:
+        """Require review unless absence/disable is explicitly verified."""
+        if self.master_enabled is False:
+            return False
+        return bool(
+            self.container_error or any(row.enabled is not False for row in self.rows)
         )
-        return None
-    matcher = raw.get("matcher")
-    if matcher is not None:
-        if event not in TOOL_NAME_EVENTS:
-            logger.warning(
-                "run-hooks: matcher is only valid on {}, got {}; hook disabled",
-                sorted(TOOL_NAME_EVENTS),
-                event,
-            )
-            return None
-        if not isinstance(matcher, str) or not matcher:
-            logger.warning(
-                "run-hooks: matcher must be a non-empty string; hook disabled"
-            )
-            return None
-    timeout = raw.get("timeout_s", HOOK_DEFAULT_TIMEOUT_S)
-    if (
-        isinstance(timeout, bool)
-        or not isinstance(timeout, (int, float))
-        or not math.isfinite(timeout)
-        or timeout <= 0
-    ):
-        logger.warning(
-            "run-hooks: timeout_s must be a positive finite number; hook disabled"
-        )
-        return None
+
+
+def fingerprint_hook(spec: HookSpec) -> str:
+    """Hash an exact normalized execution definition, without enable switches.
+
+    Args:
+        spec: Validated lifecycle event, argv, matcher, and timeout.
+
+    Returns:
+        Versioned SHA-256 identity of the execution definition.
+    """
+    encoded = json.dumps(
+        {
+            "version": 1,
+            "event": spec.event,
+            "command": list(spec.command),
+            "matcher": spec.matcher,
+            "timeout_s": float(spec.timeout_s),
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_hook_definition(raw: object) -> tuple[HookSpec | None, str | None]:
+    """Validate execution fields and return a content-free repair message.
+
+    Args:
+        raw: Saved hook table, including any unknown fields to preserve.
+
+    Returns:
+        Validated execution specification or a bounded repair message.
+    """
+    if not isinstance(raw, Mapping):
+        return None, "Hook entry must be a table."
+    try:
+        validated = ConsoleHookInput.model_validate(dict(raw))
+    except ValidationError as error:
+        field = error.errors(include_input=False, include_context=False)[0]["loc"][0]
+        messages = {
+            "event": "Choose a supported hook event.",
+            "command": "Command must be a nonempty argv list of NUL-free strings.",
+            "matcher": (
+                "Matcher is only valid for PreToolUse or PostToolUse."
+                if raw.get("event") not in ("PreToolUse", "PostToolUse")
+                else "Matcher must be a nonempty glob string."
+            ),
+            "timeout_s": "Timeout must be a positive finite number.",
+        }
+        return None, messages[field]
     return HookSpec(
-        event=event, command=tuple(command), matcher=matcher, timeout_s=float(timeout)
-    )
+        validated.event,
+        tuple(validated.command),
+        validated.matcher,
+        validated.timeout_s,
+    ), None
+
+
+def inspect_hooks_config(config: Mapping[str, object]) -> HookInventory:
+    """Inspect every raw row and retain malformed containers for recovery.
+
+    Args:
+        config: Raw configuration mapping with an optional Hooks section.
+
+    Returns:
+        Lossless inventory of switches, identities, and repair states.
+    """
+    if not isinstance(config, Mapping):
+        return HookInventory(None, "Configuration must be a table.")
+    if "hooks" not in config:
+        return HookInventory(True, None)
+    section = config["hooks"]
+    try:
+        section = CONSOLE_HOOK_CONTAINER_INPUT.validate_python(
+            dict(section) if isinstance(section, Mapping) else section
+        )
+    except ValidationError:
+        return HookInventory(
+            None, "Hooks section must be a table; repair in Advanced Config."
+        )
+    container_error = None
+    try:
+        master = CONSOLE_HOOK_SWITCH_INPUT.validate_python(section.get("enabled", True))
+    except ValidationError:
+        master = None
+        container_error = "Hooks enabled must be a boolean."
+    try:
+        raw_hooks = CONSOLE_HOOK_ROWS_INPUT.validate_python(section.get("hook", []))
+    except ValidationError:
+        return HookInventory(master, "Hooks list must be an array of tables.")
+    ids: dict[str, int] = {}
+    identities = []
+    for raw in raw_hooks:
+        hook_id = None
+        if isinstance(raw, Mapping) and "id" in raw:
+            try:
+                hook_id = CONSOLE_HOOK_ID_INPUT.validate_python(raw["id"])
+            except ValidationError:
+                pass  # The raw row remains visible with a repair error below.
+        identities.append(hook_id)
+        if hook_id is not None:
+            ids[hook_id] = ids.get(hook_id, 0) + 1
+    occurrences: dict[str, int] = {}
+    rows = []
+    for index, raw in enumerate(raw_hooks):
+        spec, error = validate_hook_definition(raw)
+        try:
+            enabled = CONSOLE_HOOK_SWITCH_INPUT.validate_python(
+                raw.get("enabled", True) if isinstance(raw, Mapping) else None
+            )
+        except ValidationError:
+            enabled = None
+            error = "Hook enabled must be a boolean."
+        hook_id = identities[index]
+        if isinstance(raw, Mapping) and "id" in raw and hook_id is None:
+            error = "Hook ID must be a nonempty string."
+        if hook_id is not None and ids.get(hook_id, 0) > 1:
+            error = "Duplicate hook ID; assign distinct IDs."
+        if error:
+            spec = None
+        if spec is None:
+            key = f"invalid:{index}"
+        elif hook_id is not None:
+            key = f"id:{hook_id}"
+        else:
+            fingerprint = fingerprint_hook(spec)
+            occurrence = occurrences.get(fingerprint, 0)
+            occurrences[fingerprint] = occurrence + 1
+            key = f"legacy:{fingerprint}:{occurrence}"
+        rows.append(HookInventoryRow(index, key, spec, enabled, error))
+    return HookInventory(master, container_error, tuple(rows))
 
 
 def load_hooks_config(config: Mapping) -> RunHooksConfig:
-    """Parse user configuration, logging invalid entries without their contents.
+    """Project valid enabled rows; inventory remains the consent authority.
 
     Args:
-        config: Loaded application configuration containing the optional hooks section.
+        config: Saved configuration mapping with an optional Hooks section.
 
     Returns:
-        Valid hooks, with invalid master switches disabled and invalid entries omitted.
+        Master switch and valid enabled execution definitions. Invalid raw
+        rows remain in the separate consent inventory for repair.
     """
-    section = config.get("hooks") if isinstance(config, Mapping) else None
-    if not isinstance(section, Mapping):
-        return RunHooksConfig(enabled=True, hooks=())
-    enabled = section.get("enabled", True)
-    if type(enabled) is not bool:
-        logger.warning("run-hooks: enabled must be a boolean; hooks disabled")
-        enabled = False
-    raw_hooks = section.get("hook", [])
-    if not isinstance(raw_hooks, list):
-        logger.warning(
-            "run-hooks: [hooks] hook must be a list of tables; hooks disabled"
-        )
-        raw_hooks = []
-    hooks = tuple(h for h in (_parse_hook(r) for r in raw_hooks) if h is not None)
-    return RunHooksConfig(enabled=enabled, hooks=hooks)
+    inventory = inspect_hooks_config(config)
+    if inventory.container_error:
+        logger.warning("run-hooks: {}", inventory.container_error)
+    for row in inventory.rows:
+        if row.error:
+            logger.warning("run-hooks: {}; hook disabled", row.error)
+    return RunHooksConfig(
+        enabled=inventory.master_enabled is True,
+        hooks=tuple(
+            row.spec
+            for row in inventory.rows
+            if row.spec is not None and row.enabled is True
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -347,8 +483,12 @@ def _kill_process_group(pid: int) -> None:
 
 
 async def _capture_hook(
-    spec: HookSpec, payload: dict[str, Any], closed: threading.Event | None
+    target: HookTarget,
+    payload: dict[str, Any],
+    closed: threading.Event | None,
+    launch_guard: Callable[..., AbstractContextManager[None]],
 ) -> tuple[int, _HookProtocol, bool]:
+    spec = target.spec
     protocol = _HookProtocol()
     transport = None
     timed_out = False
@@ -358,12 +498,23 @@ async def _capture_hook(
         cwd = str(validate_existing_absolute_directory(payload["cwd"]))
         payload = dict(payload, cwd=cwd)
         stdin = json.dumps(payload).encode("utf-8")
-        transport, _ = await asyncio.get_running_loop().subprocess_exec(
-            lambda: protocol,
-            *spec.command,
-            cwd=cwd,
-            start_new_session=(sys.platform != "win32"),
-        )
+        data = payload.get("data", {})
+        tool_name = data.get("tool_name") if isinstance(data, dict) else None
+        with ExitStack() as authority:
+            try:
+                authority.enter_context(launch_guard(target, tool_name=tool_name))
+            except HookLaunchRefused:
+                raise
+            except Exception:  # noqa: BLE001 - authority failure cannot fail open
+                raise HookLaunchRefused(
+                    "Hook authority unavailable at launch."
+                ) from None
+            transport, _ = await asyncio.get_running_loop().subprocess_exec(
+                lambda: protocol,
+                *spec.command,
+                cwd=cwd,
+                start_new_session=(sys.platform != "win32"),
+            )
         writer = transport.get_pipe_transport(0)
         writer.write(stdin)
         writer.close()
@@ -400,9 +551,13 @@ async def _capture_hook(
 
 
 def _run_hook(
-    spec: HookSpec, payload: dict[str, Any], closed: threading.Event | None = None
+    target: HookTarget,
+    payload: dict[str, Any],
+    closed: threading.Event | None,
+    launch_guard: Callable[..., AbstractContextManager[None]],
 ) -> tuple[HookSpec, _Decision | None]:
     """Execute one hook with bounded output and content-free log attribution."""
+    spec = target.spec
     fingerprint = hashlib.sha256(json.dumps(spec.command).encode("utf-8")).hexdigest()[
         :12
     ]
@@ -417,7 +572,14 @@ def _run_hook(
         hook_id=fingerprint,
     ):
         try:
-            return _execute_hook(spec, payload, closed, identity)
+            return _execute_hook(target, payload, closed, identity, launch_guard)
+        except HookLaunchRefused as refusal:
+            logger.warning("run-hooks: {} consent refused", identity)
+            return spec, (
+                _Decision(denied=True, reason=refusal.reason)
+                if spec.event in BLOCKING_EVENTS and not refusal.skip
+                else None
+            )
         except Exception as exc:  # noqa: BLE001 - process owner cleans up first
             logger.warning(
                 "run-hooks: {} hook failed (exception_type={})",
@@ -430,13 +592,17 @@ def _run_hook(
 
 
 def _execute_hook(
-    spec: HookSpec,
+    target: HookTarget,
     payload: dict[str, Any],
     closed: threading.Event | None,
     identity: str,
+    launch_guard: Callable[..., AbstractContextManager[None]],
 ) -> tuple[HookSpec, _Decision | None]:
+    spec = target.spec
     started = time.monotonic()
-    returncode, capture, timed_out = asyncio.run(_capture_hook(spec, payload, closed))
+    returncode, capture, timed_out = asyncio.run(
+        _capture_hook(target, payload, closed, launch_guard)
+    )
     stdout, stderr = capture.text(1), capture.text(2)
     if timed_out:
         logger.warning("run-hooks: {} timeout; process reaped", identity)
@@ -575,13 +741,18 @@ class RunHooksEngine:
 
     def __init__(
         self,
-        config_provider: Callable[[], RunHooksConfig],
+        target_provider: Callable[[str, str | None], tuple[HookTarget, ...]],
         cwd_provider: Callable[[], str],
+        *,
+        notification_targets: Callable[[str, str | None], tuple[HookTarget, ...]],
+        launch_guard: Callable[..., AbstractContextManager[None]],
     ) -> None:
         self._closed = threading.Event()
         self._admission_lock = threading.Lock()
         self._notify_slots = threading.BoundedSemaphore(HOOK_NOTIFY_CAPACITY)
-        self._config_provider = config_provider
+        self._target_provider = target_provider
+        self._notification_targets = notification_targets
+        self._launch_guard = launch_guard
         self._cwd_provider = cwd_provider
         # Blocking-event pool only (ruling R14); never shared with notify work.
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="run-hook")
@@ -592,21 +763,20 @@ class RunHooksEngine:
             max_workers=4, thread_name_prefix="run-hook-observe"
         )
 
-    def _matching(self, event: str, tool_name: str | None) -> list[HookSpec]:
-        cfg = self._config_provider()
-        if not cfg.enabled:
-            return []
-        matched: list[HookSpec] = []
-        for hook in cfg.hooks:
-            if hook.event != event:
-                continue
-            # Matcher-less hooks match everything; matcher hooks need a tool
-            # name to test against and are skipped when none was provided.
-            if hook.matcher is None or (
-                tool_name is not None and hook.matches_tool(tool_name)
+    def _matching(self, event: str, tool_name: str | None) -> tuple[HookTarget, ...]:
+        try:
+            targets = self._target_provider(event, tool_name)
+            if not isinstance(targets, tuple) or not all(
+                isinstance(target, HookTarget) for target in targets
             ):
-                matched.append(hook)
-        return matched
+                raise HookLaunchRefused("Hook authority returned invalid targets.")
+            return targets
+        except HookLaunchRefused:
+            raise
+        except Exception:  # noqa: BLE001 - authority cannot inherit fail-open
+            raise HookLaunchRefused(
+                "Hook authority unavailable; review before continuing."
+            ) from None
 
     def _payload(
         self,
@@ -658,6 +828,14 @@ class RunHooksEngine:
             return self._fire(
                 event, session_id=session_id, run_id=run_id, data=data, cwd=cwd
             )
+        except HookLaunchRefused as refusal:
+            logger.warning("run-hooks: event={} consent refused", event)
+            return HookOutcome(
+                blocked=event in BLOCKING_EVENTS and not refusal.skip,
+                reason=refusal.reason
+                if event in BLOCKING_EVENTS and not refusal.skip
+                else "",
+            )
         except Exception as exc:  # noqa: BLE001 - engine must never raise to callers
             logger.warning(
                 "run-hooks: event={} session_id={} run_id={} hook=unavailable "
@@ -681,14 +859,15 @@ class RunHooksEngine:
         run_id: str | None,
         data: dict[str, Any] | None,
         cwd: str | None = None,
+        targets: tuple[HookTarget, ...] | None = None,
     ) -> HookOutcome:
         tool_name: str | None = None
         if isinstance(data, dict):
             candidate = data.get("tool_name")
             if isinstance(candidate, str):
                 tool_name = candidate
-        specs = self._matching(event, tool_name)
-        if not specs:
+        targets = self._matching(event, tool_name) if targets is None else targets
+        if not targets:
             return HookOutcome()
         payload = self._payload(
             event, session_id, run_id, data if isinstance(data, dict) else {}, cwd
@@ -698,8 +877,10 @@ class RunHooksEngine:
                 raise RuntimeError("engine closed")
             pool = self._pool if event in BLOCKING_EVENTS else self._notification_pool
             futures = {
-                pool.submit(_run_hook, spec, payload, self._closed): spec
-                for spec in specs
+                pool.submit(
+                    _run_hook, target, payload, self._closed, self._launch_guard
+                ): target.spec
+                for target in targets
             }
         results = self._results_from_futures(futures)
         return self._reduce(results)
@@ -792,12 +973,25 @@ class RunHooksEngine:
                     return
                 chunks.append(chunk)
             frozen = json.loads("".join(chunks))
+            data = frozen.get("data")
+            tool_name = data.get("tool_name") if isinstance(data, dict) else None
+            targets = self._notification_targets(event, tool_name)
+            if not targets:
+                return
             with self._admission_lock:
                 if self._closed.is_set():
                     logger.warning("run-hooks: notify dropped (closed)")
                     return
-                future = self._notify_worker.submit(self.fire, event, **frozen)
-                future.add_done_callback(lambda _future: self._notify_slots.release())
+                future = self._notify_worker.submit(
+                    self._fire,
+                    event,
+                    session_id=frozen["session_id"],
+                    run_id=frozen.get("run_id"),
+                    data=frozen.get("data"),
+                    cwd=frozen.get("cwd"),
+                    targets=targets,
+                )
+                future.add_done_callback(self._notification_done)
                 submitted = True
         except Exception as exc:  # noqa: BLE001 - notifications never propagate
             logger.warning(
@@ -806,6 +1000,16 @@ class RunHooksEngine:
         finally:
             if not submitted:
                 self._notify_slots.release()
+
+    def _notification_done(self, future: Any) -> None:
+        self._notify_slots.release()
+        if not future.cancelled():
+            error = future.exception()
+            if error is not None:
+                logger.warning(
+                    "run-hooks: notification omitted (exception_type={})",
+                    type(error).__name__,
+                )
 
     def close(self) -> None:
         """Seal admission and cancel queued work without blocking the application.

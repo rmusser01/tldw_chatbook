@@ -2660,3 +2660,5 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-0 !important;
 }
 .console-generation-frame { border: round $ds-console-frame !important; }
+
+#console-control-hooks.hooks-attention{color:$ds-status-approval-required;}

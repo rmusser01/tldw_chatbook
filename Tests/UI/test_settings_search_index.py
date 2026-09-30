@@ -32,6 +32,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -47,6 +48,11 @@ from tldw_chatbook.UI.Screens.settings_search_index import (
     FIELD_SEARCH_INDEX,
     SPEECH_TTS_PROVIDER_FORM_FIELDS,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
+
+hook_file = _hook_file
+
 
 #: Widget types that hold a user-editable value.
 VALUE_WIDGET_TYPES = (Input, Select, Checkbox, Switch, TextArea, SelectionList)
@@ -116,6 +122,7 @@ DECLARED_UNMOUNTED_IDS: frozenset[str] = frozenset(
 #: category's form silently failing to compose cannot hide behind the
 #: others (review finding 12).
 PER_CATEGORY_MIN_SETTINGS: dict[str, int] = {
+    "hooks": 5,
     "providers-models": 20,
     "speech-tts": 15,
     "appearance": 15,
@@ -181,7 +188,7 @@ def _normalized_label(text: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_every_rendered_setting_is_in_the_search_index():
+async def test_every_rendered_setting_is_in_the_search_index(hook_file):
     """Forward, reverse, allowlist, and label sweeps in one mounted pass."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

@@ -445,7 +445,11 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # library owner (asserted during the carve); lazily loaded by
     # LibraryScreen's CSS_PATH.
     ScreenOwnedSplit(
-        modules=("features/_library.tcss", "features/_library_panels.tcss", "features/_library_artifacts.tcss"),
+        modules=(
+            "features/_library.tcss",
+            "features/_library_panels.tcss",
+            "features/_library_artifacts.tcss",
+        ),
         sheets={"library": "screen_agentic_library.tcss"},
         prefixes={"library": ("library",)},
         pinned=frozenset(),
@@ -457,7 +461,11 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     ScreenOwnedSplit(
         modules=("features/_settings.tcss",),
         sheets={"settings": "screen_agentic_settings.tcss"},
-        prefixes={"settings": ("settings",)},
+        # Hook review shares this existing lazy source with canonical Settings;
+        # its own modal CSS_PATH loads it when opened from Console first.
+        prefixes={
+            "settings": ("settings", "console-hooks", "hook-review", "-wide-viewport")
+        },
         pinned=SETTINGS_SPLIT_PINNED_TOKENS,
     ),
     # TASK-24459: 39.7 KB of the 40.5 KB module is `evals-*`-pure; the two

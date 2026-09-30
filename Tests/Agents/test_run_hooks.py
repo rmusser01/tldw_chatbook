@@ -10,6 +10,11 @@ import time
 import pytest
 from loguru import logger as _loguru_logger
 
+from Tests.Agents.hook_test_utils import (
+    trusted_hook_engine,
+    trusted_launch_guard,
+    trusted_target,
+)
 from tldw_chatbook.Agents import run_hooks
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.run_hooks import (
@@ -197,7 +202,7 @@ class TestLoadHooksConfig:
 
 def _engine(*hooks, enabled=True):
     cfg = RunHooksConfig(enabled=enabled, hooks=tuple(hooks))
-    return RunHooksEngine(lambda: cfg, lambda: os.getcwd())
+    return trusted_hook_engine(lambda: cfg, lambda: os.getcwd())
 
 
 class TestFire:
@@ -628,7 +633,7 @@ class TestCwdOverride:
         cfg = RunHooksConfig(
             enabled=True, hooks=(HookSpec("Stop", (sys.executable, "-c", code)),)
         )
-        eng = RunHooksEngine(lambda: cfg, lambda: provider_cwd)
+        eng = trusted_hook_engine(lambda: cfg, lambda: provider_cwd)
         return eng, payload_file
 
     def test_fire_with_cwd_override_carries_it_in_the_payload(self, tmp_path):
@@ -705,7 +710,7 @@ class TestPoolIsolation:
 class TestWrapReview:
     def _engine_with(self, spec):
         cfg = RunHooksConfig(enabled=True, hooks=(spec,))
-        return RunHooksEngine(lambda: cfg, lambda: os.getcwd())
+        return trusted_hook_engine(lambda: cfg, lambda: os.getcwd())
 
     def test_deny_short_circuits_before_inner(self):
         eng = self._engine_with(
@@ -864,7 +869,7 @@ class TestEngineHardening:
 
     def test_new_guard_is_seen_by_existing_wrapper(self):
         cfg = [RunHooksConfig()]
-        eng = RunHooksEngine(lambda: cfg[0], lambda: os.getcwd())
+        eng = trusted_hook_engine(lambda: cfg[0], lambda: os.getcwd())
         wrapped = eng.wrap_review(lambda cs, r: {}, session_id="s")
         cfg[0] = RunHooksConfig(
             hooks=(HookSpec("PreToolUse", (sys.executable, "-c", "exit(2)")),)
@@ -934,13 +939,13 @@ class TestEngineHardening:
         import threading
 
         release, started = threading.Event(), threading.Event()
-        eng = _engine()
+        eng = _engine(HookSpec("Stop", (sys.executable, "-c", "pass")))
 
         def blocked(*args, **kwargs):
             started.set()
             release.wait(2)
 
-        monkeypatch.setattr(eng, "fire", blocked)
+        monkeypatch.setattr(eng, "_fire", blocked)
         eng.notify("Stop", session_id="s")
         assert started.wait(1)
         try:
@@ -1064,7 +1069,9 @@ class TestEngineHardening:
             ),
         )
         code, captured, timed_out = asyncio.run(
-            run_hooks._capture_hook(spec, {"cwd": os.getcwd()}, None)
+            run_hooks._capture_hook(
+                trusted_target(spec), {"cwd": os.getcwd()}, None, trusted_launch_guard
+            )
         )
         assert code == 0 and not timed_out
         for stream in (1, 2):
@@ -1109,7 +1116,7 @@ class TestEngineHardening:
     def test_config_and_failure_diagnostics_omit_private_values(self, caplog):
         canary = "private-content-zqmarker"
         load_hooks_config({"hooks": {"hook": [canary, {"event": canary}]}})
-        eng = RunHooksEngine(
+        eng = trusted_hook_engine(
             lambda: (_ for _ in ()).throw(ValueError(canary)), lambda: os.getcwd()
         )
         assert eng.fire("PreToolUse", session_id="s").blocked

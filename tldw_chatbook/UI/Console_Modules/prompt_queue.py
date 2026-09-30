@@ -925,7 +925,7 @@ class ConsolePromptQueueUIController:
             )
 
         if activity.accepted_live_turn or snapshot.total_count > 0:
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
@@ -977,7 +977,7 @@ class ConsolePromptQueueUIController:
             )
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,

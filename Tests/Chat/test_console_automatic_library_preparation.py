@@ -529,10 +529,10 @@ async def _paused_queued_send(*, persistence=None, gateway=None):
     )
     await gateway.started.wait()
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    first = controller.queue_prompt(
+    first = await controller.queue_prompt(
         session.id, text="frozen queued", expected_revision=snapshot.revision
     )
-    second = controller.queue_prompt(
+    second = await controller.queue_prompt(
         session.id,
         text="later queued",
         expected_revision=first.snapshot.revision,
@@ -1094,7 +1094,7 @@ async def test_queued_failure_returns_exact_claim_without_foreground_copy():
     )
     await gateway.started.wait()
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    admitted = controller.queue_prompt(
+    admitted = await controller.queue_prompt(
         session.id,
         text="exact queued body",
         expected_revision=snapshot.revision,
@@ -1406,11 +1406,11 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     )
     await gateway.started.wait()
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    first = controller.queue_prompt(
+    first = await controller.queue_prompt(
         session.id, text="frozen queued", expected_revision=snapshot.revision
     )
     snapshot = first.snapshot
-    second = controller.queue_prompt(
+    second = await controller.queue_prompt(
         session.id, text="later queued", expected_revision=snapshot.revision
     )
     policy.auto_retrieve = ConsoleAutoRetrieve.AUTOMATIC

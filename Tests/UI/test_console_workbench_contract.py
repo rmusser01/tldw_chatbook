@@ -1264,6 +1264,7 @@ def test_console_workbench_state_exposes_core_actions_visibly():
     assert tuple(actions) == (
         "new-tab",
         "settings",
+        "hooks",
         "attach-context",
         "run-library-rag",
         "send",

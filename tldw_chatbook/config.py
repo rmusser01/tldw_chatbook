@@ -12,6 +12,7 @@ admit_startup()
 # Imports
 import copy
 import difflib
+import hashlib
 import importlib.util
 import json
 import re
@@ -7380,6 +7381,7 @@ class AtomicLiteralMutationSnapshot:
     generation: int
     raw_values: Mapping[str, object]
     effective_values: Mapping[str, object]
+    config_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -7390,6 +7392,101 @@ class LiteralConfigMutationResult:
     caches_reloaded: bool
     settings_view: Mapping[str, object] | None
     failure_phase: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HookConfigSnapshot:
+    """Detached saved hook section paired with its actual file identity."""
+
+    config_path: Path
+    section_present: bool
+    section: object = field(repr=False)
+    section_stamp: str
+    profile_data_dir: Path | None = field(default=None, repr=False)
+
+
+def _hooks_config_snapshot(
+    config_path: Path, raw: Mapping[str, object]
+) -> HookConfigSnapshot:
+    present = "hooks" in raw
+    section = copy.deepcopy(raw.get("hooks"))
+    stamp: dict[str, object] = {"present": present}
+    if present:
+        stamp["section"] = section
+    encoded = toml.dumps(stamp).encode("utf-8")
+    return HookConfigSnapshot(
+        config_path.resolve(),
+        present,
+        section,
+        hashlib.sha256(encoded).hexdigest(),
+        profile_paths.user_data_dir(raw),
+    )
+
+
+@contextmanager
+def locked_hooks_config_snapshot() -> Iterator[HookConfigSnapshot]:
+    """Hold the config writer lock while reading and consuming hook authority."""
+    config_path = validate_path_simple(
+        _get_effective_config_path(),
+        require_exists=False,
+        probe_existing=False,
+        reject_shell_metacharacters=False,
+    )
+    with _config_write_lock(config_path):
+        if _get_effective_config_path().resolve() != config_path.resolve():
+            raise ValueError("Hook configuration file changed; reload.")
+        yield _hooks_config_snapshot(
+            config_path, _read_raw_cli_config_unlocked(config_path)
+        )
+
+
+def read_hooks_config_snapshot() -> HookConfigSnapshot:
+    """Read current saved hook definitions without consulting runtime caches."""
+    with locked_hooks_config_snapshot() as snapshot:
+        return snapshot
+
+
+def replace_hooks_config_snapshot(
+    expected: HookConfigSnapshot,
+    replacement: Mapping[str, object],
+) -> LiteralConfigMutationResult:
+    """Replace the current hook section through the canonical guarded writer."""
+    owned = copy.deepcopy(dict(replacement))
+
+    def build(snapshot: AtomicLiteralMutationSnapshot) -> LiteralSettingsMutation:
+        if snapshot.config_path is None:
+            raise ValueError("Hook configuration file unavailable.")
+        current = _hooks_config_snapshot(snapshot.config_path, snapshot.raw_values)
+        if (
+            current.config_path != expected.config_path
+            or current.section_stamp != expected.section_stamp
+            or current.profile_data_dir != expected.profile_data_dir
+        ):
+            raise ValueError("Hook configuration changed; reload before saving.")
+        if current.section_present and not isinstance(current.section, Mapping):
+            raise ValueError("Repair malformed Hooks section in Advanced Config.")
+        old = current.section if isinstance(current.section, Mapping) else {}
+        return LiteralSettingsMutation(
+            section_values={
+                ("hooks",): {
+                    **{
+                        key: value
+                        for key, value in old.items()
+                        if key not in {"enabled", "hook"}
+                    },
+                    **owned,
+                }
+            },
+            delete_keys={
+                ("hooks",): tuple(
+                    key
+                    for key in ("enabled", "hook")
+                    if key in old and key not in owned
+                )
+            },
+        )
+
+    return apply_literal_settings_transaction_to_cli_config(build)
 
 
 def _atomic_config_values_from_raw(
@@ -8324,6 +8421,7 @@ def _apply_literal_settings_transaction_locked(
                 generation=_CONFIG_GENERATION,
                 raw_values=copy.deepcopy(config_data),
                 effective_values=copy.deepcopy(effective_values),
+                config_path=config_path,
             )
             mutation = _detach_literal_settings_mutation(mutation_builder(snapshot))
             if validate_literal_targets:

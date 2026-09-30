@@ -211,5 +211,24 @@ class _RunLogs(_RawDeclaration):
         return tuple(result)
 
 
+class _HookPermissions(_RawDeclaration):
+    """Local grant authority is recognized but never portable recovery input."""
+
+    def discover(self, config):
+        path = user_data_dir(config) / "hook_permissions.json"
+        return tuple(
+            replace(item, status="intentionally_excluded")
+            if item.status in {"included", "unused"}
+            else item
+            for suffix in ("", ".lock")
+            for item in (
+                self._item(config, path.with_name(path.name + suffix), suffix),
+            )
+        )
+
+    def validate(self, candidate: Path) -> tuple[str, ...]:
+        return ("device_local_hook_permissions_not_restorable",)
+
+
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
-    return (_RunLogs("agents.history"),)
+    return (_RunLogs("agents.history"), _HookPermissions("hooks.permissions"))

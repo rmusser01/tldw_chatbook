@@ -818,6 +818,20 @@ and separately prepared run afterward, while proving the old cancelled run
 does not resume. Reordering irreversible closes alone cannot establish this;
 distinguish fallible preparation/physical settlement from final destruction.
 
+## Hook launch suppression must also verify the blocking outcome
+
+**TASK-33163, 2026-09-28.** A revoke/reapprove race test proved that a queued
+hook never started its marker command, but exercised only PostToolUse. The
+same stale-target refusal used `skip=True` for PreToolUse and UserPromptSubmit,
+so those required guards disappeared and the protected action could continue.
+The expanded real-engine test failed for both blocking events after revocation
+and after disable/re-enable. Classifying stale blocking targets as refusals
+fixed all four cases while keeping stale observer targets silent.
+
+For permission races, assert both the absence of subprocess side effects and
+the protected action's denial. A no-marker assertion alone cannot establish a
+fail-closed outcome.
+
 ## Retaining a disclosure does not prove its streaming body stays mounted
 
 **TASK-32522, thinking flicker, 2026-09-12.** The existing same-widget test
@@ -16897,3 +16911,36 @@ controls. The fixture now uses the actual `sharing_scope_service` attribute and
 Sharing_Interop wrapper constructed by TldwCli; it failed before fixing the panel
 lookup. A mounted workflow test must also match the application's wiring names
 and service family, not only the underlying HTTP contract (TASK-32881).
+
+## 2026-09-28 — Own and assert the native terminal size (TASK-33163)
+
+The Hooks integration requested 120×40 with stty and initially read that size,
+but the tool transport resized the terminal to 80×24 after yielding. A later
+interaction assertion caught the mismatch. The native QA wrapper now owns its
+child PTY, sets its dimensions directly, and asserts the application's size after
+interactions. Requested dimensions alone are not evidence of a wide-layout check.
+
+## 2026-09-29 — An isolated config is not an isolated recovery startup (TASK-33163)
+
+The current-dev native Hooks check selected a fresh `TLDW_CONFIG_PATH` but
+failed before app import with `recovery_scope_uncertain`. Tracing
+`acquire_storage()` showed that startup admission still used the existing
+HOME-based recovery authority, which could not enroll that new selector.
+The QA child now has its own private HOME as well as private config/data;
+the real app then passed both terminal sizes. Native tests of startup
+boundaries must isolate every root that participates in admission, not only
+the config file.
+
+
+## 2026-09-29 — Shared lifecycle changes need ownership-harness qualification (TASK-33163)
+
+PR #2922 passed 245 focused Hooks/UI/boot/latency cases, but required CI found
+four failures in the Console ownership group. Three bare `ChatScreen.__new__`
+or namespace fixtures bypassed controller wiring and lacked the new Hooks
+child; a resume-backoff assertion counted the additional indicator callback
+as a second retry. All four reproduced locally. Supplying the child stub and
+filtering the reconciliation callback retained the detach/claim/backoff pins;
+the exact isolated admission group then passed 123 cases with its existing xfail.
+When changing shared mount/resume/unmount paths, include their ownership tests
+in the targeted run. Count callbacks by the owner contract being tested, rather
+than assuming every scheduled background callback is its retry.

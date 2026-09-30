@@ -81,7 +81,10 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # -- TldwCli (app-level startup) --
         ("_backfill_chachanotes_messages_fts", "chachanotes-fts-backfill"),
         ("_backfill_subscription_items_fts", "subscriptions-fts-backfill"),
-        ("_reconcile_research_quick_notes_startup", "research-quick-notes-startup-reconciliation"),
+        (
+            "_reconcile_research_quick_notes_startup",
+            "research-quick-notes-startup-reconciliation",
+        ),
         ("_sweep_research_paste_staging", "research_paste_staging_startup"),
         ("deferred_actor_pack_recovery", "actor_pack_recovery"),
         ("deferred_actor_pack_staging_sweep", "actor_pack_staging_sweep"),
@@ -94,10 +97,18 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # conversation rows display their saved unread state on first use.
         ("_load_manual_unread_rows", "console-manual-unread-load"),
         ("_refresh_console_skill_candidates", "default"),
-        ("_sync_console_legacy_workspace_context_aliases", "console-workspace-context-legacy-aliases"),
+        # ADR-197: one off-loop saved-consent snapshot for the Hooks indicator.
+        ("_refresh_console_hooks", "console-hook-refresh"),
+        (
+            "_sync_console_legacy_workspace_context_aliases",
+            "console-workspace-context-legacy-aliases",
+        ),
         # TASK-26042: this one off-loop snapshot is required to render truthful
         # Show Files availability without filesystem status work on the UI loop.
-        ("_refresh_workspace_files_availability_snapshot", "console-workspace-files-availability"),
+        (
+            "_refresh_workspace_files_availability_snapshot",
+            "console-workspace-files-availability",
+        ),
         ("build_worker", "console-changed-files"),
         ("load", "console-prompt-history"),
         # Rail-preference persistence: observed on the FIRST boot of a fresh

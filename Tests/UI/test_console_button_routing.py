@@ -619,7 +619,7 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
         )
         assert started.applied
         controller.prompt_queue_coordinator._changed(doomed.id)
-        queued = controller.queue_prompt(
+        queued = await controller.queue_prompt(
             doomed.id,
             text="secret queued close text",
             expected_revision=started.snapshot.revision,

@@ -1,6 +1,6 @@
 # Console Hook Settings and Review Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Dispatch subagents only after the user chooses that execution option.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. Dispatch subagents only after the user chooses that execution option.
 
 **Goal:** Give Console users persistent, exact-definition hook consent, a native review modal on next Send, and a staged editor in canonical Settings.
 
@@ -36,10 +36,10 @@
 
 The inspected checkout is `/Users/macbook-dev/Documents/GitHub/tldw_chatbook` and contains unrelated changes. The plan's file names below are relative to the executor's checkout; commands run from that checkout.
 
-- [ ] Read TASK-33163, the spec, ADR-197, `backlog/docs/design-language.md`, `backlog/docs/lessons-testing-evidence.md`, `backlog/docs/lessons-live-verification.md`, and `backlog/docs/lessons-console-wiring.md` before editing.
-- [ ] Inspect this chat's managed worktrees with `list_artifacts`; reuse a suitable free checkout or use `create_worktree` from the committed plan baseline. Use a `codex/` branch. Do not copy or commit unrelated shared changes.
-- [ ] Recheck the named symbols on the selected baseline. The plan was informed by a dirty checkout; line numbers are not authoritative. Preserve any newer caller contracts.
-- [ ] Reuse the existing Python environment without installing into it. If the worktree has no `.venv`, create an ignored symlink to the checked environment, then prove imports resolve from this checkout.
+- [x] Read TASK-33163, the spec, ADR-197, `backlog/docs/design-language.md`, `backlog/docs/lessons-testing-evidence.md`, `backlog/docs/lessons-live-verification.md`, and `backlog/docs/lessons-console-wiring.md` before editing.
+- [x] Inspect this chat's managed worktrees with `list_artifacts`; reuse a suitable free checkout or use `create_worktree` from the committed plan baseline. Use a `codex/` branch. Do not copy or commit unrelated shared changes.
+- [x] Recheck the named symbols on the selected baseline. The plan was informed by a dirty checkout; line numbers are not authoritative. Preserve any newer caller contracts.
+- [x] Reuse the existing Python environment without installing into it. If the worktree has no `.venv`, create an ignored symlink to the checked environment, then prove imports resolve from this checkout.
 
 ```bash
 # Machine-agnostic: resolve any existing tldw_chatbook checkout's environment
@@ -87,6 +87,7 @@ Keep consent storage and policy in one file/class; do not add a generic permissi
 
 **Interfaces produced:**
 
+- The literal mutation snapshot now includes the actual writer `config_path`, avoiding a second effective-path lookup when checking scope.
 - Keep the existing four-field `HookSpec` constructor unchanged.
 - `HookInventoryRow(index: int, key: str, spec: HookSpec | None, enabled: bool | None, error: str | None)` retains source position for editing, never for grants.
 - `HookInventory(master_enabled: bool | None, container_error: str | None, rows: tuple[HookInventoryRow, ...])` exposes `requires_authority: bool`. A verified absent/empty section or valid master false needs no authority; malformed enabled state does.
@@ -96,7 +97,7 @@ Keep consent storage and policy in one file/class; do not add a generic permissi
 - `locked_hooks_config_snapshot() -> ContextManager[HookConfigSnapshot]` owns the config lock through its caller's critical section; `read_hooks_config_snapshot() -> HookConfigSnapshot` returns a detached snapshot.
 - `replace_hooks_config_snapshot(expected: HookConfigSnapshot, replacement: Mapping[str, object]) -> LiteralConfigMutationResult` compares effective path and original section under the existing transaction lock. It replaces the complete hook list and returns the existing structured outcome.
 
-- [ ] **Step 1: Add the failing identity/inventory tests.** Use the existing HookSpec and new functions; no subprocess is needed for parsing.
+- [x] **Step 1: Add the failing identity/inventory tests.** Use the existing HookSpec and new functions; no subprocess is needed for parsing.
 
 ```python
 from tldw_chatbook.Agents.run_hooks import (
@@ -119,13 +120,13 @@ def test_fingerprint_ignores_numeric_spelling_but_preserves_arguments():
     assert fingerprint_hook(first) != fingerprint_hook(changed)
 ```
 
-- [ ] **Step 2: Run the red checks.** Expected failure is a missing new import, not an environment failure.
+- [x] **Step 2: Run the red checks.** Expected failure is a missing new import, not an environment failure.
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_config_inventory.py -q
 ```
 
-- [ ] **Step 3: Add the inventory and deterministic fingerprint.** Refactor `_parse_hook` into a reusable validation result and preserve its sanitized warning wrapper. `load_hooks_config` projects only valid enabled rows. Keep invalid rows in inventory, even when master false. Explicit false suppresses execution despite an invalid command; non-boolean switches remain invalid. Keep the current case-sensitive glob matcher.
+- [x] **Step 3: Add the inventory and deterministic fingerprint.** Refactor `_parse_hook` into a reusable validation result and preserve its sanitized warning wrapper. `load_hooks_config` projects only valid enabled rows. Keep invalid rows in inventory, even when master false. Explicit false suppresses execution despite an invalid command; non-boolean switches remain invalid. Keep the current case-sensitive glob matcher.
 
 ```python
 import hashlib
@@ -142,7 +143,7 @@ def fingerprint_hook(spec: HookSpec) -> str:
 
 Use `id:<explicit-id>` keys or `legacy:<fingerprint>:<duplicate-occurrence>` keys; reserve separate invalid-row keys. Never derive authority from a display label or array index. Add parametrized tests for every execution field, duplicate IDs, malformed master/table/list, absent versus empty sections, NUL, bool/nonfinite timeout and matcher misuse.
 
-- [ ] **Step 4: Add locked snapshot/save tests, then the config functions.** Use `TLDW_CONFIG_PATH` and `tmp_path` under the existing isolated test fixture. Compare a section stamp based on presence and its stable TOML representation; this handles NaN in invalid originals without Python NaN equality. Do not include unrelated provider changes in this stamp.
+- [x] **Step 4: Add locked snapshot/save tests, then the config functions.** Use `TLDW_CONFIG_PATH` and `tmp_path` under the existing isolated test fixture. Compare a section stamp based on presence and its stable TOML representation; this handles NaN in invalid originals without Python NaN equality. Do not include unrelated provider changes in this stamp.
 
 ```python
 import toml
@@ -164,7 +165,7 @@ def test_hooks_save_rejects_stale_section_without_replacing_file(tmp_path, monke
 
 Reuse `apply_literal_settings_transaction_to_cli_config` and its authoritative `raw_values` builder. Compare path/section in that lock, retain unknown keys, and assign the whole `hook` list at once. Do not add a hooks revision-owned section. Explicit repair of a malformed non-table section belongs to guarded Advanced Config; the guided editor must not discard it automatically. Test unchanged-revision raw edits, unrelated-section preservation, unknown fields, reassigned config path, source/draft deep-copy separation and post-write refresh failure.
 
-- [ ] **Step 5: Run green checks, review, and commit this unit.**
+- [x] **Step 5: Run green checks, review, and commit this unit.**
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_config_inventory.py Tests/Agents/test_run_hooks.py Tests/test_hooks_config_snapshot.py Tests/test_config_raw_snapshot.py -q
@@ -172,6 +173,8 @@ git diff --check
 git add tldw_chatbook/Agents/run_hooks.py tldw_chatbook/config.py Tests/Agents/test_hook_config_inventory.py Tests/Agents/test_run_hooks.py Tests/test_hooks_config_snapshot.py
 git commit -m "feat: add lossless hook identity and guarded config saves"
 ```
+
+Task 1 evidence: 129 targeted checks passed, including existing hook execution and raw-config snapshot coverage. New Python files and run_hooks pass Ruff; config changes were checked against the existing whole-file findings. Unknown section keys are retained by the guided writer.
 
 ## Task 2: Persistent consent and serialized process launch
 
@@ -190,7 +193,7 @@ git commit -m "feat: add lossless hook identity and guarded config saves"
 - Execution methods are `targets(event: str, tool_name: str | None) -> tuple[HookTarget, ...]`, `notification_targets(event: str, tool_name: str | None) -> tuple[HookTarget, ...]`, `launch_guard(target: HookTarget, *, tool_name: str | None) -> ContextManager[None]`, and `close() -> None`. `targets` refreshes off-thread; `notification_targets` pins the latest published immutable inventory without disk I/O on the emitting UI thread. Launch always revalidates authoritative state, including current pending/malformed guards affecting that event and tool.
 - `HookReviewConflict` reports a stale file/definition/store decision without raw values. `ConsoleRuntime.ensure_hook_permissions() -> HookPermissions` owns the singleton.
 
-- [ ] **Step 1: Add restart and legacy-duplicate regressions.** Define this shared fixture in `Tests/Agents/test_hook_permissions.py`; UI/runtime tests can import it explicitly.
+- [x] **Step 1: Add restart and legacy-duplicate regressions.** Define this shared fixture in `Tests/Agents/test_hook_permissions.py`; UI/runtime tests can import it explicitly.
 
 ```python
 import sys
@@ -233,7 +236,7 @@ def test_deleting_an_approved_legacy_duplicate_does_not_transfer_grant(hook_file
     assert not owner.snapshot().ready
 ```
 
-- [ ] **Step 2: Run the red checks, then add the private store and reconciliation.**
+- [x] **Step 2: Run the red checks, then add the private store and reconciliation.**
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_permissions.py -q
@@ -255,7 +258,7 @@ Use `open_private_binary`, `atomic_private_write_text` and `PrivateFileWritePrec
 
 The existing direct-child sensitive-path rule already covers grant, lock and hidden temporary files. Add behavior tests using the actual accessor, `.hook_permissions.json.<random>.tmp`, overrides, and filesystem/context/Git exclusions. Add an explicit dynamic-file entry only if these checks expose a real gap; do not duplicate the directory rule. Verify POSIX ownership/modes and retain existing platform-specific private-path behavior.
 
-- [ ] **Step 3: Wire engine authority and a real command positive control.** Update constructor callers to pass `target_provider`, `notification_targets`, and keyword-only `launch_guard`; production obtains all three from the same runtime owner. Existing protocol-only test engines may use an explicit `nullcontext` launch guard and inventory-derived test targets; never ship an implicit allow default.
+- [x] **Step 3: Wire engine authority and a real command positive control.** Update constructor callers to pass `target_provider`, `notification_targets`, and keyword-only `launch_guard`; production obtains all three from the same runtime owner. Existing protocol-only test engines may use an explicit `nullcontext` launch guard and inventory-derived test targets; never ship an implicit allow default.
 
 ```python
 import asyncio
@@ -296,7 +299,7 @@ Retain the existing constructor's cwd provider and pool bounds; change its first
 
 `notify()` captures immutable targets from `notification_targets` when the event is admitted, then queues their bounded descriptors with the already-frozen payload. The worker never selects new targets for an old event. Add controlled barriers around actual process creation: revoke-before-launch prevents start; launch-before-revoke owns one already-running process; revoke/reapprove cannot resurrect queued work. Use spawned-process marker checks and real `fire_async`, not a nested event-loop failure that happens to deny.
 
-- [ ] **Step 4: Test persistence failures and singleton lifecycle, then commit.** Inject writer failure before replace and after visible replacement, stale approve after revoke, two store owners and subprocessed independent instances, config/data-root retarget, malformed enabled guard, no hooks/master false with corrupt store, and queued observer definition changes. Seal before revoke/disable writes; do not hold locks until child completion. Runtime disposal closes owner and engine; optional view attachment cannot change authority.
+- [x] **Step 4: Test persistence failures and singleton lifecycle, then commit.** Inject writer failure before replace and after visible replacement, stale approve after revoke, two store owners and subprocessed independent instances, config/data-root retarget, malformed enabled guard, no hooks/master false with corrupt store, and queued observer definition changes. Seal before revoke/disable writes; do not hold locks until child completion. Runtime disposal closes owner and engine; optional view attachment cannot change authority.
 
 ```bash
 .venv/bin/python -m pytest Tests/Agents/test_hook_permissions.py Tests/Agents/test_run_hooks.py Tests/Chat/test_console_run_hooks_regressions.py Tests/Chat/test_run_hooks_metadata.py Tests/Utils/test_sensitive_paths.py Tests/Tools/test_local_tool_sensitive_paths.py Tests/Tools/test_git_tool_sensitive_paths.py -q
@@ -304,6 +307,8 @@ git diff --check
 git add tldw_chatbook/Agents/hook_permissions.py tldw_chatbook/Agents/run_hooks.py tldw_chatbook/Chat/console_runtime.py Tests/Agents/test_hook_permissions.py Tests/Agents/test_run_hooks.py Tests/Utils/test_sensitive_paths.py Tests/Tools/test_local_tool_sensitive_paths.py Tests/Tools/test_git_tool_sensitive_paths.py
 git commit -m "feat: enforce persistent hook consent at process launch"
 ```
+
+Task 2 evidence: 239 consent/executor/metadata/sensitive-path checks passed, including real-process launch/revoke controls and an independent Python reader. Runtime singleton/disposal checks use saved configuration. The existing session-close regression exposed an unbound variable; grants now retire after close-ticket validation. Two baseline viewless-wake tests call the removed singular delivery API and are recorded separately.
 
 ## Task 3: Shared Send admission and draft custody
 
@@ -320,7 +325,7 @@ git commit -m "feat: enforce persistent hook consent at process launch"
 - Named constructor dependencies: `hook_permissions_accessor: Callable[[], HookPermissions]`, `request_review: Callable[[HookReviewSnapshot, bool, Callable[[], None]], Awaitable[HookReviewResult]]`, `current_session: Callable[[], str]`, `current_stash: Callable[[], ConsoleDraftStash | None]`, `on_state: Callable[[HookReviewSnapshot], None]`, and `notify: Callable[[str, str], None]`. No DOM ownership.
 - `HookReviewResult(kind: Literal["ready", "cancel", "settings"], snapshot: HookReviewSnapshot | None)` is defined in `UI/Console_Modules/hooks.py` in this task; Task 4's modal imports it. A test callback returns the real type, without a modal dependency.
 
-- [ ] **Step 1: Add a real controller rejection/approval control.** Import the Task 2 fixture and existing controller/gateway harness.
+- [x] **Step 1: Add a real controller rejection/approval control.** Import the Task 2 fixture and existing controller/gateway harness.
 
 ```python
 import pytest
@@ -349,7 +354,7 @@ async def test_pending_consent_refuses_before_echo_then_approved_send_succeeds(h
     assert accepted.accepted
 ```
 
-- [ ] **Step 2: Run red, then put the gate before new admission's echo/queue/durable acceptance.** Use the same helper on direct and actual queued/wake submissions. Keep the existing UserPromptSubmit firing later and manual-only; consent preflight is not another lifecycle event.
+- [x] **Step 2: Run red, then put the gate before new admission's echo/queue/durable acceptance.** Use the same helper on direct and actual queued/wake submissions. Keep the existing UserPromptSubmit firing later and manual-only; consent preflight is not another lifecycle event.
 
 ```bash
 .venv/bin/python -m pytest Tests/Chat/test_console_hook_admission.py -q
@@ -400,7 +405,7 @@ Both queue calls in `ConsolePromptQueueUIController.dispatch` and `_stage_normal
 
 Visible queue admission passes through the review controller before the existing dispatcher. Runtime `_run_custodied_turn` calls the same `submit_draft`; retain `_submit_queued_turn`/`_submit_fleet_wake` custody and existing refusal/recovery settlement. Queue execution checks again via the real controller and uses `DISPATCH_REFUSED`. Recovered preparations keep their accepted owner. Leave registry/custody mutations on their existing owner/thread; only readonly consent I/O is offloaded.
 
-- [ ] **Step 3: Implement the DOM-free operation owner and its tests.** Store an incrementing generation and the originating session/stash until dispatch completes. Ignore repeated activation while the attempt is pending. After a Ready response, refresh authority, compare current stash text/edit_serial/generation and session, consume the continuation once, and call the captured dispatcher. Cancel increments generation immediately; later completion may persist an explicit decision but never dispatch.
+- [x] **Step 3: Implement the DOM-free operation owner and its tests.** Store an incrementing generation and the originating session/stash until dispatch completes. Ignore repeated activation while the attempt is pending. After a Ready response, refresh authority, compare current stash text/edit_serial/generation and session, consume the continuation once, and call the captured dispatcher. Cancel increments generation immediately; later completion may persist an explicit decision but never dispatch.
 
 ```python
 from dataclasses import dataclass
@@ -423,7 +428,7 @@ Use this predicate after the modal and before continuation; `capture_draft_for_s
 
 Add controlled-future tests for duplicate Send, duplicate Allow, Escape during write, A-to-B-to-A session return, same-text edit with changed serial, queued refusal/recovery, durable resumed ownership, and wake without a view. Assert accepted/queued counts and current text, not only notification strings.
 
-- [ ] **Step 4: Run green checks, review, and commit.**
+- [x] **Step 4: Run green checks, review, and commit.**
 
 ```bash
 .venv/bin/python -m pytest Tests/Chat/test_console_hook_admission.py Tests/Chat/test_console_run_hooks_regressions.py Tests/Chat/test_console_prompt_queue.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_viewless_hooks.py Tests/UI/test_console_prompt_queue.py -q
@@ -433,6 +438,8 @@ git add tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console
 git add Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_send_gate_queue_race.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_automatic_library_preparation.py Tests/UI/test_console_button_routing.py Tests/UI/test_console_turn_navigation_continuity.py Tests/integration/test_console_library_control_integration.py
 git commit -m "feat: gate Console sends on current hook consent"
 ```
+
+Task 3 evidence: 102 admission/queue checks passed and 38 mounted queue checks passed. The wider custody run passed 224 cases; all 21 failures reproduced against the committed pre-admission sources (baseline control: 21 failures, 4 passes). Guided legacy-ID transfer remains with Task 5, where the writer owns that mapping.
 
 ## Task 4: Native review modal and persistent Console action
 
@@ -447,7 +454,7 @@ git commit -m "feat: gate Console sends on current hook consent"
 - Toolbar Workbench action ID `hooks`, widget ID `console-control-hooks`, placed immediately after `settings`. Add a shared hook glyph with ASCII `H` fallback; counts remain in the action label/tooltip, separate from the tool Approvals chip.
 - Screen delegates `_open_console_hooks_review()` and `_refresh_console_hooks()` route through the controller. `_dispatch_console_draft_send` delegates review then its existing typed queue dispatcher.
 
-- [ ] **Step 1: Add a mounted route/geometry regression, then run it red.** Extend the real ConsoleHarness pattern from `test_console_workbench_contract.py`, not an isolated bar alone.
+- [x] **Step 1: Add a mounted route/geometry regression, then run it red.** Extend the real ConsoleHarness pattern from `test_console_workbench_contract.py`, not an isolated bar alone.
 
 ```python
 import asyncio
@@ -489,7 +496,7 @@ The harness publishes a separate provider mapping; consent must still read `hook
 .venv/bin/python -m pytest Tests/UI/test_console_hooks_review.py -q
 ```
 
-- [ ] **Step 2: Build the modal and literal command formatting.** Header/footer remain reachable; use VerticalScroll for rows and lazy expanded details. Needs review includes invalid/recovery attention with disabled checkboxes and explicit repair/retry guidance. All hooks adds current Approved/Disabled states and revoke. Start selection empty. Allow selected retains unchecked pending rows and does not resume early. Manage in Settings returns `kind="settings"` after cancelling continuation.
+- [x] **Step 2: Build the modal and literal command formatting.** Header/footer remain reachable; use VerticalScroll for rows and lazy expanded details. Needs review includes invalid/recovery attention with disabled checkboxes and explicit repair/retry guidance. All hooks adds current Approved/Disabled states and revoke. Start selection empty. Allow selected retains unchecked pending rows and does not resume early. Manage in Settings returns `kind="settings"` after cancelling continuation.
 
 ```python
 import json
@@ -503,7 +510,7 @@ Render this exact string as literal text with markup disabled. Summaries may sho
 
 Put token-backed modal rules in its `BUNDLED_CSS`, so Settings-first launch works without Console CSS. Use existing control/scroll/focus tokens; no ad-hoc Python `styles.*` values.
 
-- [ ] **Step 3: Wire the actual toolbar and Send route.** Add `hooks` to TOP_ACTION_IDS, widget ID map, fallback and Workbench action state. Bind through `WorkbenchActionRequested`, not a second button message route. Construct the controller only in `wiring.py` with late-binding lambdas. Register a view slot only if a runtime projection needs it, declare it in CONSOLE_VIEW_HOOK_SLOTS in the same change, and test detach behavior; consent itself must never depend on a view slot.
+- [x] **Step 3: Wire the actual toolbar and Send route.** Add `hooks` to TOP_ACTION_IDS, widget ID map, fallback and Workbench action state. Bind through `WorkbenchActionRequested`, not a second button message route. Construct the controller only in `wiring.py` with late-binding lambdas. Register a view slot only if a runtime projection needs it, declare it in CONSOLE_VIEW_HOOK_SLOTS in the same change, and test detach behavior; consent itself must never depend on a view slot.
 
 ```python
 result = await self._hooks.dispatch(
@@ -516,7 +523,7 @@ result = await self._hooks.dispatch(
 
 This is the screen's typed dispatch fragment after command parsing and session checks. Preserve its existing diagnostics and return-value mapping. Refresh counts on mount/activation, review open, config save, Send and owner reconciliation; add no timer polling. Compact secondary toolbar labels if needed to keep the hook icon reachable at 80 columns.
 
-- [ ] **Step 4: Add real interaction/race checks, rebuild CSS, and commit.** Exercise row disclosure, exact long/control-character argv, both tabs, keyboard activation, no-hooks/master-disabled/error states, selective approval, permission revoke and failed writes, cancellation with a composer draft, and late workers after the modal leaves the stack. Add Settings-first modal styling in Task 5's harness. Capture compositor output for wrapped/clipped details; a renderable string alone is insufficient.
+- [x] **Step 4: Add real interaction/race checks, rebuild CSS, and commit.** Exercise row disclosure, exact long/control-character argv, both tabs, keyboard activation, no-hooks/master-disabled/error states, selective approval, permission revoke and failed writes, cancellation with a composer draft, and late workers after the modal leaves the stack. Add Settings-first modal styling in Task 5's harness. Capture compositor output for wrapped/clipped details; a renderable string alone is insufficient.
 
 ```bash
 .venv/bin/python tldw_chatbook/css/build_css.py
@@ -541,7 +548,7 @@ Before that commit, explicitly stage the generated CSS/build-manifest files actu
 - IDs: `settings-hooks-enabled`, `settings-hooks-add`, `settings-hooks-list`, `settings-hooks-event`, `settings-hooks-command`, `settings-hooks-matcher`, `settings-hooks-timeout`, `settings-hooks-toggle`, `settings-hooks-remove`, `settings-hooks-save`, `settings-hooks-revert`, `settings-hooks-review`.
 - A shared modal launched from Settings has `waiting_for_send=False`, the same singleton owner/actions, and no Send continuation.
 
-- [ ] **Step 1: Add mounted category/save tests and run red.** Reuse DestinationHarness from the existing Settings hub tests. Route with the actual navigation context, then verify search/ownership rather than setting the category only in a bare model.
+- [x] **Step 1: Add mounted category/save tests and run red.** Reuse DestinationHarness from the existing Settings hub tests. Route with the actual navigation context, then verify search/ownership rather than setting the category only in a bare model.
 
 ```python
 import pytest
@@ -578,7 +585,7 @@ async def test_hooks_edit_is_staged_until_canonical_save(hook_file):
 .venv/bin/python -m pytest Tests/UI/test_settings_hooks.py -q
 ```
 
-- [ ] **Step 2: Build the focused panel and integrate canonical draft/save/revert.** Show master switch, Add, Review permissions, selectable rows, event Select, JSON argv TextArea, optional matcher and timeout fields, contextual Enable/Disable, Remove, Save and Revert. New rows are disabled, get UUIDs on guided save, and never get implicit permission. Merge edits onto detached original raw tables to preserve unknown fields. Disabled invalid originals may be retained or explicitly disabled; enabled changed definitions must validate before Save. A malformed whole section displays repair guidance to Advanced Config rather than dropping its content.
+- [x] **Step 2: Build the focused panel and integrate canonical draft/save/revert.** Show master switch, Add, Review permissions, selectable rows, event Select, JSON argv TextArea, optional matcher and timeout fields, contextual Enable/Disable, Remove, Save and Revert. New rows are disabled, get UUIDs on guided save, and never get implicit permission. Merge edits onto detached original raw tables to preserve unknown fields. Disabled invalid originals may be retained or explicitly disabled; enabled changed definitions must validate before Save. A malformed whole section displays repair guidance to Advanced Config rather than dropping its content.
 
 ```python
 import json
@@ -594,7 +601,7 @@ def parse_command_argv(text: str) -> list[str]:
 
 Use runtime validation for event/matcher/finite numeric timeout; do not add a second schema with different limits. Stage complete `enabled`/`hook` values in SettingsDraft with deep copies. Capture a submitted draft revision before the worker; successful Save clears only submitted edits, not later typing. Revert confirms before replacing dirty values and reloads authority. On `file_replaced=True, caches_reloaded=False`, display saved-but-refresh-pending and preserve the local execution fence; Retry refresh must not reapply an old replacement.
 
-- [ ] **Step 3: Integrate review/deep links/impact and run focused UI checks.** The impact pane states User config, all Console chats using this file, current saved permission, and execution changes needing review. Unsaved edits are never reviewed as saved definitions; explain Save/Revert before opening permission review without discarding them. Add every guided field to category search and all existing registries. Canonical global `s`/`r` actions and explicit buttons must agree; text-entry focus must keep its existing shortcut rules. The Console modal's Settings action posts `NavigateToScreen(TAB_SETTINGS, screen_context={"category": "hooks"})` after cancelling Send.
+- [x] **Step 3: Integrate review/deep links/impact and run focused UI checks.** The impact pane states User config, all Console chats using this file, current saved permission, and execution changes needing review. Unsaved edits are never reviewed as saved definitions; explain Save/Revert before opening permission review without discarding them. Add every guided field to category search and all existing registries. Canonical global `s`/`r` actions and explicit buttons must agree; text-entry focus must keep its existing shortcut rules. The Console modal's Settings action posts `NavigateToScreen(TAB_SETTINGS, screen_context={"category": "hooks"})` after cancelling Send.
 
 Verify Settings-first modal geometry/style, guided ID transfer, unknown fields, new hook enable/disable/remove, invalid disabled originals, matcher event change, JSON/control characters, stale raw edits, Save with newer typing, confirmed Revert, permission count refresh, and responsive category/detail/impact panes. Keep legacy Settings parallels untouched.
 
@@ -603,15 +610,15 @@ Verify Settings-first modal geometry/style, guided ID transfer, unknown fields, 
 .venv/bin/python -m pytest Tests/UI/test_settings_hooks.py Tests/UI/test_settings_search_index.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_settings_raw_draft.py Tests/UI/test_console_hooks_review.py Tests/UI/test_design_token_governance.py -q
 ```
 
-- [ ] **Step 4: Verify the complete feature with isolated live state and update guidance.** Run the new focused suites plus any still-unrun existing checks named above. Repeat a passed suite only after a relevant change/failure. Run Ruff/format checks on changed Python files using explicit paths. Rebuild CSS and compare outputs; do not edit generated sheets by hand.
+- [x] **Step 4: Verify the complete feature with isolated live state and update guidance.** Run the new focused suites plus any still-unrun existing checks named above. Repeat a passed suite only after a relevant change/failure. Run Ruff/format checks on changed Python files using explicit paths. Rebuild CSS and compare outputs; do not edit generated sheets by hand.
 
-For a live terminal run, create a private temporary config with `[paths] data_dir` pointing to an already-created private temporary directory and a hook using `sys.executable` that writes a temporary marker. Set only `TLDW_CONFIG_PATH` for that process; do not repurpose HOME or the user's config/data. Run `.venv/bin/python -m tldw_chatbook.app` through the repository's terminal verification workflow, keep stderr attached, and verify toolbar/modal/Settings at 80 and 120 columns. Assert config/data resolution before sending, and prove no writes touch the user's real paths.
+For a live terminal run, create a private temporary config with `[paths] data_dir` pointing to an already-created private temporary directory and a hook using `sys.executable` that writes a temporary marker. Set `TLDW_CONFIG_PATH` and give the isolated QA child a private HOME because current dev roots recovery admission there; do not use the user's config/data. Run `.venv/bin/python -m tldw_chatbook.app` through the repository's terminal verification workflow, keep stderr attached, and verify toolbar/modal/Settings at 80 and 120 columns. Assert config/data resolution before sending, and prove no writes touch the user's real paths.
 
 Record evidence for: pending Send keeps text and creates no marker; explicit approval sends once and creates the marker; restart keeps approval; editing argv/matcher/event/timeout requires review; revoke blocks future launches; selective approval leaves other rows pending; disabled/master-off allows Send; cancelled Settings navigation retains text; and queued/viewless refusals retain their recovery owner. Test background behavior through its real controller/coordinator, not a UI-only fake. No provider/network sweep is required; use the existing fake gateway for admission tests and a qualified isolated provider only for the live Send if configured safely.
 
 Update the user guide's existing hooks section with the implemented controls, next-Send behavior, JSON argv format, persistent consent, invalid/recovery guidance, scope and explicit integrity/revocation limits. Record actual commands/outcomes and any baseline failures in the verification record. Keep TASK-33163 In Progress until every acceptance criterion, applicable checks, docs and self-review are complete.
 
-- [ ] **Step 5: Commit the editor/integration closeout and hand off the branch.** Stage only the listed feature files, actual generated outputs, verification record and completed task notes. Use Backlog CLI for AC completion/status after evidence is recorded.
+- [x] **Step 5: Commit the editor/integration closeout and hand off the branch.** Stage only the listed feature files, actual generated outputs, verification record and completed task notes. Use Backlog CLI for AC completion/status after evidence is recorded.
 
 ```bash
 git diff --check
@@ -634,3 +641,140 @@ git commit -m "feat: manage hook configuration in canonical Settings"
 | User documentation and isolated live evidence | 5 closeout record, guide and Backlog AC checks. |
 
 After each task, review its diff against these contracts before proceeding. At final review confirm no grants in TOML, no implicit allow defaults, no hook bodies in metadata/log additions, no direct config writer, and no unrelated checkout changes. Document real unresolved limitations; never mark an unrun runtime scenario as verified.
+
+## Task 6: Feature-only integration onto dev
+
+**Target:** `origin/dev` at `e5ac111967bd7310e6e97dec043a559d07e97d30`,
+on `codex/hook-review-dev`. Preserve the verified `codex/hook-review` branch.
+Carry only `04c7e89783`, `1a09f294b2`, `c49be06916` and the four feature
+commits; exclude unrelated planning history.
+
+**ADR required:** no
+**ADR path:** `backlog/decisions/197-console-hook-configuration-review.md`
+**Reason:** Integrate the accepted feature while retaining dev's newer caller,
+runtime ownership, Settings and design-token contracts.
+
+- [x] Fetch dev, inspect divergence and preflight the feature-only patches in a temporary index.
+- [x] Resolve feature cherry-picks against actual current callers; rebuild generated CSS from source.
+- [x] Admit the concrete hook JSON/lock through ADR-126 raw-file ownership inside the retained config lock; keep config helper scope narrow and test real bound profile lifetimes.
+- [x] Run focused hook/runtime/Settings/governance checks and affected newer contracts; verify the native UI at 80×24 and 120×40 using the private recording profile.
+- [x] Refresh baseline controls, evidence and tracking for this integration tree; preserve genuine unrelated failures.
+- [x] Self-review and commit the ready integration locally. Publishing or merging remains a separate integration action.
+
+## Original inline closeout — historical
+
+The five original units were completed on codex/hook-review. Its 417-case
+run and earlier baseline comparisons belong to that branch, not this integration.
+The branch remains available. The shared modal and editor were committed together.
+
+## Dev integration closeout — 2026-09-28
+
+Completed Task 6 on codex/hook-review-dev from e5ac111967. Preserved dev's
+runtime/Settings callbacks, token compiler and responsive layout. Added the exact
+Hooks JSON/lock participant through retained ADR-126 config admission, and
+excluded device-local consent from portable backup/restore under ADR-197.
+No new ADR is required: these changes implement the accepted ownership policy.
+
+201 distinct feature/metadata checks passed across targeted runs; the latest
+consent owner suite passed all 42 cases. Authored Ruff/format checks are clean.
+Actual native 80×24 and 120×40 checks passed with private profiles, a real harmless
+hook and the recording gateway. Eleven unrelated failures reproduce on the
+untouched dev base; interrupted broader bundles qualify only completed cases.
+
+Current results, native captures, baseline controls, review fixes and limits are
+recorded in [the implementation review](../reviews/2026-09-27-console-hook-settings-and-review.md).
+Self-review and local integration commit complete the plan. No full suite,
+real provider generation, push or merge is part of this closeout.
+
+## Task 7: Carry implementation to current dev
+
+**Target:** origin/dev at 857b3dd7d0 on codex/hook-review-current.
+The hook design, ADR and task already landed on dev. Apply only the four
+implementation commits from codex/hook-review-dev and retain current caller
+contracts. The prior 201-case and native results belong to the earlier
+e5ac111967-based tree; they are historical until this tree is requalified.
+
+ADR required: no
+ADR path: backlog/decisions/197-console-hook-configuration-review.md
+Reason: direct integration of the accepted hook consent design and ADR-126
+raw-file ownership; no new storage or security decision.
+
+- [x] Fetch current dev and inspect the branch and conflict surface.
+- [x] Carry the four implementation commits and resolve documentation against
+  the design documents already on dev.
+- [x] Rebuild generated CSS from current sources and check the merged runtime,
+  Settings and Console caller contracts.
+- [x] Run targeted feature, native-width and governance checks on this tree;
+  compare any failures to the current dev base.
+- [x] Update current-tree evidence, complete TASK-33163 and commit locally.
+  Publishing or merging remains a separate integration decision.
+
+## Current-dev closeout — 2026-09-29
+
+The four implementation commits are on codex/hook-review-current from
+857b3dd7d0; previously landed design/plan commits were not duplicated.
+Current source CSS rebuilt without a diff. Targeted checks recorded 367
+distinct passing cases, including 201 feature/category cases; two Settings
+search failures reproduce against current dev application sources. Actual
+80×24 and 120×40 native runs passed after isolating the QA child's
+HOME-based recovery bootstrap. The broader 45-second exploratory queue run
+was superseded by a complete 120-second UI run and direct queue-controller
+cases. Authored Ruff/format and QA-script checks passed. See the current
+implementation review for exact qualified evidence and limits.
+
+No new ADR is required; this directly implements ADR-197 and existing
+ADR-126 raw-file ownership. No full suite or real provider generation ran.
+Published as PR #2922; the authorized merge remains gated on review and CI.
+
+
+## PR review and merge follow-up
+
+ADR required: no
+ADR path: backlog/decisions/197-console-hook-configuration-review.md
+Reason: preserve the accepted consent and UI lifecycle contracts while resolving PR review and merge gates.
+
+- [x] Confirm the branch is based on latest dev, mark PR ready, and inspect Qodo findings.
+- [x] Guard post-await modal and Settings lookups without expanding the DOM census; verify dismissal during refresh and rerun focused UI checks.
+- [ ] Resolve verified Qodo findings and required derived-artifact/CI failures, recording targeted checks and replies.
+- [ ] Verify the reviewed head and latest dev, then merge PR #2922 and record the result.
+
+Local review qualification: 185 runtime, 26 mounted UI/admission, 21 complete boot-budget and 37 token/CSS integrity cases passed; overlapping cohorts are recorded separately. Authored-line Ruff/format, QA scripts, generated CSS, reviewed diagnostic inventory, worker contract and task-file hygiene pass. Updated native captures passed and were visually inspected. Hosted CI and the final merge remain pending.
+
+Fresh Qodo review follow-up: invalid master-switch target publication reproduced across all six events; the shared projection fix passes the 78-case owner/admission/viewless group. No new ADR is required.
+
+
+Agentic Qodo follow-up: raw profile selection now shares the hook snapshot's
+config lease and refuses stale bound-cache grants; same-file profile changes
+also invalidate Settings saves. Shared strict metadata adapters and loader/
+consent API docs complete the validation boundary. Failed Disable remains
+fenced per ADR-197; explicit current review is covered as recovery. Current
+194 runtime, 25 config/mounted UI and 12 import/first-paint cases pass, with
+clean authored Ruff/format checks. Named overlapping runs are retained in QA.
+
+
+Latest-dev rebase: cleanly carried all eight commits unchanged onto
+2a74675eea after dev advanced during CI queueing. This base passes 245
+unique targeted cases (195 runtime/config, 16 mounted UI, 21 complete boot,
+13 latency/stall-persistence), authored Ruff/format and derived profile,
+diagnostic and CSS checks. QA scripts and static evidence now use this base.
+Prior broader controls/native captures retain their original base provenance.
+No new ADR is required. Hosted review/merge checks remain pending.
+
+
+Hosted admission follow-up: reproduced four ownership-harness failures after
+1171 main-contract passes and green UI/Perf lanes. Added the new child-controller
+stub to constructor-bypassing teardown fixtures and counted reconciliation
+callbacks separately from indicator refresh. Detach/claim/backoff assertions
+remain intact. Four regressions and the exact 123-pass admission invocation
+(with one existing xfail) pass locally; current-base unique local passes total
+350. Authored static checks are clean across 52 changed Python files. Production
+is unchanged, and hosted merge gates must rerun on the published test fix.
+
+
+Latest server-boundary rebase: carried all ten patches unchanged onto
+5980da9c12 after dev's per-session MCP character-write refusal landed.
+Read TASK-33106 and preserve accepted ADR-183 alongside ADR-197. This base
+passes 417 distinct cases: runtime/config, exact repaired CI admission,
+MCP/character composition and complete boot budgets (one existing xfail).
+Authored static checks and derived artifacts pass. Check the actual dev ref
+with the PR state; baseRefOid may lag. Hosted gates and merge remain pending.

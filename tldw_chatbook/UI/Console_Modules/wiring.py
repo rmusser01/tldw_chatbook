@@ -99,6 +99,7 @@ from .console_spend_projection import ConsoleDraftSpendRefresh
 from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
+from .hooks import ConsoleHooksController
 from .image import ConsoleImageController
 from .library_activity import ConsoleLibraryActivityController
 from .library_policy import ConsoleLibraryPolicyController
@@ -1470,6 +1471,16 @@ def build_console_controllers(
     #: docstring for the full map of what moved and why.
     screen._session = ConsoleSessionController(
         screen,
+        on_draft_session_changed=lambda: (
+            screen._hooks.cancel_pending(),
+            screen.call_after_refresh(
+                lambda: screen.run_worker(
+                    screen._refresh_console_hooks,
+                    group="console-hook-refresh",
+                    exclusive=True,
+                )
+            ),
+        ),
         app_instance=screen.app_instance,
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
         current_chat_store_accessor=lambda: screen._console_chat_store,
@@ -2269,6 +2280,24 @@ def build_console_controllers(
             )
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
+    )
+    screen._hooks = ConsoleHooksController(
+        hook_permissions_accessor=lambda: (
+            screen._console_runtime().ensure_hook_permissions()
+        ),
+        request_review=lambda snapshot, waiting, cancel: (
+            screen._request_console_hooks_review(snapshot, waiting, cancel)
+        ),
+        current_session=lambda: screen._console_visible_send_session_id(),
+        current_stash=lambda: (
+            screen._console_composer_or_none().capture_draft_for_send()
+            if screen._console_composer_or_none()
+            else None
+        ),
+        on_state=lambda snapshot: screen._apply_console_hooks_state(snapshot),
+        notify=lambda text, severity: screen.app_instance.notify(
+            text, severity=severity
+        ),
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),

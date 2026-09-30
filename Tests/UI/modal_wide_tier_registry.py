@@ -153,6 +153,7 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # cap 196 -- the shipped Conversation settings tier, unchanged (PR #2670)
     ("#console-settings-modal", 196, "Widgets/Console/console_settings_modal.py"),
     # cap 170 -- base width >= 104
+    ("#console-hooks-review", 170, "Widgets/Console/console_hooks_review_modal.py"),
     (
         "#console-inspector-modal",
         170,
@@ -193,7 +194,11 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#notes-recovery-dialog", 170, "Widgets/Library/notes_recovery_dialog.py"),
     ("#skills-recovery-review", 170, "UI/Screens/skills_screen.py"),
     ("ChatbookCreationWindow > Container", 170, "UI/ChatbookCreationWindow.py"),
-    ("ChatbookExportManagementWindow > Container", 170, "UI/ChatbookExportManagementWindow.py"),
+    (
+        "ChatbookExportManagementWindow > Container",
+        170,
+        "UI/ChatbookExportManagementWindow.py",
+    ),
     ("ChatbookTemplatesWindow > Container", 170, "UI/ChatbookTemplatesWindow.py"),
     # cap 150 -- base width 84-96
     ("#personal-context-review-modal", 150, "css/components/_profile_interview.tcss"),
@@ -223,12 +228,32 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # surfaces missed by the 2026-09-13 inventory (bases 86-96)
     ("#buddy-review", 150, "Widgets/Persona_Widgets/buddy_character_review.py"),
     ("#petdex-review", 150, "Widgets/Persona_Widgets/petdex_import_review.py"),
-    ("#tool-pack-export-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
-    ("#tool-pack-import-options", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
-    ("#tool-pack-import-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
-    ("#tool-profile-bind-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
+    (
+        "#tool-pack-export-review",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
+    (
+        "#tool-pack-import-options",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
+    (
+        "#tool-pack-import-review",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
+    (
+        "#tool-profile-bind-review",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
     # cap 150 -- wave 2 (2026-09-19): skip-list follow-up (base width 96)
-    ("#prompt-collection-manager", 150, "UI/Library_Modules/prompt_collection_manager_modal.py"),
+    (
+        "#prompt-collection-manager",
+        150,
+        "UI/Library_Modules/prompt_collection_manager_modal.py",
+    ),
     # cap 120 -- base width <= 80
     (
         "NoteCreationModal > Container",
@@ -393,7 +418,11 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#prompt-variables-dialog", 120, "Widgets/Console/prompt_variables_dialog.py"),
     # cap 120 -- wave 2 (2026-09-19): base-width-rule gap closed (dialog had
     # no width rule at all; base geometry shipped with this wave)
-    ("TemplateSelectorDialog .template-selector-dialog", 120, "Widgets/template_selector.py"),
+    (
+        "TemplateSelectorDialog .template-selector-dialog",
+        120,
+        "Widgets/template_selector.py",
+    ),
 )
 
 #: Cap -> one representative anchor pinned by a live geometry test.

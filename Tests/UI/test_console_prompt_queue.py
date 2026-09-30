@@ -390,7 +390,7 @@ class _FakeChatController:
             count=snapshot.total_count,
         )
 
-    def queue_prompt(
+    async def queue_prompt(
         self, session_id: str, *, text: str, expected_revision: int, configuration=None
     ):
         return self.prompt_queue_registry.admit(
@@ -754,7 +754,7 @@ async def test_wired_queue_admission_freezes_view_source_filter(
             monkeypatch.setattr(controller, "send_refusal_copy", lambda _: "")
         # Use the production wiring and builder, not an injected capture double.
         if admission == "edit":
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 session_id, text="original", expected_revision=armed.snapshot.revision
             )
             outcome = console._prompt_queue.edit_waiting(
@@ -850,7 +850,7 @@ async def test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation(
         if admission == "race":
             monkeypatch.setattr(controller, "send_refusal_copy", lambda _: "")
         if admission == "edit":
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 session_id, text="original", expected_revision=armed.snapshot.revision
             )
         before = controller.prompt_queue_registry.snapshot(session_id)
