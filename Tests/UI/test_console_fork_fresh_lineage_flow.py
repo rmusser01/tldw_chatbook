@@ -28,6 +28,10 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 from tldw_chatbook.Widgets.Console.console_fork_chat_modal import ConsoleForkChatModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 _REPLY = "hello there friend"
 
 

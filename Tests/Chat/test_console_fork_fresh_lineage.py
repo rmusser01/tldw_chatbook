@@ -44,6 +44,10 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 _SESSION = "session-1"
 # The literal body `/help` appends through `_append_native_console_system_message`
 # is irrelevant here; what matters is the call shape: an unsaved SYSTEM node
@@ -421,8 +425,7 @@ def test_discarded_reply_is_named_by_its_state_not_its_placeholder_text() -> Non
     )
     assert store.fork_eligibility(discarded.id) == ConsoleForkEligibility(
         False,
-        'Discarded messages cannot be forked. Fork from the User message "q1" '
-        "instead.",
+        'Discarded messages cannot be forked. Fork from the User message "q1" instead.',
     )
 
 
@@ -562,7 +565,7 @@ async def test_eligibility_refuses_whatever_the_fence_would_refuse(tmp_path) -> 
     # the refusal names that row rather than "saved active leaf lineage".
     assert store.fork_eligibility(first_answer.id) == ConsoleForkEligibility(
         False,
-        "The Assistant reply \"done\" further down isn't linked to the message "
+        'The Assistant reply "done" further down isn\'t linked to the message '
         "before it in the saved chat, so no message up to it can be forked.",
     )
 
