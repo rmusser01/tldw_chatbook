@@ -4,12 +4,13 @@ title: Qualify native credential backup and recovery across macOS Linux and Wind
 status: Done
 assignee: []
 created_date: 2026-09-29 17:58
-updated_date: 2026-09-30 15:22
+updated_date: 2026-09-30 16:10
 labels: []
 dependencies: []
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
 - https://github.com/rmusser01/tldw_chatbook/actions/runs/36715894237
+- https://github.com/rmusser01/tldw_chatbook/pull/2935
 priority: high
 ---
 
@@ -209,8 +210,9 @@ Fresh final f7a9 run36715894237 macOS destination passed and artifact downloaded
 Frozen source provenance: 24,835 tracked regular files; POSIX Git source tar SHA-256 372cfb0d61d9c4232e4fa316335c11e23f70f0e647ca430cdbe2a7491a26038c; Windows CRLF checkout source tar SHA-256 4c7f124b94f93b3a1387aa4fac5048c68d8628609d3b7a1aa7419f198c5b336d. Independent source archive evidence: /private/tmp/task33422-final-deadline-source-pwtd0qiw. Complete native artifacts downloaded once per folder: /private/tmp/task33422-matrix-f7a9-d52duz5v. Root strict audit: /private/tmp/task33422-final-matrix-root-50tpgox7/summary.json. Runtime receipt projection: /private/tmp/task33422-final-runtime-receipts-irq9snln/runtime-receipts.json. Standard GH watch completed exit 0.
 
 Exact native runtimes (both source and destination): Darwin 23.6.0 / arm64 / Python 3.12.10 / keyring.backends.macOS.Keyring; Linux 6.8.0-1064-azure / x86_64 / Python 3.12.14 / keyring.backends.SecretService.Keyring; Windows 2022Server / AMD64 / Python 3.12.10 / keyring.backends.Windows.WinVaultKeyring. Windows destination wheel SHA-256 ea4549c826d534a00e581b799adc4455fef465490191d09b3a8d884c6217a5f3; destination receipt 0f91aaa2e4ed0e88aab9310948ddd3fda07603092b4738d9f05b3ae3e5cc73ca; hash manifest 1f1741ebb344326097a0e046f2521560632261eb12d93389396a71bf94e6af51. Linux and macOS/source hashes were reproduced exactly by the full audit. All six touched patch pins remained unchanged. Qualification covers the frozen f7a9 runtime; subsequent task-note-only commits do not change the tested runtime and are not separately represented as native runs.
+2026-09-30 continuation: Native qualification remains complete at immutable runtime f7a9ac9d853f7cbc05b8ccb0e9bcd453a5988099; branch head b8bcde7d32934353c2242346749ac9c4e8b5905e changes task notes only. No PR exists for codex/native-credential-backup. Preparing the existing changes for a PR against dev and reviewing the full cumulative patch before integration; no new backup features or architecture changes. Current dev 856ffd9962253743173e4ec92c4cdbc609473bda advances the qualified base 75c06af39a07154560ab1db49561a620a9689e72 with eight SSH-session follow-up commits, affecting remote session files/tests and related docs only. Native qualification is not relabeled as a test of a later runtime revision. Full cumulative production and qualification reviews dispatched read-only using the requesting-code-review workflow. Repository AGENTS.md restricts verification to targeted runs unless the user requests a full sweep.
+Opened PR #2935 against dev: https://github.com/rmusser01/tldw_chatbook/pull/2935 and attached it to this chat. Required PR checks are queued; Qodo is reviewing; the branch is mergeable but behind dev. Continuing the previously authorized latest-dev integration rebase after recording the exact qualified patch content. The full cumulative runtime and qualification reviews are read-only at b8bcde7d32934353c2242346749ac9c4e8b5905e. Native run 36715894237 remains evidence for f7a9 only; no later revision will be substituted into those receipts.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
