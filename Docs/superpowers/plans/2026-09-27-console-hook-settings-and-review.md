@@ -750,3 +750,12 @@ consent API docs complete the validation boundary. Failed Disable remains
 fenced per ADR-197; explicit current review is covered as recovery. Current
 194 runtime, 25 config/mounted UI and 12 import/first-paint cases pass, with
 clean authored Ruff/format checks. Named overlapping runs are retained in QA.
+
+
+Latest-dev rebase: cleanly carried all eight commits unchanged onto
+2a74675eea after dev advanced during CI queueing. This base passes 245
+unique targeted cases (195 runtime/config, 16 mounted UI, 21 complete boot,
+13 latency/stall-persistence), authored Ruff/format and derived profile,
+diagnostic and CSS checks. QA scripts and static evidence now use this base.
+Prior broader controls/native captures retain their original base provenance.
+No new ADR is required. Hosted review/merge checks remain pending.

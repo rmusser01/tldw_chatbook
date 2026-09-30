@@ -1,11 +1,11 @@
 ---
 id: TASK-33163
 title: Add Console hook settings and consent review
-status: In Progress
+status: Done
 assignee:
   - codex
 created_date: '2026-09-28 03:03'
-updated_date: '2026-09-30 03:14'
+updated_date: '2026-09-30 03:38'
 labels:
   - hooks
   - console
@@ -56,4 +56,6 @@ Implemented the persistent Console Hooks action, expandable exact-command review
 Integrated the four implementation commits onto dev 857b3dd7d0 as codex/hook-review-current. Qodo fixes cover stale revoke/disable validation, invalid-master target publication, clean Settings reloads, central path validation, shared strict Pydantic execution/metadata validation, and API docs/typing. Raw profile selection is resolved under the config lease; stale bound-cache grants and same-file profile changes cannot authorize launches or Settings writes. Failed Disable remains fenced per ADR-197; explicit current review restores permission and is covered by regression. Post-await dismissal/shutdown guards and lazy hook imports/styles preserve original first-paint budgets.
 
 Current targeted evidence: 194 runtime, 25 config/mounted UI, and 12 import/first-paint passes. Earlier complete 21-case boot and 37-case token/CSS groups cover unchanged portions; overlapping cohorts are separately named in QA. Authored-line Ruff/format is clean across 51 changed Python files, all three QA scripts pass full checks, generated CSS reproduces, and profile-path/diagnostic/worker/task governance passes. Real TldwCli passed all six private-profile groups at actual 80x24 and 120x40; four captures were visually inspected. Two broader Settings search assertions reproduce on current dev. Self-review and documentation are complete; no full suite or real provider generation ran. Named evidence, historical qualification, and limits are in Docs/superpowers/reviews/2026-09-27-console-hook-settings-and-review.md. PR #2922 review replies, hosted checks, latest-dev confirmation, and authorized merge remain pending.
+
+Latest-dev qualification: clean rebase onto 2a74675eea preserved all eight patches exactly. Inspected upstream provider/config/Console seams. All 245 distinct targeted cases pass (195 runtime/config, 16 mounted UI, 21 complete boot group, 13 latency/stall-persistence). Authored Ruff/format across 51 changed Python files, full QA-script checks, and derived diagnostic/profile-path/CSS checks pass. Previous broader baseline controls and native captures retain 857b3dd7d0 provenance. Qodo reports zero active findings on the prior patch-equivalent published head; all review threads have evidence-backed replies. Feature implementation, self-review and documentation are complete. PR #2922 final integration remains gated on the rebased head hosted checks; no merge claimed.
 <!-- SECTION:NOTES:END -->

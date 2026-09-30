@@ -182,3 +182,24 @@ added to a distinct total. Authored-line Ruff and formatting remain clean across
 51 changed Python files. Existing boot budgets, styles and launch semantics are
 unchanged; the complete 21-case boot and 37-case CSS qualification above remains
 applicable to its unchanged portions. Hosted checks and merge remain pending.
+
+
+## Latest-dev rebase qualification
+
+Dev advanced to `2a74675eea` during the hosted queue. The rebase was clean;
+range-diff confirms all eight implementation/review commits are unchanged.
+The upstream provider-preset additions were inspected at the config, Console
+readiness and native-tool seams. On this base, **245 distinct named cases**
+pass: 195 hook runtime/config/admission/viewless, 16 mounted review/Settings,
+21 complete boot-budget and 13 latency/stall-persistence cases. The current
+static check uses this base: 51 changed Python files, no authored Ruff
+or formatting failures. All three QA scripts pass full Ruff/format checks.
+Diagnostic, profile-path and generated stylesheet checks reproduce exactly.
+
+The prior broader search baseline controls and native captures remain scoped
+to `857b3dd7d0`; they were not rerun on this new base. UI/style patches are
+identical and the current mounted UI and boot/latency cases above passed.
+No full suite or real provider generation ran. Qodo resolved all findings on
+the prior published, patch-equivalent head; replies explain the verified fixes
+and intentional failed-Disable fence. Hosted checks on the rebased head and
+final integration remain pending.

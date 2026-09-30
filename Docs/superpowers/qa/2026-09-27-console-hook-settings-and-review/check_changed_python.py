@@ -5,7 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
-BASE = "857b3dd7d0"
+BASE = "2a74675eea"
 root = Path.cwd()
 paths = subprocess.check_output(
     ["git", "diff", "--name-only", BASE], text=True
