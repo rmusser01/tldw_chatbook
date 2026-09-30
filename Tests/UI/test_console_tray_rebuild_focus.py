@@ -212,8 +212,17 @@ async def test_choosing_a_rail_chat_leaves_typing_in_the_composer(request, how) 
         )
 
 
-def _chats_state(order: tuple[str, ...]):
-    """A context snapshot whose Chats list shows ``order``, newest first."""
+def _chats_state(
+    order: tuple[str, ...],
+    *,
+    moved: tuple[str, ...] = (),
+    row_limit: int | None = None,
+):
+    """A context snapshot whose Chats list shows ``order``, newest first.
+
+    ``moved`` chats belong to a named workspace, which the Chats list never
+    shows. ``row_limit`` caps the visible rows, as the rail's height does.
+    """
     from dataclasses import replace
 
     from Tests.UI.test_console_rail_reconciliation import _workspace_state
@@ -235,13 +244,27 @@ def _chats_state(order: tuple[str, ...]):
             updated_sort=f"2026-09-{30 - position:02d}T00:00:00",
         )
         for position, key in enumerate(order)
+    ) + tuple(
+        ConsoleConversationBrowserInputRow(
+            row_key=key,
+            conversation_id=key,
+            native_session_id=None,
+            title=f"Chat {key}",
+            scope_type="workspace",
+            workspace_id="ws-research",
+            workspace_label="Research",
+            updated_sort="2026-10-01T00:00:00",
+        )
+        for key in moved
     )
+    limit = {} if row_limit is None else {"group_row_limit": row_limit}
     return replace(
         _workspace_state(),
         conversation_browser=build_console_conversation_browser_state(
             rows=rows,
             active_workspace_id=None,
             group_collapse_preferences={"section:chats": False},
+            **limit,
         ),
     )
 
@@ -303,4 +326,139 @@ async def test_a_rebuild_that_reorders_chats_keeps_focus_on_the_same_chat(
         assert getattr(focused, "row_key", None) == "c1", (
             f"focus followed the position, not the chat: {_describe(focused)} "
             f"is chat {getattr(focused, 'row_key', None)!r}"
+        )
+
+
+def _headered_rail_harness(state):
+    """The real rail behind a stand-in for the Console header's Settings.
+
+    That control is in front of the rail in the focus chain, so it is where
+    Textual's reset lands once the rail's own controls cannot take focus.
+    """
+    from textual.app import ComposeResult
+
+    from Tests.UI.test_console_rail_reconciliation import _RailHarness
+
+    class _Harness(_RailHarness):
+        def compose(self) -> ComposeResult:
+            yield Button("Settings", id="header-settings")
+            yield from super().compose()
+
+    return _Harness(workspace_state=state)
+
+
+#: departure -> (chats before, their options, chats after, their options,
+#: the focused chat, the chat expected to take focus). ``None`` expected: no
+#: row is left, so any control still in the tray.
+_DEPARTURES = {
+    # Deleted from the row menu: the chat now in its place takes focus.
+    "deleted": (("c0", "c1", "c2"), {}, ("c0", "c2"), {}, "c1", "c2"),
+    # The last row was deleted, so nothing is in its place: the nearest row.
+    "deleted-last": (("c0", "c1", "c2"), {}, ("c0", "c1"), {}, "c2", "c1"),
+    # Moved to a named workspace: it leaves the Chats list entirely.
+    "moved-to-workspace": (
+        ("c0", "c1", "c2"),
+        {},
+        ("c0", "c2"),
+        {"moved": ("c1",)},
+        "c1",
+        "c2",
+    ),
+    # A newer chat pushed the last visible row past the row cap.
+    "pushed-past-cap": (
+        ("c0", "c1", "c2"),
+        {"row_limit": 3},
+        ("new", "c0", "c1", "c2"),
+        {"row_limit": 3},
+        "c2",
+        "c1",
+    ),
+    # The only chat was deleted.
+    "deleted-only": (("c0",), {}, (), {}, "c0", None),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restorer", ["tray", "rail"])
+@pytest.mark.parametrize("departure", sorted(_DEPARTURES))
+@pytest.mark.parametrize(
+    "control_prefix",
+    ["console-workspace-conversation-", "console-conversation-actions-"],
+)
+async def test_a_rebuild_that_drops_the_focused_chat_keeps_focus_in_the_tray(
+    control_prefix, departure, restorer, monkeypatch
+) -> None:
+    """Checkpoint review of Qodo #2932: a chat can LEAVE the list mid-rebuild.
+
+    Restoring by the chat's identity alone found nothing when the focused
+    chat was deleted from its row menu, moved to a named workspace, or pushed
+    past the row cap -- and focus stayed wherever Textual's reset put it,
+    live the Console header's Settings control. Focus must go to the same
+    kind of control on the chat now at that position, else the nearest one,
+    else some control still in the tray.
+
+    ``tray``: the reset lands on the header, where the rail's recovery gives
+    up, so this is the tray's restore alone. ``rail``: with the tray's opt-in
+    off and the reset inside the rail, only the rail's recovery acts -- and
+    must pick the same stand-in, or the two fight whenever both run.
+    """
+    from Tests.UI.test_console_rail_reconciliation import _settle
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    if restorer == "rail":
+        monkeypatch.setattr(
+            ConsoleWorkspaceContextTray, "RECOMPOSE_KEEPS_FOCUS", False
+        )
+    before, before_kw, after, after_kw, focused_key, expected_key = _DEPARTURES[
+        departure
+    ]
+    app = _headered_rail_harness(_chats_state(before, **before_kw))
+    async with app.run_test(size=(60, 40)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        tray = app.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        if restorer == "tray":
+            # Only the tray's own controls can take focus inside the rail.
+            rail.can_focus = False
+            for other in rail.query("*"):
+                if tray not in other.ancestors:
+                    other.can_focus = False
+        (control,) = [
+            button
+            for button in tray.query(Button)
+            if str(button.id or "").startswith(control_prefix)
+            and getattr(button, "row_key", None) == focused_key
+        ]
+        control.focus()
+        await pilot.pause()
+        assert app.focused is control
+        reset = tray._predicted_reset_target(control)
+        assert reset is not None and (rail in reset.ancestors) == (
+            restorer == "rail"
+        ), f"setup: Textual's reset lands on {_describe(reset)}"
+
+        rail.sync_workspace_context(_chats_state(after, **after_kw))
+        assert await _wait_until(
+            pilot, lambda: not control.is_attached and not tray.recompose_in_flight
+        ), "the tray never rebuilt the rows"
+        await pilot.pause(0.3)
+        await _settle(pilot)
+
+        focused = app.focused
+        assert focused is not None and focused.is_attached, (
+            f"focus was left on {_describe(focused)}"
+        )
+        assert tray in focused.ancestors, (
+            f"focus left the tray for {_describe(focused)}"
+        )
+        if expected_key is None:
+            return
+        assert str(focused.id or "").startswith(control_prefix), (
+            f"focus moved to another kind of control: {_describe(focused)}"
+        )
+        assert getattr(focused, "row_key", None) == expected_key, (
+            f"focus went to chat {getattr(focused, 'row_key', None)!r}, "
+            f"not {expected_key!r}"
         )

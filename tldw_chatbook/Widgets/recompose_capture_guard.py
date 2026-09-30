@@ -42,7 +42,9 @@ unconditional on attachment, same as ``BaseAppScreen``, since a detached
 widget can never be a legitimate capture for anyone.
 """
 
-from typing import TYPE_CHECKING, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Optional, Sequence
+from weakref import ReferenceType, ref
 
 from loguru import logger
 from textual.geometry import Region
@@ -69,6 +71,153 @@ def focus_identity(widget: Widget) -> Optional[str]:
     return widget.id or None
 
 
+def focus_family(widget: Widget) -> Optional[str]:
+    """The kind of row control a keyed widget is: its key up to the first ``:``.
+
+    ``conversation-actions:c1`` and ``conversation-actions:c2`` are one
+    family, so a chat's actions button can stand in for another's. A control
+    without its own ``focus_identity`` has no family.
+    """
+    identity = getattr(widget, "focus_identity", None)
+    if not identity:
+        return None
+    family, separator, _ = str(identity).partition(":")
+    return family if separator else None
+
+
+def family_position(
+    controls: Sequence[Widget], widget: Widget
+) -> tuple[Optional[str], Optional[int]]:
+    """``widget``'s family and its position among that family in ``controls``."""
+    family = focus_family(widget)
+    members = [w for w in controls if family and focus_family(w) == family]
+    return family, members.index(widget) if widget in members else None
+
+
+def family_stand_in(
+    controls: Sequence[Widget], family: Optional[str], index: Optional[int]
+) -> Optional[Widget]:
+    """The control of ``family`` now at ``index`` in ``controls``, else the nearest.
+
+    The item that was at ``index`` has left the list (Qodo #2932): the one now
+    in its place stands in for it, or the last one when the list got shorter.
+    Both focus restorers -- the tray's own and ``ConsoleLeftRail``'s recovery
+    -- use this, so they cannot pick different stand-ins.
+    """
+    members = [w for w in controls if family and focus_family(w) == family]
+    if not members or index is None:
+        return None
+    return members[min(index, len(members) - 1)]
+
+
+def _can_take_focus(widget: Widget) -> bool:
+    return widget.is_mounted and widget.focusable
+
+
+@dataclass(frozen=True, eq=False)
+class FocusAnchor:
+    """A focused control's identity and place, kept across a rebuild (Qodo #2932).
+
+    Captured by :func:`capture_focus_anchor` before the control can be torn
+    down; :func:`resolve_focus_anchor` later names the control that should
+    take focus back. ``family_index`` is the control's position among the
+    controls of its family in ``scope``, ``scope_index`` its position among
+    every control in ``scope`` that could take focus.
+    """
+
+    identity: str
+    family: Optional[str] = None
+    family_index: Optional[int] = None
+    scope_index: Optional[int] = None
+    scope: Optional[ReferenceType] = None
+
+
+def _focus_keeping_scope(widget: Widget) -> Optional[Widget]:
+    """The nearest ancestor that keeps focus across its own rebuilds."""
+    for ancestor in widget.ancestors:
+        if isinstance(ancestor, RecomposeCaptureGuard) and (
+            ancestor.RECOMPOSE_KEEPS_FOCUS
+        ):
+            return ancestor
+    return None
+
+
+def capture_focus_anchor(
+    widget: Widget, scope: Optional[Widget] = None
+) -> Optional[FocusAnchor]:
+    """Record ``widget``'s identity and where it sits, while it is still mounted.
+
+    Args:
+        widget: The control to find again later.
+        scope: The container whose rebuild may replace it; by default the
+            nearest ancestor that opted in to ``RECOMPOSE_KEEPS_FOCUS``.
+            Without one, only the identity is recorded.
+
+    Returns:
+        The anchor, or ``None`` when ``widget`` has no :func:`focus_identity`.
+    """
+    identity = focus_identity(widget)
+    if identity is None:
+        return None
+    if scope is None:
+        scope = _focus_keeping_scope(widget)
+    if scope is None:
+        return FocusAnchor(identity)
+    controls = [w for w in scope.walk_children(Widget) if _can_take_focus(w)]
+    family, family_index = family_position(controls, widget)
+    return FocusAnchor(
+        identity=identity,
+        family=family,
+        family_index=family_index,
+        scope_index=controls.index(widget) if widget in controls else None,
+        scope=ref(scope),
+    )
+
+
+def resolve_focus_anchor(
+    anchor: FocusAnchor,
+    root: Widget,
+    *,
+    eligible: Callable[[Widget], bool] = _can_take_focus,
+) -> Optional[Widget]:
+    """The control that should take focus back for ``anchor``, if any.
+
+    1. The one ``eligible`` control under ``root`` with the anchor's identity:
+       the same item, wherever a reorder moved it.
+    2. That item is gone -- the chat was deleted, moved to a named workspace,
+       or pushed past the row cap -- so the control of the same family now
+       at its position stands in, else the nearest one (the last, when the
+       list got shorter).
+    3. No control of that family is left: the control now nearest its place
+       in the scope, else the scope itself when it can take focus.
+
+    Only the anchor's scope is searched while it is attached -- the item's
+    replacement is rebuilt inside it -- and ``root`` otherwise. Steps 2 and
+    3 need that scope; without it, an identity that matches nothing (or more
+    than one control) gives ``None``.
+    """
+    scope = anchor.scope() if anchor.scope is not None else None
+    if scope is not None and not scope.is_attached:
+        scope = None
+    search = scope if scope is not None else root
+    matches = [
+        widget
+        for widget in search.walk_children(Widget)
+        if focus_identity(widget) == anchor.identity and eligible(widget)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if scope is None:
+        return None
+    controls = [w for w in scope.walk_children(Widget) if eligible(w)]
+    stand_in = family_stand_in(controls, anchor.family, anchor.family_index)
+    if stand_in is not None:
+        return stand_in
+    if controls and anchor.scope_index is not None:
+        return controls[min(anchor.scope_index, len(controls) - 1)]
+    return scope if eligible(scope) else None
+
+
 class RecomposeCaptureGuard:
     """Mixin: release stale mouse capture around this widget's own recompose.
 
@@ -91,16 +240,18 @@ class RecomposeCaptureGuard:
     recompose_in_flight: bool = False
 
     #: Opt-in (TASK-33621.12): when one of this widget's own descendants had
-    #: focus as its rebuild began, put focus back on the unique replacement
-    #: with the same :func:`focus_identity` once the rebuild has mounted. The
-    #: rebuild removes the focused control, and Textual's ``_reset_focus`` then
-    #: moves focus to whatever precedes it in the focus chain -- for the
-    #: Console's Conversations tray that was the section toggle, "New
-    #: conversation", or the Console header's Settings control. Only focus
-    #: still sitting on that automatic reset target is taken back: a move made
-    #: on purpose while the rebuild ran (selecting a chat focuses the composer
-    #: mid-rebuild) is left alone. Off by default so no other guarded widget
-    #: changes behaviour.
+    #: focus as its rebuild began, put focus back once the rebuild has
+    #: mounted -- on the unique replacement with the same
+    #: :func:`focus_identity`, or, when that item left (a deleted chat), on
+    #: the stand-in :func:`resolve_focus_anchor` picks. The rebuild removes
+    #: the focused control, and Textual's ``_reset_focus`` then moves focus to
+    #: whatever precedes it in the focus chain -- for the Console's
+    #: Conversations tray that was the section toggle, "New conversation", or
+    #: the Console header's Settings control. Only focus still sitting on
+    #: that automatic reset target is taken back: a move made on purpose while
+    #: the rebuild ran (selecting a chat focuses the composer mid-rebuild) is
+    #: left alone. Off by default so no other guarded widget changes
+    #: behaviour.
     RECOMPOSE_KEEPS_FOCUS: bool = False
 
     def _capture_is_within_self(self, captured: Optional[Widget]) -> bool:
@@ -133,8 +284,8 @@ class RecomposeCaptureGuard:
                 f"{type(self).__name__}: mouse-capture release {context} skipped."
             )
 
-    def _focus_to_keep(self) -> Optional[tuple[str, Optional[Widget]]]:
-        """The focused descendant's identity and where Textual's reset sends it.
+    def _focus_to_keep(self) -> Optional[tuple[FocusAnchor, Optional[Widget]]]:
+        """The focused descendant's anchor and where Textual's reset sends it.
 
         Returns ``None`` unless a descendant of ``self`` (not ``self``) with a
         :func:`focus_identity` holds this screen's focus. Read from the screen
@@ -147,10 +298,10 @@ class RecomposeCaptureGuard:
             return None
         if focused is None or focused is self or self not in focused.ancestors:
             return None
-        identity = focus_identity(focused)
-        if identity is None:
+        anchor = capture_focus_anchor(focused, scope=self)  # type: ignore[arg-type]
+        if anchor is None:
             return None
-        return identity, self._predicted_reset_target(focused)
+        return anchor, self._predicted_reset_target(focused)
 
     def _predicted_reset_target(self, focused: Widget) -> Optional[Widget]:
         """Mirror ``Screen._reset_focus`` for a teardown of all of ``self``'s children.
@@ -180,9 +331,9 @@ class RecomposeCaptureGuard:
         return None
 
     def _refocus_rebuilt_descendant(
-        self, identity: str, reset_target: Optional[Widget]
+        self, anchor: FocusAnchor, reset_target: Optional[Widget]
     ) -> None:
-        """Return focus to the same-identity replacement a rebuild just mounted.
+        """Return focus to the replacement a rebuild just mounted, or a stand-in.
 
         Only while focus is still exactly where Textual's reset put it
         (``reset_target``, predicted before the teardown). Anything else means
@@ -190,9 +341,11 @@ class RecomposeCaptureGuard:
         a chat selection focused the composer -- and that newer move wins.
         The focus is set synchronously, so a move that was only queued
         (``Widget.focus`` defers through ``call_later``) still lands after
-        this one. Exactly one focusable match is required, so an ambiguous
-        or vanished identity changes nothing -- a reordered row's positional
-        id is never enough on its own (see :func:`focus_identity`).
+        this one. The target is :func:`resolve_focus_anchor`'s: the item's
+        own replacement when it is still listed (a reordered row's positional
+        id is never enough on its own, see :func:`focus_identity`), else the
+        control now in its place -- so focus is never left on the reset
+        target outside this widget while it has a control to offer.
         """
         if not self.is_attached:
             return
@@ -202,15 +355,9 @@ class RecomposeCaptureGuard:
             return
         if screen.focused is not reset_target:
             return
-        matches = [
-            widget
-            for widget in self.walk_children(Widget)
-            if widget.is_mounted
-            and widget.focusable
-            and focus_identity(widget) == identity
-        ]
-        if len(matches) == 1:
-            screen.set_focus(matches[0])
+        target = resolve_focus_anchor(anchor, self)  # type: ignore[arg-type]
+        if target is not None:
+            screen.set_focus(target)
 
     def refresh(
         self,

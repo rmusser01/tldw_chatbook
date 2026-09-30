@@ -91,7 +91,11 @@ from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
-from ...Widgets.recompose_capture_guard import focus_identity
+from ...Widgets.recompose_capture_guard import (
+    family_position,
+    family_stand_in,
+    focus_identity,
+)
 from ...Workspaces.conversation_browser_state import (
     console_rail_section_height_budget,
 )
@@ -152,10 +156,18 @@ _FOCUS_RECOVERY_REBUILD_MAX_POLLS = 100
 
 @dataclass(frozen=True, slots=True)
 class _ContextFocusRecoveryIncident:
-    """Stable local-focus identity retained across one DOM mutation."""
+    """Stable local-focus identity retained across one DOM mutation.
+
+    ``target_family``/``family_index`` place a row control among its own kind
+    (``recompose_capture_guard.family_position``), so when its item leaves
+    the list the stand-in is the same kind of control -- the one the tray's
+    own restore picks too (Qodo #2932).
+    """
 
     target_id: str | None
     target_index: int | None
+    target_family: str | None = None
+    family_index: int | None = None
 
 
 CONTEXT_SECTION_DESCRIPTORS = (
@@ -901,9 +913,12 @@ class ConsoleLeftRail(Vertical):
         previous: Widget,
         controls: tuple[Widget, ...],
     ) -> _ContextFocusRecoveryIncident:
+        family, family_index = family_position(controls, previous)
         return _ContextFocusRecoveryIncident(
             target_id=self._stable_focus_id(previous),
             target_index=controls.index(previous) if previous in controls else None,
+            target_family=family,
+            family_index=family_index,
         )
 
     def _ensure_focus_recovery(
@@ -1020,6 +1035,11 @@ class ConsoleLeftRail(Vertical):
                 for control in controls
                 if self._stable_focus_id(control) == incident.target_id
             )
+        stand_in = family_stand_in(
+            controls, incident.target_family, incident.family_index
+        )
+        if stand_in is not None:
+            candidates.append(stand_in)
         if incident.target_index is None:
             candidates.extend(controls)
         else:
