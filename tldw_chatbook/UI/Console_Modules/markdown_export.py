@@ -89,34 +89,55 @@ async def save_conversation_markdown(screen: Any, target: Any) -> None:
 
 
 async def write_markdown_file(path_text: str, markdown: str) -> Path:
-    """Validate ``path_text`` and write ``markdown`` there without blocking.
+    """Validate ``path_text`` and write ``markdown`` there, off the UI loop.
 
     Args:
-        path_text: The path as the user typed it; ``~`` is expanded.
+        path_text: The path as the user typed it; ``~`` is expanded, and a
+            relative path is taken from the working directory.
         markdown: The rendered document.
 
     Returns:
-        The validated path that was written.
+        The absolute path that was written.
 
     Raises:
         MarkdownSaveError: The path was refused or the file could not be
             written. The message names the file and the problem, and always
             starts with "Could not save".
     """
-    import aiofiles
+    # Every step blocks on the filesystem (validation stats the path), and a
+    # coroutine worker runs on the UI loop -- a sleeping external disk or a
+    # network mount must not freeze the Console.
+    return await asyncio.to_thread(_validate_and_write, path_text, markdown)
 
+
+def _validate_and_write(path_text: str, markdown: str) -> Path:
+    """The blocking half of :func:`write_markdown_file`; runs on a thread."""
     from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-    # expanduser FIRST: validate_path_simple rejects unresolved '~'
-    # components, and the expansion is exactly what a user means by it.
-    candidate = Path(path_text).expanduser()
+    typed = Path(path_text)
     try:
-        target_path = validate_path_simple(candidate, require_exists=False)
+        # expanduser FIRST: validate_path_simple rejects unresolved '~'
+        # components, and the expansion is exactly what a user means by it.
+        candidate = typed.expanduser()
+    except RuntimeError as exc:
+        # "~someone/..." for a user this machine does not have.
+        raise MarkdownSaveError(
+            f"Could not save {typed.name or path_text}: "
+            "the home folder in this path does not exist."
+        ) from exc
+    try:
+        # Only open()/stat() ever see this path, never a shell, so ';', '|'
+        # and '$(' are ordinary characters in a folder name here.
+        validated = validate_path_simple(
+            candidate, require_exists=False, reject_shell_metacharacters=False
+        )
     except ValueError as exc:
         raise MarkdownSaveError(
             f"Could not save {candidate.name or path_text}: {exc}"
         ) from exc
 
+    # Absolute, so the success message can say where a bare name landed.
+    target_path = validated.absolute()
     parent = target_path.parent
     if parent.exists() and not parent.is_dir():
         raise MarkdownSaveError(
@@ -124,8 +145,7 @@ async def write_markdown_file(path_text: str, markdown: str) -> Path:
         )
     try:
         parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(target_path, "w", encoding="utf-8") as handle:
-            await handle.write(markdown)
+        target_path.write_text(markdown, encoding="utf-8")
     except OSError as exc:
         reason = exc.strerror or type(exc).__name__
         raise MarkdownSaveError(
@@ -150,4 +170,4 @@ async def _write_and_report(screen: Any, path_text: str, markdown: str) -> None:
             markup=False,
         )
         return
-    screen.app.notify(f"Saved {saved.name}.", markup=False)
+    screen.app.notify(f"Saved {saved.name} to {saved.parent}.", markup=False)

@@ -586,8 +586,11 @@ async def test_row_menu_save_md_writes_the_file_and_keeps_the_app_running(
         assert "saved question" in written and "saved answer" in written
         _assert_app_alive(pilot)
         assert pilot.app.screen is chat_screen
+        # The toast names the folder too, so a file saved under a bare name
+        # (relative to where the app was started) can be found.
+        saved_message = f"Saved saved-chat.md to {target.parent}."
         assert await _wait_until(
-            pilot, lambda: "Saved saved-chat.md." in _notifications(pilot, "information")
+            pilot, lambda: saved_message in _notifications(pilot, "information")
         ), _notifications(pilot, "information")
         # Save closes through the same dismiss-once path as Cancel, so focus
         # goes back to the row control the user opened the menu from.
