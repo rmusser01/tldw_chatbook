@@ -805,6 +805,8 @@ must say so in its docstring, as `test_schedules_keyboard_map.py:115` does. And 
 the sibling trap from the paint-over hunt: widget-tier CSS (`BUNDLED_CSS`/`DEFAULT_CSS`)
 loses to app-tier rules regardless of specificity.
 
+---
+
 **The reverse trap: a new widget sized only by an app-tier class breaks bare harnesses.**
 TASK-33003.5 added an Esc hint to the Chat settings footer as
 `Static(..., classes="... w-auto")`. `.w-auto` lives in the app bundle
@@ -817,7 +819,75 @@ loads. **What to do:** give a widget added to a shared row geometry that holds w
 bundle: the widget type's own `DEFAULT_CSS`, or the owning class's `DEFAULT_CSS`. Then
 probe `region` once under a bare harness as well as under `TldwCli.CSS_PATH`.
 
----
+## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
+
+**TASK-33003.1, Chat settings disclosures, 2026-09-28.** A collapsed Chat
+settings section measured `margin (0, 0, 1, 0)` even though its own class,
+`.console-settings-modal-section { margin: 1 0 0 0; }`, asks for a top
+margin. The winner was the leaked `Collapsible.-collapsed { margin-bottom: 1; }`
+from the retired evals sheet: at (0,1,1) it outranks the (0,1,0) class, and
+Textual stores `margin-bottom` as a full `margin` spacing whose other edges
+are 0. It does not merge per edge the way browser CSS does. A toy app
+confirmed it: `.sec { margin: 1 0 0 0 }` plus `Static.x { margin-bottom: 2 }`
+gives `(0, 0, 2, 0)`. Expanding the section switched the section's spacing
+from below to above, because only then did the class rule win.
+
+**What to do.** Read a one-edge `margin-*`/`padding-*` declaration as
+"margin: 0 ... <edge> ...". A higher-specificity rule that means to adjust
+one edge silently zeroes the other three that a lower rule set. Restate every
+edge you need in the winning rule, and measure `styles.margin` rather than
+reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
+to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).
+
+## An empty Static still takes its row: hide it, don't just clear it
+
+**TASK-33003.8, Chat settings choice rows, 2026-09-30.** Each provider-choice
+row (Reasoning effort, Reasoning summary, Verbosity, Thinking) ends with a
+recovery-copy `Static` that is empty unless a restored value is obsolete. The
+modal only ever called `update("")` on it, so it stayed displayed. With no
+width it took the whole row, the `1fr` Select beside it resolved to 0
+columns, and all that painted was the Static's thick error edge, `█`, plus
+its margin row. Reasoning and thinking levels could not be chosen in Chat
+settings, and origin/dev 89dd84943a shows the same row (with the old label
+"Reasoning"). The tests stayed green because they set and read
+`Select.value` and never looked at painted text.
+
+**What to do.** An optional line must set `display = bool(copy)` wherever its
+copy changes, including at compose. A note that shares a row with a control
+should be a `Label` (its own `DEFAULT_CSS` is `width: auto`), not a `Static`.
+Prove a row paints with `screen._compositor.render_strips()` text at the
+control's region, after real key presses, not by reading `.value`
+(`test_console_settings_choice_rows_paint_their_select`). Live-driver trap:
+a mouse click opens a **blank** Select's list with **nothing** highlighted, so
+the first Down lands on the blank prompt and a second Down reaches the first
+choice. Opening it with Enter highlights the blank prompt row, so a single
+Down is enough, as the pilot tests do. A Select that already holds a value
+highlights that value whichever way it opens. (Textual 8.2.8: a click only
+toggles `expanded`, whose watcher calls `overlay.select(None)` for a blank
+value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
+`action_first()`. Reproduced in a pilot probe on the modal's own Select
+construction; see the task-33003.8 Implementation Notes and the live captures
+in qa/model-config-p3-2026-09-28/task-8/.)
+
+## A Collapsible's background paints only its title row: the body is `Contents`
+
+**TASK-33003.3 follow-up, Chat settings Advanced generation, 2026-09-30.**
+TASK-33003.1 set `ConsoleSettingsModal Collapsible { background:
+$ds-surface-panel }` to drop the global $surface band. The expanded body still
+painted $surface, because the app-wide `Collapsible > Contents { background:
+$surface }` (components/_widgets.tcss) styles the `Contents` child, and the
+child's own background covers the parent's. $surface is also the Chat settings
+field fill, so TASK-33003.3's 12-column number fields read as full-row fields
+behind a one-column edge (painted field and body both (30,30,30),
+1.00:1). The width test stayed green: it measured `region.width`, which was 12.
+The shipped captures showed the defect, and nobody measured their colours.
+
+**What to do.** To restyle a disclosure's body, style `<scope> Collapsible >
+Contents` as well as the Collapsible. Prove that a sized field reads as sized
+by painted colour, not by region width: compare the compositor cell just past
+the field's right end with the field's own fill
+(`test_console_settings_disclosure_fields_read_as_sized`, red on three themes
+before the fix).
 
 ## Target CSS by CLASS on the subject — never an ancestor-scoped bare type
 
@@ -1291,73 +1361,3 @@ for keyword-only APIs, and give test doubles the real keyword-only
 signatures. Any awaited off-loop work inserted into a swap/compose chain
 also needs helpers to WAIT for the swap's settle flag rather than assume a
 single pause covers it.
-
-## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
-
-**TASK-33003.1, Chat settings disclosures, 2026-09-28.** A collapsed Chat
-settings section measured `margin (0, 0, 1, 0)` even though its own class,
-`.console-settings-modal-section { margin: 1 0 0 0; }`, asks for a top
-margin. The winner was the leaked `Collapsible.-collapsed { margin-bottom: 1; }`
-from the retired evals sheet: at (0,1,1) it outranks the (0,1,0) class, and
-Textual stores `margin-bottom` as a full `margin` spacing whose other edges
-are 0. It does not merge per edge the way browser CSS does. A toy app
-confirmed it: `.sec { margin: 1 0 0 0 }` plus `Static.x { margin-bottom: 2 }`
-gives `(0, 0, 2, 0)`. Expanding the section switched the section's spacing
-from below to above, because only then did the class rule win.
-
-**What to do.** Read a one-edge `margin-*`/`padding-*` declaration as
-"margin: 0 ... <edge> ...". A higher-specificity rule that means to adjust
-one edge silently zeroes the other three that a lower rule set. Restate every
-edge you need in the winning rule, and measure `styles.margin` rather than
-reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
-to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).
-
-## An empty Static still takes its row: hide it, don't just clear it
-
-**TASK-33003.8, Chat settings choice rows, 2026-09-30.** Each provider-choice
-row (Reasoning effort, Reasoning summary, Verbosity, Thinking) ends with a
-recovery-copy `Static` that is empty unless a restored value is obsolete. The
-modal only ever called `update("")` on it, so it stayed displayed. With no
-width it took the whole row, the `1fr` Select beside it resolved to 0
-columns, and all that painted was the Static's thick error edge, `█`, plus
-its margin row. Reasoning and thinking levels could not be chosen in Chat
-settings, and origin/dev 89dd84943a shows the same row (with the old label
-"Reasoning"). The tests stayed green because they set and read
-`Select.value` and never looked at painted text.
-
-**What to do.** An optional line must set `display = bool(copy)` wherever its
-copy changes, including at compose. A note that shares a row with a control
-should be a `Label` (its own `DEFAULT_CSS` is `width: auto`), not a `Static`.
-Prove a row paints with `screen._compositor.render_strips()` text at the
-control's region, after real key presses, not by reading `.value`
-(`test_console_settings_choice_rows_paint_their_select`). Live-driver trap:
-a mouse click opens a **blank** Select's list with **nothing** highlighted, so
-the first Down lands on the blank prompt and a second Down reaches the first
-choice. Opening it with Enter highlights the blank prompt row, so a single
-Down is enough, as the pilot tests do. A Select that already holds a value
-highlights that value whichever way it opens. (Textual 8.2.8: a click only
-toggles `expanded`, whose watcher calls `overlay.select(None)` for a blank
-value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
-`action_first()`. Reproduced in a pilot probe on the modal's own Select
-construction; see the task-33003.8 Implementation Notes and the live captures
-in qa/model-config-p3-2026-09-28/task-8/.)
-
-## A Collapsible's background paints only its title row: the body is `Contents`
-
-**TASK-33003.3 follow-up, Chat settings Advanced generation, 2026-09-30.**
-TASK-33003.1 set `ConsoleSettingsModal Collapsible { background:
-$ds-surface-panel }` to drop the global $surface band. The expanded body still
-painted $surface, because the app-wide `Collapsible > Contents { background:
-$surface }` (components/_widgets.tcss) styles the `Contents` child, and the
-child's own background covers the parent's. $surface is also the Chat settings
-field fill, so TASK-33003.3's 12-column number fields read as full-row fields
-behind a one-column edge (painted field and body both (30,30,30),
-1.00:1). The width test stayed green: it measured `region.width`, which was 12.
-The shipped captures showed the defect, and nobody measured their colours.
-
-**What to do.** To restyle a disclosure's body, style `<scope> Collapsible >
-Contents` as well as the Collapsible. Prove that a sized field reads as sized
-by painted colour, not by region width: compare the compositor cell just past
-the field's right end with the field's own fill
-(`test_console_settings_disclosure_fields_read_as_sized`, red on three themes
-before the fix).
