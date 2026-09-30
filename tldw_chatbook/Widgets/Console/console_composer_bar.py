@@ -892,17 +892,13 @@ class ConsoleComposerBar(Horizontal):
         budget and reach Redirect through `/redirect` or the palette. Before
         the first layout the answer is no; `on_resize` re-derives it.
 
-        While collapsed the expanded row is hidden and measures 0 cells, so
-        the reservation is kept as it was, never re-derived from that 0;
-        `_rederive_redirect_budget` re-measures once expanding lays it out.
+        Measured while collapsed too (`_expanded_row_width`), so a resize
+        then re-derives it and the first frame after expanding is already
+        right: keeping the reservation from before the resize painted one
+        frame with the draft under its floor, then shifted Send and Dictate
+        (PR #2934 checkpoint review).
         """
-        if self._collapsed:
-            return self._redirect_budgeted
-        try:
-            row = self.query_one("#console-composer-expanded", Horizontal)
-        except NoMatches:
-            return False
-        row_width = int(row.content_region.width)
+        row_width = self._expanded_row_width()
         if row_width <= 0:
             return False
         spare = (
@@ -914,6 +910,36 @@ class ConsoleComposerBar(Horizontal):
             - self.SEND_REASON_MAX_WIDTH
         )
         return spare >= 0
+
+    def _expanded_row_width(self) -> int:
+        """Return the expanded row's content width, even while it is hidden.
+
+        While collapsed (and on the expand, until the next layout) the
+        expanded row is hidden and measures 0 cells. The bar keeps its outer
+        width across the toggle, so the row's width is the bar's width less
+        the inset last measured while expanded -- not the bar's own content
+        width, which the collapsed presentation's zero padding widens by two
+        cells. A composer never yet laid out expanded falls back to that
+        content width; `_rederive_redirect_budget` corrects it on expanding.
+
+        Returns:
+            The row's content width in cells, or 0 before the first layout.
+        """
+        try:
+            row = self.query_one("#console-composer-expanded", Horizontal)
+        except NoMatches:
+            return 0
+        bar_width = int(self.region.width)
+        row_width = 0 if self._collapsed else int(row.content_region.width)
+        if row_width > 0:
+            if bar_width > 0:
+                self._expanded_row_inset = bar_width - row_width
+            return row_width
+        if bar_width <= 0:
+            return 0
+        if self._expanded_row_inset is None:
+            return int(self.content_region.width)
+        return bar_width - self._expanded_row_inset
 
     @property
     def run_active(self) -> bool:
@@ -3439,10 +3465,10 @@ class ConsoleComposerBar(Horizontal):
         """Re-measure Redirect's reservation once the expanded row is laid out.
 
         The bar is one row collapsed and (with a one-line draft) one row
-        expanded, so expanding sends it no Resize and `on_resize` never runs;
-        a terminal resized while collapsed would otherwise leave the
-        reservation sized for the old width until some later action-state
-        sync widened the row and shifted Send and Dictate (PR #2934 review).
+        expanded, so expanding sends it no Resize and `on_resize` never runs
+        (PR #2934 review). A resize while collapsed already re-derived the
+        reservation from `_expanded_row_width`; this re-measure only corrects
+        the fallback estimate of a composer never yet laid out expanded.
         """
         if self._collapsed or not self.is_mounted:
             return
@@ -6202,6 +6228,10 @@ class ConsoleComposerBar(Horizontal):
     #: CLASS attribute for the same hand-built-fixture reason as
     #: `_voice_status_last` below.
     _redirect_budgeted: bool = False
+    #: Cells between the bar's outer width and the expanded row's content
+    #: width, last measured while expanded (`_expanded_row_width`); None
+    #: until then. A CLASS attribute for the same reason.
+    _expanded_row_inset: int | None = None
     #: Last `sync_action_state` queue copy and wake flag, replayed by
     #: `_sync_current_action_state` (it used to drop the wake flag on every
     #: keystroke and resize). CLASS attributes for the same reason.

@@ -1042,9 +1042,63 @@ async def test_palette_composer_actions_are_inert_while_setup_blocks(
             assert chosen == [], f"palette {expected!r} ran {chosen} under setup"
 
 
+#: Parameter sentinel: one terminal column under the width at which the
+#: expanded row first reserves Redirect's cells (`_redirect_fits`).
+_UNDER_REDIRECT_THRESHOLD = "under-threshold"
+
+
+def _redirect_threshold_columns(host, composer) -> int:
+    """The narrowest terminal width whose expanded row reserves Redirect.
+
+    Read from the laid-out expanded row (terminal width minus row width is
+    the fixed chrome) and the same budget terms `_redirect_fits` sums.
+    """
+
+    chrome = host.size.width - composer._expanded_row_width()
+    needed = (
+        ConsoleComposerBar.LEFT_CLUSTER_WIDTH
+        + composer._actions_row_width(redirect_budgeted=True)
+        + ConsoleComposerBar.ADVISORY_MARGIN_ALLOWANCE
+        + ConsoleComposerBar.DRAFT_MIN_RENDER_WIDTH
+        + ConsoleComposerBar.SEND_REASON_MAX_WIDTH
+    )
+    return needed + chrome
+
+
+def _record_laid_out_frames(console, sample) -> list:
+    """Record ``sample()`` after every layout pass of ``console``.
+
+    Wraps the screen's own ``_refresh_layout`` (pass-through), so each entry
+    is the geometry of a frame the compositor actually laid out -- the first
+    entry after an action is the first frame the user sees, before any
+    ``call_after_refresh`` correction lands.
+    """
+
+    frames: list = []
+    original = console._refresh_layout
+
+    def recording(*args, **kwargs):
+        result = original(*args, **kwargs)
+        frames.append(sample())
+        return result
+
+    console._refresh_layout = recording
+    return frames
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("collapsed_width", "redirect_shown"), [(220, True), (120, False)]
+    ("collapsed_width", "redirect_shown"),
+    [
+        (220, True),
+        (120, False),
+        # One column under Redirect's threshold (149 today): the collapsed
+        # bar's own content width is two cells wider than the expanded row
+        # (the collapsed presentation drops its padding), so measuring THAT
+        # reserved Redirect here while collapsed and shifted Send 10 cells
+        # after the first frame. Derived, so it tracks the budget constants.
+        (_UNDER_REDIRECT_THRESHOLD, False),
+    ],
 )
 @private_profile_test
 async def test_redirect_reservation_survives_a_resize_while_collapsed(
@@ -1056,19 +1110,38 @@ async def test_redirect_reservation_survives_a_resize_while_collapsed(
     keystroke or run start -- and shifted Send and Dictate, the very row
     contract the reservation exists to keep (Qodo, PR #2934). The narrow
     case pins the other half: a reservation kept while collapsed must still
-    be dropped on expanding where Redirect no longer fits."""
+    be dropped where Redirect no longer fits.
+
+    Both halves hold from the FIRST frame after expanding (PR #2934
+    checkpoint review): keeping the stale 235-column reservation while
+    collapsed and re-measuring after the expand painted one frame at 120
+    columns with the draft at 23 cells (under its 32-cell floor) and Send at
+    x=76, then shifted Send and Dictate 10 cells on the next frame."""
     gateway, host = _held_run_host()
     async with host.run_test(size=(235, 52)) as pilot:
         console, composer = await _mounted(host, pilot)
         send = composer.query_one("#console-send-message", Button)
         dictate = composer.query_one("#console-dictation", Button)
         redirect = composer.query_one("#console-redirect-generation", Button)
+        draft = composer.query_one("#console-command-visible-text", Static)
+
+        def geometry():
+            return (send.region.x, dictate.region.x, draft.region.width)
+
+        await _wait_for(
+            pilot, lambda: composer._redirect_budgeted, "235 columns never reserved"
+        )
+        if collapsed_width == _UNDER_REDIRECT_THRESHOLD:
+            collapsed_width = _redirect_threshold_columns(host, composer) - 1
         try:
             console._set_console_composer_collapsed(True)
             await _wait_for(pilot, lambda: composer.collapsed, "never collapsed")
             await pilot.pause(0.2)
             await pilot.resize_terminal(collapsed_width, 52)
             await pilot.pause(0.3)
+            frames = _record_laid_out_frames(
+                console, lambda: (send.region.width, geometry())
+            )
             console._set_console_composer_collapsed(False)
             await _wait_for(
                 pilot,
@@ -1077,6 +1150,18 @@ async def test_redirect_reservation_survives_a_resize_while_collapsed(
             )
             await pilot.pause(0.3)
             expanded_positions = (send.region.x, dictate.region.x)
+            settled = geometry()
+            laid_out = [frame for width, frame in frames if width > 0]
+            assert laid_out, "no frame laid the expanded row out"
+            assert laid_out[0] == settled, (
+                f"the first frame after expanding at {collapsed_width} columns "
+                f"painted (Send x, Dictate x, draft width) {laid_out[0]}, then "
+                f"settled at {settled}: Redirect's reservation was stale while "
+                f"collapsed (frames {laid_out})"
+            )
+            assert laid_out[0][2] >= ConsoleComposerBar.DRAFT_MIN_RENDER_WIDTH, (
+                f"the first frame squeezed the draft to {laid_out[0][2]} cells"
+            )
 
             await _start_held_run(console, composer, pilot)
             if redirect_shown:
