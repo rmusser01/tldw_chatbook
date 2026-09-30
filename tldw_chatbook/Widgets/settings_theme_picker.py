@@ -391,10 +391,11 @@ class ThemePicker(Vertical):
         self.refresh_catalog(highlight=str(self.app.theme))
 
     def on_unmount(self) -> None:
-        """Drop the app-level ``theme_changed_signal`` subscription."""
-        # TASK-33264: the app-level signal would otherwise pin this widget
+        """Drop both app-level signal subscriptions (theme change, launch default)."""
+        # TASK-33264: either app-level signal would otherwise pin this widget
         # (and through its parents the whole Settings screen).
         self.app.theme_changed_signal.unsubscribe(self)
+        launch_default_signal(self.app).unsubscribe(self)
 
     # -- catalog -------------------------------------------------------
     def refresh_catalog(self, highlight: str | None = None, *, rescan: bool = True) -> None:

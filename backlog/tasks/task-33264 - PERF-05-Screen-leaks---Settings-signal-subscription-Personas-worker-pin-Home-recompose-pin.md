@@ -71,6 +71,8 @@ Verification:
 - Preflight passes.
 
 Built by a background agent that stopped at the usage limit before finishing notes; completed and verified by the controller.
+
+**Rebase onto dev 2026-09-30:** the leak test then retained ThemePicker 10/10 through a second app-level subscription the theme program added after this branch was cut (`launch_default_signal`, c680fb7a2f). `on_unmount` now drops both subscriptions; leak test and theme picker suites 164 passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
