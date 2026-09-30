@@ -737,14 +737,27 @@ def _first_binding_scope_available(inventory):
 
 
 def _first_binding_inventory(plan, selector):
-    """Rediscover one actual current profile, never an imported source locator."""
-    from .inventory import discover
+    """Prove the reviewed local census before binding one current profile."""
+    from .inventory import classify_entries, discover
     from .storage_admission import _preview_reads
 
     recheck_targets(plan)
     install_adapters()
+    selectors = tuple(
+        sorted(
+            {
+                item.path
+                for item in plan.target.items
+                if item.owner == "config"
+                and item.status == "included"
+                and item.path is not None
+            }
+        )
+    )
+    if selector not in selectors:
+        raise ValueError("replacement_current_scope_changed")
     with _preview_reads():
-        current = discover((selector,))
+        current = discover(selectors)
     if not _first_binding_scope_available(current):
         raise ValueError("replacement_current_scope_unavailable")
     approved = {item.logical_id: item for item in plan.target.items}
@@ -761,7 +774,30 @@ def _first_binding_inventory(plan, selector):
         ) != (previous.owner, previous.path, previous.status, previous.dependencies):
             raise ValueError("replacement_current_scope_changed")
     recheck_targets(plan)
-    return current
+    configs = [
+        item
+        for item in current.items
+        if item.owner == "config" and item.path == selector
+    ]
+    if len(configs) != 1 or (
+        len(configs[0].logical_id.split(":")) != 3
+        or not configs[0].logical_id.startswith("profile:")
+        or not configs[0].logical_id.endswith(":config")
+    ):
+        raise ValueError("replacement_current_scope_changed")
+    prefix = configs[0].logical_id.removesuffix("config")
+    selected = classify_entries(
+        tuple(
+            item
+            for item in current.items
+            if item.logical_id.startswith(prefix)
+            or item.owner == "recovery.control"
+            and item.status == "intentionally_excluded"
+        )
+    )
+    if not _first_binding_scope_available(selected):
+        raise ValueError("replacement_current_scope_unavailable")
+    return selected
 
 
 def _preserved_default_controls(plan, document, parent, protected):
