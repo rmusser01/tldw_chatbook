@@ -91,7 +91,13 @@ def conversation_action_menus_on_screen(
 class ConversationActionChosen(Message):
     """A command item was chosen from the conversation action menu."""
 
-    def __init__(self, action_id: str, target: ConversationMenuTarget) -> None:
+    def __init__(
+        self,
+        action_id: str,
+        target: ConversationMenuTarget,
+        *,
+        opener_id: str = "",
+    ) -> None:
         """Create the message.
 
         Args:
@@ -99,10 +105,16 @@ class ConversationActionChosen(Message):
                 navigation id -- page moves are handled inside the menu.
             target: The row the menu was opened from, captured at open time
                 so a later rail refresh cannot redirect the action.
+            opener_id: DOM id of the control that opened the menu. A command
+                that opens a prompt hands focus back here first, so closing
+                the prompt returns the user to the row they started from
+                (TASK-33621.12) instead of wherever the menu's removal
+                dropped focus.
         """
         super().__init__()
         self.action_id = action_id
         self.target = target
+        self.opener_id = opener_id
 
 
 class ConversationActionMenuDismissed(Message):
@@ -353,7 +365,11 @@ class ConsoleConversationActionMenu(VerticalScroll):
             )
             return
         self._claimed = True
-        self.post_message(ConversationActionChosen(action_id, self._target))
+        self.post_message(
+            ConversationActionChosen(
+                action_id, self._target, opener_id=self._opener_id
+            )
+        )
         self._detach()
 
 

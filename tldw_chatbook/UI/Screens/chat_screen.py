@@ -7123,63 +7123,6 @@ class ChatScreen(BaseAppScreen):
         label = "Clean markdown" if fidelity == "clean" else "Full transcript"
         self.app.notify(f"Copied {label} ({size_kb} KB).")
 
-    async def _save_console_conversation_markdown(self, target) -> None:
-        """Prompt for a path and write the Clean markdown rendering."""
-
-        from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
-            ConsoleSaveMarkdownModal,
-            markdown_filename_slug,
-        )
-
-
-        markdown = await asyncio.to_thread(
-            self._render_console_conversation_markdown, target, "clean"
-        )
-        if markdown is None:
-            self.app.notify("This chat has no messages to save.", severity="warning")
-            return
-        title = str(getattr(target, "title", "") or "")
-        default_path = str(
-            Path.home() / "Downloads" / f"{markdown_filename_slug(title)}.md"
-        )
-
-        def _write(chosen: "str | None") -> None:
-            if not chosen:
-                return
-            self.run_worker(
-                self._write_console_markdown_file(chosen, markdown),
-                exclusive=True,
-                group="console-copy-markdown",
-            )
-
-        self.push_screen(
-            ConsoleSaveMarkdownModal(default_path=default_path), callback=_write
-        )
-
-    async def _write_console_markdown_file(self, path_text: str, markdown: str) -> None:
-        """Validate and write one markdown export off the loop."""
-
-        import aiofiles
-
-        from tldw_chatbook.Utils.path_validation import validate_path_simple
-
-        # expanduser FIRST: validate_path_simple rejects unresolved '~'
-        # components, and the expansion is exactly what a user means by it.
-        candidate = Path(path_text).expanduser()
-        try:
-            target_path = validate_path_simple(candidate, require_exists=False)
-        except Exception as exc:
-            self.app.notify(f"Invalid path: {exc}", severity="error")
-            return
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            async with aiofiles.open(target_path, "w", encoding="utf-8") as fh:
-                await fh.write(markdown)
-        except Exception as exc:
-            self.app.notify(f"Could not write file: {exc}", severity="error")
-            return
-        self.app.notify(f"Saved {target_path.name}.")
-
     def on_conversation_action_chosen(self, event: Message) -> None:
         """Run the chosen row command against the captured conversation.
 
@@ -7215,10 +7158,15 @@ class ChatScreen(BaseAppScreen):
             )
             return
         if action_id == "save-markdown":
+            from tldw_chatbook.UI.Console_Modules import markdown_export
+
+            # TASK-33621.12: the prompt returns focus to what was focused
+            # under it -- make that the row the menu was opened from.
+            self._restore_console_menu_opener_focus(getattr(event, "opener_id", ""))
             self.run_worker(
-                self._save_console_conversation_markdown(target),
+                markdown_export.save_conversation_markdown(self, target),
                 exclusive=True,
-                group="console-copy-markdown",
+                group=markdown_export.SAVE_MARKDOWN_WORKER_GROUP,
             )
             return
         if not conversation_id:
