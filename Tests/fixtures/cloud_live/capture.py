@@ -62,6 +62,16 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tldw_chatbook.provider_registry import ALL_RECORDS, ProviderRecord  # noqa: E402
 
+try:  # the app sends requests' default User-Agent; match it exactly
+    from requests.utils import default_user_agent as _requests_user_agent
+
+    USER_AGENT = _requests_user_agent()
+except ImportError:  # pragma: no cover - requests ships with the app
+    USER_AGENT = "python-requests"
+# Cloudflare answers urllib's own "Python-urllib/3.x" with 403 "error code: 1010"
+# at Together, Cerebras, GMI, W&B, OpenCode Zen and Command Code (probed
+# 2026-09-30), so every request here carries the app's User-Agent instead.
+
 FIXTURE_DIR = Path(__file__).resolve().parent
 DEFAULT_KEYS_FILE = Path.home() / ".config" / "tldw-live" / "keys.env"
 MAX_STREAM_EVENTS = 5000
@@ -189,7 +199,7 @@ class Target:
             if self.record.auth_scheme == "api_key_header"
             else {"Authorization": f"Bearer {self._api_key}"}
         )
-        return {**auth, "Content-Type": "application/json", **self.headers_extra}
+        return {**auth, "Content-Type": "application/json", "User-Agent": USER_AGENT, **self.headers_extra}
 
     def payload(self, model: str, messages: list[dict[str, Any]], *, stream: bool, tools: bool) -> dict[str, Any]:
         """A request body shaped the way the engine shapes it for this record."""
@@ -352,17 +362,93 @@ def capture(target: Target) -> Path | None:
     return path
 
 
+PROBE_KEY = "tldw-probe-invalid-key"  # deliberately fake: proves how a bad key is answered
+NOAUTH_DIR = FIXTURE_DIR / "noauth"
+
+
+def _plain_request(url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float) -> dict[str, Any]:
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    request = urllib.request.Request(url, data=data, method="POST" if body is not None else "GET",
+                                     headers={"Content-Type": "application/json", "User-Agent": USER_AGENT, **headers})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw, status = response.read().decode("utf-8", errors="replace"), response.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read().decode("utf-8", errors="replace"), error.code
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"status": -1, "body": type(error).__name__}
+    try:
+        return {"status": status, "body": json.loads(raw)}
+    except json.JSONDecodeError:
+        return {"status": status, "body": raw[:2000]}
+
+
+def probe_without_key(record: ProviderRecord) -> Path | None:
+    """Probe one preset's shipped URL with no key and with a fake key.
+
+    Records how the model listing answers (and every model id when it is
+    public) and how the chat route answers a missing and a bad key. No real
+    credential is ever sent, so nothing is spent.
+    """
+    base = (os.environ.get(_env_name(record, "BASE_URL"), "").strip() or record.default_base_url or "").rstrip("/")
+    if not base:
+        print(f"[{record.key}] skip: per-account URL (set {_env_name(record, 'BASE_URL')})")
+        return None
+    fake = ({"api-key": PROBE_KEY} if record.auth_scheme == "api_key_header"
+            else {"Authorization": f"Bearer {PROBE_KEY}"})
+    listing = _plain_request(f"{base}/{record.discovery_route or 'models'}", None, {}, 30.0)
+    listed = listing["body"].get("data") if isinstance(listing["body"], dict) else None
+    # A real model id, so a provider that checks the model before the key still
+    # answers the key question: override, else the public listing, else a seed.
+    override = os.environ.get(_env_name(record, "MODEL"), "").strip()
+    listed_model = choose_model(Target(record, {}), {"data": listed}) if isinstance(listed, list) else None
+    seeds = _config_seeds(record)
+    model = override or listed_model or (seeds[0] if seeds else "probe-model")
+    chat_body = {"model": model, "messages": [{"role": "user", "content": "hi"}],
+                 record.max_tokens_key or "max_tokens": 1}
+    if listing["status"] == 200 and isinstance(listed, list):
+        # Keep what the discovery parser checks (object-ness and each id), not
+        # the bulky pricing/metadata.
+        listing = {"status": 200, "entries": [
+            {"id": entry.get("id")} if isinstance(entry, dict) else entry for entry in listed]}
+    elif listing["status"] == 200:
+        listing = {"status": 200, "body": str(listing["body"])[:500]}
+    fixture = {
+        "server": record.key,
+        "base_url": base if base == (record.default_base_url or "").rstrip("/") else PER_ACCOUNT,
+        "probe_model": model,
+        "listing": listing,
+        "chat_no_key": _plain_request(f"{base}/chat/completions", chat_body, {}, 30.0),
+        "chat_bad_key": _plain_request(f"{base}/chat/completions", chat_body, fake, 30.0),
+        "probed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    NOAUTH_DIR.mkdir(exist_ok=True)
+    path = NOAUTH_DIR / f"{record.key}.json"
+    path.write_text(json.dumps(fixture, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    ids = listing.get("entries")
+    print(f"[{record.key}] listing {listing['status']}{f' ({len(ids)} models)' if ids is not None else ''}"
+          f"  no key {fixture['chat_no_key']['status']}  bad key {fixture['chat_bad_key']['status']}")
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("providers", nargs="*", help="record keys to capture (default: every available)")
     parser.add_argument("--keys-file", type=Path, default=DEFAULT_KEYS_FILE)
     parser.add_argument("--list", action="store_true", help="show who would run, and why not")
+    parser.add_argument("--no-auth", action="store_true",
+                        help="probe every preset's shipped URL without a real key (no tokens spent)")
     args = parser.parse_args(argv)
     env = {**read_keys_file(args.keys_file), **os.environ}
     records = engine_presets()
     unknown = set(args.providers) - {r.key for r in records}
     if unknown:
         parser.error(f"unknown provider(s): {', '.join(sorted(unknown))}")
+    if args.no_auth:
+        chosen = [r for r in records if not args.providers or r.key in args.providers]
+        probed = sum(probe_without_key(record) is not None for record in chosen)
+        print(f"probed {probed} of {len(chosen)} provider(s) without a key")
+        return 0
     targets = [Target(r, env) for r in records if not args.providers or r.key in args.providers]
     captured = 0
     for target in targets:

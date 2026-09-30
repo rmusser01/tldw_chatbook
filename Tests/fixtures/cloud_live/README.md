@@ -47,6 +47,35 @@ prints the chosen model, the HTTP status of each round, and any response key
 names that the record's allowances do not cover. It never prints response
 text.
 
+## Without a key
+
+```bash
+.venv/bin/python Tests/fixtures/cloud_live/capture.py --no-auth
+```
+
+This probes every preset's shipped URL twice: once with no key, and once
+with an obviously fake one. It spends no tokens. It records:
+
+- how the model listing answers, keeping every model id when the listing is
+  public;
+- how the chat route answers each attempt.
+
+The probes live in `noauth/` and are pinned by
+`Tests/LLM_Calls/test_noauth_probe_evidence.py`, which checks four things:
+
+- every chat route exists;
+- a bad key reaches the user as "authentication failed";
+- public listings parse through the discovery parser;
+- seeded models are still listed.
+
+To pick the model the probe sends, set `TLDW_LIVE_<KEY>_MODEL`. To probe a
+per-account host, set `TLDW_LIVE_<KEY>_BASE_URL`.
+
+Every request carries the app's own User-Agent (`python-requests/...`). On
+2026-09-30, Cloudflare answered urllib's default User-Agent with 403 `error
+code: 1010` at six of these providers: Together, Cerebras, GMI, W&B, OpenCode
+Zen and Command Code.
+
 ## Replay and amend
 
 ```bash

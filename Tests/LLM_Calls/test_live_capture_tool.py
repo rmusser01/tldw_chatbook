@@ -94,6 +94,9 @@ def test_azure_capture_uses_the_api_key_header_and_max_completion_tokens(
     assert not any("authorization" in r["headers"] for r in posts)
     assert all("max_completion_tokens" in r["body"] and "max_tokens" not in r["body"] for r in posts)
     assert all(r["body"]["model"] == "my-deploy" for r in posts)
+    # The app's User-Agent, not urllib's: Cloudflare blocks "Python-urllib" with 1010.
+    assert {r["headers"]["user-agent"] for r in _Provider.requests} == {capture_tool.USER_AGENT}
+    assert capture_tool.USER_AGENT.startswith("python-requests")
     assert not any(r["body"] is None for r in _Provider.requests)  # no discovery for deployments
     assert fixture["base_url"] == capture_tool.PER_ACCOUNT
     assert fixture["statuses"] == {"plain": 200, "tool": 200, "stream": 200}
@@ -132,3 +135,21 @@ def test_missing_key_or_account_url_is_a_clean_skip(tmp_path: Path, capsys: pyte
     assert "[azure] skip: per-account URL" in out
     assert "[together] skip: no key" in out
     assert _KEY not in out
+
+
+def test_no_auth_probe_sends_only_the_fake_key(
+    provider: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe records listing entries and both chat answers, and never sends a real key."""
+    monkeypatch.setattr(capture_tool, "NOAUTH_DIR", tmp_path / "noauth")
+    monkeypatch.setenv("TLDW_LIVE_META_BASE_URL", provider)
+    monkeypatch.setenv("META_API_KEY", _KEY)
+    assert capture_tool.main(["meta", "--no-auth"]) == 0
+    fixture = json.loads((tmp_path / "noauth" / "meta.json").read_text(encoding="utf-8"))
+    assert fixture["listing"]["entries"] == [{"id": "text-embed-1"}, {"id": "chat-small-7b"}]
+    assert fixture["probe_model"] == "chat-small-7b"
+    assert fixture["base_url"] == capture_tool.PER_ACCOUNT
+    auth = [r["headers"].get("authorization") for r in _Provider.requests if r["body"] is not None]
+    assert auth == [None, f"Bearer {capture_tool.PROBE_KEY}"]
+    assert _KEY not in json.dumps(fixture)
+
