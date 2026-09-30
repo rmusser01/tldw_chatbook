@@ -521,6 +521,15 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "ConsoleRealtimeController",
             "_tick_console_realtime",
         ),
+        # TASK-33621.12: focus recovery re-arms a 20 ms timer (at most 100
+        # times) while the lost control's own container is mid-recompose.
+        # Checked with census(): no `.update(` is reachable from it.
+        (
+            "rearming-set_timer",
+            "tldw_chatbook/UI/Console_Modules/left_rail.py",
+            "ConsoleLeftRail",
+            "_recover_pending_focus",
+        ),
         (
             "rearming-set_timer",
             "tldw_chatbook/UI/Screens/model_installed_view.py",
