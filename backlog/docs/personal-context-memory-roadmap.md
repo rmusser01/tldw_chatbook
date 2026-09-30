@@ -564,3 +564,13 @@ are unchanged. Source review found no actionable runtime integration regression;
 its stale cross-references and Dreams link are repaired. Production V2, Forget,
 source-opening, schema/AAD, disclosure and companion-server activation remain
 closed. The independent retirement qualification branch remains separate.
+
+## Pinned dev conflict refresh — 2026-09-30
+
+PR #2862 now conflicts with dev after the completed publication milestone.
+TASK-25907.23 is reopened against pinned dev `dfee4bf4c66ec2656a6c4ea2667edb63cc38a445`;
+feature pin `e3527ac883e32c94087293212ddc9d5223505adf` and its receipts remain preserved.
+The [refresh plan](../../Docs/superpowers/plans/2026-09-30-personal-context-dev-conflict-refresh.md)
+keeps both Settings memory/Hooks stylesheet owners and both lesson additions,
+then qualifies the actual combined candidate under existing limits. All production
+activation gates remain closed, and independent retirement work remains separate.
