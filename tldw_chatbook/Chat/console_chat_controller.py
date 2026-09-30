@@ -412,6 +412,8 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import (
+    TIMEOUT_REFUSAL,
+    UNRESOLVED_REFUSAL,
     MCPPendingCall,
     MCPToolProvider,
     approval_effects_for_tool,
@@ -2533,6 +2535,10 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
     "always_allow": 3,
 }
 
+#: The card answers that approve a call for every tool owner. MCP rows also
+#: accept ``"allow_matching"``; built-in and local rows do not.
+_APPROVING_DECISIONS: tuple[str, ...] = ("approve_once", "approve_session", "always_allow")
+
 
 class ApprovalDecisions(dict):
     """One approval round's verdict map, plus the keys nobody actually answered.
@@ -2605,7 +2611,7 @@ def _review_decision(
     decisions: Mapping[str, str],
     verdict: str,
     *,
-    allowing: tuple[str, ...] = ("approve_once", "approve_session", "always_allow"),
+    allowing: tuple[str, ...] = _APPROVING_DECISIONS,
     name_fallback: bool = True,
 ) -> ToolReviewDecision:
     """Attach an answered raw choice to the owner's unchanged verdict."""
@@ -2640,6 +2646,52 @@ def _stamp_answer_provenance(
         and approval_was_unanswered(row, decisions)
     )
     return result
+
+
+def _sibling_approval_refusals(
+    rows: Sequence[MCPPendingCall],
+    decision_for: Callable[[MCPPendingCall], str | None],
+    decisions: Mapping[str, str],
+    allowing_for: Callable[[MCPPendingCall], tuple[str, ...]],
+    record_refusal: Callable[[MCPPendingCall, bool], None],
+) -> dict[str, ToolReviewValue]:
+    """Refuse rows that would run only on a same-name sibling's approval.
+
+    TASK-33082. A tool's stamp is name-keyed and keeps the broadest approval
+    any row of that name received, so it cannot say "this call, not that
+    one". A row whose own answer is missing, ``"timeout"`` or unknown would
+    then run on its approved sibling's stamp. Each such row is refused here,
+    by its own key, and audited through ``record_refusal``, because the
+    runtime never dispatches it to the owner that would otherwise record the
+    outcome. A row with no approved sibling is left alone: its name's stamp
+    is not an approval, so the owner refuses and audits it at dispatch, as
+    before.
+
+    Args:
+        rows: The batch's pending approval rows.
+        decision_for: Resolves one row's own answer (call id first, then name).
+        decisions: The approval round's answers, for the review fact.
+        allowing_for: The answers that approve a given row's owner.
+        record_refusal: Audits one refused row; the flag is whether its own
+            answer was ``"timeout"``.
+
+    Returns:
+        Refusal verdicts keyed by call id, or by name for an id-less row.
+    """
+    approved = {row.llm_name for row in rows if decision_for(row) in allowing_for(row)}
+    refusals: dict[str, ToolReviewValue] = {}
+    for row in rows:
+        decision = decision_for(row)
+        if row.llm_name not in approved or decision == "deny":
+            continue
+        if decision in allowing_for(row):
+            continue
+        timed_out = decision == "timeout"
+        refusals[row.call_id or row.llm_name] = _review_decision(
+            row, decisions, TIMEOUT_REFUSAL if timed_out else UNRESOLVED_REFUSAL
+        )
+        record_refusal(row, timed_out)
+    return refusals
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -3185,8 +3237,10 @@ def build_tool_review_hook(
     `mcp_provider.apply_batch_decisions(run_id, ...)` for MCP rows,
     `builtin_gate.stamp(run_id, name, decision)` for built-in rows. The returned
     verdict map carries "proceed" for approved calls and REFUSAL STRINGS
-    for per-call denials (TASK-1861) and kill-switch blocks (TASK-631) --
-    the runtime enforces those directly, skipping dispatch. Approvals are
+    for per-call denials (TASK-1861), kill-switch blocks (TASK-631), and
+    calls that lack an approval of their own while a same-name sibling was
+    approved (TASK-33082) -- the runtime enforces those directly, skipping
+    dispatch. Approvals are
     still left to `invoke()`'s gate on dispatch, which records the audit
     decision.
 
@@ -3551,22 +3605,32 @@ def build_tool_review_hook(
             verdicts[key] = _review_decision(
                 row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
             )
+
+        def _allowing(row: MCPPendingCall) -> tuple[str, ...]:
+            if row in mcp_pending:
+                return (*_APPROVING_DECISIONS, "allow_matching")
+            return _APPROVING_DECISIONS
+
+        def _record_sibling_refusal(row: MCPPendingCall, timed_out: bool) -> None:
+            # Built-in rows are left unaudited, as for a Deny above.
+            if mcp_provider is not None and row in mcp_pending:
+                mcp_provider.record_hook_refusal(row.llm_name, timed_out=timed_out)
+
+        verdicts.update(
+            _sibling_approval_refusals(
+                mcp_pending + builtin_pending,
+                _decision_for,
+                decisions,
+                _allowing,
+                _record_sibling_refusal,
+            )
+        )
         # Settle all name-wide refusals first. Metadata must never add an
         # exact proceed that bypasses an id-less sibling's refusal fallback.
         verdicts.update(
             {
                 row.call_id or row.llm_name: _review_decision(
-                    row,
-                    decisions,
-                    "proceed",
-                    allowing=(
-                        "approve_once",
-                        "approve_session",
-                        "always_allow",
-                        "allow_matching",
-                    )
-                    if row in mcp_pending
-                    else ("approve_once", "approve_session", "always_allow"),
+                    row, decisions, "proceed", allowing=_allowing(row)
                 )
                 for row in mcp_pending + builtin_pending
                 if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
@@ -3727,6 +3791,17 @@ def build_local_review_hook(
             verdicts[key] = _review_decision(
                 row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
             )
+        verdicts.update(
+            _sibling_approval_refusals(
+                pending,
+                _decision_for,
+                decisions,
+                lambda _row: _APPROVING_DECISIONS,
+                lambda row, timed_out: provider.record_hook_refusal(
+                    row.llm_name, timed_out=timed_out
+                ),
+            )
+        )
         # Preserve settled name-wide refusal fallback before adding facts.
         verdicts.update(
             {

@@ -700,6 +700,29 @@ class MCPToolProvider:
             return
         self._record_decision_safe(entry[0], decision="denied")
 
+    def record_hook_refusal(self, llm_name: str, *, timed_out: bool) -> None:
+        """Audit a call the review hook refused for lacking its own approval.
+
+        TASK-33082: when a same-name sibling was approved, the review hook
+        refuses a row whose own answer timed out, is unknown or is missing,
+        so `invoke()` -- which records those outcomes -- never runs for it.
+        Records the decision `_apply_verdict` would have written for that
+        answer.
+
+        Args:
+            llm_name: The LLM-facing tool id. A name this provider does not
+                own is ignored, as in `record_user_denial`.
+            timed_out: Whether the row's own answer was ``"timeout"``
+                (``"denied-timeout"``); otherwise ``"denied-unresolved"``.
+        """
+        entry = self._entry_by_llm_name.get(llm_name)
+        if entry is None:
+            return
+        self._record_decision_safe(
+            entry[0],
+            decision="denied-timeout" if timed_out else UNRESOLVED_DENIED_DECISION,
+        )
+
     @contextlib.contextmanager
     def stamp_scope(self, run_id: str):
         """Snapshot `run_id`'s stamps on enter; RESTORE (not merge) on exit.
