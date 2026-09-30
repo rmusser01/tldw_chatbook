@@ -439,10 +439,15 @@ async def test_a_second_project_recovery_request_while_one_runs_is_ignored():
         for _ in range(2):
             panel.post_message(panel.RecoveryRequested("captured-session", "disable"))
         await asyncio.wait_for(started.wait(), timeout=5)
-        await pilot.pause(0.2)
+        # The clock, not ``pilot.pause``: an Inspector that awaits the recovery
+        # on its own pump (the pre-fix handler) never goes idle, so a pause
+        # would wait for it forever instead of letting this test fail.
+        await asyncio.sleep(0.2)
         assert calls == ["disable"]
         assert app.recoveries == []
         release.set()
+        await asyncio.sleep(0.2)
+        assert calls == ["disable"], "the second request ran after the first"
         for _ in range(40):
             if not modal._project_instruction_recovery_running:
                 break

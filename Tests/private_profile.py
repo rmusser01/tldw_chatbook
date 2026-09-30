@@ -24,6 +24,24 @@ def is_private_profile_child(request: pytest.FixtureRequest) -> bool:
     )
 
 
+def _child_failure_report(report: Path) -> str:
+    """The child's own failure/error text from its JUnit XML, if it wrote one.
+
+    The log tail alone is often teardown noise (DEBUG SQL lines), which left
+    the failing assertion out of the parent's message entirely.
+    """
+    try:
+        cases = list(ET.parse(report).iter("testcase"))  # nosec B314
+    except (OSError, ET.ParseError):
+        return "(the child wrote no JUnit report)"
+    return "\n".join(
+        f"--- child {element.tag}: {element.get('message', '')}\n{element.text or ''}"
+        for case in cases
+        for element in case
+        if element.tag in ("failure", "error")
+    )
+
+
 def private_profile_test(function):
     """Run the original case under pytest after selecting a fresh profile."""
 
@@ -131,7 +149,10 @@ def private_profile_test(function):
             ) as output:
                 output.write(coverage_file.read_bytes())
         if process.returncode:
-            pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+            pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
         if coverage_controller is not None and not coverage_file.is_file():
             pytest.fail(f"private profile child did not produce coverage: {log}")
         # Parse our child's local pytest output, never externally supplied XML.

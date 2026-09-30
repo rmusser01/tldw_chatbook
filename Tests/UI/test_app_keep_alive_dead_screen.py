@@ -126,10 +126,12 @@ def _crashes(messages: list[str]) -> list[str]:
     return [m for m in messages if "event=unhandled_exception" in m]
 
 
-async def _poll(predicate, *, timeout: float = 6.0) -> bool:
+async def _poll(predicate, *, timeout: float = 20.0) -> bool:
     """Poll the clock, not ``pilot.pause()``: a pause queues a callback on
     every widget of ``app.screen`` and waits for all of them, which never
-    finishes while a dead pump is on top -- the very state under test."""
+    finishes while a dead pump is on top -- the very state under test. The
+    timeouts are generous on purpose: they bound a failure, never a pass, and
+    a run on a heavily loaded machine took half again as long as usual."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -147,7 +149,7 @@ async def _press(pilot, key: str) -> None:
 
 
 async def _ready(app, pilot) -> Screen:
-    assert await _poll(lambda: getattr(app, "_ui_ready", False), timeout=15), (
+    assert await _poll(lambda: getattr(app, "_ui_ready", False), timeout=60), (
         "production TldwCli never reached _ui_ready"
     )
     await pilot.pause()
@@ -190,7 +192,7 @@ async def _trigger_screen_handler_error(app, pilot, crash_records, modal_cls):
 async def _assert_ctrl_q_quits(app, pilot) -> None:
     before = (_stack(app), _dead_screens(app), type(app.focused).__name__)
     await _press(pilot, "ctrl+q")
-    assert await _poll(lambda: bool(app._exit), timeout=10), (
+    assert await _poll(lambda: bool(app._exit), timeout=20), (
         "Ctrl+Q did not quit the app after a handler error "
         f"(stack={before[0]}, dead={before[1]}, focused={before[2]})"
     )
@@ -309,7 +311,7 @@ async def test_a_dead_content_screen_takes_textuals_loud_exit(request, crash_rec
         async with app.run_test(size=(140, 44)) as pilot:
             content = await _ready(app, pilot)
             content.call_later(_boom)
-            assert await _poll(lambda: app._exception is not None, timeout=10)
+            assert await _poll(lambda: app._exception is not None, timeout=20)
     assert _crashes(crash_records)
     assert app.return_code == 1
 

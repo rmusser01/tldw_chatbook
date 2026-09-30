@@ -38,7 +38,10 @@ from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
-from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
+from tldw_chatbook.Chat.console_display_state import (
+    PROJECT_LOCATOR_NOT_CHECKED,
+    ConsoleProjectInstructionState,
+)
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
@@ -1552,7 +1555,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             factory is None
             or state is None
             or not (state.enabled and state.binding_label)
-            or state.locator_match != "not checked"
+            or state.locator_match != PROJECT_LOCATOR_NOT_CHECKED
         ):
             return
         try:
