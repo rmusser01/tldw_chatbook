@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-09-30 05:08'
+updated_date: '2026-09-30 05:19'
 labels: []
 dependencies: []
 priority: high
@@ -33,6 +33,8 @@ ADR required: no. ADR path: backlog/decisions/139-independent-buddy-conversation
 PR2536 Qodo follow-up: verify all six issue/inline findings against the harness. Confine optional exports to an explicit disposable artifact root with the shared path validator; protect upgrade setup cleanup and transact schema reads; document harness arguments. Reproduce the queued None-selection race with a populated Persona default, then wait for target readiness and prove persisted clearing. Require the complete dynamic frame loop within a bounded wait. Run targeted harness/regression and scoped static checks, regenerate separately source-bound follow-up artifacts, and amend overbroad evidence claims without replacing original capture provenance. No production changes, native Terminal workaround, commit, push, or external review reply.
 
 2026-09-29 current-dev follow-up: ADR required: no; existing ADR-126 profile lifetime and ADR-139 independent Buddy bindings apply. Reproduce qualification setup on pinned dev, reuse Tests/private_profile.py for fresh and upgraded production-app journeys, keep each selected config/data source unchanged for its interpreter lifetime, assert the actual current schema head rather than obsolete v70, and rerun this targeted file with source-bound captures and scoped Ruff/format checks. Preserve historical receipts and keep native/audio acceptance open.
+
+2026-09-30 PR2910 Qodo coverage follow-up: ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md (existing profile-lifetime decision). Reason: repair coverage accounting in the existing test-only child helper without changing profile selection or production behavior. Reproduce a child-only line missing from a real parent pytest-cov XML report; when parent coverage is active, reuse pytest-cov and coverage data merging in Tests/private_profile.py. Retain standalone and --no-cov behavior and exact-node/result/timeout guards. Verify a real serial and xdist parent report includes child-only execution, then rerun only fresh/upgrade Buddy journeys and relevant guards with source-bound sanitized receipts. Keep native and physical voice acceptance open.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
