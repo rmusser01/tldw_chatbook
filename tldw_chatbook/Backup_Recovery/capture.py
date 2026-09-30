@@ -398,6 +398,7 @@ def _capture_under_maintenance(
         create_private_directory(stage / "payload")
         sources = tuple(dict.fromkeys(item.path for item in entries))
         staged, physical, aliases, versions = [], {}, {}, {}
+        total = 0
         with session.capture_scope(sources, stage, limits=limits, byte_budget=budget):
             for item in entries:
                 reader._check(cancel)
@@ -453,8 +454,9 @@ def _capture_under_maintenance(
                     validation = validator.validate(path)
                     if validation:
                         raise CaptureReviewRequired(validation)
-                total = sum(os.stat(candidate).st_size for _, candidate in staged)
-                if total > budget or os.stat(path).st_size > limits.member_bytes:
+                size = os.stat(path).st_size
+                total += size
+                if total > budget or size > limits.member_bytes:
                     raise CaptureReviewRequired(("capture_budget_changed",))
                 require_capacity(
                     {stage: total, Path(destination): total * (5 if encrypted else 3)}

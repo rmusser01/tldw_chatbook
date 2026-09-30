@@ -316,6 +316,32 @@ def run_capture(case, tmp_path, **kwargs):
     )
 
 
+@pytest.mark.parametrize("refuse", [False, True])
+def test_rollback_accounts_each_payload_once_and_checks_remaining_capacity(
+    tmp_path, monkeypatch, helper_resource_root, refuse
+):
+    from contextlib import nullcontext
+
+    from Tests.Backup_Recovery.test_capture import _capture_capacity_witness
+    from tldw_chatbook.Backup_Recovery import crypto, replacement
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    with replacement_case(tmp_path, monkeypatch) as case:
+        before = state(case[4])
+        checkpoints = _capture_capacity_witness(
+            replacement, monkeypatch, "originals-", refuse=refuse
+        )
+        with (
+            pytest.raises(ValueError, match="insufficient_space")
+            if refuse
+            else nullcontext()
+        ):
+            run_capture(case, tmp_path)
+        assert len(checkpoints) == 2
+        assert state(case[4]) == before
+        assert (tmp_path / "rollback.tldw-backup.zip.age").exists() is not refuse
+
+
 @pytest.mark.parametrize("tree", [False, True])
 def test_real_wal_and_corrupt_config_round_trip_under_one_session(
     tmp_path, monkeypatch, helper_resource_root, tree

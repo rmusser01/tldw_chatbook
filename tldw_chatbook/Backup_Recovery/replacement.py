@@ -370,6 +370,7 @@ def capture_verify_rollback(
     create_private_directory(stage / "payload")
     owners = {owner.owner_id: owner for owner in install_adapters()}
     staged, aliases, versions, physical = [], {}, {}, {}
+    total = 0
     captured = {}
     raw_originals = {}
     entries = [item for item in inventory.items if item.status == "included"]
@@ -424,11 +425,9 @@ def capture_verify_rollback(
             staged.append((item, path))
             if item.shared_group:
                 aliases.setdefault(item.shared_group, []).append(item.logical_id)
-            total = sum(os.stat(path).st_size for _, path in staged)
-            if (
-                total > limits.expanded_bytes
-                or os.stat(path).st_size > limits.member_bytes
-            ):
+            size = os.stat(path).st_size
+            total += size
+            if total > limits.expanded_bytes or size > limits.member_bytes:
                 raise ValueError("rollback_capture_limit")
             require_capacity({stage: total, destination.parent: total * 5})
         from .rag_projection_validation import validate_groups

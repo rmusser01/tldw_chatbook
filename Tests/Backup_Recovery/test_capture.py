@@ -197,6 +197,147 @@ def native_config_capture(tmp_path, monkeypatch):
     return module, authority, state, config
 
 
+def _capture_capacity_witness(module, monkeypatch, prefix, *, refuse=False):
+    """Check that adding a payload never re-stats earlier captured payloads."""
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import space
+
+    native_os, capacity = module.os, space.require_capacity
+    stat = native_os.stat
+    counts, previous, checkpoints = {}, {}, []
+
+    def observed(path, *args, **kwargs):
+        result = stat(path, *args, **kwargs)
+        if isinstance(path, (str, Path)):
+            path = Path(path)
+            if path.parent.name == "payload" and path.parent.parent.name.startswith(
+                prefix
+            ):
+                counts[path] = counts.get(path, 0) + 1
+        return result
+
+    def checked(requirements):
+        # SQLite snapshot preparation also checks this root's capacity. Observe
+        # only the capture module's per-payload accounting checkpoints.
+        roots = (
+            [path for path in requirements if Path(path).name.startswith(prefix)]
+            if sys._getframe(1).f_globals is vars(module)
+            else []
+        )
+        if roots:
+            assert len(roots) == 1
+            assert all(counts[path] == count for path, count in previous.items())
+            assert requirements[roots[0]] == sum(stat(path).st_size for path in counts)
+            checkpoints.append(requirements[roots[0]])
+            if refuse and len(checkpoints) == 2:
+                monkeypatch.setattr(
+                    space.shutil,
+                    "disk_usage",
+                    lambda _: SimpleNamespace(free=space._MARGIN),
+                )
+        capacity(requirements)
+        if roots:
+            previous.update(counts)
+
+    class ObservedOS:
+        def __getattr__(self, name):
+            return observed if name == "stat" else getattr(native_os, name)
+
+    # Keep the native os.stat callable's capability identity intact for SQLite.
+    monkeypatch.setattr(module, "os", ObservedOS())
+    monkeypatch.setattr(space, "require_capacity", checked)
+    return checkpoints
+
+
+@pytest.mark.parametrize("refuse", [False, True])
+def test_capture_accounts_each_payload_once_and_checks_remaining_capacity(
+    tmp_path, native_config_capture, monkeypatch, refuse
+):
+    from contextlib import nullcontext
+
+    from tldw_chatbook.Backup_Recovery.inventory import classify_entries
+
+    module, authority, state, config = native_config_capture
+    items = list(state[0].items)
+    for number in range(2):
+        sibling = config.parent / f"config-{number}.toml"
+        sibling.write_bytes(config.read_bytes())
+        sibling.chmod(0o600)
+        items.append(
+            StorageItem(
+                "config", f"profile:test-{number}:config", sibling, "included", ()
+            )
+        )
+    state[0] = classify_entries(tuple(items))
+    checkpoints = _capture_capacity_witness(
+        module, monkeypatch, "capture-", refuse=refuse
+    )
+    with (
+        authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+        pytest.raises(ValueError, match="insufficient_space")
+        if refuse
+        else nullcontext(),
+    ):
+        module._capture_under_maintenance(
+            session,
+            (config,),
+            state[0].scope_digest,
+            tmp_path / "backup.zip",
+            options={"staging_parent": tmp_path},
+            cancel=Event(),
+        )
+    assert len(checkpoints) == (2 if refuse else 3)
+
+
+@pytest.mark.parametrize("after_credentials", [False, True])
+def test_capture_refuses_actual_payload_growth_before_and_after_credentials(
+    tmp_path, native_config_capture, monkeypatch, after_credentials
+):
+    from tldw_chatbook.Backup_Recovery import credentials, owner_registry
+
+    module, authority, state, config = native_config_capture
+    original_bytes = config.read_bytes()
+    if after_credentials:
+        original = credentials.process_credentials
+
+        def grow(stage, inventory, **kwargs):
+            result = original(stage, inventory, **kwargs)
+            inventory.items[0].path.write_bytes(original_bytes + b"# growth\n" * 100)
+            return result
+
+        monkeypatch.setattr(credentials, "process_credentials", grow)
+    else:
+        adapter = owner_registry._adapters["config"]
+        original = adapter.capture
+
+        def grow(item, destination, cancel):
+            original(item, destination, cancel)
+            destination.write_bytes(original_bytes + b"# growth\n" * 100)
+
+        monkeypatch.setattr(adapter, "capture", grow)
+    with (
+        authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+        pytest.raises(module.CaptureReviewRequired) as error,
+    ):
+        module._capture_under_maintenance(
+            session,
+            (config,),
+            state[0].scope_digest,
+            tmp_path / "backup.zip",
+            options={
+                "staging_parent": tmp_path,
+                "byte_budget": len(original_bytes) + 1,
+            },
+            cancel=Event(),
+        )
+    assert error.value.issues == ("capture_budget_changed",)
+    assert config.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("capture-*"))
+
+
 @pytest.mark.parametrize("failure", ["scope", "budget", "cancel", "dependency"])
 def test_native_capture_refuses_changed_or_unavailable_boundary(
     tmp_path, native_config_capture, failure
