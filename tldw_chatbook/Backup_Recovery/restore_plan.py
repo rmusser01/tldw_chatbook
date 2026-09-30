@@ -484,7 +484,7 @@ def _tokenizer_container_owner(doc, key, path, owners):
     return owner if owner is not None and _empty_private_container(path) else None
 
 
-def _observed(path):
+def _observed(path, target=None):
     ancestor = _ancestor(path)
     ancestors = []
     current = ancestor
@@ -501,7 +501,87 @@ def _observed(path):
     if stat.S_ISLNK(info.st_mode) or info.st_nlink != 1 and stat.S_ISREG(info.st_mode):
         raise ValueError("destination_alias")
     if stat.S_ISREG(info.st_mode):
-        content = _hash(path, Event())
+        lock = None
+        if (
+            os.name == "nt"
+            and path.name == ".instance.lock"
+            and type(target) is Inventory
+        ):
+            from .config_adapter import _Config, _InstanceLock
+            from .profile_paths import lexical_path
+
+            items = [item for item in target.items if item.path == path]
+            if len(items) == 1 and items[0].owner == "runtime.instance_lock":
+                item = items[0]
+                configs = [
+                    row
+                    for row in target.items
+                    if item.dependencies == (row.logical_id,)
+                ]
+                owners = {owner.owner_id: owner for owner in install_adapters()}
+                if len(configs) == 1 and configs[0].path is not None:
+                    config = configs[0]
+                    prefix = (
+                        "profile:"
+                        + hashlib.sha256(str(config.path).encode()).hexdigest()[:24]
+                        + ":"
+                    )
+                    meta = item.metadata
+                    if (
+                        type(owners.get(item.owner)) is _InstanceLock
+                        and type(owners.get(config.owner)) is _Config
+                        and config.owner == "config"
+                        and config.status == "included"
+                        and not config.dependencies
+                        and config.path == lexical_path(config.path)
+                        and config.logical_id == prefix + "config"
+                        and item.logical_id == prefix + item.owner
+                        and sum(
+                            row.logical_id == item.logical_id for row in target.items
+                        )
+                        == 1
+                        and item.status == "intentionally_excluded"
+                        and meta is not None
+                        and (
+                            meta.root_id,
+                            meta.relative_path,
+                            meta.parent_id,
+                            meta.kind,
+                            meta.policy,
+                        )
+                        == (item.logical_id, "", None, "file", "private")
+                    ):
+                        lock = item
+        if lock is None:
+            content = _hash(path, Event())
+        else:
+            # The informational instance body is exclusively locked on Windows.
+            from .archive_reader import _identity, _regular
+
+            before = (*_identity(info), info.st_mode, info.st_uid, info.st_nlink)
+            if info.st_uid != os.geteuid():
+                raise ValueError("destination_alias")
+            with _regular(path) as stream:
+                held = os.fstat(stream.fileno())
+                named = os.stat(path, follow_symlinks=False)
+                if _ancestor(path) != ancestor or any(
+                    (
+                        (parent_info := os.stat(parent, follow_symlinks=False)).st_dev,
+                        parent_info.st_ino,
+                    )
+                    != (device, inode)
+                    for parent, device, inode in ancestors
+                ):
+                    raise ValueError("target_changed")
+                for current in (held, named, os.fstat(stream.fileno())):
+                    if (
+                        *_identity(current),
+                        current.st_mode,
+                        current.st_uid,
+                        current.st_nlink,
+                    ) != before:
+                        raise ValueError("target_changed")
+            content = None
     elif stat.S_ISDIR(info.st_mode):
         with pinned_directory(path) as fd:
             content = sorted(os.listdir(fd))
@@ -525,7 +605,7 @@ def _observed(path):
 def _fingerprint(paths, target):
     observations = []
     for path in sorted(set(paths)):
-        observed = _observed(path)
+        observed = _observed(path, target)
         items = [item for item in target.items if item.path == path] if target else []
         if (
             len(items) == 1
