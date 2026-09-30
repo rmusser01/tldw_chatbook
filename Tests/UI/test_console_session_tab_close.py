@@ -213,33 +213,35 @@ async def test_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_
     db, conversation_id, message_id = _saved_conversation(app, tmp_path)
     notes = _record_notifications(app)
     host = ConsoleHarness(app)
-    async with host.run_test(size=_SIZE) as pilot:
-        console = await _mounted_console(host, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        keeper = store.active_session_id
-        saved = _restore_saved_tab(store, conversation_id, message_id)
-        blank = store.create_session()
-        store.switch_session(keeper)
-        await _show_tabs(console, pilot, {keeper, saved.id, blank.id})
+    try:
+        async with host.run_test(size=_SIZE) as pilot:
+            console = await _mounted_console(host, pilot, "#console-native-composer")
+            store = console._ensure_console_chat_store()
+            keeper = store.active_session_id
+            saved = _restore_saved_tab(store, conversation_id, message_id)
+            blank = store.create_session()
+            store.switch_session(keeper)
+            await _show_tabs(console, pilot, {keeper, saved.id, blank.id})
 
-        await _click(pilot, f"#console-close-session-tab-{saved.id}")
-        closed = await _settle(pilot, lambda: saved.id not in _session_ids(store))
-        assert closed, "clicking ✕ on an idle saved tab left it open"
-        assert _session_ids(store) == [keeper, blank.id]
-        await _await_tabs(console, pilot, {keeper, blank.id})
-        assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
-        assert store.active_session_id == keeper
-        # Closing the tab never touches the saved history in Library.
-        retained = db.get_conversation_by_id(conversation_id)
-        assert retained is not None and not retained["deleted"]
+            await _click(pilot, f"#console-close-session-tab-{saved.id}")
+            closed = await _settle(pilot, lambda: saved.id not in _session_ids(store))
+            assert closed, "clicking ✕ on an idle saved tab left it open"
+            assert _session_ids(store) == [keeper, blank.id]
+            await _await_tabs(console, pilot, {keeper, blank.id})
+            assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
+            assert store.active_session_id == keeper
+            # Closing the tab never touches the saved history in Library.
+            retained = db.get_conversation_by_id(conversation_id)
+            assert retained is not None and not retained["deleted"]
 
-        await _click(pilot, f"#console-close-session-tab-{blank.id}")
-        closed = await _settle(pilot, lambda: blank.id not in _session_ids(store))
-        assert closed, "clicking ✕ on a blank never-sent tab left it open"
-        await _await_tabs(console, pilot, {keeper})
-        assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
-        assert _failure_toasts(notes) == []
-    db.close_connection()
+            await _click(pilot, f"#console-close-session-tab-{blank.id}")
+            closed = await _settle(pilot, lambda: blank.id not in _session_ids(store))
+            assert closed, "clicking ✕ on a blank never-sent tab left it open"
+            await _await_tabs(console, pilot, {keeper})
+            assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
+            assert _failure_toasts(notes) == []
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
