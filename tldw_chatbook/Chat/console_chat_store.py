@@ -6616,7 +6616,7 @@ class ConsoleChatStore:
     def publish_durable_turn_identity(
         self, session_id: str, commit: ConsoleDurableTurnCommit
     ) -> None:
-        """Publish committed identity, policy, and first-send settings bases."""
+        """Publish committed identity, policy, first-send bases, project controls."""
 
         self.publish_committed_identity(session_id, commit.identity)
         with self._preparation_lock:
@@ -6637,9 +6637,9 @@ class ConsoleChatStore:
         generation_base_installed = False
         context_base_installed = False
         if commit.first_persist:
+            self._persist_project_instruction_state(session)  # TASK-33621.13
             lifecycle = self._settings_persistence_lifecycles.setdefault(
-                session_id,
-                _ConsoleSettingsPersistenceLifecycle(),
+                session_id, _ConsoleSettingsPersistenceLifecycle()
             )
             conversation_id = commit.identity.conversation_id
             if conversation_id not in lifecycle.generation_bases:

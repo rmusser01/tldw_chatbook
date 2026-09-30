@@ -560,9 +560,10 @@ provider-internal framing and prompt-cache markers. The llama.cpp capture is the
 literal wire payload. Missing captures can reflect capture being off, a failed
 capture, or purged history; the modal does not reconstruct missing requests.
 
-**View: Safe/Full** controls local disclosure in both historical views. Changing
-it clears both readers and their cached bodies; switching to Full requires the
-existing confirmation. **Capture settings** applies to future capture and is a
+**View: Safe/Full** (or **v**) controls local disclosure in both historical
+views. Changing it clears both readers and their cached bodies; switching to
+Full requires the existing confirmation, and **Keep Safe** or **Esc** leaves it
+on Safe. **Capture settings** applies to future capture and is a
 separate choice. **Export selected call…** opens the existing governed export
 dialog. If the conversation, profile, or capture authority changes, stale content
 cannot return through a delayed load or export.
@@ -616,10 +617,9 @@ project instructions off. The Default workspace cannot bind folders, so there
 the picker shows only "No eligible folders"; bind one in a named workspace
 first.
 
-A saved conversation stores the choice and keeps it after a restart. A new
-chat with no messages yet keeps it only for the current run: when its first
-message saves it, the choice is not stored, and the reopened chat shows
-**Off**. Choose the folder again once the chat has been saved.
+The choice is stored with the conversation and kept after a restart. In a new
+chat with no messages yet, it is stored when you send the first message and
+the chat is saved.
 
 The **Context** view's explicit **Preview** sections are the only automatic UI
 surface that may show the exact instruction body, as a disposable preview of

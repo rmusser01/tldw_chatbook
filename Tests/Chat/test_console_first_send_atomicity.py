@@ -36,6 +36,10 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    encode_project_context_json,
+)
 from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsReadStatus,
     ConsoleGenerationSettingsWriteResult,
@@ -54,6 +58,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
+from Tests.private_profile import private_profile_test
 
 
 _POSTCOMMIT_EFFECTS = (
@@ -633,6 +638,50 @@ async def test_first_send_persists_revision_zero_new_chat_default(
         persisted.snapshot.streaming,
     ) == ("anthropic", "saved-global-model", pytest.approx(0.42), False)
     assert session.generation_durable_snapshot == persisted.snapshot
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_first_send_persists_a_project_folder_chosen_before_the_chat_was_saved(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """TASK-33621.13 review: a folder chosen for project instructions in a new,
+    unsaved chat lived only in memory -- the write is skipped while there is
+    no conversation id -- and the first send's durable commit never wrote it
+    either, so the reopened chat showed 'Off'. It must survive a restart.
+
+    A private profile: the send reads model capabilities from config, which
+    trips ``RecoveryRequired`` under the per-test sandbox otherwise."""
+    db, store, controller, _gateway = _controller(tmp_path)
+    chosen = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-7",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key="notice-key",
+    )
+    store.set_session_project_instruction_state("session-1", chosen)
+    session = store.sessions()[0]
+    assert session.persisted_conversation_id is None
+
+    result = await controller.submit_draft("keep my folder", session_id="session-1")
+
+    assert result.accepted is True
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    assert db.get_conversation_console_project_context(conversation_id) == (
+        encode_project_context_json(chosen)
+    )
+    conversation = db.get_conversation_by_id(conversation_id)
+    reopened = ConsoleChatStore(
+        persistence=ChatPersistenceService(db)
+    ).restore_persisted_session(
+        title=str(conversation["title"]),
+        workspace_id=conversation.get("workspace_id"),
+        persisted_conversation_id=conversation_id,
+        all_nodes=(),
+    )
+    assert reopened.project_instruction_state == chosen
 
 
 @pytest.mark.asyncio
