@@ -12282,8 +12282,6 @@ class ConsoleChatController:
         # The durable turn now exists even if later publication needs recovery.
         # Arm once here; replaying postcommit effects must not rearm a settled turn.
         self._arm_run_hooks_stop(session.id)
-        if commit.first_persist:  # TASK-33621.13: a later stop must not lose the folder
-            self.store.persist_project_instruction_state(session)
         if custody_acceptance_hook is not None:
             custody_acceptance_hook()
         record_send_stage("durable_commit", "succeeded")
@@ -12330,7 +12328,9 @@ class ConsoleChatController:
                     preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=(preparation.pii_ruleset_revision_id),
+                frozen_pii_ruleset_revision_id=(
+                    preparation.pii_ruleset_revision_id
+                ),
                 frozen_next_trace_privacy_revision=(
                     preparation.next_trace_privacy_revision
                 ),

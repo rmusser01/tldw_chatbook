@@ -819,6 +819,7 @@ class ConsoleChatPersistence(Protocol):
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        project_context_json: str | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn."""
 
@@ -1959,7 +1960,6 @@ class ConsoleChatStore:
         #: it is untouched by tree mutations (create/delete/sibling). ``(None,
         #: None)`` = no summary. Write-through is ``_persist_context_summary``.
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
-        self._deferred_project_instruction_state_session_ids: set[str] = set()
         self._unresolved_promotion_operations: dict[str, str] = {}
         self._pending_workspace_projections: dict[str, str] = {}
         self._pending_persistence_message_ids: set[str] = set()
@@ -5036,7 +5036,6 @@ class ConsoleChatStore:
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
         self._context_summary_by_session.pop(session_id, None)
-        self._deferred_project_instruction_state_session_ids.discard(session_id)
         self._roleplay_system_projection_candidates.pop(session_id, None)
         self._payload_revisions.pop(session_id, None)
         self._library_activity_revisions.pop(session_id, None)
@@ -6069,6 +6068,7 @@ class ConsoleChatStore:
                         session.speech_preferences
                     )
                 first_persist = session.persisted_conversation_id is None
+                project_state = session.project_instruction_state  # TASK-33621.13
                 roleplay_context = ConsoleRoleplayContext(
                     user_name_override=session.user_display_name_override,
                     character_system_template=session.character_system_template,
@@ -6209,6 +6209,11 @@ class ConsoleChatStore:
                 raise RuntimeError(
                     "Durable Console persistence cannot store staged context settings."
                 )
+            # TASK-33621.13: a new chat's project controls commit with it, off-loop.
+            project_stored = first_persist and self._persistence_accepts_kwarg(
+                durable_commit, "project_context_json"
+            )
+            project_json = encode_project_context_json(project_state)
             checkpoint = durable_commit(
                 acceptance=acceptance,
                 policy_candidate=policy_candidate,
@@ -6216,9 +6221,9 @@ class ConsoleChatStore:
                 **(
                     {"context_policy_overrides": context_policy_overrides}
                     if context_policy_overrides is not None
-                    and context_kwarg_supported
                     else {}
                 ),
+                **({"project_context_json": project_json} if project_stored else {}),
             )
             with self._preparation_lock:
                 identity_reservation = self._first_identity_reservations.get(
@@ -6277,6 +6282,10 @@ class ConsoleChatStore:
                     assistant_message_id=owners.assistant_message_id,
                     fingerprint=fingerprint,
                 )
+            if first_persist and (  # a folder re-chosen mid-commit, or no kwarg
+                not project_stored or session.project_instruction_state != project_state
+            ):
+                self._persist_project_instruction_state(session)
             return commit
         except Exception:
             if reservation is None:
@@ -10451,34 +10460,26 @@ class ConsoleChatStore:
         """
         session = self._session_or_raise(session_id)
         session.project_instruction_state = state
-        self.persist_project_instruction_state(session)
+        self._persist_project_instruction_state(session)
         return session
 
-    def persist_project_instruction_state(self, session: ConsoleChatSession) -> None:
+    def _persist_project_instruction_state(self, session: ConsoleChatSession) -> None:
         """Never-raising write of controls to the saved (or just-committed) chat."""
         with self._preparation_lock:  # TASK-33621.13: committed, unpublished first send
             reservation = self._first_identity_reservations.get(session.id)
         owner, staged, durable = reservation or (None, None, False)
         committed = staged.conversation_id if owner and durable else None
         conversation_id = session.persisted_conversation_id or committed
-        if (
-            session.ephemeral
-            or conversation_id is None
-            or session.id in self._deferred_project_instruction_state_session_ids
-        ):
+        if session.ephemeral or conversation_id is None:
             return
-        setter = getattr(
-            self.persistence, "set_conversation_console_project_context", None
-        )
-        with suppress(Exception):
-            if callable(setter):
-                setter(
-                    conversation_id=conversation_id,
-                    project_context_json=encode_project_context_json(
-                        session.project_instruction_state
-                    ),
-                )
-                return
+        with suppress(Exception):  # incl. AttributeError: no persistence or setter
+            self.persistence.set_conversation_console_project_context(
+                conversation_id=conversation_id,
+                project_context_json=encode_project_context_json(
+                    session.project_instruction_state
+                ),
+            )
+            return
         logger.warning(
             "project_instruction_state_write_failed: the updated choice "
             "may not survive restart."
@@ -18570,7 +18571,7 @@ class ConsoleChatStore:
                     "Failed to flush Console roleplay context while promoting "
                     "a temporary session."
                 )
-        self.persist_project_instruction_state(session)
+        self._persist_project_instruction_state(session)
         pinned_prefill = (
             session.settings.pinned_prefill if session.settings is not None else None
         )
@@ -19224,7 +19225,6 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self.persist_project_instruction_state(session)
         self._flush_context_policy_on_first_persist(session)
         return identity.conversation_id
 
