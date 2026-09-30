@@ -168,9 +168,10 @@ def _allowlist_covers_provider(allowlist: tuple[str, ...], provider: str) -> boo
 
 
 def _configured_model_for(app_config: Mapping[str, Any], provider: str) -> str:
-    """The provider's configured/default model (mirrors the console
-    selection builder's configured_model lookup); '' when none. Registry
-    entries carry no default model by design (ADR-146)."""
+    """The provider's configured/default model via the Console's one model
+    chain; '' when none. Deliberately narrower than the Console core, which
+    reads a registry entry's first model (TASK-33004.2): a sub-agent routed
+    to a ``custom-ep:`` id without a model fails ``no_model_resolved``."""
     from tldw_chatbook.Chat.console_session_settings import configured_provider_model
     from tldw_chatbook.Chat.custom_endpoint_registry import split_custom_endpoint_id
     from tldw_chatbook.Chat.provider_readiness import provider_config_key

@@ -3230,3 +3230,61 @@ def test_screen_selection_re_expands_character_template_parity():
     )
 
     assert selection.system_prompt == "You are Kestrel. Help Rowan."
+
+
+def _send_fields(selection):
+    return (
+        selection.provider,
+        selection.explicit_model or selection.configured_model,
+        selection.base_url,
+        selection.temperature,
+        selection.max_tokens,
+        selection.streaming,
+        selection.system_prompt,
+        selection.endpoint_provenance,
+        selection.configured_endpoint_fallback_allowed,
+        selection.workspace_context.active_workspace_id,
+    )
+
+
+def test_a_viewless_send_builds_the_mounted_sends_selection():
+    """TASK-33004.2 review round 1: a fleet wake and every viewless send
+    build their selection in ``_provider_selection_for_session``; the mounted
+    send builds it in ChatScreen. Both now call the one builder, so they send
+    the same fields for a settings session. The old controller copy refilled
+    a blank Max tokens from the provider default and gave a template-less
+    character the viewed tab's prompt."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    config = {
+        "api_settings": {"openai": {"model": "configured", "max_tokens": 4096}},
+        "console": {},
+    }
+    store = ConsoleChatStore()
+    blank = store.create_session(
+        title="Blank max tokens",
+        workspace_id="workspace-a",
+        settings=replace(_settings("openai", "model", "Blank prompt."), max_tokens=None),
+    )
+    character = store.create_session(
+        title="Chat with Kestrel",
+        workspace_id="workspace-a",
+        settings=_settings("openai", "model", "Kestrel settings prompt."),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Kestrel",
+    )
+    fake_screen = _identity_selection_screen(store)
+    fake_screen._provider_readiness_app_config = lambda: config
+    controller = ConsoleChatController(
+        store=store, provider_gateway=SimpleNamespace(), provider_config=lambda: config
+    )
+    controller.system_prompt = "the viewed tab's prompt"
+
+    for session in (blank, character):
+        mounted = ChatScreen._build_console_provider_selection(fake_screen, session.id)
+        viewless = controller._provider_selection_for_session(session.id)
+        assert _send_fields(viewless) == _send_fields(mounted)
+    assert mounted.system_prompt == "Kestrel settings prompt."
+    assert controller._provider_selection_for_session(blank.id).max_tokens is None

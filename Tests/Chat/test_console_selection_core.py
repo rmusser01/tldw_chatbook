@@ -5,14 +5,27 @@ of the selection algorithm; these pin its contract directly, independent of
 the (partially pre-existing-red) console suites.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleSelectionCore,
+    build_console_provider_selection_from_settings,
     resolve_console_selection_core,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+from tldw_chatbook.Chat.console_endpoint_provenance import ConsoleEndpointProvenance
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEphemeralEndpointPolicy,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    configured_provider_model,
+    console_provider_settings,
+)
+from tldw_chatbook.config import ProviderSettingsError
 
 
 def _settings(**overrides):
@@ -75,23 +88,6 @@ def test_blankish_models_are_treated_as_unset() -> None:
 
 
 # --- TASK-33004.2: one builder of a ConsoleProviderSelection from settings ---
-
-from pathlib import Path
-
-from tldw_chatbook.Chat.console_chat_controller import (
-    build_console_provider_selection_from_settings,
-)
-from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
-from tldw_chatbook.Chat.console_endpoint_provenance import ConsoleEndpointProvenance
-from tldw_chatbook.Chat.console_session_endpoint_policy import (
-    ConsoleEphemeralEndpointPolicy,
-)
-from tldw_chatbook.Chat.console_session_settings import (
-    ConsoleSessionSettings,
-    configured_provider_model,
-    console_provider_settings,
-)
-from tldw_chatbook.config import ProviderSettingsError
 
 
 def _build(settings, **kwargs):
@@ -302,6 +298,44 @@ def test_only_the_builder_constructs_a_selection_from_session_settings() -> None
         ("tldw_chatbook/Chat/console_agent_bridge.py", "_resolve_routed_resolution"),
         # Side chat's typed "provider/model" string.
         ("tldw_chatbook/Chat/console_side_chat.py", "_build_selection"),
-        # Personas screen preview of a config defaults section.
+        # Personas preview: only the empty-provider sentinel for an unset
+        # defaults section; a configured section routes through the builder.
         ("tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py", "_selection_from_defaults"),
     }
+
+
+def test_personas_preview_builds_a_configured_section_through_the_builder() -> None:
+    """Review round 1 (AC#1/#2): the Personas preview builds its selection
+    from Console session settings, so it goes through the one builder. The
+    PR-2668 identity fix reaches it: a hand-spelled registry id resolves to
+    the dashed identity the gateway looks up, not the underscore config key
+    the hand-written copy sent. An unset section stays an empty provider, so
+    the preview falls back to chat_defaults (task-425) instead of trying the
+    builder's llama.cpp default; the preview sends its own system prompt."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    config = {
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:9090",
+                "models": ["model-a", "model-b"],
+            }
+        },
+        "chat_defaults": {"provider": "custom-ep:GPU-Box", "model": "model-b"},
+        "character_defaults": {"model": "orphan"},
+    }
+
+    chat = PersonasPreviewController._selection_from_defaults(config, "chat_defaults")
+    assert chat.provider == "custom-ep:gpu-box"
+    assert chat.explicit_model == "model-b"
+    assert chat.system_prompt is None
+
+    unset = PersonasPreviewController._selection_from_defaults(
+        config, "character_defaults"
+    )
+    assert unset.provider == ""
+    assert unset.explicit_model == "orphan"
