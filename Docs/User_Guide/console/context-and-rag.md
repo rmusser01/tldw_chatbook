@@ -601,9 +601,25 @@ The Inspector places a one-line **Project** status above **Sources**:
 row to open this viewer's metadata-only **Project Instructions** section. It
 shows whether the feature is enabled, the selected binding and locator match,
 override/standard precedence, relative source paths, scopes, byte counts,
-active or omitted outcomes, and deduplicated warning codes. Removed or
-retargeted bindings offer **Choose folder** and **Disable**; **Off** offers
-**Enable**. There is no automatic-file editor or second settings surface.
+active or omitted outcomes, and deduplicated warning codes. When no folder is
+selected yet (**Choose folder**) or a binding was removed or retargeted
+(**Warning**), the section offers **Choose folder** and **Disable**; **Off**
+offers **Enable**. There is no automatic-file editor or second settings
+surface.
+
+**Choose folder** and **Enable** open a picker titled "Project instructions
+need a folder" that lists the folders bound to this conversation's workspace.
+Pick one to select it: you return to the Inspector, its state updates, and the
+Inspect **Project** row stops reading **Choose folder**. **Esc** or **Cancel**
+returns to the Inspector with the selection unchanged, and **Disable** turns
+project instructions off. The Default workspace cannot bind folders, so there
+the picker shows only "No eligible folders"; bind one in a named workspace
+first.
+
+A saved conversation stores the choice and keeps it after a restart. A new
+chat with no messages yet keeps it only for the current run: when its first
+message saves it, the choice is not stored, and the reopened chat shows
+**Off**. Choose the folder again once the chat has been saved.
 
 The **Context** view's explicit **Preview** sections are the only automatic UI
 surface that may show the exact instruction body, as a disposable preview of

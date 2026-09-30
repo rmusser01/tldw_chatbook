@@ -140,7 +140,6 @@ tldw_chatbook/Widgets/Console/console_agent_history_modal.py::_read_page	5
 tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py::refresh_full_count	1
 tldw_chatbook/Widgets/Console/console_citation_sources_modal.py::_show_rows	1
 tldw_chatbook/Widgets/Console/console_citation_sources_modal.py::_show_unavailable	1
-tldw_chatbook/Widgets/Console/console_conversation_inspector.py::_recover_project_instructions	1
 tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py::export_selected	1
 tldw_chatbook/Widgets/Console/console_fork_chat_modal.py::_perform_safe_cancel	1
 tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py::handle_button	1

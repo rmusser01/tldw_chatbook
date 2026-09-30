@@ -104,6 +104,11 @@ SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
 # "Failed to refresh context." toast or clear ITS spinner.
 _NEXT_SEND_WORKER_GROUP = "console-inspector-next-send"
 
+# TASK-33621.13: the Project Instructions recovery runs in a worker because it
+# may await the folder picker (``push_screen_wait``); its own group keeps it
+# out of the loaders' groups above.
+_PROJECT_INSTRUCTION_RECOVERY_WORKER_GROUP = "console-inspector-project-instructions"
+
 _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
     "Captured where Console hands the request to the provider adapter, not "
     "at the raw HTTP layer -- provider-internal framing and injected "
@@ -403,6 +408,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._project_instruction_state_factory = project_instruction_state_factory
         self._project_instruction_session_id = project_instruction_session_id
         self._project_instruction_recovery = project_instruction_recovery
+        self._project_instruction_recovery_running = False
         self._target_session_id = target_session_id
         self._target_conversation_id = target_conversation_id
         self._capture_revision_provider = capture_revision_provider
@@ -1088,26 +1094,65 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 return
 
     @on(ConsoleProjectInstructionContextPanel.RecoveryRequested)
-    async def _recover_project_instructions(
+    def _recover_project_instructions(
         self, event: ConsoleProjectInstructionContextPanel.RecoveryRequested
     ) -> None:
-        """Apply one explicit recovery decision and refresh the panel in
-        place (task-18300, ported verbatim from the retired standalone
-        context modal)."""
+        """Start one explicit recovery decision in a worker (TASK-33621.13).
+
+        'Enable' and 'Choose folder' open the folder picker through
+        ``push_screen_wait``, which Textual allows only inside a worker.
+        Awaited from this handler it pushed the picker and THEN raised
+        ``NoActiveWorker`` on the Inspector's own pump, killing the Inspector
+        under the picker and freezing the app (GAP4-01). One decision at a
+        time: a press while one is in flight is ignored, never queued.
+        """
         if (
             self._project_instruction_recovery is None
             or not self._target_authority_is_current()
         ):
             return
         event.stop()
-        state = await self._project_instruction_recovery(event.session_id, event.action)
+        if self._project_instruction_recovery_running:
+            return
+        self._project_instruction_recovery_running = True
+        self.run_worker(
+            self._apply_project_instruction_recovery(event.session_id, event.action),
+            group=_PROJECT_INSTRUCTION_RECOVERY_WORKER_GROUP,
+        )
+
+    async def _apply_project_instruction_recovery(
+        self, session_id: str | None, action: str
+    ) -> None:
+        """Apply one recovery decision and refresh the panel in place
+        (task-18300, ported from the retired standalone context modal)."""
+        recovery = self._project_instruction_recovery
+        try:
+            if recovery is None:
+                return
+            state = await recovery(session_id, action)
+        except Exception as exc:  # noqa: BLE001 -- one panel action, not the app
+            logger.warning(
+                "Project instruction recovery failed: {}", type(exc).__name__
+            )
+            self.notify(
+                "Couldn't update project instructions. Details are in the log file.",
+                severity="error",
+                markup=False,
+            )
+            return
+        finally:
+            self._project_instruction_recovery_running = False
         if state is None or not self._target_authority_is_current():
             return
         self._project_instruction_state = state
-        self.query_one(
-            "#console-context-project-instructions",
-            ConsoleProjectInstructionContextPanel,
-        ).sync_state(state)
+        try:
+            panel = self.query_one(
+                "#console-context-project-instructions",
+                ConsoleProjectInstructionContextPanel,
+            )
+        except NoMatches:
+            return  # the Inspector closed while the picker was open
+        panel.sync_state(state)
         self.call_after_refresh(self._focus_initial_control)
 
     @staticmethod
