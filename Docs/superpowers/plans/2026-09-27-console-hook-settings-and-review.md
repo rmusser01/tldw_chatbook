@@ -724,5 +724,18 @@ implementation review for exact qualified evidence and limits.
 
 No new ADR is required; this directly implements ADR-197 and existing
 ADR-126 raw-file ownership. No full suite or real provider generation ran.
-The work is ready for an integration decision; publication and merge have
-not been performed.
+Published as PR #2922; the authorized merge remains gated on review and CI.
+
+
+## PR review and merge follow-up
+
+ADR required: no
+ADR path: backlog/decisions/197-console-hook-configuration-review.md
+Reason: preserve the accepted consent and UI lifecycle contracts while resolving PR review and merge gates.
+
+- [x] Confirm the branch is based on latest dev, mark PR ready, and inspect Qodo findings.
+- [x] Guard post-await modal and Settings lookups without expanding the DOM census; verify dismissal during refresh and rerun focused UI checks.
+- [ ] Resolve verified Qodo findings and required derived-artifact/CI failures, recording targeted checks and replies.
+- [ ] Verify the reviewed head and latest dev, then merge PR #2922 and record the result.
+
+Local review qualification: 185 runtime, 26 mounted UI/admission, 21 complete boot-budget and 37 token/CSS integrity cases passed; overlapping cohorts are recorded separately. Authored-line Ruff/format, QA scripts, generated CSS, reviewed diagnostic inventory, worker contract and task-file hygiene pass. Updated native captures passed and were visually inspected. Hosted CI and the final merge remain pending.

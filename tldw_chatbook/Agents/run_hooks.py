@@ -12,7 +12,6 @@ import datetime
 import fnmatch
 import hashlib
 import json
-import math
 import os
 import signal
 import subprocess
@@ -23,26 +22,24 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, get_args
 
 from loguru import logger
+from pydantic import ValidationError
 
 from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Utils.input_validation import (
+    CONSOLE_HOOK_DEFAULT_TIMEOUT_S,
+    CONSOLE_HOOK_TOOL_EVENTS,
+    ConsoleHookEvent,
+    ConsoleHookInput,
+)
 from tldw_chatbook.Utils.path_validation import validate_existing_absolute_directory
 
-HOOK_EVENTS: frozenset[str] = frozenset(
-    {
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PostToolUse",
-        "ApprovalRequested",
-        "Stop",
-        "SubagentStop",
-    }
-)
-TOOL_NAME_EVENTS: frozenset[str] = frozenset({"PreToolUse", "PostToolUse"})
+HOOK_EVENTS: frozenset[str] = frozenset(get_args(ConsoleHookEvent))
+TOOL_NAME_EVENTS: frozenset[str] = CONSOLE_HOOK_TOOL_EVENTS
 HOOK_IO_BUDGET_CHARS: int = 4000
-HOOK_DEFAULT_TIMEOUT_S: float = 10.0
+HOOK_DEFAULT_TIMEOUT_S: float = CONSOLE_HOOK_DEFAULT_TIMEOUT_S
 # Bound retained stream bytes, including four-byte UTF-8 characters.
 HOOK_IO_BUDGET_BYTES = HOOK_IO_BUDGET_CHARS * 4
 HOOK_NOTIFY_CAPACITY = 64
@@ -150,7 +147,14 @@ class HookInventory:
 
 
 def fingerprint_hook(spec: HookSpec) -> str:
-    """Hash an exact normalized execution definition, without enable switches."""
+    """Hash an exact normalized execution definition, without enable switches.
+
+    Args:
+        spec: Validated lifecycle event, argv, matcher, and timeout.
+
+    Returns:
+        Versioned SHA-256 identity of the execution definition.
+    """
     encoded = json.dumps(
         {
             "version": 1,
@@ -168,40 +172,48 @@ def fingerprint_hook(spec: HookSpec) -> str:
 
 
 def validate_hook_definition(raw: object) -> tuple[HookSpec | None, str | None]:
-    """Validate execution fields and return a content-free repair message."""
+    """Validate execution fields and return a content-free repair message.
+
+    Args:
+        raw: Saved hook table, including any unknown fields to preserve.
+
+    Returns:
+        Validated execution specification or a bounded repair message.
+    """
     if not isinstance(raw, Mapping):
         return None, "Hook entry must be a table."
-    event = raw.get("event")
-    if not isinstance(event, str) or event not in HOOK_EVENTS:
-        return None, "Choose a supported hook event."
-    command = raw.get("command")
-    if (
-        not isinstance(command, list)
-        or not command
-        or not all(isinstance(arg, str) and "\x00" not in arg for arg in command)
-        or not command[0]
-    ):
-        return None, "Command must be a nonempty argv list of NUL-free strings."
-    matcher = raw.get("matcher")
-    if matcher is not None:
-        if event not in TOOL_NAME_EVENTS:
-            return None, "Matcher is only valid for PreToolUse or PostToolUse."
-        if not isinstance(matcher, str) or not matcher:
-            return None, "Matcher must be a nonempty glob string."
-    timeout = raw.get("timeout_s", HOOK_DEFAULT_TIMEOUT_S)
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-        return None, "Timeout must be a positive finite number."
     try:
-        timeout = float(timeout)
-    except (OverflowError, ValueError):
-        return None, "Timeout must be a positive finite number."
-    if not math.isfinite(timeout) or timeout <= 0:
-        return None, "Timeout must be a positive finite number."
-    return HookSpec(event, tuple(command), matcher, timeout), None
+        validated = ConsoleHookInput.model_validate(dict(raw))
+    except ValidationError as error:
+        field = error.errors(include_input=False, include_context=False)[0]["loc"][0]
+        messages = {
+            "event": "Choose a supported hook event.",
+            "command": "Command must be a nonempty argv list of NUL-free strings.",
+            "matcher": (
+                "Matcher is only valid for PreToolUse or PostToolUse."
+                if raw.get("event") not in ("PreToolUse", "PostToolUse")
+                else "Matcher must be a nonempty glob string."
+            ),
+            "timeout_s": "Timeout must be a positive finite number.",
+        }
+        return None, messages[field]
+    return HookSpec(
+        validated.event,
+        tuple(validated.command),
+        validated.matcher,
+        validated.timeout_s,
+    ), None
 
 
 def inspect_hooks_config(config: Mapping[str, object]) -> HookInventory:
-    """Inspect every raw row and retain malformed containers for recovery."""
+    """Inspect every raw row and retain malformed containers for recovery.
+
+    Args:
+        config: Raw configuration mapping with an optional Hooks section.
+
+    Returns:
+        Lossless inventory of switches, identities, and repair states.
+    """
     if not isinstance(config, Mapping):
         return HookInventory(None, "Configuration must be a table.")
     if "hooks" not in config:

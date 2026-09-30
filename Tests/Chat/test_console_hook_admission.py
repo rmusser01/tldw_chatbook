@@ -200,3 +200,21 @@ async def test_hooks_added_after_acceptance_retain_the_durable_recovery_owner(
         for row in store.messages_for_session(accepted.session_id)
         if row.role.value == "user"
     ] == ["retained"]
+
+
+async def test_indicator_refresh_after_runtime_disposal_is_a_noop():
+    states = []
+
+    def disposed():
+        raise RuntimeError("Console runtime is disposed.")
+
+    hooks = ConsoleHooksController(
+        hook_permissions_accessor=disposed,
+        request_review=lambda *args: None,
+        current_session=lambda: "a",
+        current_stash=lambda: None,
+        on_state=states.append,
+        notify=lambda *args: None,
+    )
+    await hooks.refresh()
+    assert states == []

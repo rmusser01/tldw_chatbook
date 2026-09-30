@@ -250,3 +250,38 @@ async def test_save_completion_preserves_a_newer_hook_edit(hook_file, monkeypatc
             assert screen._category_has_unsaved_changes(SettingsCategoryId.HOOKS)
         finally:
             release.set()
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+async def test_saved_hook_reload_updates_clean_draft_and_preserves_dirty_draft(
+    hook_file, dirty
+):
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
+    from tldw_chatbook.UI.Screens.settings_hooks import HooksSettingsPanel
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context({"category": "hooks"})
+        await _wait_for_selector(screen, pilot, "#settings-hooks-timeout")
+        panel = screen.query_one(HooksSettingsPanel)
+        if dirty:
+            panel.query_one("#settings-hooks-timeout").value = "12"
+            await pilot.pause()
+        owner = HookPermissions()
+        saved = owner.snapshot()
+        owner.disable(saved, saved.rows[0].entry.key)
+        await screen._load_hooks_settings()
+        await pilot.pause()
+        assert panel.section["hook"][0].get("enabled", True) is dirty
+        assert panel.draft.is_dirty is dirty
+        if dirty:
+            assert panel.section["hook"][0]["timeout_s"] == 12
+        else:
+            assert not panel.query_one("#settings-hooks-row-enabled").value
+        review = panel.query_one("#settings-hooks-review")
+        review.focus()
+        await screen._load_hooks_settings()
+        await pilot.pause()
+        assert panel.query_one("#settings-hooks-review") is review
+        assert host.focused is review

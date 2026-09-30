@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from typing import TYPE_CHECKING, Any, get_args
 from uuid import uuid4
 
 from textual import on
@@ -20,33 +21,22 @@ from textual.widgets import (
     TextArea,
 )
 
-from tldw_chatbook.Agents.hook_permissions import HookReviewSnapshot
-from tldw_chatbook.Agents.run_hooks import (
-    HOOK_DEFAULT_TIMEOUT_S,
-    HOOK_EVENTS,
-    fingerprint_hook,
-    inspect_hooks_config,
-)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsDraft
+from tldw_chatbook.Utils.input_validation import (
+    CONSOLE_HOOK_DEFAULT_TIMEOUT_S as HOOK_DEFAULT_TIMEOUT_S,
+)
+from tldw_chatbook.Utils.input_validation import (
+    ConsoleHookEvent,
+)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hook_permissions import HookReviewSnapshot
+
+HOOK_EVENTS = frozenset(get_args(ConsoleHookEvent))
 
 
 class HooksSettingsPanel(Vertical):
     """Edit one shared SettingsDraft. Persistence stays with SettingsScreen."""
-
-    BUNDLED_CSS = """
-    HooksSettingsPanel { height: auto; }
-    HooksSettingsPanel .hooks-actions {
-        height: auto; margin-bottom: $ds-space-1; }
-    HooksSettingsPanel .hooks-actions Button {
-        min-width: $ds-size-9; margin-right: $ds-space-1; }
-    HooksSettingsPanel OptionList { height: $ds-size-6; margin-bottom: $ds-space-1; }
-    HooksSettingsPanel #settings-hooks-editor { height: auto; }
-    HooksSettingsPanel TextArea { height: $ds-textarea-min-height; margin-bottom: $ds-space-1; }
-    HooksSettingsPanel Select, HooksSettingsPanel Input {
-        margin-bottom: $ds-space-1; }
-    HooksSettingsPanel .hooks-copy {
-        height: auto; color: $ds-text-muted; margin-bottom: $ds-space-1; }
-    """
 
     class Requested(Message):
         def __init__(self, action: str) -> None:
@@ -54,9 +44,10 @@ class HooksSettingsPanel(Vertical):
             super().__init__()
 
     def __init__(
-        self, draft: SettingsDraft, snapshot: HookReviewSnapshot | None, **kwargs
+        self, draft: SettingsDraft, snapshot: HookReviewSnapshot | None, **kwargs: Any
     ) -> None:
         super().__init__(**kwargs)
+        self.add_class("settings-hooks-panel")
         self.draft = draft
         self.snapshot = snapshot
         self.selected = 0
@@ -70,8 +61,10 @@ class HooksSettingsPanel(Vertical):
         return self.draft.values.get("section")
 
     def load(self, snapshot: HookReviewSnapshot, *, reset: bool = False) -> None:
+        if not reset and "section" in self.draft.values and self.snapshot == snapshot:
+            return
         self.snapshot = snapshot
-        if reset or "section" not in self.draft.values:
+        if reset or not self.draft.is_dirty or "section" not in self.draft.values:
             section = (
                 copy.deepcopy(snapshot.config.section)
                 if snapshot.config.section_present
@@ -99,18 +92,28 @@ class HooksSettingsPanel(Vertical):
         )
 
     def compose(self) -> ComposeResult:
+        from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
+
         yield Static("Hooks", classes="destination-section")
         yield Static(
             "External commands for Console events. Edits stay here until Save. Review applies to saved definitions.",
-            classes="hooks-copy",
+            classes="settings-hooks-copy",
             markup=False,
         )
-        with Horizontal(classes="hooks-actions"):
-            yield Button("Save", id="settings-hooks-save", variant="primary")
-            yield Button("Revert", id="settings-hooks-revert")
+        with Horizontal(classes="settings-hooks-actions"):
+            yield Button(
+                "Save",
+                id="settings-hooks-save",
+                variant="primary",
+                classes="settings-hooks-action",
+            )
+            yield Button(
+                "Revert", id="settings-hooks-revert", classes="settings-hooks-action"
+            )
         yield Button(
             f"Review saved hooks · {self.snapshot.pending_count if self.snapshot else 0}",
             id="settings-hooks-review",
+            classes="settings-hooks-action",
         )
         yield Static(
             self.snapshot.notice
@@ -119,7 +122,7 @@ class HooksSettingsPanel(Vertical):
             if self.snapshot
             else "Loading saved hooks…",
             id="settings-hooks-status",
-            classes="hooks-copy",
+            classes="settings-hooks-copy",
             markup=False,
         )
         if "section" not in self.draft.values:
@@ -132,17 +135,26 @@ class HooksSettingsPanel(Vertical):
                 "Malformed Hooks section. Repair it in Advanced Config; this editor keeps the original intact.",
                 markup=False,
             )
-            yield Button("Advanced Config", id="settings-hooks-advanced")
+            yield Button(
+                "Advanced Config",
+                id="settings-hooks-advanced",
+                classes="settings-hooks-action",
+            )
             return
         yield Checkbox(
             "Enable Console hooks",
             value=section.get("enabled", True) is True,
             id="settings-hooks-enabled",
         )
-        with Horizontal(classes="hooks-actions"):
-            yield Button("Add hook", id="settings-hooks-add")
+        with Horizontal(classes="settings-hooks-actions"):
             yield Button(
-                "Remove selected", id="settings-hooks-remove", disabled=not self._rows()
+                "Add hook", id="settings-hooks-add", classes="settings-hooks-action"
+            )
+            yield Button(
+                "Remove selected",
+                id="settings-hooks-remove",
+                disabled=not self._rows(),
+                classes="settings-hooks-action",
             )
         rows = self._rows()
         inventory = inspect_hooks_config({"hooks": section})
@@ -191,7 +203,7 @@ class HooksSettingsPanel(Vertical):
         if not rows:
             yield Static(
                 "No hooks configured. Events: " + ", ".join(sorted(HOOK_EVENTS)) + ".",
-                classes="hooks-copy",
+                classes="settings-hooks-copy",
             )
             return
         raw = rows[self.selected]
@@ -223,28 +235,40 @@ class HooksSettingsPanel(Vertical):
                 value=self._display["event"],
                 allow_blank=False,
                 id="settings-hooks-event",
+                classes="settings-hooks-field",
             )
             yield Static(
-                "Command · JSON argument array (no shell)", classes="hooks-copy"
+                "Command · JSON argument array (no shell)",
+                classes="settings-hooks-copy",
             )
             yield TextArea(str(self._display["command"]), id="settings-hooks-command")
             yield Static(
                 "Tool matcher · optional glob for PreToolUse / PostToolUse",
-                classes="hooks-copy",
+                classes="settings-hooks-copy",
             )
-            yield Input(str(self._display["matcher"]), id="settings-hooks-matcher")
-            yield Static("Timeout · seconds", classes="hooks-copy")
-            yield Input(str(self._display["timeout_s"]), id="settings-hooks-timeout")
+            yield Input(
+                str(self._display["matcher"]),
+                id="settings-hooks-matcher",
+                classes="settings-hooks-field",
+            )
+            yield Static("Timeout · seconds", classes="settings-hooks-copy")
+            yield Input(
+                str(self._display["timeout_s"]),
+                id="settings-hooks-timeout",
+                classes="settings-hooks-field",
+            )
             yield Static(
                 inventory.rows[self.selected].error
                 or "Saving a command change requires review before the next Send.",
                 id="settings-hooks-validation",
-                classes="hooks-copy",
+                classes="settings-hooks-copy",
                 markup=False,
             )
 
     def capture(self) -> None:
         """Flush current controls without changing untouched raw values."""
+        from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
+
         if (
             not self._rows()
             or not isinstance(self._rows()[self.selected], dict)
@@ -285,6 +309,11 @@ class HooksSettingsPanel(Vertical):
 
     def submission(self) -> tuple[dict, dict[str, str]]:
         """Validate edited rows and pin unchanged legacy sources for ID assignment."""
+        from tldw_chatbook.Agents.run_hooks import (
+            fingerprint_hook,
+            inspect_hooks_config,
+        )
+
         self.capture()
         section = copy.deepcopy(self.section)
         if not isinstance(section, dict) or not isinstance(

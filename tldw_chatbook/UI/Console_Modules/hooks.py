@@ -5,14 +5,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from tldw_chatbook.Agents.hook_permissions import HookPermissions, HookReviewSnapshot
 from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptDispatchResult,
     ConsolePromptDispatchStatus,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hook_permissions import (
+        HookPermissions,
+        HookReviewSnapshot,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,8 +75,14 @@ class ConsoleHooksController:
         self._generation += 1
 
     async def refresh(self) -> None:
-        snapshot = await asyncio.to_thread(self._permissions().snapshot)
-        self._on_state(snapshot)
+        generation = self._generation
+        try:
+            owner = self._permissions()
+        except RuntimeError:  # Runtime disposal may precede a queued UI refresh.
+            return
+        snapshot = await asyncio.to_thread(owner.snapshot)
+        if generation == self._generation:
+            self._on_state(snapshot)
 
     async def review_current(self) -> None:
         if self._busy:

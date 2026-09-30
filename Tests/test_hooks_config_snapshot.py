@@ -156,3 +156,20 @@ def test_guided_replace_cannot_discard_unknown_hook_section_keys(tmp_path, monke
     )
     assert result.file_replaced
     assert toml.loads(path.read_text())["hooks"]["future_option"] == "retain"
+
+
+def test_absent_hooks_section_is_readable_and_can_be_added(tmp_path, monkeypatch):
+    path = tmp_path / "Q3 P&L; config.toml"
+    path.write_text("[other]\nvalue=1\n")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
+    absent = config.read_hooks_config_snapshot()
+    assert not absent.section_present and absent.section is None
+    result = config.replace_hooks_config_snapshot(absent, {"enabled": False})
+    assert result.file_replaced and result.caches_reloaded
+    current = config.read_hooks_config_snapshot()
+    assert current.section_present and current.section == {"enabled": False}
+    assert current.section_stamp != absent.section_stamp
+    assert toml.loads(path.read_text())["other"]["value"] == 1

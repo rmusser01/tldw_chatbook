@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual import on
@@ -14,16 +15,18 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, Static
 
-from tldw_chatbook.Agents.hook_permissions import (
-    HookPermissions,
-    HookReviewSnapshot,
-)
-from tldw_chatbook.Agents.run_hooks import HookSpec
 from tldw_chatbook.Constants import TAB_SETTINGS
 from tldw_chatbook.UI.Console_Modules.hooks import HookReviewResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hook_permissions import (
+        HookPermissions,
+        HookReviewSnapshot,
+    )
+    from tldw_chatbook.Agents.run_hooks import HookSpec
 
 
 def command_json(spec: HookSpec) -> str:
@@ -36,43 +39,9 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
 
     SAFE_MODAL_CONTENT = "#console-hooks-review"
     BINDINGS = (("escape", "request_safe_cancel", "Cancel"),)
-    BUNDLED_CSS = """
-    ConsoleHooksReviewModal { align: center middle; }
-    #console-hooks-review {
-        width: $ds-percent-90; max-width: $ds-size-110; height: $ds-percent-90;
-        background: $ds-surface-panel; border: round $ds-grid-line;
-        padding: $ds-space-inset;
-    }
-    #console-hooks-title { height: auto; text-style: $ds-text-strong; }
-    #console-hooks-notice { height: auto; color: $ds-status-warning; }
-    #console-hooks-tabs, #console-hooks-actions {
-        height: $ds-control-height; width: $ds-width-full;
-    }
-    #console-hooks-list { height: $ds-height-fill; }
-    .hook-review-row {
-        height: auto; border: round $ds-grid-line;
-        margin-bottom: $ds-space-stack; padding: $ds-space-0 $ds-space-inset;
-    }
-    .hook-review-heading, .hook-review-controls { height: $ds-control-height; }
-    .hook-review-heading Checkbox { width: $ds-width-fill; }
-    .hook-review-heading Button { min-width: $ds-size-9; width: auto; }
-    .hook-review-state, .hook-review-detail { height: auto; }
-    .hook-review-state { color: $ds-text-muted; }
-    .hook-review-detail { background: $ds-surface-sunken; padding: $ds-space-inset; }
-    #console-hooks-review Button {
-        width: auto; min-width: $ds-size-9; height: $ds-control-height;
-        margin-right: $ds-space-inline;
-        background: $ds-surface-raised; color: $ds-text-primary;
-    }
-    #console-hooks-review Button:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
-    #console-hooks-review Button:focus {
-        background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline;
-    }
-    #console-hooks-review Button:disabled {
-        background: $ds-disabled-bg; color: $ds-text-disabled-readable;
-    }
-    #console-hooks-review #console-hooks-settings { height: $ds-control-height-compact; border: none; }
-    """
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2] / "css" / "screen_agentic_settings.tcss"
+    )
 
     def __init__(
         self,
@@ -89,6 +58,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         on_cancel: Callable[[], None],
     ) -> None:
         super().__init__()
+        self.add_class("settings-hooks-review-modal")
         self.snapshot = snapshot
         self._waiting = waiting_for_send
         self._approve, self._revoke, self._disable = approve, revoke, disable
@@ -103,34 +73,56 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
             yield Static("Review hooks", id="console-hooks-title")
             yield Static(self._notice(), id="console-hooks-notice", markup=False)
             with Horizontal(id="console-hooks-tabs"):
-                yield Button("Needs review", id="console-hooks-needs")
-                yield Button("All hooks", id="console-hooks-all")
-                yield Button("Retry refresh", id="console-hooks-retry")
+                yield Button(
+                    "Needs review",
+                    id="console-hooks-needs",
+                    classes="hook-review-action",
+                )
+                yield Button(
+                    "All hooks", id="console-hooks-all", classes="hook-review-action"
+                )
+                yield Button(
+                    "Retry refresh",
+                    id="console-hooks-retry",
+                    classes="hook-review-action",
+                )
                 yield Button(
                     "Reset state",
                     id="console-hooks-reset",
                     disabled=self.snapshot.store_revision != ("", 0),
+                    classes="hook-review-action",
                 )
             rows = VerticalScroll(id="console-hooks-list")
             rows.compose = self._rows
             yield rows
-            yield Button("Manage in Settings", id="console-hooks-settings")
+            yield Button(
+                "Manage in Settings",
+                id="console-hooks-settings",
+                classes="hook-review-action",
+            )
             with Horizontal(id="console-hooks-actions"):
                 yield Button(
-                    "Not now" if self._waiting else "Close", id="console-hooks-cancel"
+                    "Not now" if self._waiting else "Close",
+                    id="console-hooks-cancel",
+                    classes="hook-review-action",
                 )
                 yield Button(
                     "Allow all",
                     id="console-hooks-allow-all",
                     disabled=not self._pending(),
+                    classes="hook-review-action",
                 )
                 yield Button(
-                    "Allow selected", id="console-hooks-allow-selected", disabled=True
+                    "Allow selected",
+                    id="console-hooks-allow-selected",
+                    disabled=True,
+                    classes="hook-review-action",
                 )
                 ready = Button(
                     "Continue Send",
                     id="console-hooks-ready",
                     disabled=not self.snapshot.ready,
+                    classes="hook-review-action",
                 )
                 ready.display = self._waiting
                 yield ready
@@ -192,9 +184,14 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                     yield Checkbox(
                         Text(f"{entry.index + 1} - {title}"),
                         id=f"hook-review-select-{index}",
+                        classes="hook-review-select",
                         disabled=row.state != "pending",
                     )
-                    yield Button("Details", id=f"hook-review-details-{index}")
+                    yield Button(
+                        "Details",
+                        id=f"hook-review-details-{index}",
+                        classes="hook-review-action hook-review-details",
+                    )
                 yield Static(
                     f"{row.change} | {row.state.capitalize()}",
                     classes="hook-review-state",
@@ -207,15 +204,26 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                     )
                 with Horizontal(classes="hook-review-controls"):
                     if row.state == "approved":
-                        yield Button("Revoke now", id=f"hook-review-revoke-{index}")
+                        yield Button(
+                            "Revoke now",
+                            id=f"hook-review-revoke-{index}",
+                            classes="hook-review-action",
+                        )
                     if entry.enabled is not False and isinstance(raw, dict):
-                        yield Button("Disable now", id=f"hook-review-disable-{index}")
+                        yield Button(
+                            "Disable now",
+                            id=f"hook-review-disable-{index}",
+                            classes="hook-review-action",
+                        )
 
     async def _render_rows(self) -> None:
         self._selected.clear()
         region = self.query_one("#console-hooks-list", VerticalScroll)
         await region.recompose()
-        self.query_one("#console-hooks-notice", Static).update(self._notice())
+        if self.app.screen is not self:
+            return
+        for notice in self.query("#console-hooks-notice").results(Static):
+            notice.update(self._notice())
         self._sync_actions()
 
     def _sync_actions(self) -> None:
@@ -278,7 +286,10 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
             await self._render_rows()
         elif action.startswith("hook-review-details-"):
             index = int(action.rsplit("-", 1)[-1])
-            container = self.query_one(f"#hook-review-row-{index}", Vertical)
+            containers = self.query(f"#hook-review-row-{index}")
+            if not containers:
+                return
+            container = containers.first(Vertical)
             existing = container.query(".hook-review-detail")
             if existing:
                 await existing.remove()
@@ -290,10 +301,12 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                 else:
                     details = "Invalid definition. Open Settings to inspect and repair the saved entry."
                 detail = Static(details, classes="hook-review-detail", markup=False)
-                await container.mount(
-                    detail, before=container.query_one(".hook-review-controls")
-                )
-                detail.scroll_visible(top=True, immediate=True)
+                controls = container.query(".hook-review-controls")
+                if not controls:
+                    return
+                await container.mount(detail, before=controls.first())
+                if self.app.screen is self and detail.is_mounted:
+                    detail.scroll_visible(top=True, immediate=True)
         elif action == "console-hooks-ready" and self.snapshot.ready:
             self.dismiss_safe_once(HookReviewResult("ready", self.snapshot))
         else:
@@ -377,9 +390,10 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                     or self.app.screen is not self
                 ):
                     return
-                self.query_one("#console-hooks-notice", Static).update(
-                    "Hooks or permissions changed, or the save failed. Review current state and retry."
-                )
+                for notice in self.query("#console-hooks-notice").results(Static):
+                    notice.update(
+                        "Hooks or permissions changed, or the save failed. Review current state and retry."
+                    )
         finally:
             self._busy = False
             if self.is_mounted and self.app.screen is self:

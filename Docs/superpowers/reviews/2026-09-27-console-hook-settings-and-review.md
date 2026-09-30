@@ -110,5 +110,43 @@ From this checkout with its existing Python environment:
     .venv/bin/python Docs/superpowers/qa/2026-09-27-console-hook-settings-and-review/native_check.py 80 24
     .venv/bin/python Docs/superpowers/qa/2026-09-27-console-hook-settings-and-review/native_check.py 120 40
 
-The native script prints the private capture directory. The branch is local;
-publishing or merging is a separate integration action.
+The native script prints the private capture directory. The branch is published as PR #2922; integration is gated on its required checks.
+
+## PR #2922 review follow-up
+
+The branch was already based on the latest fetched dev (`857b3dd7d0`); the
+rebase made no changes. Qodo posted seven findings. The installed TOML encoder
+skips `None`, so its absent-section failure did not reproduce; a regression
+now covers reading and adding the optional section, and the stamp explicitly
+omits absent data. The other findings were corrected: central path validation,
+Google-style helper docs, typed widget options, clean-draft reloads that preserve
+dirty edits, stale revoke/disable validation before local sealing, and the
+existing Pydantic-backed shared validation boundary. Unknown saved fields remain
+outside the execution projection.
+
+Required local gate checks also exposed post-await modal lookups, queued
+indicator refresh during runtime disposal, eager first-paint hook imports, and
+boot CSS growth. Dismissal and shutdown regressions cover the guards. Type-only
+imports and indicator disk work now stay past first paint. The review modal and
+editor reuse the existing lazy Settings stylesheet; leaf classes avoid adding
+ancestor bare-type selectors, and the persistent icon reuses its control-bar
+styles. All original boot budget limits remain unchanged. The boot worker
+census explicitly records the one off-loop indicator snapshot.
+
+The diagnostic inventory was regenerated only after inspecting every new log
+statement and the exact private permission-lock sink. Messages remain bounded
+and omit command arguments and private paths. Native 80×24 and 120×40 checks
+passed all six groups again; the four updated captures were rendered and
+inspected. The QA runner waits for actual marker creation after acceptance,
+since accepted Send precedes asynchronous hook execution. No full suite or
+real provider generation was used.
+
+Final review checks: **185 hook-runtime cases**, **26 mounted UI/admission
+cases**, **21 cases in the complete CI boot-budget group**, and
+**37 token/CSS integrity cases** passed. The admission cases overlap the
+runtime cohort; these are run counts, not an inflated distinct total.
+Authored-line Ruff and formatting are clean across 51 changed Python files;
+all three QA scripts pass full checks. Generated sheets reproduce exactly.
+The worker contract admits no new unsafe lookup, and the reviewed diagnostic
+inventory matches the source tree. Named results and final native captures
+are retained in the linked QA artifacts.

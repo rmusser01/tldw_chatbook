@@ -1,6 +1,6 @@
 {
   "base": "857b3dd7d0",
-  "checked_files": 48,
+  "checked_files": 51,
   "new_files": [
     "Tests/Agents/hook_test_utils.py",
     "Tests/Agents/test_hook_config_inventory.py",
@@ -14,7 +14,7 @@
     "tldw_chatbook/UI/Screens/settings_hooks.py",
     "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py"
   ],
-  "all_diagnostics": 860,
+  "all_diagnostics": 874,
   "diagnostics_on_authored_lines": [],
   "authored_range_format_failures": []
 }

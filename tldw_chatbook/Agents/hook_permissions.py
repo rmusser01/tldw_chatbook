@@ -448,8 +448,6 @@ class HookPermissions:
         self, expected: HookReviewSnapshot, keys: Collection[str], approve: bool
     ) -> HookReviewSnapshot:
         owned_keys = frozenset(keys)
-        if not approve:
-            self._seal(expected, owned_keys)
         with self._current() as (current, state, precondition):
             self._expect_current(expected, current)
             if state is None:
@@ -503,12 +501,11 @@ class HookPermissions:
         return self._decision(expected, keys, True)
 
     def revoke(self, expected: HookReviewSnapshot, key: str) -> HookReviewSnapshot:
-        """Seal immediately; do not report durable revoke before saving."""
+        """Validate the review, then fence launches before persisting revoke."""
         return self._decision(expected, [key], False)
 
     def disable(self, expected: HookReviewSnapshot, key: str) -> HookReviewSnapshot:
         """Immediately disable a saved row through the canonical config writer."""
-        self._seal(expected, [key])
         row = next(
             (row.entry for row in expected.rows if row.entry and row.entry.key == key),
             None,
@@ -526,6 +523,10 @@ class HookPermissions:
         if not isinstance(raw, dict):
             raise HookReviewConflict("Repair the malformed entry in Settings.")
         raw["enabled"] = False
+        with self._current() as (current, _state, _precondition):
+            self._expect_current(expected, current)
+            self._seal(current, [key])
+        # The writer owns its config lock; never reacquire it under consent locks.
         result = config.replace_hooks_config_snapshot(expected.config, section)
         current = self.snapshot()
         if result.caches_reloaded:

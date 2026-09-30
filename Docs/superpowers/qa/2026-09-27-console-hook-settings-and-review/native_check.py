@@ -224,6 +224,7 @@ async def qa(pilot):
         app.screen.query_one("#console-hooks-allow-all").focus()
         await pilot.press("enter")
         assert await asyncio.wait_for(send, 15)
+        await wait_for(pilot, marker.exists)
         assert marker.read_text() == "run;"
         await wait_for(pilot, lambda: gateway.messages_seen is not None)
         controller = console._ensure_console_chat_controller()

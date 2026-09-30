@@ -2661,13 +2661,4 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 }
 .console-generation-frame { border: round $ds-console-frame !important; }
 
-/* Hook attention is separate from tool-call approvals. */
-#console-control-hooks {
-    min-width: $ds-size-4; height: $ds-control-height-compact;
-    margin-right: $ds-space-inline;
-}
-#console-control-hooks.hooks-attention { color: $ds-status-approval-required; }
-#console-control-hooks:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
-#console-control-hooks:focus {
-    background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline;
-}
+#console-control-hooks.hooks-attention{color:$ds-status-approval-required;}

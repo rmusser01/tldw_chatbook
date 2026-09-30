@@ -780,3 +780,21 @@ def test_decoder_depth_failure_keeps_permission_recovery_resettable(
     reset = owner.reset_invalid_state(broken)
     assert not reset.ready
     assert reset.store_revision[0]
+
+
+@pytest.mark.parametrize("action", ["revoke", "disable"])
+def test_stale_mutation_leaves_current_approval_unsealed(hook_file, action):
+    from tldw_chatbook.Agents.hook_permissions import HookReviewConflict
+
+    owner = _owner()
+    stale = _approve(owner)
+    key = stale.rows[0].entry.key
+    other = _owner()
+    other.approve(other.snapshot(), [key])
+    before = hook_file.read_bytes()
+    with pytest.raises(HookReviewConflict):
+        getattr(owner, action)(stale, key)
+    assert owner.snapshot().ready
+    assert owner.recover().ready
+    assert owner.notification_targets("PostToolUse", None)
+    assert hook_file.read_bytes() == before

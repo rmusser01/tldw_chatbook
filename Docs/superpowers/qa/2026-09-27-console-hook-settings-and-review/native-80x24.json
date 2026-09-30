@@ -3,7 +3,7 @@
     80,
     24
   ],
-  "profile": "/private/tmp/hook-review-native-dakbgvbi",
+  "profile": "/private/tmp/hook-review-native-7izxvx_x",
   "checks": [
     "config and data resolved inside the private QA profile",
     "native Console icon, expanded exact argv, modal action bounds",

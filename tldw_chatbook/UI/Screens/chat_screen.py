@@ -19301,6 +19301,9 @@ class ChatScreen(BaseAppScreen):
         await self._hooks.review_current()
 
     async def _refresh_console_hooks(self) -> None:
+        # ADR-097: indicator disk reads and hook imports start after first paint.
+        while not getattr(self.app, "_ui_ready", True):
+            await asyncio.sleep(0.1)
         await self._hooks.refresh()
 
     def _apply_console_hooks_state(self, snapshot) -> None:

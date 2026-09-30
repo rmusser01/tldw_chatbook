@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-28 03:03'
-updated_date: '2026-09-30 01:27'
+updated_date: '2026-09-30 02:28'
 labels:
   - hooks
   - console
@@ -64,4 +64,8 @@ Eleven broader failures reproduce on an untouched archive of the exact dev base.
 Self-review completed for launch/revocation ownership, narrow nested storage scope, excluded restore authority, callbacks, lossless Settings writes and generated styles. Changed core hook inventory/config transactions and consent authority, Console runtime/admission/UI routing, shared review modal, canonical Settings editor/registry/search, raw participant and private-path integration, backup declarations and targeted tests. Updated the guide, accepted plan/ADR and evidence-based lessons.
 
 Current-dev continuation (2026-09-29): carried only four implementation commits onto 857b3dd7d0 as codex/hook-review-current. Rebuilt CSS from current sources. Targeted evidence: 367 distinct passing cases including 201 feature/category cases; two Settings search assertions reproduce on current dev application sources. Real TldwCli passed all six private-profile checks at actual 80×24 and 120×40. QA now isolates the HOME-based recovery bootstrap; the queue-controller test module uses the existing bound-profile fixture. Authored-line Ruff/format checks and QA-script lint/format passed. See the updated implementation review and machine-readable QA results. No full suite, real provider generation, push or merge.
+
+PR #2922 review follow-up: resolved six verified Qodo findings and covered the non-reproducing absent-section report with an explicit TOML stamp and regression. Added stale mutation, clean/dirty reload, dismissal and runtime-disposal regressions. Shared Pydantic validation preserves raw unknown fields. Hook imports and indicator I/O stay after first paint; modal/editor styles reuse the lazy Settings sheet without raising boot budgets. Reviewed new diagnostic messages and the exact private lock sink before updating the inventory. Final targeted checks: 185 runtime, 26 mounted UI/admission, seven first-paint census, two CSS-budget and 37 token/CSS-integrity passes (overlapping cohorts). Authored Ruff/format and all QA scripts are clean. Native 80x24 and 120x40 checks pass and captures were inspected. ADR-197, ADR-126 and ADR-097 apply; no new ADR. Latest fetched dev remains 857b3dd7d0. Hosted required CI is queued; merge is pending. See the updated review and named QA records.
+
+Completed the exact CI boot-budget group after the final lazy import/style fixes: 21 passed with original limits unchanged. Local implementation, regression coverage, static checks, self-review and documentation are complete. PR review replies and hosted merge gates remain an integration follow-up.
 <!-- SECTION:NOTES:END -->

@@ -7409,7 +7409,10 @@ def _hooks_config_snapshot(
 ) -> HookConfigSnapshot:
     present = "hooks" in raw
     section = copy.deepcopy(raw.get("hooks"))
-    encoded = toml.dumps({"present": present, "section": section}).encode("utf-8")
+    stamp: dict[str, object] = {"present": present}
+    if present:
+        stamp["section"] = section
+    encoded = toml.dumps(stamp).encode("utf-8")
     return HookConfigSnapshot(
         config_path.resolve(), present, section, hashlib.sha256(encoded).hexdigest()
     )
@@ -7418,7 +7421,12 @@ def _hooks_config_snapshot(
 @contextmanager
 def locked_hooks_config_snapshot() -> Iterator[HookConfigSnapshot]:
     """Hold the config writer lock while reading and consuming hook authority."""
-    config_path = _get_effective_config_path()
+    config_path = validate_path_simple(
+        _get_effective_config_path(),
+        require_exists=False,
+        probe_existing=False,
+        reject_shell_metacharacters=False,
+    )
     with _config_write_lock(config_path):
         if _get_effective_config_path().resolve() != config_path.resolve():
             raise ValueError("Hook configuration file changed; reload.")

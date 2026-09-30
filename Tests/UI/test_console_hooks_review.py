@@ -244,3 +244,37 @@ async def test_all_hooks_exposes_current_revoke_and_disable_actions(hook_file):
         await pilot.press("escape")
         await pilot.pause()
         assert host.screen is console
+
+
+async def test_dismissal_during_row_refresh_does_not_query_removed_modal(hook_file):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(80, 24)) as pilot:
+        console = host.screen
+        await _wait_for_selector(console, pilot, "#console-control-hooks")
+        console.query_one("#console-control-hooks").focus()
+        await pilot.press("enter")
+        async with asyncio.timeout(5):
+            while not isinstance(host.screen, ConsoleHooksReviewModal):
+                await pilot.pause(0.01)
+        modal = host.screen
+        await _wait_for_selector(modal, pilot, "#console-hooks-list")
+        region = modal.query_one("#console-hooks-list")
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def paused_recompose():
+            entered.set()
+            await release.wait()
+
+        region.recompose = paused_recompose
+        refresh = asyncio.create_task(modal._render_rows())
+        await asyncio.wait_for(entered.wait(), 5)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert host.screen is console
+        synced = []
+        modal._sync_actions = lambda: synced.append(True)
+        release.set()
+        await asyncio.wait_for(refresh, 5)
+        assert synced == []

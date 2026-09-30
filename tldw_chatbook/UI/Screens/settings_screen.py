@@ -61,9 +61,7 @@ from tldw_chatbook.UI.focus_ownership import (
 # is imported where it is rendered rather than at module scope -- this
 # module is reached by the screen pre-importer.
 
-from ...Agents.hook_permissions import HookReviewSnapshot
 from ...Chat.console_runtime import ensure_console_runtime
-from ...Widgets.Console.console_hooks_review_modal import request_hook_review
 from .settings_hooks import HooksSettingsPanel
 from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
@@ -463,6 +461,7 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
+    from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.contracts import ToolPackError
     from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.Settings_Widgets.personal_context_panel import (
@@ -3681,8 +3680,11 @@ class SettingsScreen(BaseAppScreen):
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
 
         hooks_snapshot = state.get("hooks_snapshot")
-        if isinstance(hooks_snapshot, HookReviewSnapshot):
-            self._hooks_snapshot = hooks_snapshot
+        if hooks_snapshot is not None:
+            from ...Agents.hook_permissions import HookReviewSnapshot
+
+            if isinstance(hooks_snapshot, HookReviewSnapshot):
+                self._hooks_snapshot = hooks_snapshot
 
         search_session = state.get("web_search_session")
         if type(search_session) is WebSearchSettings:
@@ -4537,6 +4539,8 @@ class SettingsScreen(BaseAppScreen):
         self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
 
     async def _review_saved_hooks(self) -> None:
+        from ...Widgets.Console.console_hooks_review_modal import request_hook_review
+
         snapshot = await asyncio.to_thread(self._hooks_owner().snapshot)
         await request_hook_review(
             self, self._hooks_owner(), snapshot, False, lambda: None
@@ -4582,11 +4586,12 @@ class SettingsScreen(BaseAppScreen):
                         panel.load(snapshot)
                 elif panel.is_mounted:
                     panel.snapshot = snapshot
-                    panel.query_one("#settings-hooks-status", Static).update(
-                        snapshot.notice
-                        or snapshot.blocked_reason
-                        or "Reload before retrying."
-                    )
+                    for status in panel.query("#settings-hooks-status").results(Static):
+                        status.update(
+                            snapshot.notice
+                            or snapshot.blocked_reason
+                            or "Reload before retrying."
+                        )
                 self.app.notify(
                     snapshot.notice or "Hook settings updated.",
                     severity="information" if result.caches_reloaded else "warning",
