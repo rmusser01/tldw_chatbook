@@ -1,0 +1,111 @@
+{
+  "tested_source": "3730c33cf3b18b5b9f2784bb9af842c1ddcd0a2d",
+  "dev_base": "857b3dd7d058bc4076b9f4b23d31c724620d6193",
+  "buddy_cases_passed": 16,
+  "incoming_approval_boundary_cases_passed": 11,
+  "combined_cases_passed": 27,
+  "elapsed_seconds": 67.86,
+  "reviewed_patches_preserved": 6,
+  "all_patches_identical": true,
+  "full_suite_run": false,
+  "paid_provider_calls": false,
+  "log_sha256": "b4e4b8fc1ba34e694efe613d817ed710e2e42674e0c45cc0b9250ca4bb5a4c26",
+  "profiles": {
+    "fresh": {
+      "profile": "fresh",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "3730c33cf3b18b5b9f2784bb9af842c1ddcd0a2d",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    },
+    "upgrade": {
+      "profile": "upgrade",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "3730c33cf3b18b5b9f2784bb9af842c1ddcd0a2d",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    }
+  },
+  "profile_receipt_sha256": {
+    "fresh": "9dc6fe3ad409dc62d5734e1ac196e55315a5bd0f2bcf63d69b489f6a2f6b1b66",
+    "upgrade": "268d53818f10236a2b1d6c7bce318758035b4c82f0af954ee1883fc9c698b3e5"
+  }
+}

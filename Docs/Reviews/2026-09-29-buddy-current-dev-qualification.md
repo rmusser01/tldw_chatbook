@@ -76,3 +76,17 @@ Static/Dynamic assertions. The [provider rebase receipt](artifacts/buddy-v1-3210
 records sanitized profile outcomes and the local execution-log hash. Prior
 MCP and Buddy evidence retains its original source attribution. No full local
 suite or paid provider calls ran; native and physical voice acceptance remains open.
+
+
+The approval-boundary rebase onto dev
+`857b3dd7d058bc4076b9f4b23d31c724620d6193` preserves all six preceding
+PR patches exactly. At source `3730c33cf3b18b5b9f2784bb9af842c1ddcd0a2d`,
+the Buddy qualification and incoming approval regressions passed **27 cases
+in 67.86s**: 16 Buddy cases and 11 built-in, MCP and local approval cases.
+Fresh and schema69 upgrade profiles still reach schema73 with the same
+ownership, workspace-default and Static/Dynamic assertions. The incoming
+regressions retain refusal and audit behavior when a same-name sibling lacks
+its own approval. The [approval rebase receipt](artifacts/buddy-v1-32108/approval-dev-20260929/verification.json)
+records sanitized outcomes and local-log hashes separately. Earlier evidence
+keeps its original source attribution. No full suite or paid provider calls ran;
+native and physical voice acceptance remains open.
