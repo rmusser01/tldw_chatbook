@@ -21,6 +21,7 @@ from textual.widgets import Button, Input, Select, Static
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
+from Tests.private_profile import private_profile_test
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -214,8 +215,12 @@ def _console_app():
     return app
 
 
-def _persisted_console_app():
-    """Build from the sandbox config file the default writer will mutate."""
+def _persisted_console_app(**vllm_settings: object):
+    """Build from the sandbox config file the default writer will mutate.
+
+    Args:
+        **vllm_settings: Extra keys written into ``[api_settings.vllm]``.
+    """
 
     adapter = SettingsConfigAdapter()
     assert adapter.save_sections(
@@ -232,6 +237,7 @@ def _persisted_console_app():
                 "api_url": "http://127.0.0.1:9098",
                 "model": "vendor/model:b",
                 "streaming": True,
+                **vllm_settings,
             },
         }
     )
@@ -1014,6 +1020,125 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
     assert f"Eligible new-chat default saved: vllm/{literal_model}" in notifications
 
 
+@pytest.mark.parametrize(
+    ("provider_max_tokens", "saved_max_tokens"),
+    ((8192, 8192), ("", None)),
+    ids=("capped", "blank"),
+)
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quick_default_actions_write_the_quick_mask_to_the_exact_profile(
+    request,
+    provider_max_tokens: object,
+    saved_max_tokens: int | None,
+) -> None:
+    """TASK-33004.1 (D3): quick defaults carry Max tokens; blank leaves none.
+
+    Drives the real popover buttons, the ChatScreen coordinator and the real
+    default writer against the sandbox config file. Apply to this chat writes
+    nothing; each default action writes Temperature, Max tokens and Streaming
+    into the exact profile and keeps sibling profiles and unexposed fields.
+    """
+    from tldw_chatbook.config import get_cli_config_path
+
+    literal_model = "vendor/model:b"
+    app = _persisted_console_app(
+        max_tokens=provider_max_tokens,
+        model_defaults={
+            literal_model: {"top_p": 0.5, "unexposed": "kept"},
+            "sibling/model": {"temperature": 0.4},
+        },
+    )
+    notifications: list[str] = []
+    app.notify = lambda message, **_kwargs: notifications.append(str(message))
+    harness = _ConsoleFlowHarness(app)
+    config_path = get_cli_config_path()
+
+    def saved_config() -> dict:
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    def expected_profile(*, temperature: float, streaming: bool) -> dict:
+        profile = {
+            "top_p": 0.5,
+            "unexposed": "kept",
+            "temperature": pytest.approx(temperature),
+            "streaming": streaming,
+        }
+        if saved_max_tokens is not None:
+            profile["max_tokens"] = saved_max_tokens
+        return profile
+
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _select_vllm_model(modal, pilot, model=literal_model, temperature="0.42")
+        before_apply = config_path.read_bytes()
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+        assert config_path.read_bytes() == before_apply
+        applied = store.session_settings(store.active_session_id)
+        assert applied is not None
+        assert (applied.provider, applied.model, applied.max_tokens) == (
+            "vllm",
+            literal_model,
+            saved_max_tokens,
+        )
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        streaming = modal.query_one("#console-popover-streaming", Button)
+        streaming.scroll_visible(animate=False, force=True)
+        await pilot.pause()
+        assert await pilot.click(streaming) is True
+        await pilot.pause()
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+        save_copy = modal.query_one("#console-popover-save-model-default-copy", Static)
+        assert str(save_copy.renderable).startswith(
+            "Remember Temperature, Max tokens + Streaming for "
+        )
+        await pilot.click("#console-popover-save-model-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = saved_config()
+        profiles = saved["api_settings"]["vllm"]["model_defaults"]
+        assert profiles[literal_model] == expected_profile(
+            temperature=0.42, streaming=False
+        )
+        assert profiles["sibling/model"] == {"temperature": 0.4}
+        assert saved["chat_defaults"]["provider"] == "llama_cpp"
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        modal.query_one("#console-popover-temperature", Input).value = "0.23"
+        await pilot.pause()
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+        await pilot.click("#console-popover-make-new-chat-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = saved_config()
+        profiles = saved["api_settings"]["vllm"]["model_defaults"]
+        assert profiles[literal_model] == expected_profile(
+            temperature=0.23, streaming=False
+        )
+        assert profiles["sibling/model"] == {"temperature": 0.4}
+        assert saved["chat_defaults"]["provider"] == "vllm"
+        assert saved["chat_defaults"]["model"] == literal_model
+
+    assert app.console_default_durability_state.failure_phase is None
+    assert f"Model profile default saved: vllm/{literal_model}" in notifications
+    assert f"Eligible new-chat default saved: vllm/{literal_model}" in notifications
+
+
 @pytest.mark.asyncio
 async def test_default_failures_render_exact_sanitized_recovery_actions() -> None:
     """App-owned failure phase selects the only valid recovery controls."""
@@ -1026,7 +1151,7 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         provider_config_key="vllm",
         literal_model_id="vendor/private:model",
         field_mask=QUICK_MODEL_DEFAULT_FIELDS,
-        values={"temperature": 0.22, "streaming": True},
+        values={"temperature": 0.22, "max_tokens": 2048, "streaming": True},
         endpoint_patch=ConsoleEndpointPatch(
             value="http://192.168.1.9:8000/v1?api_key=never-render",
             bound_provider_config_key="vllm",
@@ -1054,7 +1179,8 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         )
         assert copy == (
             "Not written to disk · Make default for new chats · "
-            "vllm/vendor/private:model · fields: streaming, temperature · "
+            "vllm/vendor/private:model · "
+            "fields: max_tokens, streaming, temperature · "
             "192.168.1.9:8000 · LAN"
         )
         assert "api_key" not in copy and "never-render" not in copy

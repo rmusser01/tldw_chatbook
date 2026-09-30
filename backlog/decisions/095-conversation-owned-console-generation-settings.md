@@ -101,7 +101,9 @@ safe snapshot when the conversation is first persisted. A temporary conversation
 remains non-durable; promotion writes its current safe snapshot into the promoted
 conversation.
 
-Apply from the quick popover includes compaction mode. Compaction remains a sparse
+Apply from the quick popover includes compaction mode (amended 2026-09-26, D3: the
+quick surface no longer edits it, and Apply still commits the unchanged snapshot).
+Compaction remains a sparse
 `ConsoleContextPolicyOverrides` value in its existing
 `console_conversation_context_policy` owner; it is never copied into
 `console_generation_settings`. The Apply orchestration commits generation settings
@@ -291,24 +293,35 @@ value beside Temperature and Streaming. If the mask stayed at temperature and
 streaming, `Save as model default` would drop a visible edit without saying so.
 
 **Ruling: the quick model-profile field mask is `temperature`, `max_tokens` and
-`streaming`.**
+`streaming`.** Implemented by
+[TASK-33004.1](../tasks/task-33004.1%20-%20Make-the-quick-default-mask-temperature-max_tokens-and-streaming-D3.md).
 
 What changes:
 
 - **`QUICK_MODEL_DEFAULT_FIELDS` gains `max_tokens`**
-  (`Chat/console_settings_apply.py:19`). This applies to both default actions
+  (`Chat/console_settings_apply.py`). This applies to both default actions
   on the quick surface: `Save as model default` and `Make default for new
   chats`.
 - **The quick surface's editable fields and its default mask are the same
   set.** A field becomes editable on the quick surface only together with an
   amendment that adds it to this mask.
-- **A blank Max tokens deletes the exact profile override,** as blanks already
-  do for the other masked fields.
+- **A blank Max tokens (no cap) deletes the exact profile override,** as a
+  blank does in the full mask. It is the only quick field that may be blank:
+  every quick field must still be present in each quick default intent,
+  and Temperature and Streaming may not be blank
+  (`_validate_intent`, `Chat/console_settings_defaults.py`).
+- **The quick surface stops editing compaction mode.** Switch model shows
+  only the quick mask, so its context/compaction block is removed (spec §8).
 
 What stays:
 
 - **`Apply to this chat`** still sends an empty default mask
-  (`Widgets/Console/console_model_popover.py:1388-1392`).
+  (`ConsoleModelPopover._submit`, `Widgets/Console/console_model_popover.py`).
+- **Quick Apply still includes compaction mode.** It commits the unchanged,
+  complete context-policy snapshot with the generation settings, through the
+  same owner, durability record and `compaction` failure label as before. The
+  durable behaviour of the quick-Apply compaction rule above is unchanged; only
+  the control that edited it is gone.
 - **The rest of the mask rules:** the full Model mask is unchanged, compaction
   stays excluded from both default actions, and only full Settings `Make
   default for new chats` may carry an endpoint.

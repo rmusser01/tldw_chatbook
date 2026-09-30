@@ -232,7 +232,9 @@ async def test_model_apply_popover_commits_selected_provider_and_model_once() ->
     assert results[0].live_commit.settings.provider == "vllm"
     assert results[0].live_commit.settings.model == "served-model"
     assert results[0].submission.default_field_mask == frozenset()
-    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset({"temperature", "streaming"})
+    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset(
+        {"temperature", "max_tokens", "streaming"}
+    )
 
 
 @pytest.mark.asyncio

@@ -1073,8 +1073,11 @@ def _validate_intent(intent: ConsoleDefaultMutationIntent) -> tuple[str, str]:
     for name in intent.values:
         if type(name) is not str or not name:
             raise TypeError("Default field names must be non-empty strings")
+    # Every quick field is a required key. Only Max tokens may be blank: no
+    # cap is a real value, and None deletes the exact override (ADR-095 D3).
     if intent.field_mask == QUICK_MODEL_DEFAULT_FIELDS and any(
-        name not in intent.values or intent.values[name] is None
+        name not in intent.values
+        or (intent.values[name] is None and name != "max_tokens")
         for name in QUICK_MODEL_DEFAULT_FIELDS
     ):
         raise ValueError("Quick default fields must be materialized")

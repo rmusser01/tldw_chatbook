@@ -156,7 +156,10 @@ def test_origin_validation_rejects_closed_or_rebound_sessions(
 
 
 def test_default_profile_masks_are_exact_and_exclude_other_owners() -> None:
-    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset({"temperature", "streaming"})
+    # TASK-33004.1 (ADR-095 amendment 2026-09-26, D3): max_tokens joins.
+    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset(
+        {"temperature", "max_tokens", "streaming"}
+    )
     assert FULL_MODEL_DEFAULT_FIELDS == frozenset(
         {
             "temperature",

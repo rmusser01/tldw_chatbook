@@ -432,7 +432,7 @@ class ConsoleModelPopover(
 
     def _save_model_default_copy(self) -> str:
         return (
-            "Remember Temperature + Streaming for "
+            "Remember Temperature, Max tokens + Streaming for "
             f"{self._target_label()}. New-chat provider/model unchanged."
         )
 

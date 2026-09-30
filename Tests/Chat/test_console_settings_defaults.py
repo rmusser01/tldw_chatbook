@@ -104,22 +104,34 @@ def _intent(
         literal_model_id=LITERAL_MODEL,
         field_mask=field_mask,
         values=(
-            {"temperature": 0.25, "streaming": False} if values is None else values
+            # TASK-33004.1: every quick field is a required key. 1234 matches
+            # the seeded profile, so tests about other things see no change.
+            {"temperature": 0.25, "max_tokens": 1234, "streaming": False}
+            if values is None
+            else values
         ),
         endpoint_patch=endpoint_patch,
     )
 
 
-def test_quick_save_patches_only_temperature_and_streaming(
+def test_quick_save_patches_only_temperature_max_tokens_and_streaming(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    """TASK-33004.1 (D3): the quick mask now writes Max tokens too."""
     config_path = tmp_path / "config.toml"
     _write_config(config_path, _ready_openai_config())
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
     outcome = apply_console_default_intent(
-        _intent(values={"temperature": 0.25, "streaming": False, "top_p": 0.1})
+        _intent(
+            values={
+                "temperature": 0.25,
+                "max_tokens": 8192,
+                "streaming": False,
+                "top_p": 0.1,
+            }
+        )
     )
 
     assert outcome.file_replaced is True
@@ -127,18 +139,70 @@ def test_quick_save_patches_only_temperature_and_streaming(
     assert outcome.settings_view is not None
     assert outcome.failure_phase is None
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    profile = saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]
-    assert profile == {
+    profiles = saved["api_settings"]["OpenAI"]["model_defaults"]
+    assert profiles[LITERAL_MODEL] == {
         "temperature": 0.25,
         "streaming": False,
         "top_p": 0.9,
-        "max_tokens": 1234,
+        "max_tokens": 8192,
         "unexposed": "preserved",
     }
+    assert profiles["sibling/model"] == {"temperature": 0.4}
     assert saved["chat_defaults"] == {
         "provider": "anthropic",
         "model": "old-model",
     }
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+    ],
+)
+def test_quick_blank_max_tokens_deletes_the_exact_profile_override(
+    action: ConsoleSettingsAction,
+) -> None:
+    """TASK-33004.1 AC#4: blank Max tokens passes validation and deletes.
+
+    Drives the writer at its gate-free seam: the validation, the locked
+    builder and the literal merge ``apply_console_default_intent`` runs under
+    its lock. A re-pointed ``TLDW_CONFIG_PATH`` trips ADR-126 admission
+    locally, so this is the half of the writer that runs everywhere.
+    """
+    import copy
+
+    config = _ready_openai_config(section="openai")
+    with pytest.raises(ValueError, match="materialized"):
+        defaults_module._validate_intent(
+            _intent(values={"temperature": 0.25, "streaming": False})
+        )
+    intent = _intent(
+        action=action,
+        values={"temperature": 0.25, "max_tokens": None, "streaming": False},
+    )
+
+    provider, model = defaults_module._validate_intent(intent)
+    mutation = defaults_module._build_locked_default_mutation(
+        intent,
+        provider,
+        model,
+        config_module.AtomicLiteralMutationSnapshot(
+            generation=1, raw_values=config, effective_values=config
+        ),
+    )
+    saved = copy.deepcopy(config)
+    config_module._apply_literal_mutation_unlocked(saved, mutation)
+
+    profiles = saved["api_settings"]["openai"]["model_defaults"]
+    assert profiles[LITERAL_MODEL] == {
+        "temperature": 0.25,
+        "streaming": False,
+        "top_p": 0.9,
+        "unexposed": "preserved",
+    }
+    assert profiles["sibling/model"] == {"temperature": 0.4}
 
 
 def test_full_save_deletes_exact_inherited_fields_and_preserves_siblings(
@@ -185,12 +249,20 @@ def test_full_save_deletes_exact_inherited_fields_and_preserves_siblings(
             id="partial-non-surface-mask",
         ),
         pytest.param(
-            _intent(values={"temperature": None, "streaming": True}),
+            _intent(values={"temperature": None, "max_tokens": 64, "streaming": True}),
             id="quick-inherit-temperature",
         ),
         pytest.param(
-            _intent(values={"temperature": 0.2}),
+            _intent(values={"temperature": 0.2, "max_tokens": 64, "streaming": None}),
+            id="quick-inherit-streaming",
+        ),
+        pytest.param(
+            _intent(values={"temperature": 0.2, "max_tokens": 64}),
             id="quick-missing-streaming",
+        ),
+        pytest.param(
+            _intent(values={"temperature": 0.2, "streaming": True}),
+            id="quick-missing-max-tokens",
         ),
         pytest.param(
             _intent(
@@ -344,7 +416,11 @@ def test_before_replace_failure_retains_immutable_retry_intent(
     config_path = tmp_path / "config.toml"
     _write_config(config_path, _ready_openai_config())
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    values: dict[str, object | None] = {"temperature": 0.31, "streaming": True}
+    values: dict[str, object | None] = {
+        "temperature": 0.31,
+        "max_tokens": 1234,
+        "streaming": True,
+    }
     intent = _intent(values=values)
     real_write = config_module.atomic_private_write_text
     monkeypatch.setattr(
@@ -433,7 +509,9 @@ def test_retry_rebases_when_only_sibling_and_unrelated_fields_changed(
     config_path = tmp_path / "config.toml"
     _write_config(config_path, _ready_openai_config())
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    intent = _intent(values={"temperature": 0.31, "streaming": True})
+    intent = _intent(
+        values={"temperature": 0.31, "max_tokens": 1234, "streaming": True}
+    )
     real_write = config_module.atomic_private_write_text
     monkeypatch.setattr(
         config_module,
@@ -498,11 +576,11 @@ def test_externally_reserved_newer_generation_invalidates_inflight_precondition(
     outcomes = {}
     intent_a = _intent(
         generation=1,
-        values={"temperature": 0.1, "streaming": True},
+        values={"temperature": 0.1, "max_tokens": 1234, "streaming": True},
     )
     intent_b = _intent(
         generation=2,
-        values={"temperature": 0.6, "streaming": False},
+        values={"temperature": 0.6, "max_tokens": 1234, "streaming": False},
     )
 
     worker_a = threading.Thread(
@@ -566,11 +644,11 @@ def test_newer_generation_cannot_reserve_between_precondition_and_replacement(
 
     intent_a = _intent(
         generation=1,
-        values={"temperature": 0.1, "streaming": True},
+        values={"temperature": 0.1, "max_tokens": 1234, "streaming": True},
     )
     intent_b = _intent(
         generation=2,
-        values={"temperature": 0.6, "streaming": False},
+        values={"temperature": 0.6, "max_tokens": 1234, "streaming": False},
     )
     outcomes = {}
 
@@ -635,11 +713,11 @@ def test_newer_reservation_publishes_prior_success_before_its_failed_write(
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     intent_a = _intent(
         generation=1,
-        values={"temperature": 0.1, "streaming": True},
+        values={"temperature": 0.1, "max_tokens": 1234, "streaming": True},
     )
     intent_b = _intent(
         generation=2,
-        values={"temperature": 0.6, "streaming": False},
+        values={"temperature": 0.6, "max_tokens": 1234, "streaming": False},
     )
     live_app_config = _ready_openai_config()
     published_generations: list[int] = []
@@ -718,11 +796,11 @@ def test_newer_reservation_refreshes_cache_failed_prior_before_its_failed_write(
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     intent_a = _intent(
         generation=1,
-        values={"temperature": 0.1, "streaming": True},
+        values={"temperature": 0.1, "max_tokens": 1234, "streaming": True},
     )
     intent_b = _intent(
         generation=2,
-        values={"temperature": 0.6, "streaming": False},
+        values={"temperature": 0.6, "max_tokens": 1234, "streaming": False},
     )
     live_app_config = _ready_openai_config()
     recovery_state = ConsoleDefaultDurabilityState(
@@ -1129,7 +1207,10 @@ def test_newer_intent_supersedes_older_retry_generation(
     config_path = tmp_path / "config.toml"
     _write_config(config_path, _ready_openai_config())
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    old = _intent(generation=10, values={"temperature": 0.1, "streaming": True})
+    old = _intent(
+        generation=10,
+        values={"temperature": 0.1, "max_tokens": 1234, "streaming": True},
+    )
     real_write = config_module.atomic_private_write_text
     monkeypatch.setattr(
         config_module,
@@ -1143,7 +1224,7 @@ def test_newer_intent_supersedes_older_retry_generation(
     monkeypatch.setattr(config_module, "atomic_private_write_text", real_write)
     newer = _intent(
         generation=11,
-        values={"temperature": 0.6, "streaming": False},
+        values={"temperature": 0.6, "max_tokens": 1234, "streaming": False},
     )
     assert apply_console_default_intent(newer).runtime_published is True
 
@@ -1391,6 +1472,13 @@ def test_build_default_intent_quick_materializes_displayed_effective_values() ->
             dirty=False,
         ),
         ConsoleSettingsFieldDraft(
+            name="max_tokens",
+            effective_value=None,
+            profile_override=None,
+            provenance=ConsoleSettingsFieldProvenance.INHERITED,
+            dirty=False,
+        ),
+        ConsoleSettingsFieldDraft(
             name="top_p",
             effective_value=0.91,
             profile_override=0.42,
@@ -1409,7 +1497,12 @@ def test_build_default_intent_quick_materializes_displayed_effective_values() ->
         endpoint=None,
     )
 
-    assert dict(intent.values) == {"temperature": 0.73, "streaming": False}
+    # A blank Max tokens (no cap) stays a materialized None: it deletes.
+    assert dict(intent.values) == {
+        "temperature": 0.73,
+        "max_tokens": None,
+        "streaming": False,
+    }
 
 
 @pytest.mark.parametrize(

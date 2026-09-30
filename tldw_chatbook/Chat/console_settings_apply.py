@@ -17,7 +17,9 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 
 
-QUICK_MODEL_DEFAULT_FIELDS = frozenset({"temperature", "streaming"})
+# ADR-095 amendment 2026-09-26 (D3, TASK-33004.1): the quick surface's
+# editable fields and its default mask are this one set.
+QUICK_MODEL_DEFAULT_FIELDS = frozenset({"temperature", "max_tokens", "streaming"})
 # One field list: the fields the request-key table maps (TASK-33001.2).
 FULL_MODEL_DEFAULT_FIELDS = frozenset(GENERATION_FIELD_REQUEST_KEYS)
 
