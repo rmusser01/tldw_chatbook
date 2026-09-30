@@ -189,6 +189,55 @@ def _historical_snapshot_target_available(original, prepared, proof, document):
     return bool(missing)
 
 
+def _snapshot_target_matches(items, expected, originals):
+    """Choose one reviewed alias only after checking every physical competitor."""
+    matches = [
+        item
+        for item in items
+        if item.path == expected.path or item.logical_id == expected.logical_id
+    ]
+    if any(item.path != expected.path for item in matches) or len(
+        {item.logical_id for item in matches}
+    ) != len(matches):
+        raise ValueError("local_snapshot_preservation_unverified")
+    if len(matches) <= 1:
+        return matches
+    if not expected.shared_group:
+        raise ValueError("local_snapshot_preservation_unverified")
+    for item in matches:
+        prior = originals.get(item.logical_id)
+        if (
+            prior is None
+            or prior.path != expected.path
+            or prior.owner != item.owner
+            or prior.status != item.status
+            or prior.shared_group != expected.shared_group
+            or item.shared_group != expected.shared_group
+            or prior.owner in {"persona.visual_identity_builtin", "persona.assets"}
+            and set(prior.dependencies) != set(item.dependencies)
+        ):
+            raise ValueError("local_snapshot_preservation_unverified")
+        topology = [
+            (
+                meta.version,
+                meta.root_id,
+                meta.parent_id,
+                meta.relative_path,
+                meta.kind,
+                meta.policy,
+            )
+            if meta is not None
+            else None
+            for meta in (prior.metadata, item.metadata)
+        ]
+        if topology[0] != topology[1]:
+            raise ValueError("local_snapshot_preservation_unverified")
+    selected = [item for item in matches if item.logical_id == expected.logical_id]
+    if len(selected) != 1:
+        raise ValueError("local_snapshot_preservation_unverified")
+    return selected
+
+
 def _builtin_snapshot_target(original, proof, document, target, *, session=None):
     """Reobserve authenticated builtin/legacy persona trees for this operation."""
     from pydantic import TypeAdapter
@@ -281,7 +330,7 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
             raise ValueError("local_snapshot_preservation_unverified")
         config = configs[0]
         context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
-        current_roots = [item for item in updated if item.path == root.path]
+        current_roots = _snapshot_target_matches(updated, root, originals)
         if (
             len(current_roots) != 1
             or current_roots[0].owner != owner_id
@@ -377,15 +426,11 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
                     matches = (
                         [mapped[key]]
                         if key in mapped
-                        else [
-                            entry
-                            for entry in target.items
-                            if prior is not None
-                            and entry.path == prior.path
-                            and entry.owner == prior.owner
-                        ]
+                        else _snapshot_target_matches(target.items, prior, originals)
+                        if prior is not None
+                        else []
                     )
-                    if len(matches) != 1:
+                    if len(matches) != 1 or matches[0].owner != prior.owner:
                         raise ValueError("local_snapshot_preservation_unverified")
                     dependencies.append(matches[0].logical_id)
                 actual = replace(
@@ -393,11 +438,7 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
                     dependencies=tuple(dependencies),
                     shared_group=item.shared_group,
                 )
-                current = [
-                    entry
-                    for entry in updated
-                    if entry.path == item.path or entry.logical_id == actual.logical_id
-                ]
+                current = _snapshot_target_matches(updated, actual, originals)
                 # A replacement core may no longer reference retained legacy
                 # files. Reattach only authenticated old edges to this exact
                 # reobserved tree; config/core edges and new dependencies must
@@ -532,7 +573,7 @@ def _preserved_snapshot_members(source, archive, target):
             or Path(saved.source.path) != item.path
         ):
             raise ValueError("local_snapshot_preservation_unverified")
-        matches = [current for current in target.items if current.path == item.path]
+        matches = _snapshot_target_matches(target.items, item, originals)
         if (
             len(matches) != 1
             or matches[0].owner != item.owner
@@ -542,14 +583,12 @@ def _preserved_snapshot_members(source, archive, target):
         dependencies = set()
         for dependency in item.dependencies:
             prior = originals.get(dependency)
-            current = [
-                entry
-                for entry in target.items
+            current = (
+                _snapshot_target_matches(target.items, prior, originals)
                 if prior is not None
-                and entry.path == prior.path
-                and entry.owner == prior.owner
-            ]
-            if len(current) != 1:
+                else []
+            )
+            if len(current) != 1 or current[0].owner != prior.owner:
                 raise ValueError("local_snapshot_preservation_unverified")
             dependencies.add(current[0].logical_id)
         if set(matches[0].dependencies) != dependencies:
@@ -723,11 +762,7 @@ def _preserved_builtin_validation(
         old = originals[key]
         if old.owner not in {"persona.visual_identity_builtin", "persona.assets"}:
             continue
-        current = [
-            item
-            for item in _builtin_sources(plan)
-            if item.path == old.path and item.owner == old.owner
-        ]
+        current = _snapshot_target_matches(plan.target.items, old, originals)
         producer, record, saved = (
             producers.get(key),
             records.get(key),
@@ -743,7 +778,9 @@ def _preserved_builtin_validation(
             or producer.owner_id != old.owner
             or producer.status != old.status
             or set(producer.dependencies) != set(old.dependencies)
+            or current[0].owner != old.owner
             or current[0].status != old.status
+            or current[0].logical_id not in plan.safety_scope
         ):
             raise ValueError("local_snapshot_preservation_unverified")
         item = current[0]
@@ -857,9 +894,7 @@ def _current_config_scope(plan, document):
             # remain authoritative when historical config cannot be parsed.
             continue
         validator = _retained_config_targets if key in retained else _config_targets
-        validator(
-            data, key.split(":", 2)[1], item.path, document, plan, owners
-        )
+        validator(data, key.split(":", 2)[1], item.path, document, plan, owners)
     recheck_retained_configs(plan)
 
 
@@ -1441,10 +1476,14 @@ def _created_destination_target(
             from .effective_roots import effective_roots
 
             registry = bootstrap._registry(bootstrap.default_bootstrap_root())
-            physical = effective_roots(
-                binding["roots"],
-                (registry[name] for name in binding["namespaces"]),
-            ) if binding is not None else ()
+            physical = (
+                effective_roots(
+                    binding["roots"],
+                    (registry[name] for name in binding["namespaces"]),
+                )
+                if binding is not None
+                else ()
+            )
             if (
                 generation is None
                 or generation["operation_id"] != journal.operation_id
@@ -1456,10 +1495,7 @@ def _created_destination_target(
                     if row["selector"] == str(config.path)
                 ]
                 != [generation]
-                or not any(
-                    _contains_owned_path(path, item.path)
-                    for path in physical
-                )
+                or not any(_contains_owned_path(path, item.path) for path in physical)
             ):
                 raise ValueError("local_snapshot_created_scope_unverified")
             if lease is not None:
@@ -2147,10 +2183,13 @@ def execute_rollback(
             if current.effective_groups:
                 from .capture_service import _capture_names
 
-                names.update(_capture_names(
-                    authority, current.target,
-                    include_absent_sqlite="settings" in current.effective_groups,
-                ))
+                names.update(
+                    _capture_names(
+                        authority,
+                        current.target,
+                        include_absent_sqlite="settings" in current.effective_groups,
+                    )
+                )
             with authority.maintenance(
                 tuple(sorted(names)),
                 30,
