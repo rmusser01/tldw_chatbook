@@ -16738,6 +16738,26 @@ edited in Settings was never saved, and a saved value was dropped by the next
 save). When you replace a duplicated projection, grep for every
 place that answers the question, not just the functions named after it.
 
+### "CI will confirm" the model-default writer tests was never true, and a fixture makes them real (TASK-33004.1 fix round 1)
+
+**What happened.** TASK-33004.1 renamed and re-seeded the full-path
+`apply_console_default_intent` tests in `Tests/Chat/test_console_settings_defaults.py`,
+reported them red locally from ADR-126 (the entry above), and left them to CI.
+No lane runs them: `test.yml` is main-push/dispatch only, `nightly-deep.yml`
+runs from `main`, and the PR fast lane lists neither the file nor `Tests/Chat`.
+An autouse fixture that sets `TLDW_CONFIG_PATH` to `tmp_path / "config.toml"`
+and then imports a fresh config module with
+`Tests/Backup_Recovery/config_test_support.install_config_source` (patching the
+module references the test and `console_settings_defaults` hold) turned the
+file from 23 failed, 60 passed into 81 passed, 2 failed; mask mutants then failed the
+renamed tests. The 2 left monkeypatch guarded config functions
+(`_read_raw_cli_config_unlocked`, `load_settings`), which the ADR-126 wrapper
+refuses as `config_source_not_installed` whatever the fixture does.
+
+**What to do.** Before writing "CI will confirm", find the lane that collects
+the file. For a test that re-points `TLDW_CONFIG_PATH`, select that path first
+with `install_config_source` instead of calling the local red environmental.
+
 ### A drift guard that drives an unreferenced builder stays green while production drifts (TASK-33001.2 fix round 1)
 
 **What happened.** TASK-33001.2's AC#7 table test, and the "never sent" halves

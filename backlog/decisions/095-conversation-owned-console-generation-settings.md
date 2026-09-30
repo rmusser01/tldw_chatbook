@@ -309,7 +309,10 @@ What changes:
   blank does in the full mask. It is the only quick field that may be blank:
   every quick field must still be present in each quick default intent,
   and Temperature and Streaming may not be blank
-  (`_validate_intent`, `Chat/console_settings_defaults.py`).
+  (`_validate_intent`, `Chat/console_settings_defaults.py`). The quick rebase
+  resolves a blank Max tokens without the exact model profile
+  (`quick_blank_field_default`, `Chat/console_settings_apply.py`), so the
+  live chat takes the value the deleted override leaves, not the cap it had.
 - **The quick surface stops editing compaction mode.** Switch model shows
   only the quick mask, so its context/compaction block is removed (spec §8).
 

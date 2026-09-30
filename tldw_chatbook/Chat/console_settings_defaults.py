@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_BLANKABLE_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleEndpointDraft,
     ConsoleSettingsAction,
@@ -1073,11 +1074,14 @@ def _validate_intent(intent: ConsoleDefaultMutationIntent) -> tuple[str, str]:
     for name in intent.values:
         if type(name) is not str or not name:
             raise TypeError("Default field names must be non-empty strings")
-    # Every quick field is a required key. Only Max tokens may be blank: no
-    # cap is a real value, and None deletes the exact override (ADR-095 D3).
+    # Every quick field is a required key; only a blankable one may be None,
+    # which deletes the exact override (ADR-095 D3).
     if intent.field_mask == QUICK_MODEL_DEFAULT_FIELDS and any(
         name not in intent.values
-        or (intent.values[name] is None and name != "max_tokens")
+        or (
+            intent.values[name] is None
+            and name not in QUICK_BLANKABLE_DEFAULT_FIELDS
+        )
         for name in QUICK_MODEL_DEFAULT_FIELDS
     ):
         raise ValueError("Quick default fields must be materialized")

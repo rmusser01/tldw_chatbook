@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -12,14 +13,19 @@ from tldw_chatbook.Chat.console_settings_durability import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
+    build_target_default_console_session_settings,
     normalize_console_model_value,
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 
 
-# ADR-095 amendment 2026-09-26 (D3, TASK-33004.1): the quick surface's
-# editable fields and its default mask are this one set.
+# ADR-095 amendment 2026-09-26 (D3, TASK-33004.1): the quick default mask. The
+# quick surface's editable fields must be this same set (Max tokens becomes
+# editable in TASK-33004.5).
 QUICK_MODEL_DEFAULT_FIELDS = frozenset({"temperature", "max_tokens", "streaming"})
+# The one quick field that may be blank: no cap is a real value, and a blank
+# deletes the exact profile override so lower-precedence defaults apply.
+QUICK_BLANKABLE_DEFAULT_FIELDS = frozenset({"max_tokens"})
 # One field list: the fields the request-key table maps (TASK-33001.2).
 FULL_MODEL_DEFAULT_FIELDS = frozenset(GENERATION_FIELD_REQUEST_KEYS)
 
@@ -224,3 +230,36 @@ def remember_model_draft(
     else:
         drafts.append(remembered)
     return replace(state, model_drafts=tuple(drafts))
+
+
+def quick_blank_field_default(
+    app_config: Mapping[str, object],
+    target_defaults: ConsoleSessionSettings,
+    name: str,
+) -> object | None:
+    """Resolve one blank quick field the way its quick default Save will.
+
+    A blankable field (Max tokens) skips the exact model profile, because a
+    quick Save of that blank deletes the override (ADR-095 D3); resolving it
+    through the profile would give the live chat the cap the Save removes.
+    Every other field takes the target default.
+
+    Args:
+        app_config: The live application configuration snapshot.
+        target_defaults: The target's established default chain.
+        name: The quick field whose submitted value is blank.
+
+    Returns:
+        The value the rebased draft and the live chat should carry.
+    """
+    if name not in QUICK_BLANKABLE_DEFAULT_FIELDS:
+        return getattr(target_defaults, name)
+    return getattr(
+        build_target_default_console_session_settings(
+            app_config,
+            provider_identity_key(target_defaults.provider),
+            normalize_console_model_value(target_defaults.model),
+            excluded_model_profile_fields=frozenset({name}),
+        ),
+        name,
+    )

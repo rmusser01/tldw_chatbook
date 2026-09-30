@@ -10,6 +10,7 @@ import tomllib
 import pytest
 import toml
 
+from Tests.Backup_Recovery.config_test_support import install_config_source
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
@@ -63,6 +64,23 @@ def _ready_openai_config(*, section: str = "OpenAI") -> dict[str, object]:
         "chat_defaults": {"provider": "anthropic", "model": "old-model"},
         "unrelated": {"concurrent": "preserved"},
     }
+
+
+@pytest.fixture(autouse=True)
+def _select_scratch_config_source(tmp_path: Path, monkeypatch) -> None:
+    """Select each test's scratch ``config.toml`` as a fresh config source.
+
+    The tests re-point ``TLDW_CONFIG_PATH`` at ``tmp_path / "config.toml"``;
+    against the session-bound config module the ADR-126 admission refuses
+    that as ``raw_source_selection_changed`` (TASK-33004.1 review: every
+    ``apply_console_default_intent`` test here was red locally and no PR or
+    dev CI lane runs this file). Selecting the same path first, through the
+    repo's ``install_config_source``, keeps the gate and satisfies it.
+    """
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+    fresh = install_config_source(monkeypatch)
+    monkeypatch.setattr(defaults_module, "config_module", fresh)
+    monkeypatch.setitem(globals(), "config_module", fresh)
 
 
 @pytest.fixture(autouse=True)
@@ -162,39 +180,30 @@ def test_quick_save_patches_only_temperature_max_tokens_and_streaming(
     ],
 )
 def test_quick_blank_max_tokens_deletes_the_exact_profile_override(
+    tmp_path: Path,
+    monkeypatch,
     action: ConsoleSettingsAction,
 ) -> None:
     """TASK-33004.1 AC#4: blank Max tokens passes validation and deletes.
 
-    Drives the writer at its gate-free seam: the validation, the locked
-    builder and the literal merge ``apply_console_default_intent`` runs under
-    its lock. A re-pointed ``TLDW_CONFIG_PATH`` trips ADR-126 admission
-    locally, so this is the half of the writer that runs everywhere.
+    Drives the real owner, ``apply_console_default_intent``, against the
+    scratch config the autouse fixture selects (a missing key is the
+    ``quick-missing-max-tokens`` reject row).
     """
-    import copy
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config(section="openai"))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
-    config = _ready_openai_config(section="openai")
-    with pytest.raises(ValueError, match="materialized"):
-        defaults_module._validate_intent(
-            _intent(values={"temperature": 0.25, "streaming": False})
+    outcome = apply_console_default_intent(
+        _intent(
+            action=action,
+            values={"temperature": 0.25, "max_tokens": None, "streaming": False},
         )
-    intent = _intent(
-        action=action,
-        values={"temperature": 0.25, "max_tokens": None, "streaming": False},
     )
 
-    provider, model = defaults_module._validate_intent(intent)
-    mutation = defaults_module._build_locked_default_mutation(
-        intent,
-        provider,
-        model,
-        config_module.AtomicLiteralMutationSnapshot(
-            generation=1, raw_values=config, effective_values=config
-        ),
-    )
-    saved = copy.deepcopy(config)
-    config_module._apply_literal_mutation_unlocked(saved, mutation)
-
+    assert outcome.failure_phase is None
+    assert outcome.file_replaced is True
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     profiles = saved["api_settings"]["openai"]["model_defaults"]
     assert profiles[LITERAL_MODEL] == {
         "temperature": 0.25,
@@ -203,6 +212,7 @@ def test_quick_blank_max_tokens_deletes_the_exact_profile_override(
         "unexposed": "preserved",
     }
     assert profiles["sibling/model"] == {"temperature": 0.4}
+    assert saved["unrelated"] == {"concurrent": "preserved"}
 
 
 def test_full_save_deletes_exact_inherited_fields_and_preserves_siblings(

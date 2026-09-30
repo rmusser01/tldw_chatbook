@@ -277,6 +277,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsDraftState,
     ConsoleSettingsFieldDraft,
     ConsoleSettingsFieldProvenance,
+    quick_blank_field_default,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -13983,7 +13984,9 @@ class ConsoleChatController:
             ):
                 continue
             if quick_surface and source_field.effective_value is None:
-                effective_value = getattr(target_defaults, source_field.name)
+                effective_value = quick_blank_field_default(
+                    app_config, target_defaults, source_field.name
+                )
                 field_values[source_field.name] = effective_value
                 rebased_fields[source_field.name] = replace(
                     rebased_fields[source_field.name],

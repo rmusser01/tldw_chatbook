@@ -1140,6 +1140,70 @@ async def test_quick_default_actions_write_the_quick_mask_to_the_exact_profile(
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_quick_save_of_a_stale_blank_max_tokens_keeps_chat_and_profile_in_step(
+    request,
+) -> None:
+    """TASK-33004.1 review: a chat with no cap, whose model profile gained one
+    later, saves "no cap" as the model default. The profile override is
+    deleted, and the live chat must take the same post-save value, not the
+    pre-save profile cap it just deleted (ADR-095: blank profile values let
+    lower-precedence defaults apply)."""
+    from tldw_chatbook.config import get_cli_config_path
+
+    literal_model = "vendor/model:b"
+    app = _persisted_console_app(
+        max_tokens="", model_defaults={literal_model: {"top_p": 0.5}}
+    )
+    harness = _ConsoleFlowHarness(app)
+    config_path = get_cli_config_path()
+
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _select_vllm_model(modal, pilot, model=literal_model, temperature="0.42")
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        await _drain_settings_tasks(app)
+        assert store.session_settings(store.active_session_id).max_tokens is None
+
+        # Settings later gives this model a cap; the chat's blank is now stale.
+        assert SettingsConfigAdapter().save_sections(
+            {
+                "api_settings.vllm": {
+                    "model_defaults": {
+                        literal_model: {"top_p": 0.5, "max_tokens": 4096}
+                    }
+                }
+            }
+        )
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await pilot.click("#console-popover-defaults")
+        await pilot.pause()
+        await pilot.click("#console-popover-save-model-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        profile = saved["api_settings"]["vllm"]["model_defaults"][literal_model]
+        assert "max_tokens" not in profile
+        post_save = build_target_default_console_session_settings(
+            load_settings(force_reload=True), "vllm", literal_model
+        )
+        live = store.session_settings(store.active_session_id)
+        assert live.max_tokens == post_save.max_tokens
+        assert live.max_tokens is None
+
+    assert app.console_default_durability_state.failure_phase is None
+
+
+@pytest.mark.asyncio
 async def test_default_failures_render_exact_sanitized_recovery_actions() -> None:
     """App-owned failure phase selects the only valid recovery controls."""
 
