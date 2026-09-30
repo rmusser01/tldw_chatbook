@@ -462,6 +462,44 @@ class S:
     assert _w003(source) == []
 
 
+def test_w003_a_push_built_inline_as_the_worker_argument_is_not_the_handlers():
+    """`run_worker(app.push_screen_wait(m))` -- the fix this check's own error
+    text recommends -- runs the push in the worker. Review of TASK-33621.13:
+    the first cut reported it as a direct push by the handler."""
+    source = """
+class S:
+    def action_pick(self):
+        self.run_worker(self.app.push_screen_wait(Picker()), exit_on_error=False)
+
+    @on(Button.Pressed)
+    def _pressed(self, event):
+        self.run_worker(coro=self.app.push_screen(Picker(), wait_for_dismiss=True))
+"""
+    assert _w003(source) == []
+
+
+@pytest.mark.parametrize(
+    "push",
+    [
+        "self.app.push_screen(Picker(), callback=self._after)",
+        "self.app.push_screen(Picker(), self._after)",
+    ],
+    ids=["keyword", "positional"],
+)
+def test_w003_flags_a_waiting_push_screen_result_callback(push):
+    """Textual runs a ``push_screen`` result callback through the requester's
+    ``call_next`` -- on a pump, never in a worker."""
+    source = f"""
+class S:
+    def action_pick(self):
+        {push}
+
+    async def _after(self, result):
+        await self.app.push_screen_wait(Confirm())
+"""
+    assert _w003(source) == ["tldw_chatbook/UI/m0.py::S.action_pick->_after"]
+
+
 def test_w003_flags_a_waiting_callable_handed_to_a_pump_scheduler():
     source = """
 class S:

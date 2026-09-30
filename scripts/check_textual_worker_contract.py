@@ -70,11 +70,14 @@ W003 (census ratchet, TASK-33621.13)
     The roots are message handlers (``@on``, ``on_*``/``_on_*``, ``key_*``),
     actions (``action_*``) and watchers (``watch_*``), none of which Textual
     runs in a worker, plus a callable handed to ``call_later``/``call_next``/
-    ``call_after_refresh``/``set_timer``/``set_interval`` or a coroutine handed
-    to ``create_task``/``ensure_future``. A root is reported when it pushes
+    ``call_after_refresh``/``set_timer``/``set_interval``, a ``push_screen``
+    result ``callback`` (run through ``call_next``), or a coroutine handed to
+    ``create_task``/``ensure_future``. A root is reported when it pushes
     directly, or ``await``s -- transitively -- something that does. ``@work``
-    functions, and coroutines handed to ``run_worker``, are workers and stop
-    the propagation.
+    functions, and coroutines handed to ``run_worker`` (a push built inline as
+    its argument included), are workers and stop the propagation.
+    ``call_from_thread`` targets are not roots: the loop runs them in a copy
+    of the calling thread worker's context, where that worker is active.
 
     "Transitively" is resolved by NAME, deliberately, because the real defect
     crossed three modules through callables passed as arguments:
@@ -508,11 +511,28 @@ class _Module:
 _SCHEDULED_COROUTINE = {"create_task", "ensure_future"}
 
 
+def _call_name(call: ast.Call) -> str | None:
+    return getattr(call.func, "attr", None) or getattr(call.func, "id", None)
+
+
 def _record_call(sink: _Function, call: ast.Call) -> None:
-    """A direct wait push, or a callable handed to a pump scheduler."""
+    """A direct wait push, or a callable handed to a pump scheduler.
+
+    ``push_screen``'s result ``callback`` counts as scheduled: Textual runs it
+    through the requester's ``call_next``, on a pump, never in a worker.
+    """
     if _is_wait_push(call):
         sink.direct = True
-    name = getattr(call.func, "attr", None) or getattr(call.func, "id", None)
+    name = _call_name(call)
+    if name == "push_screen":
+        for value in [
+            *call.args[1:2],
+            *(kw.value for kw in call.keywords if kw.arg == "callback"),
+        ]:
+            ref = _ref(value)
+            if ref is not None:
+                sink.scheduled.append(ref)
+        return
     if name not in PUMP_SCHEDULERS:
         return
     for arg in call.args:
@@ -629,16 +649,20 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
                         fn.local_aliases.setdefault(alias, []).append(ref)
                     else:
                         module.aliases.append((alias, ref, cls, fn))
+        # A push built inline as `run_worker(...)`'s argument -- the fix this
+        # check recommends -- runs in the worker, not in this function.
+        in_worker = kind is ast.Call and _call_name(node) == "run_worker"
         for field in node._fields:
             if field == "ctx":
                 continue
+            child_sink = None if in_worker and field != "func" else sink
             value = getattr(node, field, None)
             if value.__class__ is list:
                 for item in value:
                     if isinstance(item, AST):
-                        stack.append((item, cls, fn, sink))
+                        stack.append((item, cls, fn, child_sink))
             elif isinstance(value, AST):
-                stack.append((value, cls, fn, sink))
+                stack.append((value, cls, fn, child_sink))
     return module, functions
 
 
