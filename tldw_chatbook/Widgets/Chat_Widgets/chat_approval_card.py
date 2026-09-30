@@ -42,8 +42,9 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.timer import Timer
-from textual.widgets import Button, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
+from tldw_chatbook.Utils.input_validation import MAX_APPROVAL_DENIAL_REASON_CHARS
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 
@@ -672,9 +673,15 @@ class ChatApprovalCard(Container):
         """
 
         def __init__(
-            self, decisions: dict[str, str], *, round_id: str | None = None
+            self,
+            decisions: dict[str, str],
+            *,
+            round_id: str | None = None,
+            denial_reasons: Mapping[str, object] | None = None,
         ) -> None:
-            self.decisions = decisions
+            from tldw_chatbook.Agents.approval_provenance import ApprovalDecisions
+
+            self.decisions = ApprovalDecisions(decisions, denial_reasons=denial_reasons)
             self.round_id = round_id
             super().__init__()
 
@@ -687,6 +694,7 @@ class ChatApprovalCard(Container):
         self._batch_submitted = False
         self._batch_names: list[str] = []
         self._batch_selects: list[Select] = []
+        self._batch_reason_inputs: list[Input] = []
         self._batch_legal_values: list[list[str]] = []
         self._batch_rows: list[Vertical] = []
         #: task-32278: each row's scope line, index-parallel to
@@ -884,6 +892,7 @@ class ChatApprovalCard(Container):
             batch_body.display = False
             self._batch_names = []
             self._batch_selects = []
+            self._batch_reason_inputs = []
             self._batch_legal_values = []
             self._batch_rows = []
             self._batch_scope_statics = []
@@ -936,6 +945,7 @@ class ChatApprovalCard(Container):
         single_row = len(grouped) == 1
         names: list[str] = []
         selects: list[Select] = []
+        reason_inputs: list[Input] = []
         legal_values: list[list[str]] = []
         rows: list[Vertical] = []
         scope_statics: list[Static] = []
@@ -960,6 +970,8 @@ class ChatApprovalCard(Container):
             )
             select.disabled = finishing
             selects.append(select)
+            reason_input = self._new_reason_input(finishing=finishing)
+            reason_inputs.append(reason_input)
             legal_values.append(row_values)
             base_header = _format_row_header(entry)
             base_headers.append(base_header)
@@ -1130,12 +1142,19 @@ class ChatApprovalCard(Container):
                         classes="approval-row-controls",
                     ),
                     *scope_children,
+                    Collapsible(
+                        reason_input,
+                        title="Reason if denied (optional)",
+                        collapsed=True,
+                        classes="deny-reason",
+                    ),
                     id=f"approval-row-{generation}-{index}",
                     classes="approval-row",
                 )
             )
         self._batch_names = names
         self._batch_selects = selects
+        self._batch_reason_inputs = reason_inputs
         self._batch_legal_values = legal_values
         self._batch_rows = rows
         self._batch_scope_statics = scope_statics
@@ -1146,6 +1165,23 @@ class ChatApprovalCard(Container):
         rows_container.remove_children()
         if rows:
             rows_container.mount(*rows)
+
+    @staticmethod
+    def _new_reason_input(*, finishing: bool) -> Input:
+        field = Input(
+            placeholder="Up to 1,000 characters; sent only if denied",
+            max_length=MAX_APPROVAL_DENIAL_REASON_CHARS,
+            classes="form-input approval-row-denial-reason",
+            tooltip="Optional user-authored reason sent to the model for this denied call.",
+        )
+        field.disabled = finishing
+        return field
+
+    def _denial_reasons(self) -> dict[str, str]:
+        return {
+            name: field.value
+            for name, field in zip(self._batch_names, self._batch_reason_inputs)
+        }
 
     def _render_deadline(self, label: Static) -> None:
         """Render the countdown and keep it ticking while a deadline is armed.
@@ -1305,6 +1341,18 @@ class ChatApprovalCard(Container):
 
         self._batch_names = [str(entry.get("call_id", "") or entry.get("llm_name", ""))]
         self._batch_selects = [select]
+        for old_details in row.query(".deny-reason"):
+            old_details.remove()
+        reason_input = self._new_reason_input(finishing=finishing)
+        row.mount(
+            Collapsible(
+                reason_input,
+                title="Reason if denied (optional)",
+                collapsed=True,
+                classes="deny-reason",
+            )
+        )
+        self._batch_reason_inputs = [reason_input]
         self._batch_legal_values = [row_values]
         self._batch_rows = [row]
         self._batch_scope_statics = [scope_static]
@@ -1510,6 +1558,8 @@ class ChatApprovalCard(Container):
         self._batch_submitted = True
         for select in self._batch_selects:
             select.disabled = True
+        for reason_input in self._batch_reason_inputs:
+            reason_input.disabled = True
         for button in self._batch_fast_buttons:
             button.disabled = True
         for button_id in (
@@ -1535,7 +1585,11 @@ class ChatApprovalCard(Container):
         }
         self._disable_batch_submit_controls()
         self.post_message(
-            self.ApprovalDecided(decisions, round_id=self._batch_round_id)
+            self.ApprovalDecided(
+                decisions,
+                round_id=self._batch_round_id,
+                denial_reasons=self._denial_reasons(),
+            )
         )
 
     def _submit_fast_decision(self, decision: str) -> None:
@@ -1578,6 +1632,8 @@ class ChatApprovalCard(Container):
         self._disable_batch_submit_controls()
         self.post_message(
             self.ApprovalDecided(
-                {self._batch_names[0]: decision}, round_id=self._batch_round_id
+                {self._batch_names[0]: decision},
+                round_id=self._batch_round_id,
+                denial_reasons=self._denial_reasons(),
             )
         )

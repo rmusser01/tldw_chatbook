@@ -455,3 +455,52 @@ def test_throwaway_home_is_removed_even_when_the_spawn_fails(tmp_path, monkeypat
     assert created, "the throwaway HOME should have been created"
     for path in created:
         assert not os.path.exists(path), f"leaked temp dir on the failure path: {path}"
+
+
+def test_flushed_short_output_is_visible_before_the_child_exits(tmp_path):
+    """The pipe reader must not wait for a full 4096-byte buffer or EOF."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Agents.tool_output import tool_output_scope
+
+    release = tmp_path / "release"
+    script = _script(
+        tmp_path,
+        """
+        import os, sys, time
+        os.write(1, b'\\xc3')
+        time.sleep(0.05)
+        os.write(1, b'\\xa9 short\\n')
+        print('warning', file=sys.stderr, flush=True)
+        while not os.path.exists('release'):
+            time.sleep(0.02)
+    """,
+    )
+    output = []
+    ready = threading.Event()
+
+    def observed(text):
+        output.append(text)
+        if "é short" in text and "warning" in text:
+            ready.set()
+
+    def execute():
+        with tool_output_scope(observed):
+            return run_script_subprocess(
+                [sys.executable, str(script)],
+                cwd=tmp_path,
+                limits=ScriptRunLimits(wall_clock_seconds=4),
+            )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(execute)
+        try:
+            assert ready.wait(2), output
+            assert not running.done()
+        finally:
+            release.touch()
+        result = running.result(timeout=5)
+    assert result.stdout == "é short\n"
+    assert result.stderr == "warning\n"
+    assert result.exit_code == 0

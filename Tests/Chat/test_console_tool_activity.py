@@ -129,3 +129,131 @@ def test_argument_preview_is_bounded_without_truncating_at_or_below_limit(extra_
         assert len(arguments) == MAX_CONSOLE_TOOL_ARGUMENT_CHARS
         assert arguments.endswith("\n… arguments truncated")
         assert original.startswith(arguments.removesuffix("\n… arguments truncated"))
+
+
+def test_partial_text_stays_on_exact_live_row_and_survives_interruption():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    activity = ConsoleToolActivity(store, session.id)
+    activity.observe(
+        AgentStep(index=1, kind="tool_proposed", call_id="reused", tool_name="read"), 1
+    )
+    activity.observe(
+        AgentStep(
+            index=2,
+            kind="tool_execution_started",
+            call_id="reused",
+            source_step_index=1,
+        ),
+        1,
+    )
+    marker = store.messages_for_session(session.id)[-1].id
+    activity.observe(
+        AgentStep(
+            index=2,
+            kind="tool_output",
+            call_id="reused",
+            source_step_index=1,
+            result="stdout\npartial",
+        ),
+        1,
+    )
+    row = store.messages_for_session(session.id)[-1]
+    assert (
+        row.id == marker
+        and row.activity_presentation.result_preview == "stdout\npartial"
+    )
+    assert not store._pending_trajectory_tool_rows
+    activity.complete(
+        AgentStep(index=3, kind="tool_result", call_id="reused", result="final"),
+        ConsoleActivityPresentation("tool", "read", "success"),
+        "final",
+        None,
+        record_trajectory=False,
+    )
+    activity.observe(
+        AgentStep(index=4, kind="tool_proposed", call_id="reused", tool_name="read"), 2
+    )
+    activity.observe(
+        AgentStep(
+            index=5,
+            kind="tool_execution_started",
+            call_id="reused",
+            source_step_index=4,
+        ),
+        2,
+    )
+    activity.observe(
+        AgentStep(
+            index=2,
+            kind="tool_output",
+            call_id="reused",
+            source_step_index=1,
+            result="stale",
+        ),
+        1,
+    )
+    assert (
+        store.messages_for_session(session.id)[-1].activity_presentation.result_preview
+        is None
+    )
+    activity.observe(
+        AgentStep(
+            index=5,
+            kind="tool_output",
+            call_id="reused",
+            source_step_index=4,
+            result="current",
+        ),
+        2,
+    )
+    activity.finish(True)
+    row = store.messages_for_session(session.id)[-1]
+    assert row.activity_presentation.status == "stopped"
+    assert "current" in row.activity_presentation.result_preview
+
+
+@pytest.mark.parametrize(
+    "outcome, status", [("timeout", "timed_out"), ("cancelled", "stopped")]
+)
+def test_interrupted_result_keeps_partial_details_out_of_trajectory(outcome, status):
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    activity = ConsoleToolActivity(store, session.id)
+    activity.observe(
+        AgentStep(index=1, kind="tool_proposed", call_id="held", tool_name="read"), 1
+    )
+    activity.observe(
+        AgentStep(
+            index=2, kind="tool_execution_started", call_id="held", source_step_index=1
+        ),
+        1,
+    )
+    activity.observe(
+        AgentStep(
+            index=2,
+            kind="tool_output",
+            call_id="held",
+            source_step_index=1,
+            result="PARTIAL_ONLY",
+        ),
+        1,
+    )
+    activity.complete(
+        AgentStep(
+            index=3,
+            kind="tool_result",
+            call_id="held",
+            result="ERROR timeout",
+            tool_outcome=outcome,
+        ),
+        ConsoleActivityPresentation("tool", "read", "failed"),
+        "ERROR timeout",
+        None,
+        record_trajectory=True,
+    )
+    activity.finish(False)
+    row = store.messages_for_session(session.id)[-1]
+    assert row.activity_presentation.status == status
+    assert "PARTIAL_ONLY" in row.tool_output_full
+    assert "PARTIAL_ONLY" not in str(store._pending_trajectory_tool_rows)

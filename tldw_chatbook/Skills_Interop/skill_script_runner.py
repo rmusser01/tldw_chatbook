@@ -32,6 +32,7 @@ streams so the caller never closes a pipe out from under a blocked reader.
 
 from __future__ import annotations
 
+import codecs
 import os
 import platform
 import shutil
@@ -244,13 +245,14 @@ class _CappedSink:
         self._buf = bytearray()
         self._total = 0
 
-    def add(self, chunk: bytes) -> None:
-        """Record ``chunk``, keeping only what still fits under the cap."""
+    def add(self, chunk: bytes) -> bytes:
+        """Record and return only the bytes that still fit under the cap."""
         with self._lock:
             self._total += len(chunk)
             room = self._cap - len(self._buf)
-            if room > 0:
-                self._buf += chunk[:room]
+            retained = chunk[: max(0, room)]
+            self._buf += retained
+            return retained
 
     def snapshot(self) -> tuple[bytes, bool]:
         """Return ``(retained_bytes, was_capped)`` as of right now."""
@@ -258,7 +260,9 @@ class _CappedSink:
             return bytes(self._buf), self._total > self._cap
 
 
-def _read_capped(stream, sink: _CappedSink) -> None:
+def _read_capped(
+    stream, sink: _CappedSink, output=None, channel: str = "stdout"
+) -> None:
     """Drain a child stream to EOF, publishing incrementally into ``sink``.
 
     Reading deliberately continues past the cap, discarding the excess, so the
@@ -270,12 +274,33 @@ def _read_capped(stream, sink: _CappedSink) -> None:
         stream: The child's stdout/stderr pipe, in binary mode.
         sink: Bounded accumulator that publishes as bytes arrive.
     """
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    capped_notice = False
+
+    def publish(text: str) -> None:
+        if output is not None and text:
+            try:
+                output(channel, text)
+            except Exception:  # noqa: BLE001, S110 — best-effort display, no body logging
+                pass  # observation cannot interrupt pipe draining or log bodies
+
     try:
         while True:
-            chunk = stream.read(_READ_CHUNK_BYTES)
+            chunk = stream.read1(_READ_CHUNK_BYTES)
             if not chunk:
                 break
-            sink.add(chunk)
+            retained = sink.add(chunk)
+            if output is not None:
+                text = decoder.decode(retained)
+                if len(retained) < len(chunk) and not capped_notice:
+                    text += (
+                        decoder.decode(b"", final=True) + "\n… script output truncated"
+                    )
+                    capped_notice = True
+                publish(text)
+        if output is not None and not capped_notice:
+            tail = decoder.decode(b"", final=True)
+            publish(tail)
     except (OSError, ValueError):
         pass
     except Exception:  # noqa: BLE001 — a reader thread must never escape
@@ -434,12 +459,17 @@ def run_script_subprocess(
         pgid = process.pid
         streams = (process.stdout, process.stderr)
 
+        from tldw_chatbook.Agents.tool_output import current_tool_output_sink
+
+        output = current_tool_output_sink()
         readers: list[threading.Thread] = []
         try:
-            for stream, sink in zip(streams, (out_sink, err_sink)):
+            for stream, sink, channel in zip(
+                streams, (out_sink, err_sink), ("stdout", "stderr")
+            ):
                 thread = threading.Thread(
                     target=_read_capped,
-                    args=(stream, sink),
+                    args=(stream, sink, output, channel),
                     name="skill-script-reader",
                     daemon=True,
                 )

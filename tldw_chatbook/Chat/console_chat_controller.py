@@ -41,6 +41,8 @@ from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 
 from tldw_chatbook.Agents.approval_provenance import (
+    ApprovalDecisions,
+    append_denial_reason,
     approval_key_unanswered,
     selected_approval_key,
 )
@@ -2541,37 +2543,6 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
 _APPROVING_DECISIONS: tuple[str, ...] = ("approve_once", "approve_session", "always_allow")
 
 
-class ApprovalDecisions(dict):
-    """One approval round's verdict map, plus the keys nobody actually answered.
-
-    task-32280 fix round (R23). A round the user never answered -- Stop
-    mid-card, or a revoked round -- fails CLOSED: every undecided key
-    defaults to ``"deny"`` and the runtime must keep seeing exactly that,
-    so the tool does not run. But an unanswered card is not a refusal, and
-    ``request_mcp_approvals`` already writes the honest
-    ``denied-unresolved`` audit row for it. The review hooks, seeing only
-    ``"deny"``, then recorded a SECOND row that Audit renders as "Denied by
-    you" -- a decision nobody made.
-
-    This is a plain ``dict`` (every consumer keeps treating it as the
-    verdict map it always was) carrying one extra attribute so the two
-    hooks can tell the two cases apart at the one place it matters:
-    ``record_user_denial``. Deliberately NOT a distinct verdict string --
-    that would have to be taught to `_apply_verdict`, `apply_batch_
-    decisions`, `apply_promotion_decisions`, `builtin_gate.stamp` and the
-    refusal loop, and any one of them missing it would let a denied tool
-    run.
-
-    Attributes:
-        unresolved_keys: The verdict keys (``call_id`` where the runtime
-            can address the call, else ``llm_name`` -- the same keying
-            ``request_mcp_approvals`` uses) that were defaulted to deny by
-            cancellation or revocation rather than chosen by the user.
-    """
-
-    unresolved_keys: frozenset[str] = frozenset()
-
-
 def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str]) -> bool:
     """True when ``row``'s deny came from a Stop/revoke, not from the user.
 
@@ -2628,7 +2599,7 @@ def _review_decision(
         fact = None
     if decision == "allow_matching" and decision in allowing and not unanswered:
         fact = "approved"
-    return ToolReviewDecision(verdict, fact)
+    return ToolReviewDecision(append_denial_reason(verdict, decisions, key), fact)
 
 
 def _stamp_answer_provenance(
@@ -3888,13 +3859,28 @@ def build_virtual_cli_review_hook(
         ]
         if not pending:
             return {}
+        from tldw_chatbook.Agents.local_tool_provider import LOCAL_USER_DENY_REFUSAL
+
         decisions = request_approvals(pending)
         provider.apply_batch_decisions(run_id, decisions, pending)
+        reason_keys = {
+            row.call_id or row.llm_name
+            for row in pending
+            if append_denial_reason(
+                LOCAL_USER_DENY_REFUSAL, decisions, row.call_id or row.llm_name
+            )
+            != LOCAL_USER_DENY_REFUSAL
+        }
+        for row in pending:
+            if (row.call_id or row.llm_name) in reason_keys:
+                provider.record_user_denial(row.tool_name)
         return {
             row.call_id or row.llm_name: _review_decision(
                 row,
                 decisions,
-                "proceed",
+                LOCAL_USER_DENY_REFUSAL
+                if (row.call_id or row.llm_name) in reason_keys
+                else "proceed",
                 allowing=(
                     "approve_once",
                     "approve_session",
@@ -14967,7 +14953,7 @@ class ConsoleChatController:
             headless.unresolved_keys = frozenset(unique_keys)
             return headless
         event = threading.Event()
-        decisions: dict[str, str] = {}
+        decisions = ApprovalDecisions()
         round_id = str(uuid4())
         owning_session_id = (
             session_id
@@ -15146,6 +15132,11 @@ class ConsoleChatController:
             result.get("map") or {key: "deny" for key in unique_keys}
         )
         verdicts_out.unresolved_keys = frozenset(unresolved_keys)
+        verdicts_out.denial_reasons = {
+            key: reason
+            for key, reason in decisions.denial_reasons.items()
+            if verdicts_out.get(key) == "deny" and key not in unresolved_keys
+        }
         return verdicts_out
 
     def _record_cancelled_approval_decisions(
@@ -17294,6 +17285,16 @@ class ConsoleChatController:
             round_state["terminal_reason"] = "user"
             decisions_dict = round_state["decisions"]
             decisions_dict.update(decisions or {})
+            if isinstance(decisions_dict, ApprovalDecisions):
+                answers = ApprovalDecisions(
+                    decisions or {},
+                    denial_reasons=getattr(decisions, "denial_reasons", {}),
+                )
+                decisions_dict.denial_reasons = {
+                    key: reason
+                    for key, reason in answers.denial_reasons.items()
+                    if key in round_state["names"]
+                }
             approval_event = round_state["event"]
         approval_event.set()
 

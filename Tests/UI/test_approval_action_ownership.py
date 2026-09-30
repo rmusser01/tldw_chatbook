@@ -37,6 +37,7 @@ def test_published_press_keeps_its_generation_after_button_changes(monkeypatch):
 def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_first):
     select = SimpleNamespace(value="approve_session", disabled=False)
     fast = SimpleNamespace(disabled=False)
+    reason = SimpleNamespace(value="Keep this private.", disabled=False)
     toolbar = [SimpleNamespace(disabled=False) for _ in range(3)]
     card = SimpleNamespace(
         _batch_submitted=False,
@@ -45,17 +46,20 @@ def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_firs
         _batch_round_id="round-1",
         _batch_selects=[select],
         _batch_fast_buttons=[fast],
+        _batch_reason_inputs=[reason],
         query_one=Mock(side_effect=toolbar),
         ApprovalDecided=ChatApprovalCard.ApprovalDecided,
     )
     card._disable_batch_submit_controls = MethodType(
         ChatApprovalCard._disable_batch_submit_controls, card
     )
+    card._denial_reasons = MethodType(ChatApprovalCard._denial_reasons, card)
     published = []
 
     def publish(message):
         assert card._batch_submitted
-        assert select.disabled and fast.disabled and all(b.disabled for b in toolbar)
+        assert select.disabled and fast.disabled and reason.disabled
+        assert all(b.disabled for b in toolbar)
         published.append(message)
 
     card.post_message = publish
@@ -72,6 +76,9 @@ def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_firs
     assert published[0].decisions == {
         "call-1": "deny" if fast_first else "approve_session"
     }
+    assert published[0].decisions.denial_reasons == (
+        {"call-1": "Keep this private."} if fast_first else {}
+    )
 
 
 @pytest.mark.asyncio

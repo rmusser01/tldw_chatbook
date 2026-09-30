@@ -2655,6 +2655,28 @@ def run_agent_loop(
                     source_step_index=proposal_step.index,
                 )
                 trace_state["execution"] = execution_step
+
+                def publish_output(
+                    text: str, *, output_call=call, source=execution_step
+                ) -> None:
+                    # Separate from trace/add: partial bodies are never durable.
+                    projected = project_record(
+                        "display", output_call, ToolResult(ok=True, content=text)
+                    )
+                    try:
+                        deps.on_tool_activity(
+                            replace(
+                                source, kind="tool_output", result=projected.content
+                            )
+                        )
+                    except Exception:  # noqa: BLE001, S110 — best-effort display, no body logging
+                        pass
+
+                from .tool_output import tool_output_scope
+
+                output_observer = (
+                    publish_output if deps.on_tool_activity is not None else None
+                )
                 if call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
                         # Q6: refuse before dispatch — no budget consumption,
@@ -2938,11 +2960,12 @@ def run_agent_loop(
                     raw_args = call.args.get("args") or []
                     if not isinstance(raw_args, (list, tuple)):
                         raw_args = [raw_args]
-                    result = deps.run_skill_script(
-                        str(call.args.get("skill_name", "")),
-                        str(call.args.get("script_path", "")),
-                        [str(item) for item in raw_args],
-                    )
+                    with tool_output_scope(output_observer):
+                        result = deps.run_skill_script(
+                            str(call.args.get("skill_name", "")),
+                            str(call.args.get("script_path", "")),
+                            [str(item) for item in raw_args],
+                        )
                 elif (
                     call.name == FORK_CHAT_TOOL_NAME
                     and deps.fork_chat is not None
@@ -2977,14 +3000,15 @@ def run_agent_loop(
                     tool_step = add(
                         STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
                     )
-                    if deps.invoke_tool_at_step is not None:
-                        result = deps.invoke_tool_at_step(
-                            call,
-                            tool_step.index,
-                            current_call_correlation,
-                        )
-                    else:
-                        result = deps.invoke_tool(call)
+                    with tool_output_scope(output_observer):
+                        if deps.invoke_tool_at_step is not None:
+                            result = deps.invoke_tool_at_step(
+                                call,
+                                tool_step.index,
+                                current_call_correlation,
+                            )
+                        else:
+                            result = deps.invoke_tool(call)
 
                 tool_outcome = (
                     TOOL_OUTCOME_SUCCESS
