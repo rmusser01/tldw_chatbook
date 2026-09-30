@@ -14,8 +14,10 @@ This check finds that shape without importing anything: in every class of
 ``UI/Console_Modules`` that has no base class and no ``__getattr__``, each
 ``self.<name>`` read must be defined by the class itself -- a method, a class
 attribute, a ``self.<name> = ...`` assignment, or ``setattr(self, "<name>",
-...)``. A class with a base inherits names this AST cannot see, so it is out
-of scope rather than guessed at.
+...)``. ``self.<name> += ...``, ``self.<name>[k] = ...`` and
+``self.<name>.x = ...`` read ``<name>`` before storing, so they are reads,
+not definitions. A class with a base inherits names this AST cannot see, so
+it is out of scope rather than guessed at.
 
 It is the ``self`` analogue of ``test_no_undefined_module_globals.py``.
 """
@@ -23,6 +25,8 @@ It is the ``self`` analogue of ``test_no_undefined_module_globals.py``.
 from __future__ import annotations
 
 import ast
+import textwrap
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -45,6 +49,37 @@ def _self_attribute(node: ast.AST) -> str | None:
         and node.value.id == "self"
     ):
         return node.attr
+    return None
+
+
+def _bound_self_names(target: ast.AST) -> Iterator[str]:
+    """The ``<name>`` of each ``self.<name>`` an assignment target binds.
+
+    Only a bare ``self.<name>``, alone or unpacked from a tuple or list,
+    binds ``<name>``. ``self.<name>[key] = ...`` and ``self.<name>.x = ...``
+    read ``self.<name>`` to store into it, so they define nothing.
+    """
+
+    if (name := _self_attribute(target)) is not None:
+        yield name
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            yield from _bound_self_names(element)
+    elif isinstance(target, ast.Starred):
+        yield from _bound_self_names(target.value)
+
+
+def _self_read(node: ast.AST) -> str | None:
+    """The ``<name>`` a node reads from ``self``, else ``None``.
+
+    ``self.<name> += ...`` is a read although its target is a ``Store``.
+    """
+
+    if isinstance(node, ast.AugAssign):
+        return _self_attribute(node.target)
+    name = _self_attribute(node)
+    if name is not None and isinstance(node.ctx, ast.Load):
+        return name
     return None
 
 
@@ -76,16 +111,16 @@ def _defined_names(cls: ast.ClassDef) -> set[str]:
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names.add(node.target.id)
     for node in _own_nodes(cls):
+        # Not ``AugAssign``: ``self.<name> += 1`` reads ``<name>`` first. Not
+        # a bare ``self.<name>: T`` either: without a value nothing is bound.
         if isinstance(node, ast.Assign):
             targets = node.targets
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
             targets = [node.target]
         else:
             targets = []
         for target in targets:
-            for sub in ast.walk(target):
-                if (name := _self_attribute(sub)) is not None:
-                    names.add(name)
+            names.update(_bound_self_names(target))
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -114,6 +149,28 @@ def _in_scope(cls: ast.ClassDef) -> bool:
     )
 
 
+def _unresolved_in(tree: ast.AST, relative: str) -> tuple[int, dict[str, int]]:
+    """Count the in-scope classes of ``tree`` and map each unresolved read to its line."""
+
+    scanned = 0
+    unresolved: dict[str, int] = {}
+    for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        if not _in_scope(cls):
+            continue
+        scanned += 1
+        defined = _defined_names(cls)
+        for node in _own_nodes(cls):
+            name = _self_read(node)
+            if (
+                name is None
+                or name in defined
+                or (name.startswith("__") and name.endswith("__"))
+            ):
+                continue
+            unresolved.setdefault(f"{relative}::{cls.name}.{name}", node.lineno)
+    return scanned, unresolved
+
+
 def _unresolved_reads() -> tuple[int, dict[str, int]]:
     """Count the in-scope classes and map each unresolved read to its line."""
 
@@ -122,21 +179,9 @@ def _unresolved_reads() -> tuple[int, dict[str, int]]:
     for path in sorted(_CONSOLE_MODULES.glob("*.py")):
         relative = path.relative_to(_REPO_ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
-        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
-            if not _in_scope(cls):
-                continue
-            scanned += 1
-            defined = _defined_names(cls)
-            for node in _own_nodes(cls):
-                name = _self_attribute(node)
-                if (
-                    name is None
-                    or not isinstance(node.ctx, ast.Load)
-                    or name in defined
-                    or (name.startswith("__") and name.endswith("__"))
-                ):
-                    continue
-                unresolved.setdefault(f"{relative}::{cls.name}.{name}", node.lineno)
+        count, reads = _unresolved_in(tree, relative)
+        scanned += count
+        unresolved.update(reads)
     return scanned, unresolved
 
 
@@ -157,3 +202,73 @@ def test_exempt_reads_are_still_unresolved(key: str) -> None:
     """An exemption whose read got fixed must be deleted with it."""
 
     assert key in _unresolved_reads()[1], f"{key} is resolved now; drop its exemption"
+
+
+def _probe_reads(body: str) -> set[str]:
+    """Unresolved reads of a base-less ``Probe`` class whose body is ``body``."""
+
+    source = "class Probe:\n" + textwrap.indent(body, "    ")
+    return set(_unresolved_in(ast.parse(source), "probe.py")[1])
+
+
+@pytest.mark.parametrize(
+    ("body", "missing"),
+    [
+        ("def bump(self):\n    self.count += 1\n", "count"),
+        ("def bump(self, key):\n    self.counts[key] += 1\n", "counts"),
+        ("def put(self, key):\n    self.cache[key] = 1\n", "cache"),
+        ("def ready(self):\n    self.state.ready = True\n", "state"),
+        (
+            "def __init__(self):\n    self.ready: bool\n"
+            "def read(self):\n    return self.ready\n",
+            "ready",
+        ),
+    ],
+    ids=[
+        "augassign",
+        "augassign-subscript",
+        "subscript-store",
+        "attr-store",
+        "bare-annotation",
+    ],
+)
+def test_a_store_that_reads_first_does_not_define_the_name(
+    body: str, missing: str
+) -> None:
+    """``self.x += 1``, ``self.x[k] = v`` and ``self.x.y = v`` read ``self.x``.
+
+    Each raises ``AttributeError`` when ``x`` was never bound, so none of
+    them may count as the definition that clears ``x`` (Qodo, PR #2933).
+    """
+
+    assert _probe_reads(body) == {f"probe.py::Probe.{missing}"}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "def __init__(self):\n    self.count = 0\n"
+        "def bump(self):\n    self.count += 1\n",
+        "def __init__(self):\n    self.counts = {}\n"
+        "def bump(self, key):\n    self.counts[key] += 1\n",
+        "count = 0\ndef bump(self):\n    self.count += 1\n",
+        "def __init__(self):\n    self.a, (self.b, *self.c) = 1, (2, 3)\n"
+        "def read(self):\n    return self.a, self.b, self.c\n",
+        "def __init__(self):\n    self.ready: bool = False\n"
+        "def read(self):\n    return self.ready\n",
+        "def __init__(self):\n    setattr(self, 'late', 1)\n"
+        "def read(self):\n    return self.late\n",
+    ],
+    ids=[
+        "init-then-bump",
+        "init-then-subscript-bump",
+        "class-attr",
+        "unpacking",
+        "annotated",
+        "setattr",
+    ],
+)
+def test_a_real_binding_defines_the_name(body: str) -> None:
+    """Negative control: every way a class really binds ``self.x`` still clears it."""
+
+    assert _probe_reads(body) == set()
