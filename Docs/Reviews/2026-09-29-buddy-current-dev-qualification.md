@@ -90,3 +90,6 @@ its own approval. The [approval rebase receipt](artifacts/buddy-v1-32108/approva
 records sanitized outcomes and local-log hashes separately. Earlier evidence
 keeps its original source attribution. No full suite or paid provider calls ran;
 native and physical voice acceptance remains open.
+
+
+The provider-preset rebase onto dev `2a74675eea24bc2d96b40bf1da2d6550043a58a1` preserves all seven preceding PR patches exactly. At source `ce02e03442986d706e73455536626700cf52422c`, the targeted Buddy and incoming provider tests passed **187 cases in 66.55s**: 16 Buddy qualification cases and 171 provider-preset, setup-persistence, env-readiness and catalog cases. All 11 derived-artifact preflight guards passed. Fresh and schema69 upgrade profiles still reach schema73 with unchanged ownership, workspace-default and Static/Dynamic assertions. The [preset rebase receipt](artifacts/buddy-v1-32108/preset-dev-20260930/verification.json) records sanitized outcomes and local-log hashes separately. Earlier evidence retains its original source attribution. No full local suite or paid provider calls ran; native and physical voice acceptance remains open. ADR required: no; existing ADR126 and ADR139 govern unchanged Buddy behavior.
