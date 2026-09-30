@@ -338,7 +338,8 @@ def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
     speak-stop swap reads "⏹ Stop speech" instead of pointing at a 🔊 that
     is not there. Only glyph-only buttons need naming (DS-01); the key
     hints and j/k/Esc framing come from task-362's static guide, which this
-    replaces.
+    replaces. A disabled Fork is never advertised as ``f Fork`` (TASK-33621.10):
+    ``f`` would only repeat the refusal, which the transcript shows instead.
 
     Args:
         actions: The row's actions as returned by
@@ -353,6 +354,8 @@ def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
     segments_by_id = dict(ACTION_GUIDE_SEGMENTS)
     parts: list[str] = []
     for action in actions:
+        if action.action_id == "fork" and not action.enabled:
+            continue
         segment = segments_by_id.get(action.action_id)
         if segment is not None and segment not in parts:
             parts.append(segment)

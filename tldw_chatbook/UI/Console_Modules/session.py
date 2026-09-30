@@ -2225,9 +2225,9 @@ class ConsoleSessionController:
             return
         store = self._ensure_console_chat_store()
         try:
-            session_id = store.session_id_for_message(message_id)
-            prefix_ids = store.active_path_message_ids(session_id)
-            prefix_ids = prefix_ids[: prefix_ids.index(message_id) + 1]
+            # The copied lineage, not the raw active path: command notes such
+            # as /help output are excluded from a fork (TASK-33621.10).
+            prefix_ids = store.fork_source_message_ids(message_id)
             prefix = tuple(store.get_message(item) for item in prefix_ids)
             image_selections = self._capture_fork_image_selections_fn(prefix)
             fence = store.issue_fork_fence(

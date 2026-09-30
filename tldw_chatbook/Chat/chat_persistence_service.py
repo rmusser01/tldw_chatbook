@@ -1907,7 +1907,10 @@ class ChatPersistenceService:
             if (
                 row is None
                 or row["conversation_id"] != source_id
-                or row["parent_message_id"] != previous_source_id
+                or self._fork_source_parent(
+                    cursor, source_id, row["parent_message_id"], previous_source_id
+                )
+                != previous_source_id
                 or row["version"] != message.source_persisted_revision
                 or row["deleted"]
                 or row["content"] != message.source_persisted_content
@@ -1941,6 +1944,39 @@ class ChatPersistenceService:
         else:
             raise RuntimeError("Console fork source changed.")
         return source["root_id"], source_id, previous_source_id
+
+    @staticmethod
+    def _fork_source_parent(
+        cursor: Any,
+        source_id: str,
+        parent_id: str | None,
+        previous_id: str | None,
+    ) -> str | None:
+        """Walk a copied row's saved parent up past saved System notes.
+
+        A fork copies only the USER/ASSISTANT chain (ADR-092 §2), so a saved
+        SYSTEM row -- a promoted ``/help`` note, image-edit failure guidance --
+        may sit between two copied rows. Only live ``system`` rows of the
+        source conversation are skipped (TASK-33621.10); anything else stops
+        the walk and the caller's exact-parent check decides.
+        """
+        for _ in range(CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH):
+            if parent_id is None or parent_id == previous_id:
+                return parent_id
+            row = cursor.execute(
+                "SELECT conversation_id, parent_message_id, sender, deleted "
+                "FROM messages WHERE id = ?",
+                (parent_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["deleted"]
+                or row["conversation_id"] != source_id
+                or row["sender"] != "system"
+            ):
+                return parent_id
+            parent_id = row["parent_message_id"]
+        return parent_id
 
     def _link_console_fork_citations(
         self,

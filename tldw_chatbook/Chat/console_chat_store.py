@@ -89,6 +89,9 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedGeneration,
     ConsoleForkProjectedMessage,
     ConsoleForkProjectedVideoTombstone,
+    console_fork_prefix_refusal,
+    console_fork_skips,
+    console_fork_source_ids,
     encode_console_fork_message_metadata,
     fingerprint_console_fork_configuration,
     fingerprint_console_fork_selected_image,
@@ -6866,6 +6869,9 @@ class ConsoleChatStore:
         if self._message_session_index.get(user.id) != session_id:
             raise RuntimeError("Committed USER owner changed sessions.")
         user.persisted_message_id = commit.user_message_id
+        # TASK-33621.10: mirror the committed rows' parents as reload does (the
+        # USER row was written via ``durable_parent_for_message``'s same walk).
+        user.parent_message_id = self._nearest_persisted_ancestor_id(session_id, user)
         # The atomic acceptance transaction creates the durable USER row, but
         # the optimistic live echo accumulated its trajectory observations
         # before it had that durable identity. Publish the sidecar owner now so
@@ -6887,6 +6893,7 @@ class ConsoleChatStore:
         if assistant.role is not ConsoleMessageRole.ASSISTANT:
             raise RuntimeError("Committed assistant owner changed role.")
         assistant.persisted_message_id = commit.assistant_message_id
+        assistant.parent_message_id = commit.user_message_id
         # TASK-22302: arm here, AFTER the durable id is assigned.
         # `append_message` gates arming on its own `persist` flag, which is
         # False on this path and correctly so -- the checkpoint already wrote
@@ -7285,6 +7292,8 @@ class ConsoleChatStore:
         ].persisted_message_id
         for native_id in active_path[boundary_index + 1 : leaf_index + 1]:
             message = self._nodes_by_session[session_id][native_id]
+            if console_fork_skips(message) and message.persisted_message_id is None:
+                continue
             if (
                 type(message.persisted_message_id) is not str
                 or not message.persisted_message_id
@@ -7294,12 +7303,27 @@ class ConsoleChatStore:
             previous_id = message.persisted_message_id
         return active_leaf_id
 
+    def _fork_lineage(
+        self, session_id: str, prefix: Sequence[str], *, durable: bool
+    ) -> tuple[ConsoleForkLineageFence, ...]:
+        nodes = self._nodes_by_session[session_id]
+        return tuple(
+            self._fork_lineage_entry(
+                session_id,
+                nodes[native_id],
+                durable=durable,
+                lineage_parent_id=prefix[index - 1] if index else None,
+            )
+            for index, native_id in enumerate(prefix)
+        )
+
     def _fork_lineage_entry(
         self,
         session_id: str,
         message: ConsoleChatMessage,
         *,
         durable: bool,
+        lineage_parent_id: str | None,
     ) -> ConsoleForkLineageFence:
         if message.generation_projection_quarantined:
             raise ValueError(
@@ -7308,11 +7332,10 @@ class ConsoleChatStore:
         if not self._fork_message_state_is_eligible(message.role, message.status):
             raise ValueError("Console fork message state is unavailable.")
         content, variant_id = self._fork_visible_selection(message)
+        # Siblings hang off the native parent; the copied parent skips notes.
         parent_id = self._native_parent_by_message.get(message.id)
-        expected_persisted_parent = (
-            self._nodes_by_session[session_id][parent_id].persisted_message_id
-            if parent_id is not None
-            else None
+        expected_persisted_parent = self._nearest_persisted_ancestor_id(
+            session_id, message
         )
         if durable and message.parent_message_id != expected_persisted_parent:
             raise ValueError("Saved Console fork parent is unavailable.")
@@ -7327,7 +7350,7 @@ class ConsoleChatStore:
         return ConsoleForkLineageFence(
             native_message_id=message.id,
             persisted_message_id=message.persisted_message_id,
-            native_parent_id=parent_id,
+            native_parent_id=lineage_parent_id,
             turn_id=message.turn_id,
             trace_turn_id=(
                 message.trace_turn_id
@@ -7369,7 +7392,7 @@ class ConsoleChatStore:
         active_ids = self.active_path_message_ids(session_id)
         if message_id not in active_ids:
             return ConsoleForkEligibility(False, "Message is not on the active path.")
-        prefix = active_ids[: active_ids.index(message_id) + 1]
+        prefix = console_fork_source_ids(active_ids, message_id, nodes)
         session = self._sessions[session_id]
         durability = self._fork_durability(session)
         durable = durability == "durable"
@@ -7378,35 +7401,19 @@ class ConsoleChatStore:
                 False,
                 "Durable Console Library policy is not loaded.",
             )
-        for native_id in prefix:
-            message = nodes.get(native_id)
-            if message is not None and message.generation_projection_quarantined:
-                return ConsoleForkEligibility(
-                    False,
-                    "Canonical generation is unavailable; reload before forking.",
-                )
-            if message is None or not self._fork_message_state_is_eligible(
-                message.role,
-                message.status,
-            ):
-                return ConsoleForkEligibility(
-                    False,
-                    "Only user and assistant messages can be forked.",
-                )
-            try:
-                content, _ = self._fork_visible_selection(message)
-            except ValueError as exc:
-                return ConsoleForkEligibility(False, str(exc))
-            if not content.strip():
-                return ConsoleForkEligibility(
-                    False,
-                    "Message must contain stable completed text before forking.",
-                )
-            if durable and not message.persisted_message_id:
-                return ConsoleForkEligibility(
-                    False,
-                    "Every message through the selected boundary must be saved before forking.",
-                )
+        refusal = console_fork_prefix_refusal(
+            prefix,
+            nodes,
+            durable=durable,
+            persisted_parent=lambda item: self._nearest_persisted_ancestor_id(
+                session_id, item
+            ),
+            state_is_eligible=self._fork_message_state_is_eligible,
+            visible_content=lambda item: self._fork_visible_selection(item)[0],
+            can_fork=lambda native_id: self._fork_eligibility(native_id).eligible,
+        )
+        if refusal is not None:
+            return ConsoleForkEligibility(False, refusal)
         if durable:
             try:
                 self._fork_database_active_leaf(session_id, message_id)
@@ -7420,6 +7427,14 @@ class ConsoleChatStore:
         except (TypeError, ValueError) as exc:
             return ConsoleForkEligibility(False, str(exc))
         return ConsoleForkEligibility(True)
+
+    def fork_source_message_ids(self, message_id: str) -> tuple[str, ...]:
+        """Return the rows a fork through ``message_id`` copies, root first."""
+        with self._fork_source_lock:
+            session_id = self._message_session_index[message_id]
+            nodes = self._nodes_by_session.get(session_id, {})
+            active_ids = self.active_path_message_ids(session_id)
+            return tuple(console_fork_source_ids(active_ids, message_id, nodes))
 
     def issue_fork_fence(
         self,
@@ -7446,8 +7461,7 @@ class ConsoleChatStore:
             raise ValueError(eligibility.reason)
         session_id = self._message_session_index[message_id]
         session = self._sessions[session_id]
-        active_ids = self.active_path_message_ids(session_id)
-        prefix = active_ids[: active_ids.index(message_id) + 1]
+        prefix = self.fork_source_message_ids(message_id)
         durability = self._fork_durability(session)
         durable = durability == "durable"
         selections = tuple(image_selections)
@@ -7463,14 +7477,7 @@ class ConsoleChatStore:
         active_leaf_persisted_id = (
             self._fork_database_active_leaf(session.id, message_id) if durable else None
         )
-        lineage = tuple(
-            self._fork_lineage_entry(
-                session_id,
-                self._nodes_by_session[session_id][native_id],
-                durable=durable,
-            )
-            for native_id in prefix
-        )
+        lineage = self._fork_lineage(session_id, prefix, durable=durable)
         trace_boundary = session.fork_trace_boundary if not durable else None
         trace_boundary_reader = getattr(
             self.persistence,
@@ -7546,10 +7553,8 @@ class ConsoleChatStore:
             eligibility = self.fork_eligibility(fence.boundary_message_id)
             if not eligibility.eligible:
                 return False
-            active_ids = self.active_path_message_ids(session.id)
-            boundary_index = active_ids.index(fence.boundary_message_id)
-            prefix = active_ids[: boundary_index + 1]
-            if tuple(prefix) != tuple(item.native_message_id for item in fence.lineage):
+            prefix = self.fork_source_message_ids(fence.boundary_message_id)
+            if prefix != tuple(item.native_message_id for item in fence.lineage):
                 return False
             if not self._validate_fork_image_selections(
                 self._nodes_by_session[session.id],
@@ -7590,14 +7595,7 @@ class ConsoleChatStore:
                 != fence.source_configuration_fingerprint
             ):
                 return False
-            current_lineage = tuple(
-                self._fork_lineage_entry(
-                    session.id,
-                    self._nodes_by_session[session.id][native_id],
-                    durable=durable,
-                )
-                for native_id in prefix
-            )
+            current_lineage = self._fork_lineage(session.id, prefix, durable=durable)
             current_trace_boundary = (
                 None if durable else session.fork_trace_boundary
             )
