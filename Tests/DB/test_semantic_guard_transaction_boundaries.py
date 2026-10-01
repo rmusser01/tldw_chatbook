@@ -287,6 +287,51 @@ def test_a_non_class_cursor_factory_is_refused() -> None:
         conn.close()
 
 
+@pytest.mark.parametrize("end", ["commit", "rollback"])
+def test_the_direct_commit_and_rollback_methods_report_a_boundary(end: str) -> None:
+    """``connection.commit()``/``rollback()`` notify the listener themselves.
+
+    Args:
+        end: The connection method that ends the transaction.
+    """
+    conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
+    try:
+        conn.execute("CREATE TABLE t(x)")
+        calls: list[None] = []
+        conn.set_transaction_boundary_listener(lambda: calls.append(None))
+        conn.execute("BEGIN")
+        conn.execute("INSERT INTO t VALUES (1)")
+        before = len(calls)
+        getattr(conn, end)()
+        assert not conn.in_transaction
+        assert len(calls) == before + 1, f"{end}() did not report the boundary"
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("end", ["commit", "rollback"])
+def test_the_direct_methods_advance_the_managed_guard_generation(
+    tmp_path: Path, end: str
+) -> None:
+    """Ending a transaction through the connection methods starts a new generation.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+        end: The connection method that ends the transaction.
+    """
+    db = CharactersRAGDB(tmp_path / f"direct-{end}.sqlite", f"direct-{end}")
+    try:
+        _seed_traced_message(db)
+        conn = db.get_connection()
+        authorization = db._semantic_mutation_authorization_for_coordinator(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        generation = authorization._transaction_generation
+        getattr(conn, end)()
+        assert authorization._transaction_generation != generation
+    finally:
+        db.close_connection()
+
+
 def test_a_script_that_ends_and_restarts_a_transaction_reports_a_boundary() -> None:
     """``in_transaction`` is True before and after, yet the transaction changed."""
     conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
