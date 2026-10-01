@@ -21,7 +21,7 @@ from tldw_chatbook.Backup_Recovery.control_records import admission_authority, r
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir=' + json.dumps(str(base/'data')) + '\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir=' + json.dumps(str(base/'data'),ensure_ascii=False) + '\n',encoding='utf-8')
 selector.chmod(0o600)
 from tldw_chatbook import config
 data = config.get_user_data_dir()
@@ -293,6 +293,17 @@ print('retired and reopened')
 
 def test_remote_mcp_accepted_await_retains_lease_and_denies_new_intake(tmp_path):
     _run(tmp_path, "retained", "fresh", script=_RETENTION)
+
+
+@pytest.mark.parametrize(
+    "script,route,state",
+    [(_SCRIPT, "load_section", "ordinary"), (_RETENTION, "retained", "fresh")],
+    ids=["configured", "restored"],
+)
+def test_remote_mcp_fixtures_preserve_unicode_paths(tmp_path, script, route, state):
+    profile = tmp_path / "profilé-😄"
+    profile.mkdir(mode=0o700)
+    _run(profile, route, state, script=script)
 
 
 def test_remote_mcp_supported_operation_set_has_no_unguarded_async_route():
