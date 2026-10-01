@@ -172,6 +172,7 @@ class _VoiceTraceImportAuthorization:
             and self._connection.in_transaction
         )
 
+
 _CANVAS_REVISION_DELETE_GUARD_FUNCTION = "canvas_revision_delete_authorized"
 _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION = "canvas_revision_payload_valid"
 _NOTES_ORGANIZATION_SYNC_ID_TABLES = (
@@ -3907,6 +3908,7 @@ UPDATE db_schema_version
                         f"thread={threading.get_ident()} "
                         f"exception_type={type(exc).__name__}"
                     )
+
     def backup_database(self, backup_file_path: str) -> bool:
         """
         Creates a backup of the current database to the specified file path.
@@ -7696,9 +7698,7 @@ UPDATE db_schema_version
                     (self._SCHEMA_NAME,),
                 )
                 if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        "Notes organization schema version update failed"
-                    )
+                    raise SchemaError("Notes organization schema version update failed")
             if self._get_db_version(conn) != 58:
                 raise SchemaError(
                     f"[{self._SCHEMA_NAME} V57→V58] Migration version check failed"
@@ -7872,7 +7872,9 @@ UPDATE db_schema_version
                     "V62→V63",
                 )
                 if cursor.execute("PRAGMA foreign_key_check").fetchall():
-                    raise SchemaError("Console trace GC migration foreign key audit failed")
+                    raise SchemaError(
+                        "Console trace GC migration foreign key audit failed"
+                    )
                 version_cursor = cursor.execute(
                     "UPDATE db_schema_version SET version = 63 "
                     "WHERE schema_name = ? AND version = 62",
@@ -8114,7 +8116,9 @@ UPDATE db_schema_version
                     "V67→V68",
                 )
                 if cursor.execute("PRAGMA foreign_key_check").fetchall():
-                    raise SchemaError("Canvas runtime migration foreign key audit failed")
+                    raise SchemaError(
+                        "Canvas runtime migration foreign key audit failed"
+                    )
                 version_cursor = cursor.execute(
                     "UPDATE db_schema_version SET version = 68 "
                     "WHERE schema_name = ? AND version = 67",
@@ -13062,7 +13066,9 @@ UPDATE db_schema_version
         safe_search_term = build_and_match_query(title_query)
         if not safe_search_term:
             return []
-        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace("archived", "c.archived")
+        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace(
+            "archived", "c.archived"
+        )
         base_query = f"""
                      SELECT c.*
                      FROM conversations_fts fts
@@ -14244,9 +14250,7 @@ UPDATE db_schema_version
             )
             raise
 
-    def get_message_versions_by_ids(
-        self, message_ids: Iterable[str]
-    ) -> Dict[str, int]:
+    def get_message_versions_by_ids(self, message_ids: Iterable[str]) -> Dict[str, int]:
         """Return current positive versions for many non-deleted messages.
 
         task-32804.12 ([D2]): ``_durable_context_snapshots`` read one
@@ -15163,8 +15167,7 @@ UPDATE db_schema_version
                             role=current["role"],
                             raw_state=update_data["assistant_generation_state"],
                             has_valid_active_continuation=(
-                                checkpoint is not None
-                                and checkpoint.state == "active"
+                                checkpoint is not None and checkpoint.state == "active"
                             ),
                         )
                     except ValueError:
@@ -17777,9 +17780,7 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
-    def list_deleted_notes(
-        self, limit: int = 20, offset: int = 0
-    ) -> Dict[str, Any]:
+    def list_deleted_notes(self, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
         """Page the soft-deleted notes behind the Library Notes Trash view.
 
         task-32144: the inverse of ``list_notes``' visibility. Both the page
@@ -17845,9 +17846,7 @@ UPDATE db_schema_version
         """
 
     @staticmethod
-    def replace_note_links(
-        cursor: sqlite3.Cursor, note_id: str, content: str
-    ) -> None:
+    def replace_note_links(cursor: sqlite3.Cursor, note_id: str, content: str) -> None:
         """Rewrite one note's outgoing links to match its body.
 
         Call this from every writer of ``notes.content``, inside that writer's
@@ -18068,9 +18067,7 @@ UPDATE db_schema_version
                 tuple(note_ids),
             ).fetchall()
         }
-        link_tuples: Dict[str, List[List[Any]]] = {
-            note_id: [] for note_id in note_ids
-        }
+        link_tuples: Dict[str, List[List[Any]]] = {note_id: [] for note_id in note_ids}
         subject_expression = """
             CASE
               WHEN domain = 'notes.folder_link'
@@ -18201,8 +18198,7 @@ UPDATE db_schema_version
             result[note_id] = {
                 "keyword_metadata": visible_keywords,
                 "keyword_metadata_total": keyword_total,
-                "keyword_metadata_truncated": keyword_total
-                > len(visible_keywords),
+                "keyword_metadata_truncated": keyword_total > len(visible_keywords),
                 "folders": visible_folders,
                 "folder_total": folder_total,
                 "folders_truncated": folder_total > len(visible_folders),
@@ -18434,9 +18430,7 @@ UPDATE db_schema_version
                 if normalized_query is not None:
                     if row["hit_0"] or row["hit_1"]:
                         matched_fields.add("title")
-                    content_hit_indexes = [2] + (
-                        [3] if fts_query is not None else []
-                    )
+                    content_hit_indexes = [2] + ([3] if fts_query is not None else [])
                     keyword_hit_index = 4 if fts_query is not None else 3
                     if any(row[f"hit_{index}"] for index in content_hit_indexes):
                         matched_fields.add("content")
@@ -19189,9 +19183,7 @@ UPDATE db_schema_version
             or any(character not in "0123456789abcdef" for character in fingerprint)
         ):
             fingerprint = hashlib.sha256(
-                ("cancelled:" + str(receipt["requested_keywords_json"])).encode(
-                    "utf-8"
-                )
+                ("cancelled:" + str(receipt["requested_keywords_json"])).encode("utf-8")
             ).hexdigest()
         base_version = stored_request.get("expected_version")
         if not isinstance(base_version, int) or isinstance(base_version, bool):
@@ -24281,7 +24273,9 @@ class TransactionContextManager:
                         self.cursor = None
                 finally:
                     if self.connection_use_token is not None:
-                        self.db._connection_quiescence.end_use(self.connection_use_token)
+                        self.db._connection_quiescence.end_use(
+                            self.connection_use_token
+                        )
                         self.connection_use_token = None
         finally:
             self._maintenance_context.__exit__(exc_type, exc_val, exc_tb)

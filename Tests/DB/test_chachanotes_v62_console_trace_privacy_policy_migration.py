@@ -26,11 +26,15 @@ def test_v61_policy_detail_survives_and_new_controls_start_inherit(
 
     migrated = CharactersRAGDB(path, client_id="trace-privacy-v62")
     try:
-        row = migrated.get_connection().execute(
-            "SELECT capture_detail, capture_enabled, pii_redaction_enabled "
-            "FROM console_conversation_capture_policy WHERE conversation_id = ?",
-            (conversation_id,),
-        ).fetchone()
+        row = (
+            migrated.get_connection()
+            .execute(
+                "SELECT capture_detail, capture_enabled, pii_redaction_enabled "
+                "FROM console_conversation_capture_policy WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            .fetchone()
+        )
         assert row is not None
         assert tuple(row) == ("full", None, None)
         assert (
