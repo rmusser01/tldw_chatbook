@@ -281,3 +281,37 @@ def test_fresh_context_executor_jobs_do_not_share_context() -> None:
         assert executor.submit(marker.get).result(timeout=5) == "unset"
     finally:
         executor.shutdown(wait=True)
+
+
+def test_installing_the_executor_shuts_the_pool_it_replaces() -> None:
+    """``on_load`` shuts down a replaced default pool and keeps its own (Qodo, #2897).
+
+    The loop's final ``shutdown_default_executor`` joins only the current
+    default, so a pool that was the default before ``Load`` -- a host's, a
+    test fixture's, an earlier app's on the same loop -- would otherwise keep
+    its threads with no shutdown. A second ``Load`` keeps the installed one.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Utils.text_selection_crash_guard import (
+        FreshContextExecutor,
+        ThreadWorkerContextGuard,
+    )
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        previous = ThreadPoolExecutor(max_workers=1)
+        loop.set_default_executor(previous)
+        await loop.run_in_executor(None, lambda: None)  # a live pool thread
+
+        guard = ThreadWorkerContextGuard()
+        guard.on_load()
+        installed = getattr(loop, "_default_executor", None)
+        assert isinstance(installed, FreshContextExecutor)
+        with pytest.raises(RuntimeError):
+            previous.submit(lambda: None)  # shut down
+
+        guard.on_load()
+        assert getattr(loop, "_default_executor", None) is installed
+
+    asyncio.run(scenario())

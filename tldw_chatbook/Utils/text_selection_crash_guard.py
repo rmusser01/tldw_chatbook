@@ -190,12 +190,22 @@ class ThreadWorkerContextGuard:
     """
 
     def on_load(self) -> None:
-        """Install :class:`FreshContextExecutor` as the running loop's default executor."""
+        """Install :class:`FreshContextExecutor` as the running loop's default executor.
+
+        An installed one is kept. A pool it replaces is shut down: the loop's
+        final ``shutdown_default_executor`` joins only the current default, so
+        a host's, a test fixture's or an earlier app's pool would otherwise
+        keep its threads (Qodo, #2897).
+        """
+        loop = asyncio.get_running_loop()
+        previous = getattr(loop, "_default_executor", None)
+        if isinstance(previous, FreshContextExecutor):
+            return
         # "asyncio" keeps asyncio's own thread names (asyncio_0, ...), which
         # the boot thread census allowlists.
-        asyncio.get_running_loop().set_default_executor(
-            FreshContextExecutor(thread_name_prefix="asyncio")
-        )
+        loop.set_default_executor(FreshContextExecutor(thread_name_prefix="asyncio"))
+        if previous is not None:
+            previous.shutdown(wait=False)
 
 
 class TextualAppGuards(TextSelectionCrashGuard, ThreadWorkerContextGuard):
