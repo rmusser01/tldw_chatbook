@@ -52,6 +52,8 @@ How:
 - _QuiescentSQLiteConnection now reports transaction boundaries through set_transaction_boundary_listener.
 - Its cursor compares in_transaction before and after every execute/executemany/executescript. The check before a statement also catches a C-level commit from 'with conn:'. executescript always reports a boundary.
 - commit()/rollback() report as well.
+- Every cursor the connection creates is tracked (review on #2894): a caller's cursor type is combined with the tracked cursor through a cached subclass that puts the tracked cursor first, so its statement methods bracket the caller's overrides even without super(); plain sqlite3.Cursor maps to the tracked cursor. A factory that cannot be made tracked fails closed with TypeError: a non-Cursor factory, or a tracked subclass that replaces execute/executemany/executescript (the tracked cursor cannot precede its own subclass in the MRO).
+- A stale cursor's failed call (its connection already closed) releases its quiescence use token, so it cannot pin the registry and block maintenance.
 - register_semantic_mutation_guard uses the listener on quiescent connections (all ChaChaNotes connections; the factory is enforced at open) and keeps trace_transaction as a fallback for any other connection type.
 - Since these connections run isolation_level=None, every transaction boundary is observable this way.
 
@@ -61,9 +63,16 @@ Measured (isolated profile, load avg ~30):
 - 3 MiB image add_message: 1,217 ms -> 28.8 ms median
 - text add_message: 10.3 -> 6.6 ms
 
-Tests: Tests/DB/test_semantic_guard_transaction_boundaries.py adds 4 tests. The no-trace test failed first (36 traced statements per add_message); the 3 preservation tests pass before and after.
+Tests, all in Tests/DB/test_semantic_guard_transaction_boundaries.py:
+- managed connections never trace statements (failed first: 36 traced statements per add_message);
+- fail-closed preservation: cached COMMIT+BEGIN inside a scope is refused, an authorized update in its own transaction still succeeds, a C-level commit is seen before the next statement (these pass before and after);
+- scripts: one that ends and restarts a transaction reports a boundary, and advances the managed guard generation;
+- direct commit()/rollback() each notify the listener and advance the managed generation;
+- cursor factories: any factory (plain Cursor, an observing subclass, one overriding every statement method without super()) still reports the C-level-commit-then-BEGIN boundary; the composition rule unit test (tracked cursor first, cached, plain Cursor and tracked types pass through); a non-class factory and a tracked subclass replacing a statement method are refused;
+- a cursor used after its connection closed releases its use token.
+The review-driven tests each failed before their fix (generation 9 == 9 for the factory cases) or under a negative control.
 
-Regression: Tests/DB, Tests/ChaChaNotesDB and the semantic-guard / trace-collector Chat and UI tests fail the identical 294 pre-existing ids on branch and base (TASK-33370/33371), 0 new failures, and the branch has 4 more passes.
+Regression: Tests/DB, Tests/ChaChaNotesDB and the semantic-guard / trace-collector Chat and UI tests fail the identical 294 pre-existing ids on branch and base (TASK-33370/33371), 0 new failures, and the branch has 4 more passes. Re-run 2026-09-30 after rebasing onto dev dfee4bf4c6: Tests/DB 230 failed vs dev's 232, no new failures (the two apparent ones, the v48 SIGKILL migration test and an FTS cache test, fail on dev too).
 
 Ruff findings on base_db.py are unchanged. Preflight passes.
 
