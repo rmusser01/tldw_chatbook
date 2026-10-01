@@ -228,7 +228,7 @@ git diff --check
 - Consumes: F2 registry projections; existing passphrase-derived skill trust crypto, protected snapshots and keyring posture. The existing skill marker pair is not the new plugin marker tuple.
 - Produces: PluginMarker is a frozen model with generation: int, operation_id: str, recovery_snapshot_digest: str. authority_message(purpose: str, payload: dict) -> bytes uses a closed purpose set. PluginAuthorityStore(store_dir: Path, marker_store: object) provides unlock(passphrase: str), prepare(snapshot: dict, old: PluginMarker, new: PluginMarker), certify_commit(old: PluginMarker, new: PluginMarker), advance_marker(old: PluginMarker, new: PluginMarker), verify_current() -> dict. Protected payload schema includes complete authority, root fences and references; methods validate and authenticate before returning.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_prepared_intent_is_not_commit_proof():
@@ -238,9 +238,9 @@ def test_prepared_intent_is_not_commit_proof():
     assert authority_message("prepared", payload) == authority_message("prepared", payload)
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_authority.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_authority.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 from tldw_chatbook.Skills_Interop.skill_trust_crypto import canonical_json
@@ -253,20 +253,20 @@ def authority_message(purpose: str, payload: dict) -> bytes:
     return b"chatbook.plugins.v1\0" + purpose.encode("ascii") + b"\0" + canonical_json(payload)
 ```
 
-  - [ ] 3.1. Add purpose-separated plugin trust keys/store identity without changing standalone keyring accounts, manifests or trust defaults. Reuse established authenticated encryption/MAC helpers; do not build another cryptographic primitive.
-  - [ ] 3.2. Encode complete logical authority deterministically, distinguishing absence, Inherit and Disabled. Include root generations/fences and stable credential-binding references; exclude token bytes and volatile connection liveness.
-  - [ ] 3.3. Persist encrypted snapshots, exact old/new marker intent and separate post-commit certificate with qualified fsync/replace helpers. Limit certificate creation to the coordinator call after a durable database commit.
-  - [ ] 3.4. Exercise locked keyring, explicit reduced posture, reset, corrupt snapshot/MAC, same bytes with changed workspace override and replayed marker. Add successful authenticated load and standalone-skill controls.
+  - [x] 3.1. Add purpose-separated plugin trust keys/store identity without changing standalone keyring accounts, manifests or trust defaults. Reuse established authenticated encryption/MAC helpers; do not build another cryptographic primitive.
+  - [x] 3.2. Encode complete logical authority deterministically, distinguishing absence, Inherit and Disabled. Include root generations/fences and stable credential-binding references; exclude token bytes and volatile connection liveness.
+  - [x] 3.3. Persist encrypted snapshots, exact old/new marker intent and separate post-commit certificate with qualified fsync/replace helpers. Limit certificate creation to the coordinator call after a durable database commit.
+  - [x] 3.4. Exercise locked keyring, explicit reduced posture, reset, corrupt snapshot/MAC, same bytes with changed workspace override and replayed marker. Add successful authenticated load and standalone-skill controls.
 
 **Failure and successful-control matrix:** Real crypto with an injected isolated marker backend; every authenticated field is tampered independently. Hash-only same-directory authority must never pass. Existing standalone trust reset/reopen behavior must remain unchanged.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_authority.py Tests/Plugins/test_authority_store.py Tests/Skills/test_skill_trust_store.py Tests/Skills/test_skill_trust_service.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32670 --plain

@@ -111,8 +111,11 @@ publish its protected commit certificate only **after** this return. These rows
 are unauthenticated metadata and do not grant trust or execution permission.
 `:memory:` is available for nonpersistent data tests; it grants no runtime owner.
 
-Schema v1 is packaged in `migrations/001_initial.sql`; creation/versioning share
-one transaction, and reopening verifies exact schema and database integrity.
+Schema v1 is packaged in `migrations/001_initial.sql`; v2 adds separate mutable
+`revision_trust` and independently retained `tombstones` through
+`002_authority.sql`. Exact predecessor validation, upgrade and versioning share
+one owned transaction; reopening verifies exact schema and database integrity.
+A read-only v1 view requires the owner to perform that upgrade first.
 Tables hold installations, immutable revision/component records, selections,
 activation, sources, mappings, authority generations, operation intents,
 data-root generations/deletion fences, process evidence, and receipts. Persist
@@ -156,3 +159,98 @@ third-party syncing cannot be detected generically and is **unsupported** even
 when a local lock succeeds. Network/sync semantics, Windows and Linux are not
 qualified. This is host process ownership, not sandbox containment or proof that
 escaped descendants and external side effects have stopped.
+
+
+## Authenticated authority (F3)
+
+`PluginAuthorityStore` is an internal primitive for the existing plugin owner and
+coordinator. **F4/app callers must hold the acquired F2 runtime owner before
+bootstrap, prepare, certify, marker advancement or reset.** Secondary instances
+remain read-only. UI must use the coordinator/owner gate, never call these
+mutating primitives around it. This store creates no second owner or permission
+service, and its signature does not grant component eligibility or tool access.
+
+Use `default_plugin_authority_dir(local_skills_store_dir)` for the fixed protected
+`trust/plugins` namespace. It has its own 32-byte salt and schema-v1 metadata,
+separate scrypt/HMAC purpose keys, and marker service `tldw_chatbook.plugin_trust`
+with scoped account `managed-plugins:generation-marker:v1:<scope>`. Standalone
+skill accounts, manifests, salts, key caches and snapshots remain unchanged.
+There is no plugin key cache: unlock authenticates current material on each start.
+
+Explicit `bootstrap(passphrase)` creates only a canonical empty generation-zero
+snapshot and the reserved `bootstrap` marker. It refuses existing/partial setup;
+`unlock` never bootstraps. An unavailable secure keyring blocks mutation.
+`FilePluginMarkerStore` is reduced rollback protection and requires explicit
+`accept_reduced_protection=True`; constructing it is not acceptance. The posture
+API distinguishes setup, locked, unavailable, recovery and reduced protection.
+
+`authority_projection(operation_result=...)` reads one consistent SQLite snapshot
+and validates a closed complete logical schema. It preserves missing workspace
+rows versus explicit Inherit/Disabled, missing review rows versus reviewed false,
+selection, dependencies/blockers, package/source/link/adapter identity, mappings,
+credential binding references/generations, revocations, tombstones and data roots.
+It omits transient availability, inspection timestamps, process cleanup claims,
+source caches and receipts. `sources.source_json` stays untrusted acquisition/
+discovery metadata: later catalog/update consumers must add a closed authenticated
+artifact/update-origin binding before treating it as reviewed provenance. Source
+refresh/deletion cannot change an installed revision's authority.
+The closed operation result is supplied by the
+coordinator; `read_operation` returns only an untrusted phase hint plus a validated
+intended result. Neither is proof of commitment.
+
+Component definitions and variable declarations are authenticated digest references,
+including malformed/unsupported definitions and their blockers. Reconstruction
+must reinspect retained immutable package material under the exact authenticated
+interpretation, then match package/component/variable digests and constraints.
+Catalog overlays require their own retained authenticated material. Missing bytes,
+changed material or unavailable adapters require recovery; never fetch, execute,
+drop constraints or infer defaults. Mapping target/configuration references require
+the owning service's equivalent digest/binding validation. Credential snapshots
+contain stable reference IDs, authority generations and identity/audience/scope
+bindings; current token values and expiry are resolved by that service at use time.
+
+Publication ordering is `prepare(snapshot, old, new)` → durable owned registry
+transaction returns → `certify_commit(old, new)` → `advance_marker(old, new)`.
+Certificate issuance is coordinator-internal. Prepared data has no certificate;
+a registry phase flag cannot authorize issuance. `verify_transition(operation_id)`
+authenticates exact old/new tuples, snapshot and optional separate certificate.
+An old marker plus prepared-only evidence cannot advance. `verify_snapshot(marker)`
+allows reconstruction after registry loss, and `verify_current()` selects exactly
+the marker-named snapshot. F4 implements actual crash/commit orchestration.
+
+The recovery digest is SHA-256 over the domain-separated canonical plaintext
+snapshot. AES-GCM binds the complete marker header; prepared and committed HMACs
+use different purposes and keys. Operation artifact names hash their IDs. Files
+are create-only; exact retries authenticate equality and resynchronize durability.
+The private-file helper pins protected file identities, fsyncs file and parent,
+and requires `verified_private`. This was exercised on local macOS/APFS; no
+Windows, network/synchronized filesystem or power-loss guarantee is inferred.
+
+`reset(operation_id=...)` requires an explicit caller-reviewed operation ID under
+the same owner gate. F4/app retains that ID with the review. A new reviewed reset
+uses a new ID; retries reuse the exact original ID. Reset clears only the plugin
+marker, drops that namespace's session keys and archives encrypted evidence under
+the protected trust parent (`plugins-reset-<scope>-<random>`).
+
+A protected sibling `plugins-reset-state.json` binds its exact store scope and
+retains up to 1,000 closed reset records: operation ID, safe archive leaf, original
+directory device/inode, and pending/completed phase. A pristine reset records an
+explicit completed no-archive outcome. Pending state is durable before any archive
+rename; exact archive and parent synchronization precede completed publication.
+A visible completed receipt is synchronized again on recovery/readiness checks,
+since its final publication may itself have failed synchronization.
+
+Pending or invalid receipts report Recovery required and block bootstrap/unlock.
+Another ID cannot replace a pending reset. Same-ID retries qualify and return only
+that ID's retained archive or no-archive outcome, even after later resets and a new
+bootstrap; they do not clear the new marker or drop the new session's keys. At the
+1,000-record cap, a new reset fails closed; no IDs or archives are evicted. These
+cleanup receipts never authorize execution. Archive deletion/pruning has no API
+in this foundation task.
+
+Reset returns the archive path (or None for a recorded pristine reset). It does
+not delete archives or standalone data. Failures retain available evidence and
+raise; do not report success after a partial reset. Rebootstrap creates only
+empty authority and never imports previously reviewed packages. Exact marker
+advancement retries also republish through the configured marker backend, so
+visible marker bytes cannot substitute for successful durable publication.

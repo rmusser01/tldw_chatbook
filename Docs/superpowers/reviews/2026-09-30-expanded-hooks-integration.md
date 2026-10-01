@@ -218,9 +218,35 @@ all four ACs self-reviewed. Ownership remains qualified only on 64-bit macOS loc
 APFS; unknown/network/synchronized storage fails closed. No full sweep or
 Linux/Windows execution qualification is claimed.
 
+## TASK-32670 — authenticated complete plugin authority
+
+Reused reviewed F3 checkpoint `a259e61459`. Closed complete logical authority,
+exact generation/operation/digest markers and disjoint plugin purpose keys reuse
+the existing KDF, AES-GCM and private publication helpers. Prepared intent cannot
+substitute for a separate commit certificate; standalone skill trust stays intact.
+Plugin schema v2 upgrades exact v1 in one owned transaction and retains explicit
+review state and independent uninstall tombstones. ADR009/162/163 apply.
+
+RED: **10 failed** for missing authority modules/keys. Real crypto, every-field
+tamper, marker/posture/reset/durability/migration and owner controls:
+**172 passed in 47.10s**, no skips/warnings (`/private/tmp/expanded-hooks-f3-core.xml`).
+Standalone skill trust and protected-path neighbors: **92 passed in 56.29s**,
+no skips/warnings (`/private/tmp/expanded-hooks-f3-neighbors-qualified.xml`). The
+initial protected-path run hit 21 stale config-binding failures; one reproduced
+against frozen pre-feature H4 production. The existing selected-profile fixture
+now keeps admission current, and the test-owned collision directory is removed
+in finally. No production path/config guard or permission expectation changed.
+The independent crypto child uses exact checkout/private-profile/network refusal.
+
+Six task-owned Python files pass full Ruff/formatting. Shared crypto/protected-path
+lint codes/messages remain unchanged (2/1 respectively); changed Python syntax
+and whitespace pass. All four ACs self-reviewed. Local macOS/APFS durability
+controls and an isolated marker backend qualify behavior; no real-keyring,
+Linux/Windows, network filesystem, power-loss or full-sweep claim is made.
+
 ## Remaining requested order
 
-- TASK-32670 through TASK-32675: required plugin registry, authority and drain foundations.
+- TASK-32671 through TASK-32675: required plugin registry, authority and drain foundations.
 - TASK-32680: Stop continuations and teardown, including native plugin drain qualification.
 - TASK-32685: MCP hooks, including required MCP/plugin prerequisites.
 - TASK-32686: native capabilities, required by the requested TASK-32687.

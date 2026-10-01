@@ -244,7 +244,9 @@ arguments containing command-looking text remain data.
 ### 4.2 Storage and concurrency
 
 Use a dedicated versioned SQLite plugin registry through the repository's
-private-database seam. Initial plugin schema version is 1; migrations belong
+private-database seam. Initial plugin schema version is 1; F3 upgrades it transactionally to version 2
+with separate mutable revision review state and retained uninstall tombstones.
+Migrations belong
 to the plugin store, not an unrelated conversation schema. The registry holds
 installations, revisions, selections, workspace overrides, source records,
 operation intents and recovery states. Secrets remain references to existing
