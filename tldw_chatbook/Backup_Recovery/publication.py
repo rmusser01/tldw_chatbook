@@ -818,8 +818,8 @@ def _pending(
             ):
                 raise ValueError("publication_config_foreign_scope")
             if (
-                any(_overlap(target, root) for target in targets for root in roots)
-                and name not in context.namespaces
+                name not in context.namespaces
+                and any(_overlap(target, root) for target in targets for root in roots)
                 and not any(_overlap(root, fence) for root in roots for fence in fenced)
             ):
                 raise ValueError("publication_scope_uncovered")

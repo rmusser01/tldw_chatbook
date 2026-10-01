@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
-from .admission import Admission, fcntl
+from .admission import Admission
 from .bootstrap import _read
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file
@@ -115,7 +115,9 @@ def activation_permission(
             if roots != profile["roots"]:
                 return False
             for namespace in witness["namespaces"]:
-                if namespace in seen and seen[namespace] != witness:
+                if namespace in seen and not bootstrap._same_activation_generation(
+                    seen[namespace], witness
+                ):
                     return False
                 seen[namespace] = witness
             store = ActivationStore(Path(witness["store_root"]))

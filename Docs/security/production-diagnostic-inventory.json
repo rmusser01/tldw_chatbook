@@ -4390,6 +4390,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "384f49203944c0c68b36",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/runtime_policy/server_credentials.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "df78ea9f8f5241cefcc3",
       "owner": "TASK-494",

@@ -337,7 +337,7 @@ def _capture_under_maintenance(
 
     from . import archive_reader as reader
     from .archive_writer import _output
-    from .credentials import process_credentials
+    from .credentials import process_credentials, profile_credential_scopes
     from .models import StorageItem
     from .native_files import create_private_directory, create_private_file
     from .owner_registry import registered
@@ -398,6 +398,7 @@ def _capture_under_maintenance(
         create_private_directory(stage / "payload")
         sources = tuple(dict.fromkeys(item.path for item in entries))
         staged, physical, aliases, versions = [], {}, {}, {}
+        total = 0
         with session.capture_scope(sources, stage, limits=limits, byte_budget=budget):
             for item in entries:
                 reader._check(cancel)
@@ -453,8 +454,9 @@ def _capture_under_maintenance(
                     validation = validator.validate(path)
                     if validation:
                         raise CaptureReviewRequired(validation)
-                total = sum(os.stat(candidate).st_size for _, candidate in staged)
-                if total > budget or os.stat(path).st_size > limits.member_bytes:
+                size = os.stat(path).st_size
+                total += size
+                if total > budget or size > limits.member_bytes:
                     raise CaptureReviewRequired(("capture_budget_changed",))
                 require_capacity(
                     {stage: total, Path(destination): total * (5 if encrypted else 3)}
@@ -499,7 +501,13 @@ def _capture_under_maintenance(
             rebound = replace(
                 current, items=tuple(replace(item, path=path) for item, path in staged)
             )
-            issues = process_credentials(stage, rebound, mode=mode, encrypted=encrypted)
+            issues = process_credentials(
+                stage,
+                rebound,
+                mode=mode,
+                encrypted=encrypted,
+                profile_scopes=profile_credential_scopes(current),
+            )
             acknowledged = options.get("acknowledged_credential_issues", ())
             if (
                 type(acknowledged) is not tuple
@@ -539,6 +547,19 @@ def _capture_under_maintenance(
                     complete=False,
                     issues=tuple(sorted(set(final_inventory.issues) | set(issues))),
                 )
+            # Captured values needing manual application limit recovery readiness,
+            # without making the coordinated stored-data snapshot inconsistent.
+            manual_issues = tuple(
+                issue
+                for issue in issues
+                if issue.startswith("credential_manual_recovery_required:")
+            )
+            consistency_issues = tuple(
+                issue
+                for issue in issues
+                if not issue.startswith("credential_manual_recovery_required:")
+            )
+            if consistency_issues:
                 representation = replace(
                     representation, complete=False, issues=final_inventory.issues
                 )
@@ -556,10 +577,10 @@ def _capture_under_maintenance(
                     "encrypted": encrypted,
                     "versions": versions,
                     "limits": limits,
-                    "report_lines": representation_report,
+                    "report_lines": (*representation_report, *manual_issues),
                     "data_groups": selections.data_groups,
                 },
-                tuple(sorted(set(issues) | set(current.issues))),
+                tuple(sorted(set(consistency_issues) | set(current.issues))),
             )
             reader._check(cancel)
         completed = True

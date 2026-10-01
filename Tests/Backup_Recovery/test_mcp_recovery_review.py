@@ -17,7 +17,7 @@ from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated,sele
 from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 from tldw_chatbook.Backup_Recovery.activation import ActivationStore
 base=Path.home();source=base/'source';source.mkdir(mode=0o700)
-selector=Path(os.environ['TLDW_CONFIG_PATH']);selector.write_text('[general]\nusers_name="Local"\n[paths]\ndata_dir="'+str(source)+'"\n')
+selector=Path(os.environ['TLDW_CONFIG_PATH']);selector.write_text('[general]\nusers_name="Local"\n[paths]\ndata_dir='+json.dumps(str(source),ensure_ascii=False)+'\n',encoding='utf-8')
 
 user=source/'Local';user.mkdir(mode=0o700)
 owners_by_name={'local_mcp_store.json':'mcp.local','mcp_permissions.json':'mcp.permissions','unified_mcp_context.json':'mcp.context','mcp_server_targets.json':'mcp.targets'}
@@ -169,7 +169,7 @@ fresh=service.local_service.store.path.parent
 if change=='definition':(user/'local_mcp_store.json').write_text('{}')
 elif change=='workspace':
  selector=bootstrap.effective_config_path()
- selector.write_text(selector.read_text()+'\n[console]\nworkspace_root="'+str(base)+'"\n')
+ selector.write_text(selector.read_text(encoding='utf-8')+'\n[console]\nworkspace_root='+json.dumps(str(base),ensure_ascii=False)+'\n',encoding='utf-8')
 else:
  fresh.mkdir(mode=0o700);(fresh/'foreign').write_bytes(b'foreign evidence')
 try:service.approve_recovery_review(review)

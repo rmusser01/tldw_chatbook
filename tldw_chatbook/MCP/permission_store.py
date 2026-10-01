@@ -198,6 +198,18 @@ def _resolved_path_lock(path: Path) -> threading.RLock:
 
 def _fsync_parent_directory(path: Path) -> None:
     """Fsync ``path`` or tolerate only an explicitly unsupported operation."""
+    if os.name == "nt":
+        from tldw_chatbook.Utils.file_durability import flush_directory
+        from tldw_chatbook.Utils.platform_files import os as native_os
+
+        parent_fd = native_os.open(
+            path, native_os.O_RDONLY | native_os.O_DIRECTORY | native_os.O_NOFOLLOW
+        )
+        try:
+            flush_directory(parent_fd)
+        finally:
+            native_os.close(parent_fd)
+        return
     try:
         parent_fd = os.open(path, os.O_RDONLY)
     except OSError as exc:

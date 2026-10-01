@@ -158,6 +158,16 @@ def _activation_witness(record: object) -> None:
         raise ValueError("invalid_activation_witness")
 
 
+def _same_activation_generation(
+    left: Mapping[str, object], right: Mapping[str, object]
+) -> bool:
+    """Compare validated generation identity across per-profile namespace scopes."""
+    return all(
+        left[key] == right[key]
+        for key in ("operation_id", "generation", "owners", "store_root")
+    )
+
+
 def _control_records(
     root: Path, *, activation: bool = True
 ) -> tuple[list[dict], list[dict], list[dict]]:

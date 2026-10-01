@@ -56,7 +56,9 @@ def _paired_witnesses(path, root, names, selected):
         if roots != profile["roots"]:
             raise ValueError("projection_generation_unavailable")
         for name in witness["namespaces"]:
-            if name in seen and seen[name] != witness:
+            if name in seen and not bootstrap._same_activation_generation(
+                seen[name], witness
+            ):
                 raise ValueError("projection_generation_unavailable")
             seen[name] = witness
         store = ActivationStore(Path(witness["store_root"]))

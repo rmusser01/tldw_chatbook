@@ -96,13 +96,13 @@ async def main():
         gateway.resolve_release.set()
         await gateway.started[0].wait()
         if case != "preflight":
-            _queue(controller, session, "second")
+            await _queue(controller, session, "second")
             if case == "user_pause":
                 snapshot = controller.prompt_queue_registry.snapshot(session)
                 controller.pause_prompt_queue_after_turn(session, expected_revision=snapshot.revision)
             controller.maintenance_close_admission()
             snapshot = controller.prompt_queue_registry.snapshot(session)
-            rejected = controller.queue_prompt(session, text="third", expected_revision=snapshot.revision)
+            rejected = await controller.queue_prompt(session, text="third", expected_revision=snapshot.revision)
             assert not rejected.applied
             assert not await controller.maintenance_drain(time.monotonic())
         gateway.release[0].set()

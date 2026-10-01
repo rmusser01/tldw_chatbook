@@ -21,6 +21,8 @@ from tldw_chatbook.Widgets.backup_group_selector import BackupDataGroupSelector
 
 from .backup_restore_state import result_label
 
+_RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
+
 
 class BackupRestoreScreen(Screen):
     """Navigation releases widgets, while the app retains accepted native work."""
@@ -77,6 +79,7 @@ class BackupRestoreScreen(Screen):
         self._requested_backup_operation = None
         self._requested_restore_operation = None
         self._restore_review_codes_seen = ()
+        self._restore_retention_accepted = False
         self._safety_scope_seen = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
@@ -84,6 +87,7 @@ class BackupRestoreScreen(Screen):
         self._requested_rollback_operation = None
         self._rollback_selection = None
         self._later_review_codes_seen = ()
+        self._later_retention_accepted = False
         self._media_review = None
         self._media_offset = 0
 
@@ -990,6 +994,10 @@ class BackupRestoreScreen(Screen):
             and not box.disabled
             and box.name in self._later_review_codes_seen
         )
+        if _RETAINED_CREDENTIAL_REVIEW in self._later_review_codes_seen:
+            self._later_retention_accepted = _RETAINED_CREDENTIAL_REVIEW in acknowledged
+        elif self._later_retention_accepted:
+            acknowledged = (*acknowledged, _RETAINED_CREDENTIAL_REVIEW)
         self._requested_rollback_operation = None
         self._invalidate()
         self._preview_rollback(
@@ -1350,6 +1358,7 @@ class BackupRestoreScreen(Screen):
         self._requested_rollback_operation = None
         self._rollback_selection = None
         self._later_review_codes_seen = ()
+        self._later_retention_accepted = False
         self.query_one("#backup-later-credential-review").display = False
         for box in self.query(".backup-acknowledge-later-credential"):
             box.value = False
@@ -1359,6 +1368,7 @@ class BackupRestoreScreen(Screen):
         """A rollback omission belongs to the unchanged replacement choices."""
         self._requested_restore_operation = None
         self._restore_review_codes_seen = ()
+        self._restore_retention_accepted = False
         self.query_one("#backup-restore-credential-review").display = False
         for box in self.query(".backup-acknowledge-restore-credential"):
             box.value = False
@@ -1768,16 +1778,25 @@ class BackupRestoreScreen(Screen):
         ):
             return
         area.display = True
+        retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
         await area.mount(
             Static(
-                "The safety copy could not include these credentials. No replacement was published. "
+                "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
+                "No replacement was published. Accept encrypted retention, enter a new rollback password, "
+                "and review restore again."
+                if retention
+                else "The safety copy could not include these credentials. No replacement was published. "
                 "In Recovery copies, choose Abort untouched replacement. Then return here, "
                 "review each omission, enter a new rollback password, and review restore again.",
                 markup=False,
             ),
             *(
                 Checkbox(
-                    Text("Acknowledge safety-copy omission: " + code),
+                    Text(
+                        "Accept encrypted manual retention"
+                        if retention
+                        else "Acknowledge safety-copy omission: " + code
+                    ),
                     name=code,
                     classes="backup-acknowledge-restore-credential",
                 )
@@ -1809,20 +1828,32 @@ class BackupRestoreScreen(Screen):
         ):
             return
         area.display = True
+        retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
         await area.mount(
             Static(
                 (
-                    "The new safety copy could not include these credentials. No later rollback was published. "
+                    "Some credentials need manual recovery and will remain in the encrypted archive. "
+                    "No later rollback was published. Accept encrypted retention. "
+                    if retention
+                    else "The new safety copy could not include these credentials. No later rollback was published. "
                     "Choose Abort untouched replacement above. "
                     if pending
                     else "Review these unavailable credential scopes. "
                 )
-                + "Then select each omission you accept, re-enter the old copy password, and review later rollback again.",
+                + (
+                    "Re-enter the old copy password and review later rollback again."
+                    if retention
+                    else "Then select each omission you accept, re-enter the old copy password, and review later rollback again."
+                ),
                 markup=False,
             ),
             *(
                 Checkbox(
-                    Text("Acknowledge safety-copy omission: " + code),
+                    Text(
+                        "Accept encrypted manual retention"
+                        if retention
+                        else "Acknowledge safety-copy omission: " + code
+                    ),
                     name=code,
                     classes="backup-acknowledge-later-credential",
                 )
@@ -2108,6 +2139,19 @@ class BackupRestoreScreen(Screen):
                 )
                 return
         displayed_groups = self._effective_restore_groups()
+        acknowledged = tuple(
+            box.name
+            for box in self.query(".backup-acknowledge-restore-credential")
+            if mode == "replace"
+            and box.value
+            and box.name in self._restore_review_codes_seen
+        )
+        if _RETAINED_CREDENTIAL_REVIEW in self._restore_review_codes_seen:
+            self._restore_retention_accepted = (
+                _RETAINED_CREDENTIAL_REVIEW in acknowledged
+            )
+        elif mode == "replace" and self._restore_retention_accepted:
+            acknowledged = (*acknowledged, _RETAINED_CREDENTIAL_REVIEW)
         self._invalidate()
         self._preview_restore(
             self.app,
@@ -2117,13 +2161,7 @@ class BackupRestoreScreen(Screen):
             (bases, external, setup_parent),
             names,
             target,
-            tuple(
-                box.name
-                for box in self.query(".backup-acknowledge-restore-credential")
-                if mode == "replace"
-                and box.value
-                and box.name in self._restore_review_codes_seen
-            ),
+            acknowledged,
             tuple(
                 box.name
                 for box in self.query(".backup-safety-member")

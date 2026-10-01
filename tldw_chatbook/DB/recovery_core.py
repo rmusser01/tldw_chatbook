@@ -244,7 +244,10 @@ class _CoreAdapter:
                     )
                 )
                 policy = self.schema_policy()
-                if not any(actual == sql for _, sql in policy.schema_sql):
+                matched_versions = tuple(
+                    version for version, sql in policy.schema_sql if actual == sql
+                )
+                if not matched_versions:
                     return ("unsupported_schema",)
                 version_sql = (
                     "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
@@ -253,9 +256,11 @@ class _CoreAdapter:
                     # owner reads the latest stamp after validating the schema.
                     else "SELECT MAX(version) FROM schema_version"
                 )
+                versions = tuple(row[0] for row in connection.execute(version_sql))
                 if (
-                    tuple(row[0] for row in connection.execute(version_sql))
-                    != policy.versions
+                    len(versions) != 1
+                    or versions[0] not in policy.versions
+                    or versions[0] not in matched_versions
                 ):
                     return ("unsupported_schema_version",)
                 with _canvas_schema_access(connection, actual, restrictions):
@@ -433,13 +438,21 @@ class _CoreAdapter:
         from .recovery_core_schema import (
             CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
             CORE_SCHEMAS,
+            PROMPTS_V4_SCHEMA,
+            PROMPTS_V4_TO_V5_SQL,
         )
 
         _, version, sql = next(row for row in CORE_SCHEMAS if row[0] == self.owner_id)
         schemas = ((version, sql),)
+        versions = (version,)
+        migrations = ()
         if self.owner_id == "db.chachanotes.primary":
             schemas += ((version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),)
-        return SchemaPolicy(self.owner_id, (version,), schemas, ())
+        elif self.owner_id == "db.prompts.primary":
+            schemas += ((4, PROMPTS_V4_SCHEMA),)
+            versions += (4,)
+            migrations = ((4, 5, PROMPTS_V4_TO_V5_SQL),)
+        return SchemaPolicy(self.owner_id, versions, schemas, migrations)
 
 
 def core_adapters() -> tuple[OwnerAdapter, ...]:

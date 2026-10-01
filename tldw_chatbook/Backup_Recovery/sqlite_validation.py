@@ -92,6 +92,7 @@ class _Restrictions:
         self.migration_owner = None
         self.canvas_schema = False
         self.changing_schema_trust = False
+        self.reading_fts_metadata = False
         connection.set_authorizer(self.authorize)
         connection.set_progress_handler(self.progress, _PROGRESS_INTERVAL)
 
@@ -142,6 +143,8 @@ class _Restrictions:
                 allowed.add("canvas_revision_payload_valid")
             if self.migrating:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
+                if self.migration_owner == "db.prompts.primary":
+                    allowed.add("trim")
             return sqlite3.SQLITE_OK if second in allowed else sqlite3.SQLITE_DENY
         if action == sqlite3.SQLITE_PRAGMA:
             reads = {
@@ -161,6 +164,17 @@ class _Restrictions:
             )
             permitted |= self.migrating and first == "user_version"
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
+        if (
+            self.reading_fts_metadata
+            and action == sqlite3.SQLITE_UPDATE
+            and first == "sqlite_master"
+            and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+            and database == "main"
+            and source is None
+        ):
+            # SQLite 3.37 compiles, then discards, this declaration UPDATE
+            # while connecting an existing FTS5 table for table_xinfo.
+            return sqlite3.SQLITE_OK
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
@@ -193,6 +207,23 @@ class _Restrictions:
                 )
                 if allowed:
                     return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.prompts.primary":
+                allowed = (
+                    action == sqlite3.SQLITE_CREATE_TABLE
+                    and first == "LocalPromptDrafts"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and first == "idx_local_prompt_drafts_updated"
+                    and second == "LocalPromptDrafts"
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first == "idx_local_prompt_drafts_updated"
+                    or action == sqlite3.SQLITE_INSERT
+                    and first == "sqlite_master"
+                    or action == sqlite3.SQLITE_UPDATE
+                    and first == "schema_version"
+                    and second == "version"
+                )
+                if allowed:
+                    return sqlite3.SQLITE_OK
             if action == sqlite3.SQLITE_UPDATE and first == "sqlite_master":
                 return sqlite3.SQLITE_OK
         return sqlite3.SQLITE_DENY
@@ -201,7 +232,14 @@ class _Restrictions:
 def _restrict_connection(connection, cancel=None):
     """Install and verify mandatory primitives before any candidate query."""
     try:
-        connection.enable_load_extension(False)
+        disable_extensions = getattr(connection, "enable_load_extension", None)
+        if disable_extensions is None:
+            option = sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION
+            connection.setconfig(option, False)
+            if connection.getconfig(option) is not False:
+                raise ValueError("sqlite_security_unavailable")
+        else:
+            disable_extensions(False)
         connection.execute("PRAGMA trusted_schema=OFF")
         if connection.execute("PRAGMA trusted_schema").fetchone() != (0,):
             raise ValueError("sqlite_security_unavailable")
@@ -240,14 +278,27 @@ def _catalog(connection):
     return tuple(rows)
 
 
-def _metadata(connection, catalog):
+def _metadata(connection, catalog, restrictions=None):
     def quote(name):
         return '"' + name.replace('"', '""') + '"'
 
     result = []
-    for kind, name, _, _ in catalog:
+    for kind, name, _, sql in catalog:
         if kind in ("table", "view"):
-            columns = tuple(connection.execute(f"PRAGMA table_xinfo({quote(name)})"))
+            if restrictions is not None:
+                restrictions.reading_fts_metadata = (
+                    kind == "table"
+                    and sql is not None
+                    and sql.startswith("CREATE VIRTUAL TABLE")
+                    and "USING fts5(" in sql
+                )
+            try:
+                columns = tuple(
+                    connection.execute(f"PRAGMA table_xinfo({quote(name)})")
+                )
+            finally:
+                if restrictions is not None:
+                    restrictions.reading_fts_metadata = False
             # Sequence reflects creation order, not index semantics.
             indexes = tuple(
                 sorted(
@@ -367,8 +418,20 @@ def _reference(schema):
             others = [sql for sql in schema if sql not in tables]
             for sql in tables + others:
                 # AUTOINCREMENT and FTS create their own internal/shadow tables.
-                existing = {row[3] for row in _catalog(reference)}
-                if sql in existing:
+                # Keep the same bounds without copying the growing catalog
+                # into Python before every installed statement.
+                count, size, existing = reference.execute(
+                    "SELECT COUNT(*), COALESCE(SUM("
+                    "length(CAST(COALESCE(type,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(name,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(tbl_name,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(sql,'') AS BLOB))),0), "
+                    "COALESCE(MAX(sql = ?),0) FROM sqlite_schema",
+                    (sql,),
+                ).fetchone()
+                if count > _CATALOG_LIMIT or size > _CATALOG_BYTES:
+                    raise ValueError("sqlite_resource_limit")
+                if existing:
                     continue
                 reference.execute(sql)
             catalog = _catalog(reference)
@@ -430,7 +493,10 @@ def _check(connection, owner, policy, restrictions):
         return ("unsupported_schema_version",), None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
         reference_catalog, metadata = _reference(matched[0][1])
-        if actual != reference_catalog or _metadata(connection, actual) != metadata:
+        if (
+            actual != reference_catalog
+            or _metadata(connection, actual, restrictions) != metadata
+        ):
             return ("unsupported_schema",), None
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             return ("invalid_domain_reference",), None

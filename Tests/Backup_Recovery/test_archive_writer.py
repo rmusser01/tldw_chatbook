@@ -122,6 +122,47 @@ def test_encrypted_roundtrip_uses_real_helper(
         acquire(destination, tmp_path / "wrong", ArchiveLimits(), b"wrong", Event())
 
 
+@pytest.mark.parametrize(
+    "issues, blocking, published",
+    [
+        (("credential_manual_recovery_required:fixture",), False, True),
+        ((), False, False),
+        (("credential_missing:fixture",), False, False),
+        (("credential_manual_recovery_required:fixture", "unsupported"), False, False),
+        (("credential_manual_recovery_required:fixture",), True, False),
+    ],
+)
+def test_coherent_publication_distinguishes_manual_readiness_from_missing_data(
+    tmp_path, helper_resource_root, monkeypatch, issues, blocking, published
+):
+    from tldw_chatbook.Backup_Recovery import crypto
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    capture = captured(tmp_path)
+    doc = json.loads(capture.manifest_bytes)
+    doc["credential_policy"] = "include"
+    doc["report"]["lines"].extend(issues)
+    items = (
+        (StorageItem("notes", "missing", None, "unavailable", ()),) if blocking else ()
+    )
+    capture = CaptureResult(
+        capture.root, Inventory(items, False, "scope", issues), json.dumps(doc).encode()
+    )
+    destination = tmp_path / "new.tldw-backup.zip.age"
+    if published:
+        result = write_archive(
+            capture, destination, password=b"disposable-password", cancel=Event()
+        )
+        assert json.loads(result.manifest_bytes)["consistency"] == "coherent"
+        assert destination.is_file()
+    else:
+        with pytest.raises(ValueError, match="^incomplete_capture$"):
+            write_archive(
+                capture, destination, password=b"disposable-password", cancel=Event()
+            )
+        assert not destination.exists()
+
+
 def test_highly_compressible_text_stays_within_normal_reader_limits(tmp_path):
     capture = captured(tmp_path, b"text " * 100000)
     result = write_archive(

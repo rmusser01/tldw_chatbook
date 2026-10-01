@@ -1,6 +1,8 @@
 """Restore preparation uses explicit local targets and private candidates."""
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 
 def test_replace_requires_independent_target_inventory(tmp_path):
@@ -14,13 +16,353 @@ def test_replace_requires_independent_target_inventory(tmp_path):
 
 import hashlib
 import json
+import os
 import zipfile
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+
+
+@pytest.fixture
+def reviewed_instance_lock(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import archive_reader, restore_plan
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+
+    selector = tmp_path / "config.toml"
+    selector.write_text('[general]\nusers_name="Ada"\n')
+    selector.chmod(0o600)
+    data = tmp_path / "Ada"
+    data.mkdir(mode=0o700)
+    lock = data / ".instance.lock"
+    lock.write_bytes(b"test-only-exclusive-instance-body")
+    lock.chmod(0o600)
+    context = DiscoveryContext(
+        selector, hashlib.sha256(str(selector).encode()).hexdigest()[:24]
+    )
+    config = {
+        "paths": {"data_dir": str(tmp_path)},
+        "general": {"users_name": "Ada"},
+        DISCOVERY_CONTEXT_KEY: context,
+    }
+    owners = {row.owner_id: row for row in install_adapters()}
+    target = Inventory(
+        (
+            *owners["config"].discover(config),
+            *owners["runtime.instance_lock"].discover(config),
+        ),
+        True,
+        "local",
+        (),
+    )
+    regular = archive_reader._regular
+
+    @contextmanager
+    def locked_read(path):
+        with regular(path) as stream:
+            if path != lock:
+                yield stream
+            else:
+
+                def read(size):
+                    raise PermissionError(13, "test-only-instance-body", str(path))
+
+                yield SimpleNamespace(fileno=stream.fileno, read=read)
+
+    monkeypatch.setattr(archive_reader, "_regular", locked_read)
+    native = restore_plan.os
+    facade = SimpleNamespace(
+        name="nt",
+        **{
+            name: getattr(native, name)
+            for name in ("stat", "fstat", "listdir", "geteuid")
+        },
+    )
+    monkeypatch.setattr(restore_plan, "os", facade)
+    return SimpleNamespace(selector=selector, lock=lock, target=target, facade=facade)
+
+
+@pytest.mark.parametrize("platform_name", ("nt", "posix"))
+def test_only_windows_reviewed_instance_lock_is_observed_without_body_read(
+    tmp_path, reviewed_instance_lock, platform_name
+):
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore, recheck_targets
+
+    case = reviewed_instance_lock
+    case.facade.name = platform_name
+    archive = sealed(tmp_path)
+    if platform_name == "posix":
+        with pytest.raises(PermissionError):
+            plan_restore(
+                archive,
+                mode="isolated",
+                destinations={"root": tmp_path / "new"},
+                target=case.target,
+            )
+    else:
+        plan = plan_restore(
+            archive,
+            mode="isolated",
+            destinations={"root": tmp_path / "new"},
+            target=case.target,
+        )
+        recheck_targets(plan)
+        assert (case.target.items[1].logical_id, case.lock) in plan.preserve
+        assert case.lock.read_bytes() == b"test-only-exclusive-instance-body"
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "owner",
+        "status",
+        "root",
+        "parent",
+        "relative",
+        "kind",
+        "policy",
+        "duplicate",
+        "same-id-moved",
+        "ordinary",
+        "config-owner",
+        "config-id",
+        "config-path",
+        "no-config",
+    ),
+)
+def test_malformed_instance_lock_declarations_keep_the_body_hash(
+    reviewed_instance_lock, change
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.restore_plan import _fingerprint
+
+    case = reviewed_instance_lock
+    config, lock = case.target.items
+    items = (config, lock)
+    if change in {"owner", "status"}:
+        lock = replace(
+            lock, **{change: "ui.state" if change == "owner" else "included"}
+        )
+    elif change in {"root", "parent", "relative", "kind", "policy"}:
+        field, value = {
+            "root": ("root_id", "foreign"),
+            "parent": ("parent_id", "foreign"),
+            "relative": ("relative_path", "foreign"),
+            "kind": ("kind", "directory"),
+            "policy": ("policy", "external"),
+        }[change]
+        lock = replace(lock, metadata=replace(lock.metadata, **{field: value}))
+    elif change == "duplicate":
+        items += (lock,)
+    elif change == "same-id-moved":
+        items += (replace(lock, path=lock.path.with_name("moved")),)
+    elif change == "ordinary":
+        items += (replace(lock, owner="ui.state", logical_id="ordinary"),)
+    elif change == "config-owner":
+        config = replace(config, owner="ui.state")
+    elif change == "config-id":
+        config = replace(config, logical_id="profile:foreign:config")
+        lock = replace(lock, dependencies=(config.logical_id,))
+    elif change == "config-path":
+        config = replace(config, path=config.path.with_name("other.toml"))
+    elif change == "no-config":
+        items = (lock,)
+    if len(items) == 2:
+        items = (config, lock)
+    with pytest.raises(PermissionError):
+        _fingerprint((case.lock,), replace(case.target, items=items))
+
+
+@pytest.mark.parametrize("owner", ("ui.state", "research.local", "wal", "shm"))
+def test_windows_ordinary_and_sqlite_files_keep_exact_byte_hashes(
+    tmp_path, monkeypatch, reviewed_instance_lock, owner
+):
+    from tldw_chatbook.Backup_Recovery import restore_plan
+
+    path = tmp_path / (
+        ".instance.lock"
+        if owner == "ui.state"
+        else "main.sqlite" + ("-" + owner if owner in {"wal", "shm"} else "")
+    )
+    path.write_bytes(b"first")
+    row = StorageItem(
+        "sqlite.transient" if owner in {"wal", "shm"} else owner,
+        "ordinary",
+        path,
+        "intentionally_excluded" if owner in {"wal", "shm"} else "included",
+        ("main",) if owner in {"wal", "shm"} else (),
+    )
+    items = (row,)
+    if owner in {"wal", "shm"}:
+        main_path = tmp_path / "main.sqlite"
+        main_path.write_bytes(b"main")
+        items += (StorageItem("research.local", "main", main_path, "included", ()),)
+    target = Inventory(items, True, "local", ())
+    first = restore_plan._fingerprint((path,), target)
+    original_stat = restore_plan.os.stat
+    info = original_stat(path, follow_symlinks=False)
+    path.write_bytes(b"other")
+    # Equal-length changes still refuse even when native metadata appears stable.
+    monkeypatch.setattr(
+        restore_plan.os,
+        "stat",
+        lambda source, **kwargs: (
+            info if source == path else original_stat(source, **kwargs)
+        ),
+    )
+    assert restore_plan._fingerprint((path,), target) != first
+
+
+@pytest.mark.parametrize(
+    "change", ("identity", "type", "hardlink", "symlink", "mode", "mtime", "ancestor")
+)
+def test_windows_instance_lock_keeps_native_drift_refusal(
+    tmp_path, monkeypatch, reviewed_instance_lock, change
+):
+    from tldw_chatbook.Backup_Recovery.restore_plan import (
+        _fingerprint,
+        _paths,
+        plan_restore,
+        recheck_targets,
+    )
+
+    case = reviewed_instance_lock
+    plan = plan_restore(
+        sealed(tmp_path),
+        mode="isolated",
+        destinations={"root": tmp_path / "new"},
+        target=case.target,
+    )
+    if change in {"identity", "type", "symlink"}:
+        saved = case.lock.with_name("saved")
+        case.lock.rename(saved)
+        if change == "identity":
+            case.lock.write_bytes(saved.read_bytes())
+        elif change == "type":
+            case.lock.mkdir()
+        else:
+            case.lock.symlink_to(saved)
+    elif change == "hardlink":
+        os.link(case.lock, case.lock.with_name("alias"))
+    elif change == "mode":
+        original_stat = case.facade.stat
+        original_fstat = case.facade.fstat
+        info = original_stat(case.lock, follow_symlinks=False)
+
+        def changed_mode(value):
+            return os.stat_result(
+                (value.st_mode ^ 0o040, *value[1:]),
+                {
+                    name: getattr(value, name)
+                    for name in ("st_atime_ns", "st_mtime_ns", "st_ctime_ns")
+                },
+            )
+
+        def changed_stat(path, **kwargs):
+            value = original_stat(path, **kwargs)
+            return changed_mode(value) if Path(path) == case.lock else value
+
+        def changed_fstat(fd):
+            value = original_fstat(fd)
+            return (
+                changed_mode(value)
+                if (value.st_dev, value.st_ino) == (info.st_dev, info.st_ino)
+                else value
+            )
+
+        monkeypatch.setattr(case.facade, "stat", changed_stat)
+        monkeypatch.setattr(case.facade, "fstat", changed_fstat)
+    elif change == "mtime":
+        os.utime(case.lock, ns=(1_234_000_000, 1_234_000_000))
+    else:
+        original_stat = case.facade.stat
+
+        def changed_ancestor(path, **kwargs):
+            value = original_stat(path, **kwargs)
+            return (
+                SimpleNamespace(st_dev=value.st_dev, st_ino=value.st_ino + 1)
+                if Path(path) == case.lock.parent
+                else value
+            )
+
+        monkeypatch.setattr(case.facade, "stat", changed_ancestor)
+    if change == "mode":
+        assert _fingerprint(_paths(plan), plan.target) != plan.target_fingerprint
+    with pytest.raises(ValueError, match="^target_changed$"):
+        recheck_targets(plan)
+
+
+@pytest.mark.parametrize("change", ("named-identity", "after-metadata"))
+def test_windows_instance_lock_checks_pinned_before_named_and_after_state(
+    monkeypatch, reviewed_instance_lock, change
+):
+    from tldw_chatbook.Backup_Recovery.restore_plan import _fingerprint
+
+    case = reviewed_instance_lock
+    fstat = case.facade.fstat
+    calls = 0
+
+    def changed_state(fd):
+        nonlocal calls
+        calls += 1
+        if calls == 1 and change == "named-identity":
+            case.lock.rename(case.lock.with_name("saved"))
+            case.lock.write_bytes(b"test-only-exclusive-instance-body")
+        elif calls == 2 and change == "after-metadata":
+            os.utime(case.lock, ns=(1_234_000_000, 1_234_000_000))
+        return fstat(fd)
+
+    monkeypatch.setattr(case.facade, "fstat", changed_state)
+    with pytest.raises(ValueError, match="^target_changed$"):
+        _fingerprint((case.lock,), case.target)
+
+
+def test_windows_preserved_lock_uses_reviewed_config_after_publication(
+    reviewed_instance_lock,
+):
+    from tldw_chatbook.Backup_Recovery.preserved_groups import (
+        preserved_settings_fingerprint,
+    )
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+
+    case = reviewed_instance_lock
+    plan = RestorePlan(
+        "archive",
+        "replace",
+        (),
+        (),
+        ((case.target.items[1].logical_id, case.lock),),
+        "reviewed",
+        target=case.target,
+    )
+    with _preview_reads():
+        before = preserved_settings_fingerprint(plan)
+        case.selector.write_bytes(b"replaced-config-does-not-parse-as-TOML")
+        assert preserved_settings_fingerprint(plan) == before
+    assert case.lock.read_bytes() == b"test-only-exclusive-instance-body"
+
+
+def test_windows_instance_observation_binds_mode_without_normalizing_it(
+    reviewed_instance_lock,
+):
+    from tldw_chatbook.Backup_Recovery.restore_plan import _fingerprint
+
+    case = reviewed_instance_lock
+    case.lock.chmod(0o644)
+    mode = case.facade.stat(case.lock, follow_symlinks=False).st_mode
+    assert _fingerprint((case.lock,), case.target)
+    assert case.facade.stat(case.lock, follow_symlinks=False).st_mode == mode
 
 
 def sealed(tmp_path, *, partial=False, unknown=False, mutate=None, data=b"durable"):
@@ -599,6 +941,101 @@ def test_metadata_normalization_and_legacy_omission_are_explicit(tmp_path):
     assert row["desired_metadata"]["mode"] == 0o644
     assert row["applied_metadata"]["mode"] == 0o600
     assert Path(row["candidate"]).stat().st_mtime_ns == 1234000000
+
+
+@pytest.mark.parametrize("platform_name", ["nt", "posix"])
+@pytest.mark.parametrize(
+    "kind,mtime_ns",
+    [
+        ("file", 1_234_000_099),
+        ("directory", 1_234_000_099),
+        ("file", 1_234_000_000),
+        ("directory", 1_234_000_000),
+        ("file", None),
+    ],
+)
+def test_applied_metadata_matches_target_platform_without_changing_desired(
+    tmp_path, monkeypatch, platform_name, kind, mtime_ns
+):
+    from tldw_chatbook.Backup_Recovery import restore_plan
+
+    desired = {"version": 1, "mode": 0o700, "mtime_ns": mtime_ns}
+
+    def metadata(doc):
+        row = doc["files" if kind == "file" else "directories"][0]
+        row["metadata"] = None if mtime_ns is None else desired
+
+    archive = sealed(tmp_path, mutate=metadata)
+    manifest_bytes = archive.manifest_bytes
+    monkeypatch.setattr(
+        restore_plan,
+        "os",
+        SimpleNamespace(
+            name=platform_name,
+            stat=restore_plan.os.stat,
+            listdir=restore_plan.os.listdir,
+        ),
+    )
+    plan = restore_plan.plan_restore(
+        archive, mode="isolated", destinations={"root": tmp_path / "new"}, target=None
+    )
+    key = "file" if kind == "file" else "root"
+    original, applied = next(
+        (old, new) for item, old, new in plan.metadata if item == key
+    )
+    private_mode = 0o600 if kind == "file" else 0o700
+    if mtime_ns is None:
+        assert original is None
+        assert applied.model_dump() == {
+            "version": 1,
+            "mode": private_mode,
+            "mtime_ns": 0,
+        }
+        assert "metadata_unavailable:" + key in plan.issues
+    else:
+        assert original.model_dump() == desired
+        assert applied.mode == (private_mode if platform_name == "nt" else 0o700)
+        assert applied.mtime_ns == (
+            mtime_ns // 100 * 100 if platform_name == "nt" else mtime_ns
+        )
+        assert ("metadata_normalized:" + key in plan.issues) == (applied != original)
+    assert archive.manifest_bytes == manifest_bytes
+
+
+@settings(max_examples=20, deadline=None)
+@given(
+    mtime_ns=st.integers(min_value=0, max_value=2**63 - 1),
+    mode=st.integers(min_value=0, max_value=0o777),
+)
+def test_windows_applied_metadata_is_private_and_representable(
+    tmp_path_factory, mtime_ns, mode
+):
+    from tldw_chatbook.Backup_Recovery import restore_plan
+
+    root = tmp_path_factory.mktemp("windows-metadata")
+    desired = {"version": 1, "mode": mode, "mtime_ns": mtime_ns}
+
+    def metadata(doc):
+        for row in (*doc["directories"], *doc["files"]):
+            row["metadata"] = desired
+
+    archive = sealed(root, mutate=metadata)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            restore_plan,
+            "os",
+            SimpleNamespace(
+                name="nt", stat=restore_plan.os.stat, listdir=restore_plan.os.listdir
+            ),
+        )
+        plan = restore_plan.plan_restore(
+            archive, mode="isolated", destinations={"root": root / "new"}, target=None
+        )
+    for key, original, applied in plan.metadata:
+        assert original.model_dump() == desired
+        assert applied.mode == (0o700 if key == "root" else 0o600)
+        assert applied.mtime_ns % 100 == 0
+        assert 0 <= original.mtime_ns - applied.mtime_ns < 100
 
 
 def test_credential_material_is_validated_privately_without_profile_destination(
