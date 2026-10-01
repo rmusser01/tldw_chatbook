@@ -1186,12 +1186,9 @@ def _consume_console_roleplay_repair_for_current_screen(
 
 CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
-    ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Alt+M", "switch model"),  # TASK-33004.7: mockup (a)'s order
     ("Ctrl+O", "chat settings"),
-    ("Enter", "send / queue"),
-    ("Y", "trace"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     # TASK-24604: the rail's own accelerator has to be advertised here or it
@@ -1204,6 +1201,9 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Alt+A", "approval"),
     ("Alt+C", "context rail"),
     ("Ctrl+P", "palette"),
+    ("Y", "trace"),  # Y/Enter/Shift+F6 last: 211x44 keeps Alt+I/A/C (33004.7)
+    ("Enter", "send / queue"),
+    ("Shift+F6", "previous pane"),
 )
 
 #: TASK-24703: `AppFooterStatus` degrades by keeping a PREFIX of the hint
@@ -1227,9 +1227,9 @@ CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
 #: advertising "Enter send" is a lie -- Enter activates the focused setup-card
 #: action instead. The blocked variant hides the send hint and names the real
 #: action. `_register_console_footer_shortcuts` swaps between the two.
-CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
-    ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
-    for pair in CONSOLE_WORKBENCH_SHORTCUTS
+CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = (
+    ("Enter", "continue setup"),  # the real action leads, as collapsed's Esc does
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Enter"),
 )
 
 #: TASK-25733: the same lie as the setup-blocked case above, from a different
@@ -1237,9 +1237,9 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
 #: sends nothing, yet the footer kept offering "Enter send / queue". Escape is
 #: the way back (see the `expand_collapsed_console_composer` priority binding),
 #: so the send hint is replaced by the one action that matters while hidden.
-CONSOLE_WORKBENCH_SHORTCUTS_COMPOSER_COLLAPSED = tuple(
-    ("Esc", "show composer") if pair == ("Enter", "send / queue") else pair
-    for pair in CONSOLE_WORKBENCH_SHORTCUTS
+CONSOLE_WORKBENCH_SHORTCUTS_COMPOSER_COLLAPSED = (
+    ("Esc", "show composer"),  # the way back leads, so a narrow footer keeps it
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Enter"),
 )
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped

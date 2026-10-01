@@ -190,6 +190,10 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
         footer = console.query_one(AppFooterStatus)
         shown = str(footer._shortcut_display.content)
         assert "Alt+M switch model" in shown and "Ctrl+O chat settings" in shown
+        # TASK-33004.7 review: at the owner's 211x44 the new model hints must
+        # not push the Inspect/approval/context-rail accelerators out.
+        for hint in ("Alt+I inspect", "Alt+A approval", "Alt+C context rail"):
+            assert hint in shown, (hint, shown)
 
 
 @pytest.mark.asyncio

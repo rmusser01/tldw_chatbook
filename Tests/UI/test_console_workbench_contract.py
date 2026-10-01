@@ -1832,7 +1832,7 @@ async def test_console_registers_footer_workbench_shortcuts():
             # Ctrl+Shift+F toggle pair PREPENDED — AppFooterStatus drops
             # trailing hints first when width runs out, and the focus
             # toggle is the only exit affordance visible in focus mode.
-            "Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | "
+            "Ctrl+Shift+F focus | F6 next pane | F1 help | "
             # TASK-33004.7: the two model surfaces follow F1, as in mockup (a).
             "Alt+M switch model | Ctrl+O chat settings | "
             # TASK-24604: Alt+I sits before the palette hint. The Inspect
@@ -1841,10 +1841,13 @@ async def test_console_registers_footer_workbench_shortcuts():
             # the source mentions is not a discoverable one.
             # task-32277: Alt+A follows immediately after, same reasoning --
             # the approval card had no key binding at all before this.
-            "Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new "
+            "Ctrl+K switch session | Ctrl+T new "
             # TASK-32320's Alt+C was missing here (red on dev before 33004.7).
             "tab | Alt+I inspect | Alt+A approval | Alt+C context rail | "
-            "Ctrl+P palette | Ctrl+Q quit"
+            # TASK-33004.7 review: the self-evident Enter, the rarer Y and the
+            # F6-paired Shift+F6 trail, so 211x44 keeps Alt+I/Alt+A/Alt+C.
+            "Ctrl+P palette | Y trace | Enter send / queue | "
+            "Shift+F6 previous pane | Ctrl+Q quit"
         )
 
         await console.remove()
