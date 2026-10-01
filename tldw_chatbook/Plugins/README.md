@@ -433,3 +433,64 @@ Permanent app shutdown drains Console and then closes the plugin service;
 navigation keeps its owner alive. F7 supplies update/revision drain and retention;
 M4 supplies plugin MCP ownership. These later paths must preserve these identities
 and current-authority checks.
+
+## Scoped stop and uninstall (F6)
+
+Use the app-owned `PluginService.disable(target, operation_id)` or
+`uninstall(installation_id, operation_id)`. `RevocationTarget` is frozen:
+
+- `RevocationTarget(id, workspace_id, False)` disables one named workspace.
+- `RevocationTarget(id, None, False, global_default=True)` changes the explicit
+  default and stops its captured inheritors; explicit workspace overrides remain.
+- `RevocationTarget(id, None, True)` disables every scope, setting the default
+  false and existing overrides disabled. Uninstall always covers every scope.
+
+Missing/contradictory modes and reserved workspace names are rejected. Reviewed
+activation commits that disable, including Enabled → Inherit under a false
+default, use the same immediate path and retain their original reviewed intent.
+
+The facade seals live admission and transfers exact host cancellation before its
+first storage-worker await. Pending admissions, context checks, result acceptance
+and future hook/checkpoint consumers use the same snapshot fence. Call
+`check_entries_live(entries)` for immediate refusal before asynchronous checks;
+a pass is **not** authorization and must still be followed by the normal current
+checks. Independently configured handlers have no plugin admission carrier and
+retain their existing authority. Namespace marker changes alone do not cancel
+unrelated scopes. Explicit reconciled enable creates fresh live generations;
+old tokens never revive. Failed/pending disable scopes remain fenced until their
+persistence is reconciled, including an explicit fresh request after an aborted ID.
+
+`OperationReceipt` separates `committed` and `phase` from `runtime_stopped`,
+`cleanup_pending`, and content-free error types. `complete` means publication
+finished; `recovery_required` with `committed=True` can mean SQLite committed but
+its certificate/publication still needs recovery. `session_only` means disable
+was not saved and gives **no restart guarantee**. Runtime stop uses actual host
+completion events and retained process evidence; a cancelled caller/Future never
+proves completion. An unobserved process inventory cannot prove a clean stop.
+`revocation_status(operation_id)` observes retained outcomes without storage IO.
+`RevocationFailure` retains the original exception in `original_error`/`__cause__`
+for the owning adapter; public diagnostics must use the receipt's closed fields.
+
+Caller cancellation leaves retained persistence/cleanup running. Retry the exact
+operation ID and request; conflicting reuse raises `ValueError`. A prepared-only
+abort retains its aborted result without replay; reconcile, then make an explicit
+fresh request with a fresh ID. A committed registry without a certificate remains
+recovery-required. Cross-session issued-ID/legacy retry migration and bounded
+retention are F7; do not invent a new ID to retry uncertain remote work.
+
+Uninstall commits the tombstone and removes only installation-owned trust,
+selection, mappings and registrations before package-file cleanup. Saved data and
+process evidence survive. Unknown/idle surviving owners keep cleanup pending;
+retry the same uninstall after confirmed drain to remove retained package files.
+Independent credentials and connection owners remain with their existing
+services. M4 supplies actual plugin MCP request/connection ownership; hook-v2
+consumers use this admission fence without a parallel runtime.
+
+A pending request also captures its live scope versions. A newer disable in that
+scope (or everywhere) supersedes the old unfinished request. Retrying it after a
+fresh enable raises `RevocationConflict` before worker access; it cannot mint a
+new disable review or cancel fresh work. Completed IDs remain idempotent.
+`runtime_stopped=None` means the worker has not yet observed enough process
+ownership evidence; UI must show unknown/cleanup pending, never confirmed stop.
+An explicit Inherit review under a true default can resume fresh admissions after
+reconciliation, with the same permanent refusal of old tokens.

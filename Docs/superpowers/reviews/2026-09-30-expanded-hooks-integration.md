@@ -313,3 +313,36 @@ Limits: real local macOS/APFS storage, crypto, native threads, controlled child
 processes, actual Console/AgentService composition; provider transport and marker
 backends are isolated doubles. No external provider/keychain, Windows/Linux, full
 suite, power-loss or plugin MCP/native capability qualification is claimed here.
+
+
+## F6 — TASK-32673 scoped stop and uninstall
+
+Integrated the reviewed `a9f4efd792` increment onto current native owners. The
+shared live fence invalidates only the requested scope and starts retained exact
+cancellation before trust/storage access. Durable persistence, confirmed runtime
+stop and pending cleanup have separate receipts; surviving or unknown processes
+keep their leases. Uninstall commits tombstones and installation-owned removals
+before descriptor-relative package cleanup, retaining data and independent
+credentials. Fresh re-enable does not restore old approvals or callbacks.
+
+The first real A/B activation and controlled-child test reached the missing
+revocation module after successful preconditions (RED). All **45 scoped
+revocation/persistence checks passed in 155.21s**, no warnings/skips;
+`/private/tmp/hooks-f6-core.xml`. This includes actual Console provider custody,
+stalled/failed durable boundaries, exact original retries, replacement-parent
+refusal and live surviving children. Neighbor admission, native Console skills, coordinator/recovery and automatic-work lineage: **123 passed in 248.90s**, no warnings/skips; `/private/tmp/hooks-f6-neighbors.xml`.
+
+All 37 plugin Python files pass full Ruff and formatter checks. Changed Python
+parses and whitespace checks pass; the shared Console controller retains its
+205 pre-existing lint findings with no additions. ACs were self-reviewed against
+the real service and storage flows. ADR-162/163 govern these existing boundaries.
+
+Limits: local macOS/APFS, real SQLite/crypto/threads and controlled children; marker
+and provider backends are isolated doubles. No full suite, external provider,
+keychain, Linux/Windows or hardware power-loss qualification. Cross-session issued
+request lookup and rolling history retention remain F7.
+
+F5 packaging follow-up: the built wheel
+`/private/tmp/hooks-f5-wheel/tldw_chatbook-0.2.2-py3-none-any.whl` was inspected;
+all three packaged registry migration resources exactly match source. No editable
+environment was rebound or reinstalled.

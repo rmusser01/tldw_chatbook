@@ -268,6 +268,19 @@ class PluginRuntimeOwner:
                 (installation_id, revision_digest),
             ).fetchone()[0]
 
+    def unsettled_tokens(
+        self, installation_id: str, workspace_id: str | None = None
+    ) -> tuple[str, ...]:
+        """Retain unknown/idle owners too; lack of an active lease proves no drain."""
+        with self._store().transaction() as cursor:
+            return tuple(
+                row[0]
+                for row in cursor.execute(
+                    "SELECT token FROM processes WHERE installation_id=? AND state!='settled' AND (? IS NULL OR workspace_id=?)",
+                    (installation_id, workspace_id, workspace_id),
+                )
+            )
+
     def list_processes(self, *, limit: int, offset: int) -> tuple[dict, ...]:
         """Expose bounded exact recovery evidence, including settled history."""
         validate_page(limit, offset)

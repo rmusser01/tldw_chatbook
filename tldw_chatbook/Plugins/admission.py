@@ -8,6 +8,7 @@ from .coordinator import PluginCoordinator
 from .models import PackageInspection
 from .package_files import canonical_json
 from .recovery import retained_inspections
+from .revocation import RevocationTarget
 
 
 def effective_activation(default: bool, override: str) -> bool:
@@ -37,6 +38,7 @@ class RunPluginSnapshot:
     dependencies: tuple[tuple[str, tuple[str, ...]], ...]
     inspection: PackageInspection
     alias: str
+    live_generations: tuple[tuple[str, str, int], ...] = ()
 
 
 class LivePluginFences:
@@ -49,6 +51,128 @@ class LivePluginFences:
     def __init__(self) -> None:
         self.live_lock = RLock()
         self._sealed: set[tuple[str, str | None]] = set()
+        self.epochs = {}
+        self.blocked = set()
+        self.runs = {}
+        self.operations = {}
+
+    def current(self, installation_id, generations):
+        with self.live_lock:
+            keys = [
+                (installation_id, kind, workspace) for kind, workspace, _ in generations
+            ]
+            if any(key in self.blocked for key in keys):
+                raise PluginUnavailable("plugin_scope_sealed")
+            return tuple(
+                (
+                    kind,
+                    workspace,
+                    self.epochs.get((installation_id, kind, workspace), 0),
+                )
+                for _, kind, workspace in keys
+            )
+
+    def check_snapshot(self, snapshot):
+        self.check(snapshot.installation_id, snapshot.workspace_id)
+        if (
+            self.current(snapshot.installation_id, snapshot.generations)
+            != snapshot.live_generations
+        ):
+            raise PluginUnavailable("plugin_live_generation_changed")
+
+    def seal_target(self, target: RevocationTarget) -> tuple[str, ...]:
+        with self.live_lock:
+            self.epochs[target.scope] = self.epochs.get(target.scope, 0) + 1
+            self.blocked.add(target.scope)
+            return tuple(
+                record.lease_token
+                for record in self.runs.values()
+                if target.matches(record)
+            )
+
+    def begin(self, target, operation_id, kind="revoke", review=None):
+        from .authority import PluginMarker
+        from .review import OperationReceipt
+        from .revocation import RevocationOperation
+
+        PluginMarker(
+            generation=1, operation_id=operation_id, recovery_snapshot_digest="0" * 64
+        )
+        with self.live_lock:
+            prior = self.operations.get(operation_id)
+            if prior is not None:
+                if (prior.target, prior.kind) != (target, kind) or (
+                    review is not None and prior.review != review
+                ):
+                    raise ValueError("plugin operation identity conflict")
+                if prior.receipt.phase != "complete" and any(
+                    self.epochs.get(scope, 0) != generation
+                    for scope, generation in prior.scope_versions
+                ):
+                    from dataclasses import replace
+
+                    from .revocation import RevocationConflict
+
+                    prior.receipt = replace(prior.receipt, phase="superseded")
+                    raise RevocationConflict("plugin revocation request superseded")
+                return prior
+            tokens = self.seal_target(target)
+            records = tuple(
+                record for record in self.runs.values() if record.lease_token in tokens
+            )
+            operation = RevocationOperation(
+                target,
+                kind,
+                operation_id,
+                records,
+                OperationReceipt(operation_id, "session_only", False),
+                review=review,
+                scope_versions=tuple(
+                    (scope, self.epochs.get(scope, 0))
+                    for scope in sorted(
+                        {target.scope, (target.installation_id, "installation", "")}
+                    )
+                ),
+            )
+            self.operations[operation_id] = operation
+            operation.cancel_owned()
+            return operation
+
+    def reconcile_enable(self, installation_id, workspace_id):
+        with self.live_lock:
+            self.blocked.discard((installation_id, "installation", ""))
+            self.blocked.discard(
+                (
+                    installation_id,
+                    "global_default" if workspace_id is None else "workspace",
+                    workspace_id or "",
+                )
+            )
+
+    def require_enable_reconciled(self, installation_id, workspace_id):
+        with self.live_lock:
+            reconciled = set()
+            for op in reversed(tuple(self.operations.values())):
+                target = op.target
+                if target.installation_id != installation_id:
+                    continue
+                if op.receipt.phase == "complete":
+                    reconciled.add(target.scope)
+                    continue
+                if (
+                    target.scope in reconciled
+                    or (installation_id, "installation", "") in reconciled
+                ):
+                    continue
+                if (
+                    target.everywhere
+                    or (target.global_default and workspace_id is None)
+                    or (
+                        not target.global_default
+                        and target.workspace_id == workspace_id
+                    )
+                ):
+                    raise PluginUnavailable("plugin_revocation_reconciliation_required")
 
     def seal(self, installation_id: str, workspace_id: str | None = None) -> None:
         with self.live_lock:
@@ -75,7 +199,11 @@ class PluginAdmission:
     ) -> None:
         self.coordinator = coordinator
         self.workspace_lookup = workspace_lookup
-        self.fences = fences or LivePluginFences()
+        self.fences = fences or coordinator.fences
+
+    def seal(self, target: RevocationTarget) -> tuple[str, ...]:
+        """Fence the exact scope synchronously; return retained cancellation tokens."""
+        return self.fences.seal_target(target)
 
     def _workspace(self, workspace_id: str | None) -> None:
         if workspace_id is None or workspace_id in {"global", "workspace-default"}:
@@ -232,6 +360,7 @@ class PluginAdmission:
                 ),
                 inspection,
                 alias,
+                self.fences.current(installation_id, generations),
             )
         except PluginUnavailable:
             raise
@@ -240,6 +369,7 @@ class PluginAdmission:
 
     def check(self, snapshot: RunPluginSnapshot, component_id: str) -> None:
         """Refuse changed installation/scope/material; unrelated markers may move."""
+        self.fences.check_snapshot(snapshot)
         if component_id not in snapshot.selection:
             raise PluginUnavailable("plugin_component_not_admitted")
         current = self.capture(

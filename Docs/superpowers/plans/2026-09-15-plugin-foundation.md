@@ -428,7 +428,7 @@ git diff --check
 - Consumes: F5 scoped snapshots and F2 process/lease ownership.
 - Produces: RevocationTarget(installation_id: str, workspace_id: str | None, everywhere: bool) is frozen. async PluginCoordinator.disable(target: RevocationTarget, operation_id: str) -> OperationReceipt and uninstall(installation_id: str, operation_id: str) -> OperationReceipt. PluginAdmission.seal(target: RevocationTarget) -> tuple[str, ...] synchronously fences affected owners and returns cancellation tokens; the persistence path is a separate await.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 import pytest
@@ -445,9 +445,9 @@ async def test_disable_starts_cleanup_before_blocked_persistence(revocation_case
     await operation
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_revocation.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_revocation.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 async def disable_scoped(admission, target, cancel_owned, persist):
@@ -456,20 +456,20 @@ async def disable_scoped(admission, target, cancel_owned, persist):
     return await persist()
 ```
 
-  - [ ] 3.1. Build revocation_case in test_revocation_persistence.py around plugin_stack: A/B admitted skills, an owned controlled subprocess, real admission checks, an asyncio.Event for cleanup-start and a storage fault gate. Define block_persistence/start_disable_here/admission_allows_a/admission_allows_b/release_persistence locally on that fixture; start_disable_here schedules the real coordinator method.
-  - [ ] 3.2. Implement the ordering kernel with cancellation owned by a retained host task; cancellation of the caller must not abandon cleanup. Return/report persistence and runtime outcomes independently, preserving the original storage/cancellation error if cleanup also fails.
-  - [ ] 3.3. Invalidate pending approvals, checkpoints, context callbacks and continuations only for the target scope. Suppress affected plugin cleanup hooks immediately; independently configured user handlers retain their authority.
-  - [ ] 3.4. Make uninstall tombstones and owned-grant/registration removal durable before file removal. Preserve data and independent credentials; expose session-only failure without a restart guarantee.
+  - [x] 3.1. Build revocation_case in test_revocation_persistence.py around plugin_stack: A/B admitted skills, an owned controlled subprocess, real admission checks, an asyncio.Event for cleanup-start and a storage fault gate. Define block_persistence/start_disable_here/admission_allows_a/admission_allows_b/release_persistence locally on that fixture; start_disable_here schedules the real coordinator method.
+  - [x] 3.2. Implement the ordering kernel with cancellation owned by a retained host task; cancellation of the caller must not abandon cleanup. Return/report persistence and runtime outcomes independently, preserving the original storage/cancellation error if cleanup also fails.
+  - [x] 3.3. Invalidate pending approvals, checkpoints, context callbacks and continuations only for the target scope. Suppress affected plugin cleanup hooks immediately; independently configured user handlers retain their authority.
+  - [x] 3.4. Make uninstall tombstones and owned-grant/registration removal durable before file removal. Preserve data and independent credentials; expose session-only failure without a restart guarantee.
 
 **Failure and successful-control matrix:** Stalled storage before every durable boundary, locked trust, dead child and surviving child, re-enable after stale approval, global-default inheritors versus explicit overrides, uninstall idempotency and no new plugin-owned callback after the live fence.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_revocation.py Tests/Plugins/test_revocation_persistence.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32673 --plain

@@ -23,7 +23,7 @@ class PluginReview:
     token: str
     expires_at: float
     alias: str | None = None
-    kind: Literal["install", "trust", "activate"] = "install"
+    kind: Literal["install", "trust", "activate", "revoke", "uninstall"] = "install"
     intent: Literal["inherit", "enabled", "disabled"] | None = None
 
 
@@ -35,6 +35,10 @@ class OperationReceipt:
     phase: str
     committed: bool
     recovery_reason: str | None = None
+    runtime_stopped: bool | None = None
+    cleanup_pending: bool = False
+    persistence_error: str | None = None
+    cleanup_errors: tuple[str, ...] = ()
 
 
 def inspection_identity(inspection: PackageInspection) -> str:

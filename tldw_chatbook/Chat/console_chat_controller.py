@@ -27661,6 +27661,7 @@ class ConsoleChatController:
         provider_consumer_finished = False
         plugin_terminal_task = None
         provider_loop = asyncio.get_running_loop()
+        provider_consumer_task = asyncio.current_task()
         previous_work_callback = stream_signals.provider_work_callback
 
         def finish_plugin_when_terminal(completion=None) -> None:
@@ -27690,14 +27691,38 @@ class ConsoleChatController:
             completion.add_done_callback(finish_plugin_when_terminal)
             return True
 
-        def cancel_plugin_provider() -> None:
+        def cancel_plugin_provider():
             cancel_event.set()
 
-            def close_owned_transport():
+            async def close_owned_transport():
+                errors = []
+                closing = []
                 for close in tuple(provider_closers):
-                    close()
+                    try:
+                        result = close()
+                        if inspect.isawaitable(result):
+                            closing.append(result)
+                    except Exception as error:  # noqa: BLE001
+                        errors.append(error)
+                # The caller task may have moved on after this consumer exited.
+                # Cancel only this consumer, while retaining real worker evidence.
+                if (
+                    not provider_consumer_finished
+                    and provider_consumer_task is not None
+                    and not provider_consumer_task.done()
+                ):
+                    provider_consumer_task.cancel()
+                if closing:
+                    outcomes = await asyncio.gather(*closing, return_exceptions=True)
+                    errors.extend(
+                        item for item in outcomes if isinstance(item, BaseException)
+                    )
+                if errors:
+                    raise BaseExceptionGroup("plugin transport cleanup failed", errors)
 
-            provider_loop.call_soon_threadsafe(close_owned_transport)
+            return asyncio.run_coroutine_threadsafe(
+                close_owned_transport(), provider_loop
+            )
 
         async def enter_provider_dispatch() -> None:
             nonlocal plugin_service, admitted_plugin_entries

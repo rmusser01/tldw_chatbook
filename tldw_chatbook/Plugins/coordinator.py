@@ -19,6 +19,7 @@ from .models import PackageInspection
 from .package_files import canonical_json, capture_package, materialize_package
 from .registry import PluginRegistry
 from .review import OperationReceipt, PluginReview, inspection_identity, reinspect
+from .revocation import RevocationTarget
 from .runtime_owner import PluginRuntimeOwner
 
 REVIEW_SECONDS = 15 * 60
@@ -39,6 +40,8 @@ class PluginCoordinator:
         registry: PluginRegistry,
         authority: PluginAuthorityStore,
         owner: PluginRuntimeOwner,
+        *,
+        fences=None,
     ) -> None:
         if threading.current_thread() is threading.main_thread():
             raise RuntimeError("plugin coordinator requires a dedicated worker")
@@ -48,6 +51,10 @@ class PluginCoordinator:
         self.registry, self.authority, self.owner = registry, authority, owner
         self._thread = threading.get_ident()
         self._loop = asyncio.get_event_loop()
+        from .admission import LivePluginFences
+
+        self.fences = fences or LivePluginFences()
+        self._revocation_reviews = {}
         self._reviews: dict[str, PluginReview] = {}
         self._published: dict | None = None
         self.progress: Callable[[str], None] | None = None
@@ -214,7 +221,55 @@ class PluginCoordinator:
                 alias=review.alias,
             )
             return
-        if review.kind == "trust":
+        if review.kind in {"revoke", "uninstall"}:
+            operation = self._revocation_reviews[review.token]
+            target = operation.target
+            if review.kind == "uninstall":
+                cursor.execute(
+                    "INSERT INTO tombstones VALUES (?, ?, ?)",
+                    (
+                        review.installation_id,
+                        review.authority_marker.generation + 1,
+                        operation.operation_id,
+                    ),
+                )
+                for table in (
+                    "selections",
+                    "components",
+                    "revision_trust",
+                    "revisions",
+                    "activation",
+                    "sources",
+                    "mappings",
+                    "authority_generations",
+                    "installations",
+                ):
+                    cursor.execute(
+                        f"DELETE FROM {table} WHERE installation_id=?",
+                        (review.installation_id,),
+                    )
+                return
+            scope, workspace = target.scope[1:]
+            if target.everywhere:
+                cursor.execute(
+                    "UPDATE installations SET activation_default=0 WHERE installation_id=?",
+                    (review.installation_id,),
+                )
+                cursor.execute(
+                    "UPDATE activation SET intent='disabled' WHERE installation_id=?",
+                    (review.installation_id,),
+                )
+            elif target.global_default:
+                cursor.execute(
+                    "UPDATE installations SET activation_default=0 WHERE installation_id=?",
+                    (review.installation_id,),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO activation VALUES (?, ?, 'disabled') ON CONFLICT(installation_id, workspace_id) DO UPDATE SET intent='disabled'",
+                    (review.installation_id, workspace),
+                )
+        elif review.kind == "trust":
             cursor.execute(
                 "UPDATE revision_trust SET reviewed=1 WHERE installation_id=? AND revision_digest=?",
                 (review.installation_id, retained.effective_digest),
@@ -318,7 +373,16 @@ class PluginCoordinator:
 
     async def commit(self, review: PluginReview, operation_id: str) -> OperationReceipt:
         """Revalidate, prepare, durably commit, certify, mark, then publish."""
+        from .revocation import revocation_for_review
+
+        target = revocation_for_review(review)
+        if target is not None and review.token not in self._revocation_reviews:
+            return await self._revoke(target, operation_id, "activate", review=review)
         self._require_worker()
+        if review.kind == "activate" and target is None:
+            self.fences.require_enable_reconciled(
+                review.installation_id, review.workspace_id
+            )
         # Validate the ID with the same closed schema used by protected authority.
         PluginMarker(
             generation=1, operation_id=operation_id, recovery_snapshot_digest="0" * 64
@@ -399,6 +463,60 @@ class PluginCoordinator:
                         matches = intent == review.intent
                     if not matches:
                         raise ValueError("operation ID belongs to a different review")
+                    if prior.committed and prior.phase == "complete" and target is None:
+                        current = self.published_snapshot()
+
+                        def resume_authority(snapshot):
+                            installed = next(
+                                (
+                                    row
+                                    for row in snapshot["installations"]
+                                    if row["installation_id"] == review.installation_id
+                                ),
+                                None,
+                            )
+                            if installed is None:
+                                return None
+                            scopes = {("installation", ""), (scope, workspace)}
+                            if review.intent == "inherit":
+                                scopes.add(("global_default", ""))
+                            return (
+                                installed["revision_digest"],
+                                installed.get("alias"),
+                                (
+                                    installed["activation_default"]
+                                    if review.workspace_id is None
+                                    or review.intent == "inherit"
+                                    else None
+                                ),
+                                [
+                                    row
+                                    for row in snapshot["activation"]
+                                    if row["installation_id"] == review.installation_id
+                                    and row["workspace_id"] == review.workspace_id
+                                ],
+                                [
+                                    row
+                                    for row in snapshot["authority_generations"]
+                                    if row["installation_id"] == review.installation_id
+                                    and (row["scope_kind"], row["workspace_id"])
+                                    in scopes
+                                ],
+                            )
+
+                        # A historical receipt is not a fresh enable. Only the
+                        # still-current scoped authority may release its fence;
+                        # unrelated namespace publications do not prevent resume.
+                        if resume_authority(current) == resume_authority(
+                            evidence.snapshot
+                        ):
+                            with self.fences.live_lock:
+                                self.fences.require_enable_reconciled(
+                                    review.installation_id, review.workspace_id
+                                )
+                                self.fences.reconcile_enable(
+                                    review.installation_id, review.workspace_id
+                                )
             return prior
         if any(item.phase == "recovery_required" for item in receipts):
             raise PermissionError("plugin recovery required")
@@ -433,6 +551,10 @@ class PluginCoordinator:
             self.authority.prepare(snapshot, review.authority_marker, new)
             self._milestone("prepared")
             self.registry.write_operation(cursor, result, phase="committed")
+        if review.token in self._revocation_reviews:
+            self._revocation_reviews[review.token].receipt = OperationReceipt(
+                operation_id, "recovery_required", True
+            )
         self._milestone("registry_committed")
         # This is the only production certificate issuance call. The guarded
         # registry context above has returned after its actual SQLite COMMIT.
@@ -445,8 +567,139 @@ class PluginCoordinator:
         with self.registry.transaction() as cursor:
             self.registry.write_operation(cursor, result, phase="complete")
         self._published = snapshot
+        if review.kind == "activate" and target is None:
+            self.fences.reconcile_enable(review.installation_id, review.workspace_id)
         self._milestone("published")
         return OperationReceipt(operation_id, "complete", True)
+
+    async def disable(
+        self, target: RevocationTarget, operation_id: str
+    ) -> OperationReceipt:
+        """Share the facade's immediate live owner before persistence begins."""
+        return await self._revoke(target, operation_id, "revoke")
+
+    async def uninstall(
+        self, installation_id: str, operation_id: str
+    ) -> OperationReceipt:
+        return await self._revoke(
+            RevocationTarget(installation_id, None, True), operation_id, "uninstall"
+        )
+
+    async def _revoke(self, target, operation_id, kind, *, review=None):
+        from dataclasses import replace
+
+        from .revocation import RevocationConflict, RevocationFailure
+
+        operation = self.fences.begin(target, operation_id, kind, review=review)
+        self._require_worker()
+        if operation.review is not None:
+            self._revocation_reviews[operation.review.token] = operation
+        try:
+            with self.fences.live_lock:
+                known_tokens = {
+                    record.lease_token
+                    for record in (*operation.records, *self.fences.runs.values())
+                }
+            operation.unresolved_tokens = tuple(
+                token
+                for token in self.owner.unsettled_tokens(
+                    target.installation_id,
+                    (
+                        None
+                        if target.everywhere or target.global_default
+                        else target.workspace_id
+                    ),
+                )
+                if token not in known_tokens
+            )
+            operation.runtime_observed = True
+            if operation.receipt.phase != "complete":
+                receipts = await self.recover()
+                prior = next(
+                    (item for item in receipts if item.operation_id == operation_id),
+                    None,
+                )
+                if prior is not None:
+                    # Custody pins request identity within this live owner. Cross-session
+                    # issuance/legacy retry migration belongs to F7 (R32).
+                    evidence = self.authority.verify_transition(operation_id)
+                    result = evidence.snapshot["operation_result"]
+                    if (
+                        result["installation_id"] != target.installation_id
+                        or result["kind"] != kind
+                    ):
+                        raise RevocationConflict(
+                            "operation ID belongs to a different review"
+                        )
+                    if operation.review is None:
+                        raise ValueError(
+                            "plugin retry requires original session custody"
+                        )
+                    checked = await self.commit(operation.review, operation_id)
+                    operation.receipt = replace(
+                        checked,
+                        committed=checked.committed or operation.receipt.committed,
+                    )
+                else:
+                    if any(item.phase == "recovery_required" for item in receipts):
+                        raise PermissionError("plugin recovery required")
+                    if operation.review is None:
+                        operation.review = self._review_existing(
+                            target.installation_id,
+                            kind=kind,
+                            workspace_id=target.workspace_id,
+                        )
+                        self._revocation_reviews[operation.review.token] = operation
+                    operation.receipt = await self.commit(
+                        operation.review, operation_id
+                    )
+        except RevocationConflict:
+            raise
+        except Exception as error:
+            if (
+                isinstance(error, ValueError)
+                and str(error) == "operation ID belongs to a different review"
+            ):
+                raise
+            operation.receipt = replace(
+                operation.receipt, persistence_error=type(error).__name__
+            )
+            raise RevocationFailure(operation.status(), error) from error
+        if kind == "uninstall" and operation.receipt.phase == "complete":
+            operation.files_pending = True
+            if not operation.unresolved_tokens and all(
+                record.completed.is_set() for record in operation.records
+            ):
+                try:
+                    self._remove_uninstalled_package(target.installation_id)
+                    operation.files_pending = False
+                except (OSError, ValueError) as error:
+                    operation.cleanup_errors.append(error)
+        return operation.status()
+
+    def _remove_uninstalled_package(self, installation_id: str) -> None:
+        """Unlink only beneath the qualified owner, without following parent links."""
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        root_fd = os.open(self.owner.root, flags)
+        try:
+            self.owner.require_owner(self.owner.root)
+            opened, named = os.fstat(root_fd), self.owner.root.lstat()
+            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+                raise ValueError("plugin removal root changed")
+            try:
+                packages_fd = os.open("packages", flags, dir_fd=root_fd)
+            except FileNotFoundError:
+                return
+            try:
+                try:
+                    shutil.rmtree(installation_id, dir_fd=packages_fd)
+                except FileNotFoundError:
+                    pass
+                os.fsync(packages_fd)
+            finally:
+                os.close(packages_fd)
+        finally:
+            os.close(root_fd)
 
     async def recover(self) -> tuple[OperationReceipt, ...]:
         """Reconcile authenticated transitions under the same storage owner."""
