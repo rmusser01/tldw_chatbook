@@ -35,6 +35,9 @@ def operation_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         A mutable ``{"n": entries}`` mapping; tests reset ``n`` after warming
         the cache and then assert on it.
     """
+    # Warm first: a cold-cache rebuild must run the real ``operation`` -- a
+    # wrapped one fails the raw-participant provenance checks (Qodo, #2903).
+    _warm_settings()
     real_operation = config_participants.operation
     calls = {"n": 0}
 
