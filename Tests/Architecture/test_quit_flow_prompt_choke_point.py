@@ -98,9 +98,9 @@ def _closure(methods: dict[str, _FunctionNode], roots: list[str]) -> list[str]:
     return seen
 
 
-def scan_source(source: str, label: str, *, quit_named_roots: bool) -> tuple[
-    list[str], list[str]
-]:
+def scan_source(
+    source: str, label: str, *, quit_named_roots: bool
+) -> tuple[list[str], list[str]]:
     """Scan one module.
 
     Args:
@@ -203,12 +203,14 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"
     # session.py's confirm_quit(self, controller) is not called by the walk.
     assert not any(
-        root.endswith("Console_Modules/session.py:ConsoleSessionController.confirm_quit")
+        root.endswith(
+            "Console_Modules/session.py:ConsoleSessionController.confirm_quit"
+        )
         for root in roots
     )
 
 
-_OFFENDING = '''
+_OFFENDING = """
 class Direct:
     async def confirm_quit(self):
         return await self.app.push_screen_wait(Prompt())
@@ -227,7 +229,7 @@ class NotOnTheWalk:
 class Fine:
     async def confirm_quit(self):
         return await confirm_quit_discarding_edits(self, "edits")
-'''
+"""
 
 
 def test_negative_control_the_scan_catches_a_direct_and_a_transitive_wait() -> None:
@@ -241,13 +243,13 @@ def test_negative_control_the_scan_catches_a_direct_and_a_transitive_wait() -> N
 
 
 def test_negative_control_module_functions_except_the_choke_point() -> None:
-    source = '''
+    source = """
 async def await_quit_prompt(app, prompt):
     return app.push_screen(prompt, wait_for_dismiss=True)
 
 async def confirm_quit_with_a_bare_wait(app, prompt):
     return await app.push_screen_wait(prompt)
-'''
+"""
     roots, offences = scan_module_functions(source, "fixture")
     assert roots == ["fixture:confirm_quit_with_a_bare_wait"]
     assert offences == ["fixture:confirm_quit_with_a_bare_wait:6"]
