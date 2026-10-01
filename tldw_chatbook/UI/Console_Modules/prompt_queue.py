@@ -154,11 +154,29 @@ def derive_prompt_queue_presentation(
 ) -> ConsolePromptQueuePresentation:
     """Derive exact visible queue vocabulary from bounded previews only.
 
-    No full prompt body is read here. ``failed_turn_preview`` is the bounded
-    one-line preview of the prompt whose turn failed and paused the queue
-    (the caller's ``make_prompt_preview``), or ``None`` when no failed turn
-    exists. A FAILED pause without one (every turn succeeded) offers Resume:
-    a Retry there could only refuse (TASK-33621.19).
+    No full prompt body is read here.
+
+    Args:
+        snapshot: Body-free queue snapshot for the session.
+        activity: The session's controller activity; a live accepted turn or
+            an occupied agent slot decides the Send/Queue/Preparing label.
+        composer_collapsed: True hides the shelf whatever its state.
+        dispatch_recovery: A pending dispatch recovery, whose copy and typed
+            actions replace the queue's own state and primary action.
+        dispatch_recovery_blocked: True when a response recovery blocks the
+            queue; the shelf shows a disabled Resume.
+        turn_recovery_id: An unsent turn needing attention. It outranks every
+            other state and keeps the shelf visible with no queued entries.
+        failed_turn_preview: Bounded one-line preview of the prompt whose turn
+            failed and paused the queue (the caller's ``make_prompt_preview``),
+            or ``None`` when no failed turn exists. A FAILED pause without one
+            (every turn succeeded) offers Resume: a Retry there could only
+            refuse (TASK-33621.19).
+
+    Returns:
+        The immutable shelf/composer presentation: Send label and gate, shelf
+        visibility, state label, next waiting preview, primary action and its
+        label, and any dispatch-recovery actions.
     """
 
     count = snapshot.total_count
