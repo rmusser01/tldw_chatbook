@@ -4873,6 +4873,38 @@ async def test_console_settings_select_highlight_is_a_readable_bar(theme) -> Non
         assert _painted_ratio(ink, bar) >= 4.5, (theme, ink, bar)
 
 
+@pytest.mark.parametrize("theme", ["textual-dark", "agentic_terminal", "textual-light"])
+@pytest.mark.asyncio
+async def test_console_settings_select_popover_edge_keeps_3_to_1(theme) -> None:
+    """cubic review of #2937: an open Select's popover edge is a
+    $tldw-boundary control edge, so it must clear 3:1 against the popover's
+    own fill. Textual tints a focused OptionList 5% toward the foreground and
+    the popover always holds focus, so the edge measured 2.71:1 in
+    textual-dark (3.05:1 on the untinted panel)."""
+    from textual.widgets._select import SelectOverlay
+
+    app = _themed_modal_harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        budget = screen.query_one("#console-context-budget-mode", Select)
+        budget.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        overlay = budget.query_one(SelectOverlay)
+        assert overlay.display and overlay.has_focus
+        x, y = overlay.region.x, overlay.region.y + 1
+        glyph, edge, _ = _painted_cell(screen, x, y)
+        _, _, fill = _painted_cell(screen, x + 1, y)
+        assert glyph == "│", (theme, glyph)
+        assert _painted_ratio(edge, fill) >= 3.0, (theme, edge, fill)
+
+
 @pytest.mark.parametrize(
     "theme", ["agentic_terminal", "textual-light", "paradise_virtua", "earthy_nature"]
 )

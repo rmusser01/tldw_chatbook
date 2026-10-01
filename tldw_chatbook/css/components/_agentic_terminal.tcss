@@ -134,10 +134,13 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
     text-style: bold;
 }
 
+/* The overlay holds focus while open, so Textual's 5% focus tint only cut
+   the edge to 2.71:1 against the panel the guard pins it on (cubic #2937). */
 ConsoleSettingsModal Select > SelectOverlay {
     padding: $ds-space-0 $ds-space-1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
+    background-tint: transparent;
     color: $ds-text-primary;
     min-width: $ds-size-30;
 }
