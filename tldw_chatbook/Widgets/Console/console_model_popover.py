@@ -113,9 +113,10 @@ HIGHLIGHT_GLYPH = "▶"
 #: built-in custom and custom_2 slots always stay listable (ADR-146).
 _LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
 #: Column widths of one pair row (mockup (a)). The model column grows to the
-#: longest id shown, up to the cap, so ids render whole (spec: never truncated).
+#: longest id shown, so ids render whole (spec: never truncated); a row too
+#: long for the list ends in an ellipsis (the list is ``nowrap``), so the
+#: note, then readiness, give way before any id does.
 _MODEL_COLUMNS = 28
-_MODEL_COLUMNS_MAX = 44
 _PROVIDER_COLUMNS = 20
 _CONTEXT_COLUMNS = 5
 _READINESS_COLUMNS = 28
@@ -233,10 +234,10 @@ def _model_column_width(rows: Sequence[SwitcherRow]) -> int:
         rows: The switcher rows about to be rendered.
 
     Returns:
-        The longest model id's length, clamped to the column's floor and cap.
+        The longest model id's length, never below the column's floor.
     """
     longest = max((len(row.model) for row in rows if row.model), default=0)
-    return max(_MODEL_COLUMNS, min(_MODEL_COLUMNS_MAX, longest))
+    return max(_MODEL_COLUMNS, longest)
 
 
 def _fit(text: str, width: int) -> str:
@@ -339,6 +340,8 @@ class ConsoleModelPopover(
         height: auto;
         max-height: 100%;
         background: $panel;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     #console-popover-pairs.-fill {
@@ -1266,7 +1269,7 @@ class ConsoleModelPopover(
             muted = self.get_component_rich_style("console-popover--unpickable")
             style = Style(color=muted.color, bold=False)
         return Text(
-            f"{glyph} {_fit(model, self._model_columns):<{self._model_columns}} "
+            f"{glyph} {model:<{self._model_columns}} "
             f"{_fit(self._display(row.provider), _PROVIDER_COLUMNS):<{_PROVIDER_COLUMNS}} "
             f"{context:>{_CONTEXT_COLUMNS}}  "
             f"{_fit(switcher_readiness_words(readiness), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "

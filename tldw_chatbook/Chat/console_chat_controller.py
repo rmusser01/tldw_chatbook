@@ -273,6 +273,7 @@ from tldw_chatbook.Chat.console_provider_support import supported_generation_fie
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_BLANKABLE_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleEndpointDraft,
     ConsoleSettingsDraftState,
@@ -14005,10 +14006,16 @@ class ConsoleChatController:
                     app_config, target_defaults, source_field.name
                 )
                 field_values[source_field.name] = effective_value
+                # A blank Max tokens stays "inherit" (ADR-095 D3): the live
+                # chat takes the fallback; a quick Save deletes the override.
                 rebased_fields[source_field.name] = replace(
                     rebased_fields[source_field.name],
                     effective_value=effective_value,
-                    profile_override=effective_value,
+                    profile_override=(
+                        None
+                        if source_field.name in QUICK_BLANKABLE_DEFAULT_FIELDS
+                        else effective_value
+                    ),
                 )
                 continue
             inherits_target_default = (

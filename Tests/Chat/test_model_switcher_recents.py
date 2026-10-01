@@ -251,6 +251,62 @@ async def test_a_chat_reopened_from_sessions_keeps_its_stored_last_use(file_db) 
     )
 
 
+async def test_a_pair_switched_in_an_open_chat_is_used_now(file_db) -> None:
+    """Qodo #2947: switching an open saved chat from A to B is a use of B.
+
+    The switch moves the row's ``last_modified``, but RECENT reads an open
+    chat only through its live session, so the session's last use must move
+    too: B reads "used just now" and sorts first, ahead of a newer chat.
+    """
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Chat.console_settings_apply import (
+        ConsoleSettingsAction,
+        ConsoleSettingsDraftState,
+        ConsoleSettingsSubmission,
+        ConsoleSettingsSurface,
+    )
+
+    db = file_db
+    old_id = _add(db, _owned("openai", "gpt-5.1"), age=timedelta(days=3))
+    _add(db, _owned("deepseek", "deepseek-reasoner"), age=timedelta(days=1))
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=db),
+        store=store,
+        conversation_id=old_id,
+        tree=ChatConversationService(db).get_conversation_tree(old_id),
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5.1"),
+    )
+    switch = ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-5")
+
+    store.commit_console_settings_live(
+        ConsoleSettingsSubmission(
+            submission_id="switch-a-to-b",
+            action=ConsoleSettingsAction.APPLY_TO_CHAT,
+            surface=ConsoleSettingsSurface.QUICK_POPOVER,
+            origin=store.capture_console_settings_origin(session.id),
+            draft=ConsoleSettingsDraftState(
+                settings=switch,
+                context_policy_overrides=ConsoleContextPolicyOverrides(),
+                field_drafts=(),
+                model_drafts=(),
+                endpoint_draft=None,
+            ),
+            user_display_name_override=None,
+            default_field_mask=frozenset(),
+        )
+    )
+    uses = await read_recent_model_pairs(db, store.sessions())
+
+    assert _pairs(uses) == [
+        ("anthropic", "claude-sonnet-4-5"),
+        ("deepseek", "deepseek-reasoner"),
+    ]
+    assert uses[0].used_label(datetime.now(UTC)) == "used just now"
+
+
 async def test_read_runs_off_the_ui_thread_without_blocking_the_loop(file_db) -> None:
     """AC#3: the DB read runs in a worker thread while the loop keeps running."""
     db = file_db

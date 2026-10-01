@@ -279,15 +279,17 @@ class ConsoleControlBar(Vertical):
         self._set_recovery_height(recovery_visible)
         try:
             row = self.query_one("#console-auto-speak-row", Horizontal)
+            # Teardown prunes the buttons before their row; a late sync
+            # (a hook refresh still in flight) must not fail its worker.
+            retry = self.query_one("#console-auto-speak-retry", Button)
+            resume = self.query_one("#console-auto-speak-resume", Button)
         except NoMatches:
             return
-        retry = self.query_one("#console-auto-speak-retry", Button)
         retry.display = (
             self.auto_speak_enabled
             and self.auto_speak_paused
             and self.auto_speak_retry_available
         )
-        resume = self.query_one("#console-auto-speak-resume", Button)
         resume.display = recovery_visible
         row.display = recovery_visible
 

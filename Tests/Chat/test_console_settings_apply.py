@@ -478,7 +478,8 @@ def test_rebase_quick_blank_max_tokens_skips_the_profile_like_a_quick_save(
 
     assert rebased.settings.max_tokens == expected
     assert fields["max_tokens"].effective_value == expected
-    assert fields["max_tokens"].profile_override == expected
+    # Qodo #2947: the blank stays "inherit", so a quick Save deletes the cap.
+    assert fields["max_tokens"].profile_override is None
     assert (
         build_target_default_console_session_settings(
             saved_without_cap, "openai", "target"

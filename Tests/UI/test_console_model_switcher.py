@@ -715,23 +715,33 @@ async def test_switcher_is_140_wide_auto_height_to_80_percent_keys_visible(
 
 
 @pytest.mark.parametrize("size", [(211, 44), (235, 52)])
-async def test_switcher_shows_long_model_ids_whole(size) -> None:
-    """Spec rule: full ids, never truncated. A 36-column id renders whole."""
+@pytest.mark.parametrize(
+    ("long_id", "query"),
+    [
+        ("anthropic/claude-3.7-sonnet:thinking", "sonnet:thinking"),
+        # Qodo #2947: past the old 44-column cap.
+        ("accounts/fireworks/models/deepseek-r1-distill-llama-70b-fast", "distill"),
+    ],
+    ids=["36-columns", "60-columns"],
+)
+async def test_switcher_shows_long_model_ids_whole(size, long_id, query) -> None:
+    """Spec rule: full ids, never truncated, in the row and on screen."""
     recorder = Recorder()
-    long_id = "anthropic/claude-3.7-sonnet:thinking"
     models = {**PROVIDERS_MODELS, "Ollama": [long_id]}
     app = SwitcherHarness()
     async with app.run_test(size=size) as pilot:
         switcher = await open_switcher(
             app, pilot, build_switcher(recorder, providers_models=models)
         )
-        await pilot.press(*"sonnet:thinking")
+        await pilot.press(*query)
         await _settle(app, pilot)
         rendered = [
             str(switcher._prompt(row, False)) for row in switcher._rows
         ]
-        assert any(long_id in line for line in rendered), rendered
-        assert not any("…" in line and "claude-3.7" in line for line in rendered)
+        painted = list_lines(app, switcher)
+    assert any(long_id in line for line in rendered), rendered
+    assert not any("…" in line and long_id[:12] in line for line in rendered)
+    assert any(long_id in line for line in painted), painted
 
 
 def _painted_cell(screen, x: int, y: int):

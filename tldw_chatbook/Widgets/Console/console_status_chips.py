@@ -47,7 +47,14 @@ class ConsoleChip(Static):
     HELP = ""
 
     def label_tooltip(self, label: str) -> Content:
-        """The full label, then this chip's ``HELP`` line when it has one."""
+        """The full label, then this chip's ``HELP`` line when it has one.
+
+        Args:
+            label: The chip's full, unellipsized label text.
+
+        Returns:
+            Tooltip content: ``label``, plus ``HELP`` on a second line if set.
+        """
         return Content(f"{label}\n{self.HELP}" if self.HELP else label)
 
 

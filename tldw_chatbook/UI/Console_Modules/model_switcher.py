@@ -54,7 +54,15 @@ class ModelPairUse:
         return (self.provider, self.model)
 
     def used_label(self, now: datetime) -> str:
-        """Return the row's last-use text, e.g. ``used 2h ago in this chat``."""
+        """Return the row's last-use text, e.g. ``used 2h ago in this chat``.
+
+        Args:
+            now: The current time the age is measured against (UTC).
+
+        Returns:
+            ``used just now`` under a minute, else ``used <age>``, with
+            `` in this chat`` appended for this chat's own PREVIOUS pair.
+        """
         age = relative_age(self.last_used, now)
         text = "used just now" if age == "0m ago" else f"used {age}"
         return f"{text} in this chat" if self.in_this_chat else text
@@ -84,9 +92,17 @@ def live_model_pair_uses(sessions: Iterable[ConsoleChatSession]) -> list[ModelPa
     """Return the pairs of open Console sessions. UI thread only.
 
     A session's ``updated_at`` is its chat's last use: sending moves it, while
-    ``add_message`` never touches the row's ``last_modified``. A reopened chat
+    ``add_message`` never touches the row's ``last_modified``, and applying a
+    new pair (``commit_console_settings_live``) moves it too. A reopened chat
     starts from its row's ``last_modified`` (``hydrate_console_session``), and
     a chat restored at startup from its saved ``updated_at``.
+
+    Args:
+        sessions: The open Console sessions, temporary chats included.
+
+    Returns:
+        One use per session with a model and a readable ``updated_at``, in
+        the sessions' order; sessions without either are skipped.
     """
     uses = []
     for session in sessions:

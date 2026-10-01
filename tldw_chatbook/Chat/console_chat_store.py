@@ -8619,6 +8619,13 @@ class ConsoleChatStore:
                 raise ValueError("Console settings submission was already applied.")
             session.applied_settings_submission_ids.append(submission.submission_id)
             self.replace_session_settings(session.id, settings)
+            if current_settings is None or (
+                current_settings.provider,
+                current_settings.model,
+            ) != (settings.provider, settings.model):
+                # Applying a pair is a use of it: Switch model's RECENT reads
+                # an open chat's last use from this, as its row moved too.
+                session.updated_at = _utc_now_iso()
             self._replace_session_context_policy_live(
                 session,
                 submission.draft.context_policy_overrides,

@@ -492,7 +492,8 @@ Models ▸ Custom endpoints**.
 
 For a faster switch, **Alt+M** opens **Switch model**, a 140-column list of
 provider·model pairs; every row is a pair, so you never pick a provider
-without a model. The Provider and Model chips, the rail's **Change  Alt+M**,
+without a model. Model ids are never shortened: on a very long id, the
+row's notes and readiness words give way first. The Provider and Model chips, the rail's **Change  Alt+M**,
 the palette's "Console: Switch model…" and `/model` open it too. `/model
 <query>` (for example `/model son`) opens it with the query already in
 **Find** and the best match highlighted; nothing applies until you press
@@ -571,7 +572,7 @@ Switch model keeps no history of its own. Its **RECENT** group is built
 from chats you already have: every open Console chat, temporary chats
 included, and your 50 most recently changed saved chats in the global
 scope. A workspace chat's model appears there only while that chat is
-open. A saved chat whose stored settings are damaged, or were written by a
+open, and a model you just applied to a chat counts as used now. A saved chat whose stored settings are damaged, or were written by a
 newer version of tldw_chatbook, is left out. The list opens straight away
 and RECENT fills in a moment later. **PREVIOUS** is the model you last
 switched away from in this chat with Switch model, remembered while the

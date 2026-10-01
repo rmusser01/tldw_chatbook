@@ -187,9 +187,12 @@ def build_console_default_intent(
         exposed_names.add(draft.name)
         if draft.name not in field_mask:
             continue
+        # Quick values are materialized, except a blankable field's inherit
+        # (``profile_override=None``), which deletes the override (ADR-095 D3).
         values[draft.name] = (
             draft.effective_value
             if field_mask == QUICK_MODEL_DEFAULT_FIELDS
+            and draft.name not in QUICK_BLANKABLE_DEFAULT_FIELDS
             else draft.profile_override
         )
 

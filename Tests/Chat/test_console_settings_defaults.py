@@ -215,6 +215,92 @@ def test_quick_blank_max_tokens_deletes_the_exact_profile_override(
     assert saved["unrelated"] == {"concurrent": "preserved"}
 
 
+@pytest.mark.parametrize(
+    "action",
+    [
+        ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+    ],
+)
+@pytest.mark.parametrize(
+    "source_model",
+    [LITERAL_MODEL, "sibling/model"],
+    ids=["live-commit-rebase", "carried-to-another-row"],
+)
+def test_quick_blank_max_tokens_rebased_to_a_model_still_deletes_its_override(
+    tmp_path: Path,
+    monkeypatch,
+    action: ConsoleSettingsAction,
+    source_model: str,
+) -> None:
+    """Qodo #2947: a blank Max tokens stays "inherit" through a rebase.
+
+    Both the live commit's same-pair rebase (whose accepted draft the default
+    intent is built from) and a highlight carrying the blank to another row
+    give the live chat the lower-precedence cap, but the draft and the quick
+    Save must still delete the exact override (ADR-095 D3), not write that
+    cap into ``model_defaults``. Drives the real rebase, intent builder and
+    owner, ``apply_console_default_intent``.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsDraftState
+
+    config = _ready_openai_config(section="openai")
+    config["chat_defaults"]["max_tokens"] = 2048
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, config)
+    blank = ConsoleSettingsFieldDraft(
+        name="max_tokens",
+        effective_value=None,
+        profile_override=None,
+        provenance=ConsoleSettingsFieldProvenance.EXPLICIT,
+        dirty=True,
+    )
+    source = ConsoleSettingsDraftState(
+        settings=ConsoleSessionSettings(
+            provider="openai", model=source_model, max_tokens=None
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=(blank,),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+    rebased = ConsoleChatController.rebase_console_settings_draft(
+        object(),
+        source,
+        provider="openai",
+        model=LITERAL_MODEL,
+        app_config=config,
+        exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
+    )
+    fields = {field.name: field for field in rebased.field_drafts}
+    assert rebased.settings.max_tokens == 2048  # the live chat's fallback
+    assert fields["max_tokens"].effective_value == 2048
+    assert fields["max_tokens"].profile_override is None  # inherit
+    outcome = apply_console_default_intent(
+        defaults_module.build_console_default_intent(
+            generation=1,
+            action=action,
+            provider_config_key="openai",
+            literal_model_id=LITERAL_MODEL,
+            field_drafts=rebased.field_drafts,
+            field_mask=QUICK_MODEL_DEFAULT_FIELDS,
+            endpoint=None,
+        )
+    )
+
+    assert outcome.failure_phase is None
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    profile = saved["api_settings"]["openai"]["model_defaults"][LITERAL_MODEL]
+    assert "max_tokens" not in profile
+    assert profile["unexposed"] == "preserved"
+
+
 def test_full_save_deletes_exact_inherited_fields_and_preserves_siblings(
     tmp_path: Path,
     monkeypatch,
