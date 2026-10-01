@@ -51,9 +51,7 @@ class _LibraryActivityActorPayload(BaseModel):
 
     kind: Literal["primary", "subagent"]
     run_id: str = Field(min_length=1, max_length=_OPAQUE_ID_MAX_CHARS)
-    parent_run_id: str | None = Field(
-        default=None, max_length=_OPAQUE_ID_MAX_CHARS
-    )
+    parent_run_id: str | None = Field(default=None, max_length=_OPAQUE_ID_MAX_CHARS)
 
 
 class _LibraryActivitySourceRefPayload(BaseModel):
@@ -199,9 +197,11 @@ class LibraryActivityContribution:
             owner_id = message_ids.get(item.owner_message_key)
             if not isinstance(owner_id, str) or not owner_id:
                 raise ValueError("Library activity requires a durable turn opener.")
-            if not isinstance(item.captured_at, (int, float)) or isinstance(
-                item.captured_at, bool
-            ) or not math.isfinite(float(item.captured_at)):
+            if (
+                not isinstance(item.captured_at, (int, float))
+                or isinstance(item.captured_at, bool)
+                or not math.isfinite(float(item.captured_at))
+            ):
                 raise ValueError("Library activity capture time is invalid.")
             prepared.append(
                 (owner_id, encode_library_activity_event(item.event), item.captured_at)
@@ -327,13 +327,17 @@ def _source_refs(result: object) -> tuple[LibraryActivitySourceRef, ...]:
         source_id = _bounded_identifier(_row_value(row, *_ID_KEYS))
         if source_id is None:
             continue
-        source_type = _bounded_text(
-            _row_value(row, "type", "source_type", "kind"), 40
-        ) or "library"
-        title = _bounded_text(
-            _row_value(row, "title", "name", "label"),
-            LIBRARY_ACTIVITY_TITLE_MAX_CHARS,
-        ) or "Untitled"
+        source_type = (
+            _bounded_text(_row_value(row, "type", "source_type", "kind"), 40)
+            or "library"
+        )
+        title = (
+            _bounded_text(
+                _row_value(row, "title", "name", "label"),
+                LIBRARY_ACTIVITY_TITLE_MAX_CHARS,
+            )
+            or "Untitled"
+        )
         refs.append(
             LibraryActivitySourceRef(
                 source_type=source_type,
@@ -371,7 +375,9 @@ def _result_count(result: object, rows: tuple[object, ...]) -> int:
     return len(rows)
 
 
-def minimize_library_activity(candidate: LibraryActivityCandidate) -> LibraryActivityEvent:
+def minimize_library_activity(
+    candidate: LibraryActivityCandidate,
+) -> LibraryActivityEvent:
     """Convert one trusted provider result into the bounded v1 review event.
 
     Args:
@@ -430,9 +436,9 @@ def minimize_library_activity(candidate: LibraryActivityCandidate) -> LibraryAct
         error_summary=error_summary,
     )
     size = len(
-        json.dumps(event.to_payload(), ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(
+            event.to_payload(), ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
     )
     if size > LIBRARY_ACTIVITY_PAYLOAD_MAX_BYTES:
         raise ValueError("bounded Library activity payload exceeds byte ceiling")
@@ -453,9 +459,7 @@ def encode_library_activity_event(event: LibraryActivityEvent) -> str:
         ValueError: If event validation or the byte ceiling fails.
     """
     _validate_event(event)
-    encoded = json.dumps(
-        event.to_payload(), ensure_ascii=False, separators=(",", ":")
-    )
+    encoded = json.dumps(event.to_payload(), ensure_ascii=False, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > LIBRARY_ACTIVITY_PAYLOAD_MAX_BYTES:
         raise ValueError("bounded Library activity payload exceeds byte ceiling")
     return encoded
@@ -546,9 +550,7 @@ def redacted_library_activity_payload(event: LibraryActivityEvent) -> str:
         ValueError: If the event is invalid.
     """
     _validate_event(event)
-    source_types = list(
-        dict.fromkeys(ref.source_type for ref in event.source_refs)
-    )
+    source_types = list(dict.fromkeys(ref.source_type for ref in event.source_refs))
     return json.dumps(
         {
             "version": event.version,
