@@ -840,6 +840,8 @@ class ConsoleSettingsSummaryState:
     #: em-dash placeholder at the rail).
     temperature: str = ""
     max_tokens: str = ""
+    #: "On"/"Off" for the rail's Streaming row (TASK-33004.7, task-338).
+    streaming: str = ""
     readiness_label: str = ""
     provider_row: str = ""
     endpoint_row: str = ""
@@ -2090,6 +2092,7 @@ def build_console_settings_summary_state(
         max_tokens=(
             str(settings.max_tokens) if settings.max_tokens is not None else ""
         ),
+        streaming="On" if settings.streaming else "Off",
         identity_row=identity_row,
         readiness_label="",
         provider_row=f"Provider: {provider_label}",

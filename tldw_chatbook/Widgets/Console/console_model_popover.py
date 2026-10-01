@@ -425,6 +425,7 @@ class ConsoleModelPopover(
         catalog_loader: CatalogLoader | None = None,
         setup_opener: SetupOpener | None = None,
         pick_only: bool = False,
+        query: str = "",
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -453,6 +454,8 @@ class ConsoleModelPopover(
                 default actions, never calls ``draft_rebaser``,
                 ``live_committer`` or ``setup_opener``, and NEEDS SETUP rows
                 cannot be picked.
+            query: Text Find opens with (``/model <query>``); the best match
+                is highlighted, and nothing applies until Enter.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -494,7 +497,7 @@ class ConsoleModelPopover(
             str(settings.provider or "").strip(),
             settings.model or None,
         )
-        self._query = ""
+        self._query = query
         self._rows: list[SwitcherRow] = []
         self._painted_index: int | None = None
         self._highlight_key: tuple[str, str, str | None] | None = None
@@ -610,6 +613,7 @@ class ConsoleModelPopover(
             ):
                 yield Static("Find", id="console-popover-find-label")
                 yield ConsolePopoverInput(
+                    self._query,
                     placeholder=self._find_placeholder(),
                     id="console-popover-find",
                     compact=True,

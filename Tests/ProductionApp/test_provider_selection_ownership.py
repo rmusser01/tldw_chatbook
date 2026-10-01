@@ -225,9 +225,10 @@ async def test_real_console_change_model_command_opens_real_picker(
             )
 
             palette = ConsoleCommandProvider(screen, match_style=None)
-            hits = [hit async for hit in palette.search("change model")]
+            # TASK-33004.7: the entry is named for the surface it opens.
+            hits = [hit async for hit in palette.search("switch model")]
             change_model = [
-                hit for hit in hits if str(hit.text) == "Console: Change model…"
+                hit for hit in hits if str(hit.text) == "Console: Switch model…"
             ]
             assert len(change_model) == 1
             # The palette runs a selected command exactly like this.

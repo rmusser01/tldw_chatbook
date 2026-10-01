@@ -1188,6 +1188,8 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
+    ("Alt+M", "switch model"),  # TASK-33004.7: mockup (a)'s order
+    ("Ctrl+O", "chat settings"),
     ("Enter", "send / queue"),
     ("Y", "trace"),
     ("Ctrl+K", "switch session"),
@@ -1310,7 +1312,9 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
         (
             ("F1", "help"),
             ("Ctrl+P", "command palette"),
-            ("Alt+M", "quick change model"),
+            ("Alt+M", "Switch model: this chat's provider·model pair"),
+            ("/model [query]", "Switch model with Find filled in"),
+            ("Ctrl+O", "Chat settings: every setting for this chat"),
             ("F2", "rename a session (in the Ctrl+K switcher)"),
         ),
     ),
@@ -1940,7 +1944,8 @@ class ChatScreen(BaseAppScreen):
         # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
         # of the Console vocabulary.
         Binding("y", "open_trajectory_view", "Trace", show=True),
-        Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        Binding("alt+m", "open_console_model_popover", "Switch model", show=True),
+        Binding("ctrl+o", "open_console_session_settings", "Chat settings", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         # TASK-24604: the Inspect rail ships CLOSED (unlike the left rail) and
         # F6 filters out non-displayed panes, so before this binding the only
@@ -5512,11 +5517,11 @@ class ChatScreen(BaseAppScreen):
         """Open Trace for the active Console conversation (``y``)."""
         self._review_selection.open_trajectory_view()
 
-    async def action_open_console_model_popover(self) -> None:
-        """Open Switch model (Alt+M): provider·model pairs and quick values."""
+    async def action_open_console_model_popover(self, query: str = "") -> None:
+        """Open Switch model (Alt+M, ``/model [query]``) with Find set to ``query``."""
         from ..Console_Modules.model_switcher import open_model_switcher
 
-        await open_model_switcher(self)
+        await open_model_switcher(self, query)
 
     def on_console_workspace_details_tray_default_persona_requested(self, event) -> None:
         """Route the workspace details action to its explicit workspace owner."""
@@ -6105,7 +6110,7 @@ class ChatScreen(BaseAppScreen):
     def action_open_console_session_settings(self) -> None:
         """Open the full Console session settings modal, guarded by the setup modal.
 
-        Routes the command-palette "Console: Session settings…" entry through
+        Routes Ctrl+O and the palette's "Console: Chat settings…" entry through
         the same blocking check every other Console action honors, instead of
         the palette calling ``_open_console_settings`` directly and bypassing
         the first-run setup modal.
@@ -9355,28 +9360,19 @@ class ChatScreen(BaseAppScreen):
         else:
             # The child owns its bounded-body and rail invalidation.
             summary.sync_state(summary_state)
-        # TASK-32811.7: read the structured values the state already carries
-        # (TASK-32338 added `temperature`/`max_tokens` for exactly this) rather
-        # than regex-parsing them back out of the formatted `sampling_row`,
-        # which drifts the moment that display string is reworded.
-        temperature_value = summary_state.temperature or "—"
-        max_tokens_value = summary_state.max_tokens or "—"
-        readiness = summary_state.readiness
-
-        # TASK-32811.7: the Provider and Model rows were removed from this
-        # section (TASK-23196 -- the status bar owns them), so querying their
-        # ids here raised NoMatches on the FIRST lookup and the temperature
-        # and max-token writes below it never ran, leaving those two rows
-        # frozen at their compose-time values. Query only the ids that are
-        # actually composed. Each is guarded on its own so a future removal
-        # of one cannot silently freeze the other.
+        # TASK-32811.7: read the structured values (TASK-32338; `streaming` since
+        # TASK-33004.7) rather than regex-parse `sampling_row`, and query only
+        # composed ids: the Provider/Model rows TASK-23196 removed raised
+        # NoMatches on the FIRST lookup and froze the rest. Each row is guarded.
         for section_id, value in (
-            ("console-model-section-temperature", temperature_value),
-            ("console-model-section-max-tokens", max_tokens_value),
+            ("console-model-section-temperature", summary_state.temperature),
+            ("console-model-section-max-tokens", summary_state.max_tokens),
+            ("console-model-section-streaming", summary_state.streaming),
         ):
             rows = self.query(f"#{section_id} .console-model-section-value")
             if rows:
-                rows.first(Static).update(value)
+                rows.first(Static).update(value or "—")
+        readiness = summary_state.readiness
 
         try:
             recovery = self.query_one("#console-model-section-recovery", Static)
@@ -12050,7 +12046,7 @@ class ChatScreen(BaseAppScreen):
     async def _console_model_chip_activated(
         self, event: ConsoleModelChip.OpenRequested
     ) -> None:
-        """Open the quick model popover from the Provider/Model chips.
+        """Open Switch model from the Provider/Model chips.
 
         task-1670: a second entry point into the same opener Alt+M uses,
         following the scope-chip precedent below.
@@ -19361,7 +19357,9 @@ class ChatScreen(BaseAppScreen):
             )
             return
         try:
-            result = method()
+            self._clear_console_composer_draft()  # it ran: drop "/model son"
+            takes_args = dict(CONSOLE_ACTION_COMMANDS).get(parse.name)  # /model [query]
+            result = method(parse.args) if takes_args else method()
             if inspect.isawaitable(result):
                 await result
         except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
@@ -24584,8 +24582,9 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)
             return
-        if button_id == "console-model-section-configure":
-            await self.on_console_settings_open(event)
+        if button_id == "console-model-section-configure":  # "Change  Alt+M"
+            event.stop()
+            await self.action_open_console_model_popover()
             return
         if button_id == "console-agent-drilldown-back":
             event.stop()
@@ -25032,8 +25031,9 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)
             return
-        if button_id == "console-model-section-configure":
-            await self.on_console_settings_open(event)
+        if button_id == "console-model-section-configure":  # "Change  Alt+M"
+            event.stop()
+            await self.action_open_console_model_popover()
             return
         if button_id == "console-agent-drilldown-back":
             event.stop()

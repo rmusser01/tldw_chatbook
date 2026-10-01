@@ -267,8 +267,12 @@ async def load_provider_catalog(
     return [option.model_id for option in options]
 
 
-async def open_model_switcher(screen: ChatScreen) -> None:
-    """Open Switch model for the active chat (Alt+M, chips, palette, /model)."""
+async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
+    """Open Switch model for the active chat (Alt+M, chips, palette, /model).
+
+    ``/model <query>`` passes its text here: it opens in Find, so the best
+    match is highlighted and nothing applies until Enter (TASK-33004.7).
+    """
     from ...Chat.console_settings_apply import QUICK_MODEL_DEFAULT_FIELDS
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
 
@@ -327,6 +331,7 @@ async def open_model_switcher(screen: ChatScreen) -> None:
             setup_opener=lambda provider, model: open_provider_setup(
                 screen, provider, model
             ),
+            query=query.strip(),
         ),
         callback=screen._apply_console_model_popover_result,
     )

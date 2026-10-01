@@ -14,8 +14,8 @@ This document describes the comprehensive command palette implementation and tes
 6. **MediaProvider** - Media and content management
 7. **DeveloperProvider** - Developer and debug commands
 
-Provider and model changes go through the model picker: in Console, the
-palette's "Console: Change model…" opens it (Alt+M). The old "LLM Provider
+Provider and model changes go through Switch model: in Console, the
+palette's "Console: Switch model…" opens it (Alt+M). The old "LLM Provider
 Management" commands were removed by TASK-33001.6.
 
 ### ✅ Configuration Integration

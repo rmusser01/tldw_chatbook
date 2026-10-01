@@ -342,7 +342,7 @@ fails without playing a truncated file.
 | **Sessions** section | Names the active chat. Hovering it shows the durable conversation id. |
 | **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
 | **Conversations** section | Independently searches, starts, and resumes only Default and unassigned conversations; favourited entries sort first and are marked beside the title. Each row carries an **\*** that opens its action menu — Favourite, Change status, Archive, Rename, and More ▸ Delete. See [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
-| **Model** section | Read-only Temperature / Max tokens / system-prompt lines plus a **Configure** button that opens Console Settings. The active provider and model are read from the status bar, which shows them at every width. |
+| **Model** section | Read-only Temperature / Max tokens / Streaming (On or Off) / system-prompt lines plus **Change  Alt+M**, which opens Switch model. The rows follow the chat through Apply, a new chat and switching chats. The active provider and model are read from the status bar, which shows them at every width. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
 | **Character** section | Appears only when the character-avatar preference is on. Its complete portrait is centered and keeps its aspect ratio; it only scales down to fit and is never stretched, cropped, or enlarged merely to fill the 35-row body. |
@@ -413,10 +413,11 @@ during a run); **Esc** expands it and returns the caret to your draft.
 
 ### Session settings & model selection
 
-The **Console Settings** modal is the one place provider, model, and
-generation settings live. Open it from the control bar's **Settings**
-button, the Model section's **Configure** button in the left rail, or the
-**Session Settings** action in the Inspector. Inside:
+The **Console Settings** modal (**Chat settings**) is the one place provider,
+model, and generation settings live. Open it with **Ctrl+O** from anywhere in
+Console, `/settings`, the palette's "Console: Chat settings…", the control
+bar's **Settings** button, or the **Session Settings** action in the
+Inspector. Inside:
 
 - A readiness line up top (e.g. "custom is ready. No API key is required.").
 - **Provider and model** — Provider and Model selects, **Custom model** for
@@ -491,7 +492,11 @@ Models ▸ Custom endpoints**.
 
 For a faster switch, **Alt+M** opens **Switch model**, a 120-column list of
 provider·model pairs; every row is a pair, so you never pick a provider
-without a model. Focus starts in **Find** and the rows are grouped:
+without a model. The Provider and Model chips, the rail's **Change  Alt+M**,
+the palette's "Console: Switch model…" and `/model` open it too. `/model
+<query>` (for example `/model son`) opens it with the query already in
+**Find** and the best match highlighted; nothing applies until you press
+**Enter**. Focus starts in **Find** and the rows are grouped:
 
 - **PREVIOUS**, highlighted when the list opens, so **Alt+M** then **Enter**
   swaps back to the model you used before.
@@ -805,7 +810,8 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Ctrl+T | New Console tab |
 | Ctrl+G | Stop this tab's run (only while one is running; shown in the footer then) |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
-| Alt+M | Switch model (provider·model pairs; Enter applies to this chat, Tab edits Temperature and Max tokens, Ctrl+N default for new chats, Ctrl+O Chat settings) |
+| Alt+M | Switch model (provider·model pairs; Enter applies to this chat, Tab edits Temperature and Max tokens, Ctrl+N default for new chats, Ctrl+O Chat settings); `/model <query>` opens it with Find filled in |
+| Ctrl+O | Chat settings: every setting for this chat |
 | Alt+C | Open or close the Context (left) rail |
 | Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |
@@ -889,8 +895,8 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   opens Console directly.
 - **Alt+M does nothing.** Some terminal/multiplexer setups deliver Alt
   chords as a separate Esc + letter, which Console reads as Escape then a
-  typed character. The same popover is always reachable via **Ctrl+P** →
-  "Console: Change model…".
+  typed character. Switch model is always reachable via `/model` or
+  **Ctrl+P** → "Console: Switch model…".
 
 —
 *Verified against working tree — 2026-09-04 (TASK-31429, Context-rail colour

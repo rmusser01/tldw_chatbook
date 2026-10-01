@@ -2012,6 +2012,9 @@ def test_settings_summary_includes_runtime_endpoint_credential_and_streaming_row
     assert state.endpoint_row == "Endpoint: http://127.0.0.1:11434"
     assert state.credential_row == "Credential: not required"
     assert state.transport_row == "Streaming: off"
+    # TASK-33004.7: the rail's Streaming row reads a structured value, the
+    # way Temperature and Max tokens do (TASK-32338), not this display row.
+    assert state.streaming == "Off"
 
 
 def test_readiness_explicit_send_capable_injection_allows_supported_generic_provider() -> (

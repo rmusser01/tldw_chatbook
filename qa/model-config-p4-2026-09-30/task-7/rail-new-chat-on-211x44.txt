@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                    Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 2                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕        Chat 2         ✕    New tab     Temporary                                                                                         │
+   Terminal                         │                                                                                                                                                                   │
+ Conversations                 ▾    │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                     ✕  │
+   New conversation                 │                                                                                                                                                                   │
+        Archive this chat         ▄ │                                                                                                                                                                   │
+          Archived chats            │                                                                                                                                                                   │
+        Search all chats…           │                                                                                                                                                                   │
+   Chat 2                           │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                                   │
+  ▊  Filter visible     ▎           │                                                                                                                                                                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+  Chats                        ▾    │                                                                                                                                                                   │
+   Chat 2                     💬    │                                                                                                                                                                   │◂ Inspect
+   Chat 1                     💬    │                                                                                                                                                                   │
+                                    │                                                                         No messages yet.                                                                          │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Character · No chats          ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Model                         ▾    │                                                                                                                                                                   │
+  Temperature 0.60                  │                                                                                                                                                                   │
+  Max tokens  4096                  │                                                                                                                                                                   │
+  Streaming   On                    │                                                                                                                                                                   │
+  System: none ▸                    │                                                                                                                                                                   │
+   Change  Alt+M                    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Agent                         ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────▇ │                                                                                                                                                                   │
+ ▼ Details                          │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Model: qwen3:32b     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $0.00 ·
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q
