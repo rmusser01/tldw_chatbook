@@ -1050,12 +1050,13 @@ def _fresh_wizard() -> FirstRunSetupWizard:
 async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
     request,
 ):
-    """The finding's repro, fresh profile: Enter, Down x4, Back, Next, then on.
+    """The finding's repro, fresh profile: Enter, Down to Cloud, Back, Next, on.
 
-    Pre-fix the fourth Down (the first Cloud row) blanked the step, and
-    re-entering it quit the app. The walk targets the first row under the
-    Cloud heading, read off the list, so a resized Popular group cannot aim
-    it at a different row while every assertion still holds. TASK-33510
+    Pre-fix, landing on the first row under the Cloud heading (BytePlus on
+    that day's list) blanked the step, and re-entering it quit the app. The
+    walk targets that position, read off the list, so a resized Popular group
+    cannot aim it at a different row while every assertion still holds. The
+    walk through every remaining row below still covers BytePlus. TASK-33510
     made that row ownable, so after Back, Next and a keyless Next the walk
     goes on to the last row: the pre-fix list still carried Custom Hosted
     under Local. Runs in a private profile because Next from Welcome writes
@@ -1072,9 +1073,9 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         assert app.focused is choices
         listed = _listed_provider_keys(step)
 
-        # The row the finding crashed on is the first one under the Cloud
-        # heading. Read it off the list, so a resized Popular group still
-        # aims the walk there (four presses on the shipped list).
+        # The finding's repro landed on the first row under the Cloud
+        # heading. Read that position off the list, so a resized Popular
+        # group still aims the walk there.
         cloud_heading = choices.get_option_index(_provider_group_option_id("Cloud"))
         assert choices.get_option_at_index(cloud_heading).provider_key is None
         first_cloud = choices.get_option_at_index(cloud_heading + 1).provider_key
