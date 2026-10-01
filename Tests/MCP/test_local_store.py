@@ -645,7 +645,7 @@ def test_legacy_schema_migrates_durably_and_reopens(tmp_path):
         "spaced",
     )  # Explicit historical manual-profile normalization.
     migrated = path.read_bytes()
-    assert json.loads(migrated)["schema_version"] == 3
+    assert json.loads(migrated)["schema_version"] == 4
     assert LocalMCPStore(path).get_profile("old") == profile
     assert path.read_bytes() == migrated
 
@@ -754,3 +754,67 @@ def test_literal_endpoint_query_survives_reopen_and_changes_invalidate_discovery
     )
     assert LocalMCPStore(path).get_profile("query").url == changed
     assert reopened.get_discovery_snapshot("query") is None
+
+
+def _owned_record():
+    return {
+        "profile_id": "plugin-test",
+        "command": "/usr/bin/true",
+        "args": ["", " padded "],
+        "cwd": "/tmp",
+        "plugin_owner": {
+            "installation_id": "installation",
+            "revision_digest": "a" * 64,
+            "component_id": "mcp:test",
+            "definition_digest": "b" * 64,
+            "environment": {"PLUGIN_ROOT": "/tmp"},
+            "data_root": None,
+            "session_isolation": "separate",
+            "literal_headers": {},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("args", "text"), ("args", [1]), ("cwd", "relative"), ("command", 1)],
+)
+def test_malformed_owned_profile_preserves_source_bytes(tmp_path, field, value):
+    record = _owned_record()
+    record[field] = value
+    path = tmp_path / "owned.json"
+    raw = json.dumps({"schema_version": 4, "profiles": [record]})
+    path.write_text(raw)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == raw
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_legacy_schema_cannot_import_owned_authority(tmp_path, version):
+    path = tmp_path / "legacy.json"
+    raw = json.dumps({"schema_version": version, "profiles": [_owned_record()]})
+    path.write_text(raw)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == raw
+
+
+def test_owned_profile_roundtrip_preserves_literal_argv(tmp_path):
+    store = LocalMCPStore(tmp_path / "owned.json")
+    store.save_profile(LocalExternalMCPProfile.from_input_dict(_owned_record()))
+    assert store.get_profile("plugin-test").args == ("", " padded ")
+
+
+@pytest.mark.parametrize(
+    "headers", [{"X-Dup": "a", "x-dup": "b"}, {"Bad Name": "a"}, {"X-Test": "a\nb"}]
+)
+def test_malformed_owned_literal_headers_preserve_source(tmp_path, headers):
+    record = _owned_record()
+    record["plugin_owner"]["literal_headers"] = headers
+    path = tmp_path / "headers.json"
+    raw = json.dumps({"schema_version": 4, "profiles": [record]})
+    path.write_text(raw)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == raw

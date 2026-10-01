@@ -42,6 +42,7 @@ class RunPluginSnapshot:
     live_generations: tuple[tuple[str, str, int], ...] = ()
     data_roots_json: str = "[]"
     root_epochs: tuple[tuple[str, int], ...] = ()
+    component_ceiling: tuple[str, ...] | None = None
 
 
 class LivePluginFences:
@@ -262,6 +263,7 @@ class PluginAdmission:
         run_id: str,
         *,
         fresh: bool = True,
+        component_ceiling: tuple[str, ...] | None = None,
     ) -> RunPluginSnapshot:
         """Capture a trusted, enabled revision and dependency-complete skills."""
         self.fences.check(installation_id, workspace_id)
@@ -321,29 +323,60 @@ class PluginAdmission:
                 and row["revision_digest"] == revision
                 and row["selected"]
             )
+            owned_mappings = [
+                row
+                for row in authority["mappings"]
+                if row["installation_id"] == installation_id
+                and row["revision_digest"] == revision
+            ]
+            unavailable = set()
+            if owned_mappings:
+                from tldw_chatbook.MCP.credential_bindings import CredentialError
+                from tldw_chatbook.MCP.local_control_service import (
+                    LocalMCPControlService,
+                )
+
+                owner = self.coordinator.mcp_mapping_owner
+                if not isinstance(owner, LocalMCPControlService):
+                    raise PluginUnavailable("plugin_mapping_owner_unavailable")
+                for mapping in owned_mappings:
+                    try:
+                        owner.validate_connection_mapping(mapping, inspection)
+                    except (ValueError, PermissionError, CredentialError):
+                        unavailable.add(mapping["component_id"])
 
             def ready(component_id: str, visiting: frozenset[str]) -> bool:
                 component = inspection.inventory.get(component_id)
                 if (
                     component_id in visiting
+                    or component_id in unavailable
                     or component_id not in selection
                     or component is None
                 ):
                     return False
-                # F5 has only native skill execution. Other providers must prove
-                # readiness through their owning services in their increments.
                 if (
-                    component.kind != "skill"
+                    component.kind not in {"skill", "mcp"}
                     or component.support not in {"supported", "adapted"}
                     or component.activation_blockers
                 ):
                     return False
-                from .skill_provider import skill_summary
+                if component.kind == "mcp":
+                    if (
+                        sum(
+                            row["component_id"] == component_id
+                            and row["kind"] == "connection"
+                            for row in owned_mappings
+                        )
+                        != 1
+                    ):
+                        return False
+                else:
+                    from .skill_provider import skill_summary
 
-                if skill_summary(installation_id, inspection, component_id, alias)[
-                    "plugin_blockers"
-                ]:
-                    return False
+                    if skill_summary(installation_id, inspection, component_id, alias)[
+                        "plugin_blockers"
+                    ]:
+                        return False
                 return all(
                     ready(dep, visiting | {component_id})
                     for dep in component.dependencies
@@ -352,6 +385,28 @@ class PluginAdmission:
             eligible = tuple(
                 sorted(key for key in selection if ready(key, frozenset()))
             )
+            if component_ceiling is not None:
+                if (
+                    not isinstance(component_ceiling, (tuple, list, frozenset))
+                    or not component_ceiling
+                    or any(not isinstance(key, str) for key in component_ceiling)
+                ):
+                    raise PluginUnavailable("plugin_component_ceiling_invalid")
+                requested = set(component_ceiling)
+                if not requested <= selection:
+                    raise PluginUnavailable("plugin_component_ceiling_invalid")
+                pending = list(requested)
+                while pending:
+                    key = pending.pop()
+                    for dependency in inspection.inventory[key].dependencies:
+                        if dependency not in selection:
+                            raise PluginUnavailable("plugin_component_unavailable")
+                        if dependency not in requested:
+                            requested.add(dependency)
+                            pending.append(dependency)
+                if not requested <= set(eligible):
+                    raise PluginUnavailable("plugin_component_unavailable")
+                eligible = tuple(sorted(requested))
             if not eligible:
                 raise PluginUnavailable("plugin_components_unavailable")
             scopes = {("installation", "")}
@@ -390,10 +445,10 @@ class PluginAdmission:
                     row
                     for row in authority["mappings"]
                     if row["installation_id"] == installation_id
+                    and row["revision_digest"] == revision
+                    and row["component_id"] in eligible
                 ]
             )
-            if mappings != "[]":
-                raise PluginUnavailable("plugin_mapping_owner_unavailable")
             from .data_cleanup import applicable_roots
 
             roots = applicable_roots(authority, installation_id, workspace_id)
@@ -419,6 +474,7 @@ class PluginAdmission:
                 self.fences.current(installation_id, generations),
                 canonical_json(roots),
                 root_epochs,
+                eligible if component_ceiling is not None else None,
             )
         except PluginUnavailable:
             raise
@@ -435,6 +491,7 @@ class PluginAdmission:
             snapshot.workspace_id,
             snapshot.run_id,
             fresh=False,
+            component_ceiling=snapshot.component_ceiling,
         )
         if (
             current.revision_digest,

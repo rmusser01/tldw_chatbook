@@ -326,13 +326,17 @@ async def test_blocked_credential_backend_does_not_block_peer_or_emit_after_time
         )
         try:
             before = time.monotonic()
-            pending = asyncio.create_task(auth.request("ping", timeout_seconds=0.03))
+            pending = asyncio.create_task(
+                auth.request("ping", timeout_seconds=1.0 if cancel else 0.03)
+            )
             await asyncio.sleep(0.01)
             assert started.is_set()
-            await ordinary.request("ping")
-            assert time.monotonic() - before < 0.2
+            # Cancel the actual blocked lookup before unrelated peer I/O can
+            # consume its deadline. The timeout case still exercises 30 ms.
             if cancel:
                 pending.cancel()
+            await ordinary.request("ping")
+            assert time.monotonic() - before < 0.2
             with pytest.raises(asyncio.CancelledError if cancel else TimeoutError):
                 await pending
             # A second lookup cannot queue behind the retained blocked owner.

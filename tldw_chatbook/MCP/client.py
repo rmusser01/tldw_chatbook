@@ -605,6 +605,9 @@ class _StdioJSONRPCConnection:
         request_id = next(self._request_ids)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Dict[str, Any]] = loop.create_future()
+        future.add_done_callback(
+            lambda done: None if done.cancelled() else done.exception()
+        )
         self._pending_requests[request_id] = future
         metadata = params.get("_meta", {}) if params is not None else {}
         token = metadata.get("progressToken") if isinstance(metadata, dict) else None
@@ -627,7 +630,7 @@ class _StdioJSONRPCConnection:
             )
             sent = True
             return await asyncio.wait_for(
-                future,
+                asyncio.shield(future),
                 timeout=(
                     self.request_timeout_seconds
                     if timeout_seconds is None
@@ -638,14 +641,17 @@ class _StdioJSONRPCConnection:
             # A valid server error completes this request like a result.
             raise
         except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+            shared = sent and self._shared_owned_request()
             if sent and method != "initialize" and self.process.stdin is not None:
                 try:
-                    await asyncio.wait_for(
-                        self.notify("notifications/cancelled", {"requestId": request_id}),
-                        timeout=1.0,
-                    )
-                except Exception:  # noqa: BLE001 -- bounded cancellation cleanup
+                    async with asyncio.timeout(1.0):
+                        await self.notify(
+                            "notifications/cancelled", {"requestId": request_id}
+                        )
+                except (Exception, asyncio.CancelledError):  # noqa: BLE001
                     logger.debug("MCP cancellation notification could not be sent")
+            if shared:
+                return await self._retain_shared_request(future)
             await self._settle_failed_request()
             if isinstance(exc, asyncio.TimeoutError):
                 raise TimeoutError(f"Timed out waiting for MCP response to '{method}'") from exc
@@ -660,6 +666,47 @@ class _StdioJSONRPCConnection:
                 self._progress_observers.pop(completed_token, None)
             if not future.done():
                 future.cancel()
+
+    def _shared_owned_request(self) -> bool:
+        """Only the exact host-owned request may preserve another scope's peer."""
+        from .connection_ownership import owned_invocation
+
+        context = owned_invocation.get()
+        if context is None:
+            return False
+        owner = context.ownership
+        identity = owner._owner_id(context.snapshot)
+        task = asyncio.current_task()
+        with owner._lock:
+            return any(
+                connection.session is self
+                and connection.key.session_isolation == "request_independent"
+                and connection.owners - {identity}
+                and any(
+                    request.task is task and request.dispatched
+                    for request in connection.requests.values()
+                )
+                for connection in owner.connections.values()
+            )
+
+    async def _retain_shared_request(self, future) -> dict[str, Any]:
+        """Keep native/source custody until the original reply or child exit."""
+        while True:
+            try:
+                return await asyncio.shield(future)
+            except _JSONRPCError:
+                raise
+            except asyncio.CancelledError:
+                if future.cancelled():
+                    break
+            except Exception:  # noqa: BLE001 -- transport failure is not exit
+                break
+        while self.process.returncode is None:
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                pass
+        raise RuntimeError("MCP transport unavailable")
 
     async def _settle_failed_request(self) -> None:
         """Keep each interrupted request admitted until its child has exited.
@@ -1335,7 +1382,9 @@ class MCPClient:
 
     @producer_call
     @client_guard
-    async def connect_profile(self, profile: TransportProfile) -> bool:
+    async def connect_profile(
+        self, profile: TransportProfile, *, observe_connection=None
+    ) -> bool:
         """Connect a validated direct transport through the existing readiness owner."""
         if not isinstance(profile, TransportProfile):
             raise ValueError("mcp_profile_invalid")  # noqa: TRY004
@@ -1345,6 +1394,7 @@ class MCPClient:
             list(profile.args),
             dict(profile.env) if profile.env is not None else None,
             _profile=profile,
+            _observe_connection=observe_connection,
         )
 
     @producer_call
@@ -1357,6 +1407,7 @@ class MCPClient:
         env: Optional[Dict[str, str]] = None,
         *,
         _profile: TransportProfile | None = None,
+        _observe_connection=None,
     ) -> bool:
         """Connect to an MCP server via stdio.
 
@@ -1411,6 +1462,7 @@ class MCPClient:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         env=env,
+                        cwd=_profile.cwd if _profile is not None else None,
                         limit=MAX_OUTPUT_LINE_BYTES,
                     ),
                     timeout=spawn_timeout,
@@ -1472,6 +1524,10 @@ class MCPClient:
             session._qualified_profile = _profile is not None
             session._definition_store = getattr(self, "_definition_store", None)
             pending.session = session
+            if _observe_connection is not None:
+                # Host custody observes the exact retained transport, including
+                # failed initialization. Remote messages never supply this object.
+                _observe_connection(session)
             session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(
                 deadline, "MCP connection deadline exceeded"

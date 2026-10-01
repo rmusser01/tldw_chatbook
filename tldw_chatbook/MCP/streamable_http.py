@@ -51,6 +51,7 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
         self.profile = protocol_profile(profile.protocol_version)
         self._allow_negotiation = True
         self.url = profile.url
+        self._package_headers = profile.package_headers
         self._credential_reference = profile.credential_reference
         self._credential_generation = profile.credential_generation
         self._credential_service = credential_service
@@ -126,6 +127,21 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
                 headers["MCP-Protocol-Version"] = self.profile.version
             if self._session_id is not None:
                 headers["Mcp-Session-Id"] = self._session_id
+        from .credential_bindings import _RESERVED
+
+        effective = {}
+        for name, value in self._package_headers.items():
+            lower = name.lower()
+            if (
+                lower in _RESERVED
+                or lower == "user-agent"
+                or lower.startswith(("mcp-", "proxy-", "sec-"))
+            ):
+                continue
+            try:
+                effective[lower] = (name, value.encode("latin-1"))
+            except UnicodeEncodeError:
+                raise ValueError("mcp_package_header_wire_unsupported") from None
         if self._credential_reference is not None:
             from .credential_bindings import CredentialError, endpoint_origin
 
@@ -140,10 +156,16 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
                 )
             # RFC 9110 obs-text is octets. Host mapping supports Latin-1 exactly,
             # refuses other Unicode, and never rewrites/re-encodes values silently.
-            headers.update(
-                {name: value.encode("latin-1") for name, value in resolved.items()}
+            effective.update(
+                {
+                    name.lower(): (name, value.encode("latin-1"))
+                    for name, value in resolved.items()
+                }
             )
-        return headers
+        effective.update(
+            {name.lower(): (name, value) for name, value in headers.items()}
+        )
+        return dict(effective.values())
 
     @guarded
     @producer_call

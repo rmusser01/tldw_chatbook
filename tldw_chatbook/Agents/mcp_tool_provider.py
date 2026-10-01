@@ -326,6 +326,7 @@ class MCPToolProvider:
         runtime_source_provider: Callable[[], str] | None = None,
         maximum_tool_ids: frozenset[str] | None = None,
         maximum_definition_hashes: Mapping[str, str] | None = None,
+        owned_profile_ids: frozenset[str] = frozenset(),
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -373,6 +374,7 @@ class MCPToolProvider:
                 (default) applies no check.
         """
         self._service = service
+        self._owned_profile_ids = owned_profile_ids
         self._main_loop = main_loop
         self._approval_callback = approval_callback
         self._builtin_raw_name_exclusions = frozenset(builtin_raw_name_exclusions or ())
@@ -477,6 +479,11 @@ class MCPToolProvider:
         hub_tools: list[HubTool] = []
         records = await self._service.local_external_catalog()
         for record in records:
+            if (
+                record.get("plugin_owner") is not None
+                and record.get("profile_id") not in self._owned_profile_ids
+            ):
+                continue
             hub_tools.extend(local_tools_from_record(record))
 
         local_service = getattr(self._service, "local_service", None)

@@ -308,6 +308,26 @@ class PluginRuntimeOwner:
                 self.root_usage.grant_epochs.pop(token, None)
                 self.root_usage.cancel_callbacks.pop(token, None)
 
+    def mark_request_uncertain(self, token: str, request_id: str) -> None:
+        """Retain current request custody without promoting recovery-quarantined work."""
+        with self._store().transaction() as cursor:
+            row = cursor.execute(
+                "SELECT provenance_json, state FROM processes WHERE token=? AND owner_session=? AND state IN ('published', 'settled') AND kind='active_run'",
+                (token, self.session_id),
+            ).fetchone()
+            if row is None:
+                raise PermissionError("mcp_request_custody_unavailable")
+            provenance = json.loads(row[0])
+            if provenance.get("mcp_request_id") != request_id:
+                raise PermissionError("mcp_request_custody_changed")
+            if row[1] == "settled":
+                return
+            provenance["outcome"] = "uncertain"
+            cursor.execute(
+                "UPDATE processes SET provenance_json=? WHERE token=?",
+                (json.dumps(provenance, sort_keys=True), token),
+            )
+
     def set_process_kind(self, token: str, kind: str) -> None:
         """Distinguish active revision leases from idle/history references."""
         if kind not in ("active_run", "idle_connection", "archived_history"):

@@ -303,7 +303,7 @@ git diff --check
 - Consumes: F5 admission, F6 scoped revocation, F8 data-root usage, M1-M3 qualified transport/credentials and H3 final tool guards.
 - Produces: ConnectionAuthorityKey is frozen: installation/revision, executable/environment/cwd or endpoint, effective config digest, credential-binding generation and session-isolation qualification. ConnectionOwnership.attach(key: ConnectionAuthorityKey, owner_id: str) -> str; async detach(connection_id: str, owner_id: str) -> None; bind_request(connection_id: str, request_id: str, snapshot: RunPluginSnapshot) -> None. PluginMCPProvider implements existing ToolProvider and always dispatches typed results through the normal permission seam.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 import pytest
@@ -318,29 +318,29 @@ async def test_detaching_a_keeps_b_transport_alive(shared_connection_case):
     assert case.unresolved_a_is_recorded()
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_owned_mcp_tools.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_owned_mcp_tools.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def may_close_connection(owners: frozenset[str], affected: frozenset[str]) -> bool:
     return owners <= affected
 ```
 
-  - [ ] 3.1. Create shared_connection_case with a controlled multiplexed MCP server and two real scope snapshots. Its methods call production coordinator/provider/ownership paths; hold A response while B completes and observe actual transport close.
-  - [ ] 3.2. Register owned profiles and namespace-safe tool definitions through existing catalog services. Recheck exact definition hashes, stable mappings, plugin dependencies, permission profile and parent/workspace restrictions at dispatch.
-  - [ ] 3.3. Expand only portable args/env/cwd fields, set host-controlled variables last and reject unresolved required config. Configuration save is data-only; explicit connection/test invokes normal review and records data-root ownership before launch.
-  - [ ] 3.4. Share only identical reviewed effective authority with qualified isolated session state. Detach/cancel A at request granularity; unknown A outcome retains request/root ownership, while B remains authorized. Release shared processes only after all owners drain or are affected, and guard package-owned edit/delete at MCP service entry.
+  - [x] 3.1. Create shared_connection_case with a controlled multiplexed MCP server and two real scope snapshots. Its methods call production coordinator/provider/ownership paths; hold A response while B completes and observe actual transport close.
+  - [x] 3.2. Register owned profiles and namespace-safe tool definitions through existing catalog services. Recheck exact definition hashes, stable mappings, plugin dependencies, permission profile and parent/workspace restrictions at dispatch.
+  - [x] 3.3. Expand only portable args/env/cwd fields, set host-controlled variables last and reject unresolved required config. Configuration save is data-only; explicit connection/test invokes normal review and records data-root ownership before launch.
+  - [x] 3.4. Share only identical reviewed effective authority with qualified isolated session state. Detach/cancel A at request granularity; unknown A outcome retains request/root ownership, while B remains authorized. Release shared processes only after all owners drain or are affected, and guard package-owned edit/delete at MCP service entry.
 
 **Failure and successful-control matrix:** Different credential/config/cwd bindings, two workspaces, default inheritors, late A response, uncancellable remote call, idle writer-capable server, global disable, reserved variable override, stale approval and standalone MCP successful control.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_owned_mcp_tools.py Tests/MCP/test_connection_ownership.py Tests/Agents/test_mcp_tool_provider.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32684 --plain
@@ -504,3 +504,73 @@ Qualification uses memory credential backends, real portalocker with a fake
 keyring API, isolated profiles and controlled local HTTP peers. Real OS keychain
 interoperability, generic OAuth, other platforms and external production MCP
 servers remain unqualified by this task.
+
+### Shared MCP session qualification and uncertain request custody (R65/R66)
+
+Owned MCP profiles default to separate scoped connections. Sharing requires an explicit host-controlled `request_independent` qualification bound by the same immutable configure review and authenticated mapping as the exact execution, definition, effective configuration and credential authority. Package metadata, a server claim or transport multiplexing cannot supply it. Unknown qualification stays isolated. Every request retains its workspace/parent/permission and current-authority checks; changed qualification or binding requires review. The host attestation can be mistaken and does not prove arbitrary external-server or original-host isolation.
+
+A same-session request with an uncertain outcome retains its published active owner, durable host identity/outcome and complete root joins while exact connection custody remains. Local waiter cancellation does not call recovery settlement merely to mark uncertainty, release a request, or block unrelated authorized B work globally. Existing unresolved and foreign-session records are never promoted; lost custody and restart follow the existing recovery/dirty-checkpoint gates. Request completion cannot settle idle writer-capable server lifetime, and local transport closure cannot prove uncertain remote completion or permit replay. Uncertain requests can continue blocking revision drain and data deletion until positive terminal evidence exists.
+
+### Initial owned MCP setup and discovered definitions (R67)
+
+Saving owned configuration is data-only. Publish its exact connection mapping through the existing immutable configure review/commit before explicit connect or test. That authorized discovery can produce tool definitions; publish their exact reviewed tool mappings through the same configuration owner before plugin advertisement. Unchanged already-reviewed discovery may be reused. First setup can therefore require a connection review followed by a discovered-tool review. Neither step grants ordinary tool permission, starts execution implicitly or creates another approval owner; all per-call checks and no-tools/call probing rules still apply.
+
+
+### Portable literal HTTP headers and credential separation (R68)
+
+Agent Plugins 1.0.0 section 7.2.1 defines remote headers as visible package data,
+with client-generated HTTP/MCP/authorization headers taking precedence by
+case-insensitive name. Only the authenticated retained package definition may
+supply an owned profile's literal header map; arbitrary save-time raw overrides
+and foreign per-install header import remain forbidden. The reviewed exact
+configuration digest covers that public declaration. Runtime credentials stay
+in the protected credential owner and are resolved fresh for the selected origin;
+no resolved secret goes into an authority snapshot, profile, audit or diagnostic.
+Header spelling cannot prove a value is non-secret.
+
+Compose one case-insensitive map from package literals, then current credential
+headers, then authoritative host HTTP/MCP/routing/session fields. Preserve host
+framing, hop-by-hop, proxy and MCP namespace controls, including headers normally
+generated by the HTTP client. Never expand placeholders in URL/header names or
+values, forward across origins, or follow redirects. Preserve the existing exact
+Latin-1 wire policy for empty/interior-HTAB/obs-text values; wider Unicode remains
+explicitly unsupported at runtime. Package literals are not a credential mechanism,
+and standalone raw secret fields remain refused. Actual controlled-peer observation,
+case-collision precedence and no-launch save tests qualify this boundary; they do
+not qualify external services, arbitrary Unicode or foreign app behavior.
+
+Source: [Agent Plugins specification, remote MCP configuration](https://agent-plugins.org/specification#streamable-http-and-legacy-httpsse).
+
+
+### Component readiness and immutable MCP capture ceilings (R69)
+
+A missing, changed or unusable MCP owner mapping makes its own component and
+declared dependents unready. It does not discard a valid independent sibling.
+Global authenticated authority, retained interpretation and current installation,
+scope and root generations remain exact; unknown/missing required dependencies
+cannot be treated as independent. Recovery still validates every supported
+reference in the complete authenticated snapshot.
+
+The existing MCP capture API may take an explicit component ceiling, checked
+against current authenticated selection with the complete prerequisite closure.
+Unavailable explicitly requested components refuse instead of silently shrinking
+the request. Mappings, dependency records and advertised tools respect that
+immutable ceiling. Default capture uses the currently eligible set. An already
+admitted snapshot containing a newly failed component still refuses; a fresh
+narrower independent capture is required. A B-only snapshot need not fail merely
+because unrelated A becomes unready, provided B's captured mappings, complete
+requirements and generations still match. No narrowing restores an old approval,
+replays an invocation or weakens whole-snapshot recovery.
+
+
+### M4 implementation verification handoff
+
+The owned provider and connection adapter use the actual protected configuration review/commit owner and existing catalog/permission/typed transport entries. The permanent qualification lives in `Tests/Plugins/test_owned_mcp_tools.py`, `Tests/MCP/test_connection_ownership.py` and the existing `Tests/Agents/test_mcp_tool_provider.py` regression. Controls cover real multiplexed stdio workspace A/B, component A/B prerequisite ceilings, permission changes during approval, literal argv/env/cwd, native root deletion, pending/idle/global/default lifecycle, actual public revision drain, controlled HTTP loss/retained cleanup, package header octets/precedence and credential changes. Schema 4 migration/source preservation is covered in the existing local-store and credential tests. The delivery task report records exact targeted covering/static commands and limits; counts from intermediate runs are not additive.
+
+### Current native owner integration (M4)
+
+Retained MCP launch/request tasks acquire their own recovery admission through the existing worker-isolation seam; inherited task state is never treated as a transferable storage lease. Direct profile admission refusal returns false, and owned launch requires an actual true result plus the exact retained session.
+
+For an exact host-qualified request-independent stdio session with another attached owner, a request deadline/cancel retains its original native producer/source admission until its original validated terminal reply or actual child exit. It never replays or terminates the shared peer to settle one request. Ordinary/separate/last-owner cleanup retains native kill-and-reap custody. Revoked scopes still refuse late results.
+
+Portable MCP expansion recognizes only ${PLUGIN_ROOT} and ${PLUGIN_DATA} in args, env values and cwd, once. Unknown placeholder text remains literal. Stdio configuration requires an explicitly created persistent plugin data-root binding before publication/launch; saving configuration never creates a root or launches a peer.

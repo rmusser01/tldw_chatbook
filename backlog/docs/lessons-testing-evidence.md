@@ -17313,3 +17313,7 @@ pending forever, so later authenticated requests could not acquire capacity.
 original future with a fixed error. Keep capacity for workers that actually did
 start until real completion. Verify the real transport refuses before wire and
 can retry successfully; do not conflate failed start with cancelled waiting.
+
+### M4: separate explicit cancellation from a short timeout race
+
+While qualifying scoped MCP connections, the credential cancellation control waited for an unrelated real HTTP request before cancelling a 30 ms blocked lookup. It failed with TimeoutError both on M4 and frozen committed M3 production (`hooks-m4-credential-cancel-probe.xml`, `hooks-m4-auth-m3-baseline.xml`). The cancellation case now cancels the positively started actual backend call before peer I/O, with its separate finite bound; the timeout and second-lookup controls retain 30 ms and the no-late-wire assertions. A competing earlier timeout is not evidence that cancellation was exercised.

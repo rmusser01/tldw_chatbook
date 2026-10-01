@@ -201,6 +201,121 @@ class LocalMCPControlService:
         if isinstance(self.runtime_delegate, LocalMCPRuntimeDelegate):
             self.runtime_delegate._definition_store = self.store
         self._runtime_activity_limit = 50
+        self.connection_ownership = None
+
+    def save_owned_profile(
+        self,
+        *,
+        installation_id,
+        inspection,
+        component_id,
+        data_root=None,
+        session_isolation="separate",
+        protocol_version="2026-07-28",
+        credential_reference=None,
+        credential_generation=None,
+        development_loopback=False,
+    ) -> dict:
+        """Save exact host configuration data. This never connects or grants tools."""
+        from dataclasses import asdict
+        from pathlib import Path
+
+        from tldw_chatbook.Plugins.package_files import canonical_json
+
+        self._require_allowed("mcp.external_profiles.configure.local")
+        component = inspection.inventory[component_id]
+        if (
+            component.kind != "mcp"
+            or component.activation_blockers
+            or component.support != "supported"
+        ):
+            raise PermissionError("plugin_mcp_unavailable")
+        definition = json.loads(component.definition_json)
+        root = str(Path(inspection.materialized_identity).resolve(strict=True))
+        if data_root is not None and data_root.installation_id != installation_id:
+            raise PermissionError("plugin_data_owner_changed")
+        command, args, cwd, environment = self._owned_launch_values(
+            definition, root, str(data_root.path) if data_root is not None else None
+        )
+        transport = "stdio" if definition["type"] == "stdio" else "streamable_http"
+        ref = asdict(data_root) if data_root is not None else None
+        if ref is not None:
+            ref["path"] = str(ref["path"])
+        owner = {
+            "installation_id": installation_id,
+            "revision_digest": inspection.effective_digest,
+            "component_id": component_id,
+            "definition_digest": hashlib.sha256(
+                canonical_json(definition).encode()
+            ).hexdigest(),
+            "environment": environment,
+            "data_root": ref,
+            "session_isolation": session_isolation,
+            "literal_headers": definition.get("headers", {}),
+        }
+        configuration = {
+            "transport": transport,
+            "command": command,
+            "args": args,
+            "cwd": cwd,
+            "url": definition.get("url", ""),
+            "protocol_version": protocol_version,
+            "development_loopback": development_loopback,
+            "credential_reference": credential_reference,
+            "credential_generation": credential_generation,
+            "plugin_owner": owner,
+        }
+        profile_id = (
+            "plugin-"
+            + hashlib.sha256(canonical_json(configuration).encode()).hexdigest()[:56]
+        )
+        record = LocalExternalMCPProfile(profile_id=profile_id, **configuration)
+        return self.store.save_profile(record).to_dict()
+
+    @staticmethod
+    def _owned_launch_values(definition, root, data_path, baseline=None):
+        """Expand retained portable fields once, with host variables assigned last."""
+        import shutil
+        from pathlib import Path
+
+        if definition["type"] == "stdio" and data_path is None:
+            raise ValueError("plugin_configuration_unresolved")
+        variables = {"PLUGIN_ROOT": root}
+        if data_path is not None:
+            variables["PLUGIN_DATA"] = data_path
+
+        def expand(value):
+            def substitute(match):
+                if match.group(1) not in variables:
+                    raise ValueError("plugin_configuration_unresolved")
+                return variables[match.group(1)]
+
+            return re.sub(r"\$\{(PLUGIN_ROOT|PLUGIN_DATA)\}", substitute, value)
+
+        source_env = definition.get("env", {})
+        if source_env.keys() & {"PLUGIN_ROOT", "PLUGIN_DATA"}:
+            raise ValueError("plugin_reserved_variable")
+        baseline = os.environ if baseline is None else baseline
+        environment = {
+            key: baseline[key] for key in _SPAWN_ENV_BASELINE_KEYS if key in baseline
+        }
+        environment.update({key: expand(value) for key, value in source_env.items()})
+        environment.update(variables)
+        if definition["type"] != "stdio":
+            return "", (), None, {}
+        token = definition["command"]
+        command = (
+            str(Path(root) / token)
+            if token.startswith("./")
+            else shutil.which(token, path=environment.get("PATH"))
+        )
+        if not command:
+            raise ValueError("plugin_executable_unavailable")
+        args = tuple(expand(value) for value in definition.get("args", []))
+        cwd = expand(definition.get("cwd", "${PLUGIN_ROOT}"))
+        if not Path(cwd).is_absolute():
+            cwd = str(Path(root) / cwd)
+        return command, args, cwd, environment
 
     def _credentials(self):
         if self.credential_service is None:
@@ -242,11 +357,48 @@ class LocalMCPControlService:
                 or component.selection != "selected"
                 or component.activation_blockers
                 or profile is None
-                or profile.transport != "streamable_http"
             ):
                 raise CredentialError("credential_mapping_invalid")
             definition = json.loads(component.definition_json)
-            if (
+            if profile.plugin_owner is not None:
+                owner = profile.plugin_owner
+                if (
+                    owner["installation_id"],
+                    owner["component_id"],
+                    owner["revision_digest"],
+                    owner["definition_digest"],
+                ) != (
+                    installation_id,
+                    component_id,
+                    inspection.effective_digest,
+                    sha256_hex(canonical_json(definition)),
+                ):
+                    raise CredentialError("credential_mapping_invalid")
+                data_root = owner["data_root"]
+                if (
+                    data_root is not None
+                    and data_root["installation_id"] != installation_id
+                ):
+                    raise CredentialError("credential_mapping_invalid")
+                expected = self._owned_launch_values(
+                    definition,
+                    inspection.materialized_identity,
+                    data_root["path"] if data_root else None,
+                    owner["environment"],
+                )
+                if (
+                    expected
+                    != (
+                        profile.command,
+                        profile.args,
+                        profile.cwd,
+                        owner["environment"],
+                    )
+                    or profile.url != definition.get("url", "")
+                    or owner["literal_headers"] != definition.get("headers", {})
+                ):
+                    raise CredentialError("credential_mapping_invalid")
+            elif (
                 definition.get("type") != "streamable-http"
                 or definition.get("url") != profile.url
             ):
@@ -282,12 +434,60 @@ class LocalMCPControlService:
         except Exception:  # noqa: BLE001 -- sanitized authority boundary
             raise CredentialError("credential_mapping_invalid") from None
 
+    def capture_tool_mapping(
+        self, connection: dict, inspection, tool_name: str
+    ) -> dict:
+        """Bind a discovered tool to its reviewed connection and exact definition."""
+        from .credential_bindings import CredentialError
+        from .permission_store import definition_hash
+
+        self.validate_connection_mapping(connection, inspection)
+        profile_id = connection["target_reference"].removeprefix("local:")
+        snapshot = self.store.get_discovery_snapshot(profile_id) or {}
+        tools = [
+            tool for tool in snapshot.get("tools", ()) if tool.get("name") == tool_name
+        ]
+        if (
+            len(tools) != 1
+            or not isinstance(tool_name, str)
+            or not tool_name
+            or "::" in tool_name
+        ):
+            raise CredentialError("mcp_tool_mapping_invalid")
+        tool = tools[0]
+        return {
+            **connection,
+            "kind": "tool",
+            "mapping_id": "tool-"
+            + hashlib.sha256(
+                (connection["mapping_id"] + "\0" + tool_name).encode()
+            ).hexdigest(),
+            "target_reference": connection["target_reference"] + "::" + tool_name,
+            "definition_digest": definition_hash(
+                tool.get("description", ""), tool.get("inputSchema", {})
+            ),
+        }
+
     def validate_connection_mapping(self, mapping: dict, inspection) -> None:
         """Validate every mapping field against retained material/current owners."""
         from .credential_bindings import CredentialError
 
         try:
             reference = mapping["target_reference"]
+            if mapping["kind"] == "tool":
+                profile, separator, name = reference.partition("::")
+                if not separator:
+                    raise CredentialError("mcp_tool_mapping_invalid")
+                connection = self.capture_connection_mapping(
+                    installation_id=mapping["installation_id"],
+                    mapping_id=mapping["component_id"],
+                    inspection=inspection,
+                    component_id=mapping["component_id"],
+                    profile_id=profile.removeprefix("local:"),
+                )
+                if self.capture_tool_mapping(connection, inspection, name) != mapping:
+                    raise CredentialError("credential_mapping_changed")
+                return
             if mapping["kind"] != "connection" or not reference.startswith("local:"):
                 raise CredentialError("credential_mapping_unsupported")
             current = self.capture_connection_mapping(
@@ -368,7 +568,10 @@ class LocalMCPControlService:
                     **profile.to_dict(),
                     "discovery_snapshot": snapshot,
                     "is_connected": (
-                        profile.profile_id in active_sessions
+                        self.connection_ownership.is_connected(profile.profile_id)
+                        if profile.plugin_owner is not None
+                        and self.connection_ownership is not None
+                        else profile.profile_id in active_sessions
                         and not getattr(
                             active_sessions[profile.profile_id], "_closed", False
                         )
@@ -388,6 +591,11 @@ class LocalMCPControlService:
             else profile
         )
         record = LocalExternalMCPProfile.from_input_dict(strict_input)
+        existing = self.store.get_profile(record.profile_id)
+        if record.plugin_owner is not None or (
+            existing is not None and existing.plugin_owner is not None
+        ):
+            raise PermissionError("plugin_owned_profile")
         return self.store.save_profile(record).to_dict()
 
     @producer_call
@@ -419,6 +627,16 @@ class LocalMCPControlService:
         if profile is None:
             raise KeyError(f"Unknown profile_id: {profile_id}")
         profile_id = profile.profile_id
+        if profile.plugin_owner is not None:
+            from .connection_ownership import owned_invocation
+
+            context = owned_invocation.get()
+            if context is None or context.ownership is not self.connection_ownership:
+                raise PermissionError("plugin_connection_authority_required")
+            identity = await context.ownership.connect(
+                context.snapshot, context.component_id, profile_id
+            )
+            return await self._get_client().describe_server(identity)
 
         client = self._get_client()
         if profile.credential_reference is not None and isinstance(client, MCPClient):
@@ -433,6 +651,7 @@ class LocalMCPControlService:
                     protocol_version=profile.protocol_version,
                     command=profile.command,
                     args=profile.args,
+                    cwd=profile.cwd,
                     env=(
                         self._build_spawn_env(profile)
                         if profile.transport == "stdio"
@@ -484,6 +703,9 @@ class LocalMCPControlService:
     @producer_call
     async def disconnect_profile(self, profile_id: str) -> bool:
         self._require_allowed("mcp.external_profiles.launch.local")
+        profile = self.store.get_profile(profile_id)
+        if profile is not None and profile.plugin_owner is not None:
+            raise PermissionError("plugin_owned_profile")
         client = self._get_client()
         return await client.disconnect_from_server(profile_id)
 
@@ -552,6 +774,26 @@ class LocalMCPControlService:
         if automatic_work is not None:
             automatic_work.check()
         client = self._get_client()
+        profile = self.store.get_profile(profile_id)
+        if profile is not None and profile.plugin_owner is not None:
+            from .connection_ownership import owned_invocation
+
+            context = owned_invocation.get()
+            if context is None or context.ownership is not self.connection_ownership:
+                raise PermissionError("plugin_connection_authority_required")
+            result = await context.ownership.invoke(
+                context,
+                profile_id,
+                tool_name,
+                arguments or {},
+                client.call_tool_result,
+                automatic_work=automatic_work,
+            )
+            if typed_result:
+                return result
+            from .tool_results import project_tool_result
+
+            return project_tool_result(result)
         sessions = getattr(client, "sessions", {})
         if profile_id not in sessions:
             await self.connect_profile(profile_id)
@@ -621,6 +863,9 @@ class LocalMCPControlService:
 
     def delete_external_profile(self, profile_id: str) -> bool:
         self._require_allowed("mcp.external_profiles.configure.local")
+        profile = self.store.get_profile(profile_id)
+        if profile is not None and profile.plugin_owner is not None:
+            raise PermissionError("plugin_owned_profile")
         return self.store.delete_profile(profile_id)
 
     def get_governance(self) -> list[dict[str, Any]]:
@@ -1147,6 +1392,29 @@ class LocalMCPControlService:
             raise KeyError(f"Unknown profile_id: {profile_id}")
 
         client = self._get_client()
+        if profile.plugin_owner is not None:
+            from .connection_ownership import owned_invocation
+
+            context = owned_invocation.get()
+            if context is None or context.ownership is not self.connection_ownership:
+                raise PermissionError("plugin_connection_authority_required")
+            ownership = context.ownership
+            owner_id = ownership._owner_id(context.snapshot)
+            existing = {
+                connection.connection_id
+                for connection in ownership.connections.values()
+                if connection.profile is not None
+                and connection.profile.profile_id == profile_id
+                and owner_id in connection.owners
+            }
+            identity = await ownership.connect(
+                context.snapshot, context.component_id, profile_id
+            )
+            try:
+                return await client.describe_server(identity)
+            finally:
+                if not keep_connected and identity not in existing:
+                    await ownership.detach(identity, owner_id)
         sessions = getattr(client, "sessions", {})
         was_connected = profile_id in sessions
         if not was_connected:

@@ -50,11 +50,13 @@ class PluginService:
         workspace_lookup: Callable[[str], object | None],
         marker_store_factory: Callable[[Path], Any] | None = None,
         accept_reduced_protection: bool = False,
+        mcp_mapping_owner=None,
     ) -> None:
         self.profile_root = Path(profile_root)
         self.workspace_lookup = workspace_lookup
         self._marker_factory = marker_store_factory
         self._reduced = accept_reduced_protection
+        self._mcp_mapping_owner = mcp_mapping_owner
         self.fences = LivePluginFences()
         from .revisions import RevisionDrain
 
@@ -131,7 +133,11 @@ class PluginService:
                 trust_root, marker, accept_reduced_protection=self._reduced
             )
             self._coordinator = PluginCoordinator(
-                registry, authority, owner, fences=self.fences
+                registry,
+                authority,
+                owner,
+                fences=self.fences,
+                mcp_mapping_owner=self._mcp_mapping_owner,
             )
             self._coordinator.on_data_change = self._refresh
             self._admission = PluginAdmission(
@@ -377,6 +383,38 @@ class PluginService:
     async def review_trust(self, installation_id: str) -> PluginReview:
         return await self._call(lambda: self._coordinator.review_trust(installation_id))
 
+    async def review_configuration(
+        self, installation_id: str, *, connections, tools=None
+    ) -> PluginReview:
+        """Capture current MCP references on the existing plugin storage worker."""
+        return await self._call(
+            lambda: self._coordinator.review_configuration(
+                installation_id, connections=connections, tools=tools
+            )
+        )
+
+    async def capture_mcp_snapshot(
+        self,
+        installation_id: str,
+        workspace_id: str | None,
+        run_id: str,
+        *,
+        component_ceiling: tuple[str, ...] | None = None,
+    ):
+        """Capture immutable scope authority, including all requested prerequisites."""
+        return await self._call(
+            lambda: self._admission.capture(
+                installation_id,
+                workspace_id,
+                run_id,
+                component_ceiling=component_ceiling,
+            )
+        )
+
+    async def check_mcp_snapshot(self, snapshot, component_id: str) -> None:
+        self.fences.check_snapshot(snapshot)
+        await self._call(lambda: self._admission.check(snapshot, component_id))
+
     async def review_activation(
         self, installation_id: str, *, workspace_id: str | None, intent: str
     ) -> PluginReview:
@@ -442,6 +480,8 @@ class PluginService:
                         token = uuid4().hex
                         self._snapshots[token] = snapshot
                         for component_id in snapshot.selection:
+                            if inspection.inventory[component_id].kind != "skill":
+                                continue
                             row = skill_summary(
                                 identity, inspection, component_id, snapshot.alias
                             )

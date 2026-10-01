@@ -403,7 +403,7 @@ def test_legacy_store_migrates_without_fabricating_credentials(tmp_path, version
     profile = LocalMCPStore(path).get_profile("old")
     assert profile.credential_reference is profile.credential_generation is None
     migrated = path.read_bytes()
-    assert json.loads(migrated)["schema_version"] == 3
+    assert json.loads(migrated)["schema_version"] == 4
     assert LocalMCPStore(path).get_profile("old") == profile
     assert path.read_bytes() == migrated
 
@@ -630,9 +630,12 @@ def test_schema2_complete_public_store_migrates_and_reopens_without_record_loss(
     )
     stored = path.read_bytes()
     expected = dict(schema2_store_payload)
-    expected["schema_version"] = 3
+    expected["schema_version"] = 4
     expected["profiles"][0].update(
-        credential_reference=None, credential_generation=None
+        credential_reference=None,
+        credential_generation=None,
+        cwd=None,
+        plugin_owner=None,
     )
     expected["updated_at"] = json.loads(stored)["updated_at"]
     assert json.loads(stored) == expected
