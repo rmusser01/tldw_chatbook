@@ -18,7 +18,9 @@ after the call and detaches it from the DOM. GAP4-01 (Console UX review
   the binding chain again stopped short of the App.
 
 :func:`retire_dead_pump` removes the dead screen and every screen above it,
-or moves focus off the dead widget's subtree. When neither is possible -- the
+or moves focus off the dead widget's subtree. A screen that died mounting is
+also torn down, because Textual skips that for a failed mount (see
+:func:`_finish_unmounted_screen`). When neither is possible -- the
 dead screen is the content screen itself, with only Textual's blank
 placeholder beneath it -- it returns ``None`` and the caller takes Textual's
 loud exit: a crash is better than a frozen app that cannot even quit.
@@ -35,7 +37,9 @@ from collections.abc import Sequence
 from typing import Any, Literal
 
 from loguru import logger
+from textual.reactive import Reactive
 from textual.screen import Screen
+from textual.timer import Timer
 from textual.widget import Widget
 
 #: ``App.get_default_screen()``'s id. Textual's blank default screen sits at
@@ -99,7 +103,8 @@ def retire_dead_pump(
     Returns:
         ``"alive"`` when the error did not end the pump (nothing to retire),
         ``"screen"`` when a dead screen was taken off the stack (or out of the
-        reusable-screen cache), ``"widget"`` when the app can stay up around a
+        reusable-screen cache) and, if it died mounting, its teardown was
+        scheduled; ``"widget"`` when the app can stay up around a
         dead widget, or ``None`` when no live screen would be left in charge
         -- the caller must then exit. A recovery that itself raises also
         returns ``None``, after a warning naming its class and site.
@@ -108,7 +113,12 @@ def retire_dead_pump(
         return "alive"
     try:
         if isinstance(pump, Screen):
-            return "screen" if _discard_dead_screen(app, pump) else None
+            if not _discard_dead_screen(app, pump):
+                return None
+            if frames[0][1] == "_pre_process":
+                # After the pops above, so it runs after `_replace_screen`.
+                app.call_next(_finish_unmounted_screen, app, pump)
+            return "screen"
         if isinstance(pump, Widget):
             _move_focus_off_dead_widget(app, pump)
         return "widget"
@@ -238,6 +248,59 @@ def _forget_dead_screen(app: Any, screen: Screen) -> None:
             cache.pop(route, None)
     if app.is_screen_installed(screen):
         app.uninstall_screen(screen)
+
+
+async def _finish_unmounted_screen(app: Any, screen: Screen) -> None:
+    """Run the loop exit Textual skips for a screen whose mount raised.
+
+    In Textual 8.2.8, ``MessagePump._process_messages`` returns at once when
+    ``_pre_process`` fails (``message_pump.py:566-568``). It never reaches the
+    ``finally`` that every other loop exit runs (574-582): stop the pump's own
+    timers, clear its reactive watchers, and ``await _message_loop_exit()``.
+
+    That last call is what tears a dispatch-killed screen down.
+    ``Widget._message_loop_exit`` (``widget.py:4514-4535``) posts ``Prune`` to
+    each child and awaits them; each child's own loop is still running, so it
+    stops its timers, unmounts and unregisters itself. It then dispatches
+    Unmount, whose ``Widget._on_unmount`` cancels the screen's workers, and
+    drops the screen from its parent, ``app._registry`` and the DOM.
+    ``Screen._message_loop_exit`` (``screen.py:1302-1310``) also clears the
+    compositor and the layout-refresh subscription. Skip all that and the
+    popped screen stays attached and registered, with its children running.
+
+    ``remove()`` cannot do this: ``App._prune`` only posts ``Prune`` to the
+    screen's own queue, and no loop reads that queue any more.
+    ``_replace_screen`` already calls it on a popped, uninstalled screen, to
+    no effect. So this runs the same ``finally``, in the screen's own
+    message-pump context as Textual does, once the screen is off every stack.
+    It is scheduled with ``app.call_next``, the way ``App._prune`` schedules
+    its own wait for removed nodes.
+    """
+    if screen._parent is None:
+        return
+    try:
+        with screen._context():
+            try:
+                if screen._timers:
+                    await Timer._stop_all(screen._timers)
+                    screen._timers.clear()
+                Reactive._clear_watchers(screen)
+            finally:
+                await screen._message_loop_exit()
+    except Exception as exc:  # noqa: BLE001 -- the app's pump must not die here
+        logger.warning(
+            "Dead screen teardown failed: {} at {}",
+            type(exc).__name__,
+            _raise_site(exc),
+        )
+    finally:
+        # The last steps of `_message_loop_exit`, for a handler that raised
+        # before it got there: never leave the dead screen in the DOM.
+        parent = screen._parent
+        if parent is not None:
+            parent._nodes._remove(screen)
+            screen._detach()
+        app._registry.discard(screen)
 
 
 def _release_pending_result(screen: Screen) -> None:
