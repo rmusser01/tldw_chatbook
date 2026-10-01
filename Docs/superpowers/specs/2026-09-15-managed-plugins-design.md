@@ -1161,3 +1161,9 @@ The written design incorporates all accepted section reviews:
 This is the approved implementation contract, not a report of implemented
 features or passing runtime tests. Written-spec review is complete; the delivery
 plan records the implementation and qualification work still required.
+
+
+F5 integration note: schema v3 adds optional stable installation aliases while
+preserving exact pre-alias authenticated projections. Protected authority uses
+the canonical Skills trust subtree, shared context carriers preserve hook and
+plugin attribution, and native worker caches retire through existing owners.

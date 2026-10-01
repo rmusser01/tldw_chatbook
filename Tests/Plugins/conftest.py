@@ -104,3 +104,97 @@ def plugin_stack(tmp_path):
         yield stack
     finally:
         stack.close()
+
+
+@pytest.fixture
+async def native_console(tmp_path, native_package):
+    """Actual services and persisted Console; only provider transport is a double."""
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_console_skill_substitution import _RecordingGateway
+    from Tests.console_provider_doubles import persisted_console_store
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
+    from tldw_chatbook.Plugins.service import PluginService
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="plugin-tests")
+    )
+    registry.ensure_default_workspace()
+    registry.create_workspace(workspace_id="workspace-a", name="A")
+    registry.create_workspace(workspace_id="workspace-b", name="B")
+    service = PluginService(
+        tmp_path / "profile",
+        workspace_lookup=registry.get_workspace,
+        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
+        accept_reduced_protection=True,
+    )
+    await service.bootstrap("test passphrase")
+    local = LocalSkillsService(
+        store_dir=tmp_path / "skills",
+        plugin_service=service,
+        allow_untrusted_without_trust_service=True,
+    )
+    skills = SkillsScopeService(local_service=local)
+    gateway = _RecordingGateway()
+    store = persisted_console_store(workspace_registry=registry)
+    session = store.create_session(workspace_id="workspace-a")
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    )
+    controller.app = SimpleNamespace(
+        local_skills_service=local,
+        skills_scope_service=skills,
+        workspace_registry_service=registry,
+    )
+
+    async def install(*, metadata="", tools=None, enable=True):
+        package = native_package()
+        file = package / "skills/review/SKILL.md"
+        additions = ("metadata:\n" + metadata) if metadata else ""
+        if tools is not None:
+            additions += "allowed-tools: " + json.dumps(tools) + "\n"
+        file.write_text(
+            file.read_text().replace(
+                "description: Review a change against its requirements.\n",
+                "description: Review a change against its requirements.\n" + additions,
+            )
+        )
+        review = await service.review_install(
+            package, selection=("skill:review",), workspace_id="workspace-a"
+        )
+        await service.commit(review, "install-" + review.token)
+        trust = await service.review_trust(review.installation_id)
+        await service.commit(trust, "trust-" + trust.token)
+        if enable:
+            active = await service.review_activation(
+                review.installation_id, workspace_id="workspace-a", intent="enabled"
+            )
+            await service.commit(active, "activate-" + active.token)
+        return review
+
+    try:
+        yield SimpleNamespace(
+            service=service,
+            local=local,
+            skills=skills,
+            controller=controller,
+            store=store,
+            session=session,
+            gateway=gateway,
+            registry=registry,
+            install=install,
+        )
+    finally:
+        await controller.shutdown()
+        await service.aclose()
+        store.persistence.db.close()
+        registry.db.close()

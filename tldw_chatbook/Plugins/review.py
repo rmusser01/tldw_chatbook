@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from .authority import PluginMarker
 from .inspection import inspect_package
@@ -21,6 +22,9 @@ class PluginReview:
     authority_json: str
     token: str
     expires_at: float
+    alias: str | None = None
+    kind: Literal["install", "trust", "activate"] = "install"
+    intent: Literal["inherit", "enabled", "disabled"] | None = None
 
 
 @dataclass(frozen=True)

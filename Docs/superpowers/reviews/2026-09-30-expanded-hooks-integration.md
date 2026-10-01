@@ -276,3 +276,40 @@ network/synchronized storage qualification is claimed.
 - TASK-32685: MCP hooks, including required MCP/plugin prerequisites.
 - TASK-32686: native capabilities, required by the requested TASK-32687.
 - TASK-32687: Cursor/Codex package and hook adapter qualification.
+
+
+## F5 — TASK-32672 native Console skills
+
+Integrated the reviewed F5 increment from `ae19daa8be` onto current dev, retaining
+H3 mixed hook/plugin context carriers, H4 exact consent/lifecycle ownership, builtin
+skill handling, actual approval provenance, and current service-wiring/lifecycle
+modules. Schema v3 adds stable aliases without changing pre-alias snapshot bytes.
+Installed packages require separate review and scoped activation; actual Console
+manual/model/fork/file flows use the existing skill/tool/approval owners.
+
+Additional behavioral REDs proved the live authority worker selected the wrong
+protected directory and both native workspace and Console chain offloads leaked
+worker-held caches. Fixed these at shared ownership entries with existing helpers.
+Removed a conditional import shadowing the context carrier on continuation resume;
+updated stale test catalog doubles and selected-profile markers, preserving the
+production recovery guard and file-descriptor sentinel.
+
+Qualification:
+- Native admission, actual Console sends/agents, formatting/continuations, resolver,
+  provider custody and schema migration: **193 passed, 227.66s**, no warnings/skips;
+  `/private/tmp/hooks-f5-qualified.xml`.
+- Existing standalone Skills services: **51 passed, 12.02s**, no warnings/skips;
+  `/private/tmp/hooks-f5-skills-controls.xml`.
+- Hook lifecycle/child/post-checkpoint controls: **51 passed** in the integration
+  probe, plus all **9 automatic-work lineage checks passed, 24.47s** after correcting
+  their selected-profile fixture; `/private/tmp/hooks-f5-hooks-controls.xml` and
+  `/private/tmp/hooks-f5-lineage-qualified.xml`. The first probe's eight lineage
+  failures were profile-admission refusals; every one executes in the final nine.
+- Owned plugin Python: full Ruff and formatter pass. Shared-file diagnostics were
+  compared against HEAD; no new lint findings. Changed Python parses and whitespace
+  checks pass. Baseline shared formatting/lint debt was not rewritten.
+
+Limits: real local macOS/APFS storage, crypto, native threads, controlled child
+processes, actual Console/AgentService composition; provider transport and marker
+backends are isolated doubles. No external provider/keychain, Windows/Linux, full
+suite, power-loss or plugin MCP/native capability qualification is claimed here.

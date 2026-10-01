@@ -64,6 +64,7 @@ from tldw_chatbook.Chat.console_history_budget import count_console_messages_tok
 from .agent_models import (
     WorkOrigin,
     check_host_context,
+    PluginContextText,
     MESSAGE_TOOL_NAMES,
     AGENT_LIFECYCLE_INDEX_BASE,
     AGENT_KIND_PRIMARY,
@@ -2894,11 +2895,22 @@ class AgentService:
             return payload
         boundary = _make_round_boundary(native=native)
         if self._tool_result_pruning is not None:
+            whole_plugin_rows = {
+                index: row["content"]
+                for index, row in enumerate(payload)
+                if isinstance(row.get("content"), PluginContextText)
+            }
             payload, stats = prune_stale_tool_results(
                 payload,
                 settings=self._tool_result_pruning,
                 is_turn_boundary=boundary,
             )
+            for index, original in whole_plugin_rows.items():
+                if payload[index].get("content") != original:
+                    payload[index] = {
+                        **payload[index],
+                        "content": "Plugin context omitted whole by history pruning.",
+                    }
             if stats.pruned_rows:
                 logger.info(
                     "tool_result_prune rows={} chars_removed={}",
@@ -7446,7 +7458,12 @@ class AgentService:
                 content = out.get("content", "")
             except Exception as exc:  # SkillTrustBlockedError, ValueError, OSError
                 return ToolResult(ok=False, error=f"skill_file: {exc}")
-            return ToolResult(ok=True, content=str(content))
+            return ToolResult(
+                ok=True,
+                content=(
+                    content if isinstance(content, PluginContextText) else str(content)
+                ),
+            )
 
         def search_run_log(args: dict) -> ToolResult:
             """Query THIS run's log, or (``scope="conversation"``) this

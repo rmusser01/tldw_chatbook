@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import threading
@@ -99,8 +100,23 @@ class PluginCoordinator:
                 installation_id="review", workspace_id=workspace_id, intent="disabled"
             )
         self._verify_reviewed_package(inspection)
+        installation_id = uuid4().hex
+        source = Path(inspection.materialized_identity or inspection.source_identity)
+        package_name = capture_package(source).document(inspection.root_manifest)[
+            "name"
+        ]
+        aliases = {row.get("alias") for row in baseline["installations"]}
+        alias = package_name
+        if alias in aliases:
+            for length in range(8, len(installation_id) + 1, 4):
+                alias = f"{package_name}-{installation_id[:length]}"
+                if alias not in aliases:
+                    break
+            else:
+                raise ValueError("installation alias collision")
         review = PluginReview(
-            installation_id=uuid4().hex,
+            installation_id=installation_id,
+            alias=alias,
             inspection=inspection,
             selection=tuple(sorted(selection)),
             workspace_id=workspace_id,
@@ -111,6 +127,118 @@ class PluginCoordinator:
         )
         self._reviews[review.token] = review
         return review
+
+    def review_trust(self, installation_id: str) -> PluginReview:
+        """Review the exact currently installed bytes for explicit trust."""
+        return self._review_existing(installation_id, kind="trust")
+
+    def review_activation(
+        self, installation_id: str, *, workspace_id: str | None, intent: str
+    ) -> PluginReview:
+        """Review one explicit activation scope without changing selection."""
+        from .authority import Activation
+
+        if workspace_id is not None and (
+            not isinstance(workspace_id, str)
+            or not workspace_id.strip()
+            or workspace_id in {"global", "workspace-default"}
+        ):
+            raise ValueError("activation override requires a named workspace")
+        Activation(
+            installation_id=installation_id,
+            workspace_id=workspace_id or "global",
+            intent=intent,
+        )
+        if workspace_id is None and intent == "inherit":
+            raise ValueError("global activation cannot inherit")
+        return self._review_existing(
+            installation_id, kind="activate", workspace_id=workspace_id, intent=intent
+        )
+
+    def _review_existing(
+        self,
+        installation_id: str,
+        *,
+        kind: str,
+        workspace_id: str | None = None,
+        intent: str | None = None,
+    ) -> PluginReview:
+        from .recovery import retained_inspections
+
+        self._require_worker()
+        baseline = self.published_snapshot()
+        installed = next(
+            (
+                row
+                for row in baseline["installations"]
+                if row["installation_id"] == installation_id
+            ),
+            None,
+        )
+        if installed is None:
+            raise ValueError("installation unavailable")
+        inspection = retained_inspections(baseline)[
+            (installation_id, installed["revision_digest"])
+        ]
+        review = PluginReview(
+            installation_id=installation_id,
+            inspection=inspection,
+            selection=tuple(
+                row["component_id"]
+                for row in baseline["selections"]
+                if row["installation_id"] == installation_id
+                and row["revision_digest"] == installed["revision_digest"]
+                and row["selected"]
+            ),
+            workspace_id=workspace_id,
+            authority_marker=self.authority.load_marker(),
+            authority_json=canonical_json(baseline),
+            token=uuid4().hex,
+            expires_at=time.monotonic() + REVIEW_SECONDS,
+            kind=kind,
+            intent=intent,
+            alias=installed.get("alias"),
+        )
+        self._reviews[review.token] = review
+        return review
+
+    def _apply_review(
+        self, cursor, review: PluginReview, retained: PackageInspection
+    ) -> None:
+        if review.kind == "install":
+            self.registry.insert_installation(
+                cursor,
+                review.installation_id,
+                retained,
+                review.selection,
+                alias=review.alias,
+            )
+            return
+        if review.kind == "trust":
+            cursor.execute(
+                "UPDATE revision_trust SET reviewed=1 WHERE installation_id=? AND revision_digest=?",
+                (review.installation_id, retained.effective_digest),
+            )
+            scope, workspace = "installation", ""
+        elif review.kind == "activate":
+            workspace = review.workspace_id or ""
+            scope = "workspace" if review.workspace_id is not None else "global_default"
+            if review.workspace_id is None:
+                cursor.execute(
+                    "UPDATE installations SET activation_default=? WHERE installation_id=?",
+                    (review.intent == "enabled", review.installation_id),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO activation VALUES (?, ?, ?) ON CONFLICT(installation_id, workspace_id) DO UPDATE SET intent=excluded.intent",
+                    (review.installation_id, workspace, review.intent),
+                )
+        else:
+            raise ValueError("invalid review operation")
+        cursor.execute(
+            "INSERT INTO authority_generations VALUES (?, ?, ?, 1, 0) ON CONFLICT(installation_id, scope_kind, workspace_id) DO UPDATE SET generation=generation+1",
+            (review.installation_id, scope, workspace),
+        )
 
     @staticmethod
     def _verify_reviewed_package(inspection: PackageInspection) -> None:
@@ -216,8 +344,61 @@ class PluginCoordinator:
             if (
                 result["installation_id"] != review.installation_id
                 or result["revision_digest"] != review.inspection.effective_digest
+                or result["kind"] != review.kind
             ):
                 raise ValueError("operation ID belongs to a different review")
+            if review.kind in {"trust", "activate"}:
+                evidence = self.authority.verify_transition(operation_id)
+                if evidence.old != review.authority_marker:
+                    raise ValueError("operation ID belongs to a different review")
+                baseline = json.loads(review.authority_json)
+                scope = (
+                    "installation"
+                    if review.kind == "trust"
+                    else (
+                        "global_default" if review.workspace_id is None else "workspace"
+                    )
+                )
+                workspace = review.workspace_id or ""
+
+                def scoped_generation(snapshot):
+                    return next(
+                        (
+                            row["generation"]
+                            for row in snapshot["authority_generations"]
+                            if row["installation_id"] == review.installation_id
+                            and row["scope_kind"] == scope
+                            and row["workspace_id"] == workspace
+                        ),
+                        0,
+                    )
+
+                if (
+                    scoped_generation(evidence.snapshot)
+                    != scoped_generation(baseline) + 1
+                ):
+                    raise ValueError("operation ID belongs to a different review")
+                if review.kind == "activate":
+                    if review.workspace_id is None:
+                        intent = next(
+                            row["activation_default"]
+                            for row in evidence.snapshot["installations"]
+                            if row["installation_id"] == review.installation_id
+                        )
+                        matches = intent == (review.intent == "enabled")
+                    else:
+                        intent = next(
+                            (
+                                row["intent"]
+                                for row in evidence.snapshot["activation"]
+                                if row["installation_id"] == review.installation_id
+                                and row["workspace_id"] == review.workspace_id
+                            ),
+                            "inherit",
+                        )
+                        matches = intent == review.intent
+                    if not matches:
+                        raise ValueError("operation ID belongs to a different review")
             return prior
         if any(item.phase == "recovery_required" for item in receipts):
             raise PermissionError("plugin recovery required")
@@ -230,19 +411,19 @@ class PluginCoordinator:
             raise ValueError("stale review authority")
         self._verify_reviewed_package(review.inspection)
         self._published = None
-        retained = self._materialize(review)
+        retained = (
+            self._materialize(review) if review.kind == "install" else review.inspection
+        )
         self._milestone("materialized")
         result = {
             "operation_id": operation_id,
             "installation_id": review.installation_id,
-            "kind": "install",
+            "kind": review.kind,
             "revision_digest": retained.effective_digest,
             "result": "committed",
         }
         with self.registry.transaction() as cursor:
-            self.registry.insert_installation(
-                cursor, review.installation_id, retained, review.selection
-            )
+            self._apply_review(cursor, review, retained)
             snapshot = self.registry.authority_projection(operation_result=result)
             new = PluginMarker(
                 generation=review.authority_marker.generation + 1,

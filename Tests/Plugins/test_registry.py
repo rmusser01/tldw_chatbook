@@ -22,7 +22,7 @@ def test_memory_schema_pagination_and_rollback():
     from tldw_chatbook.Plugins.registry import PluginRegistry
 
     with PluginRegistry(Path(":memory:")) as registry:
-        assert registry.schema_version == 2
+        assert registry.schema_version == 3
         with registry.transaction() as cursor:
             cursor.executemany(
                 "INSERT INTO installations(installation_id) VALUES (?)",
@@ -200,7 +200,7 @@ def test_failed_schema_creation_rolls_back_all_ddl(tmp_path, monkeypatch):
         with module.PluginRegistry(
             tmp_path / "registry.sqlite3", owner=owner
         ) as registry:
-            assert registry.schema_version == 2
+            assert registry.schema_version == 3
     finally:
         owner.close()
 
@@ -402,12 +402,14 @@ def test_v1_upgrade_retains_rows_and_adds_independent_trust_and_tombstones(tmp_p
         for statement in _schema_statements():
             connection.execute(statement)
         connection.execute("PRAGMA user_version=1")
-        connection.execute("INSERT INTO installations VALUES ('installed', NULL, 0)")
+        connection.execute(
+            "INSERT INTO installations(installation_id, revision_digest, activation_default) VALUES ('installed', NULL, 0)"
+        )
     owner = PluginRuntimeOwner(tmp_path)
     assert owner.try_acquire()
     try:
         with PluginRegistry(path, owner=owner) as registry:
-            assert registry.schema_version == 2
+            assert registry.schema_version == 3
             with registry.transaction() as cursor:
                 assert (
                     cursor.execute("SELECT COUNT(*) FROM revision_trust").fetchone()[0]
@@ -432,7 +434,7 @@ def test_v1_upgrade_retains_rows_and_adds_independent_trust_and_tombstones(tmp_p
                 }
             ]
         with PluginRegistry(path) as registry:
-            assert registry.schema_version == 2
+            assert registry.schema_version == 3
             assert registry.authority_projection(operation_result=None) == snapshot
     finally:
         owner.close()
@@ -451,7 +453,8 @@ def test_projection_preserves_review_blockers_and_excludes_liveness(native_packa
     with PluginRegistry(Path(":memory:")) as registry:
         with registry.transaction() as cursor:
             cursor.execute(
-                "INSERT INTO installations VALUES (?, ?, 0)", ("installed", digest)
+                "INSERT INTO installations(installation_id, revision_digest, activation_default) VALUES (?, ?, 0)",
+                ("installed", digest),
             )
             cursor.execute(
                 "INSERT INTO revisions VALUES (?, ?, ?)",
@@ -546,7 +549,7 @@ def test_invalid_scalar_component_is_bound_as_blocked_reference(native_package):
     with PluginRegistry(Path(":memory:")) as registry:
         with registry.transaction() as cursor:
             cursor.execute(
-                "INSERT INTO installations VALUES ('installed', ?, 0)",
+                "INSERT INTO installations(installation_id, revision_digest, activation_default) VALUES ('installed', ?, 0)",
                 (inspection.effective_digest,),
             )
             cursor.execute(
@@ -584,7 +587,9 @@ def test_exact_operation_read_and_projection_preserve_guarded_transaction():
     }
     with PluginRegistry(Path(":memory:")) as registry:
         with pytest.raises(RuntimeError), registry.transaction() as cursor:
-            cursor.execute("INSERT INTO installations VALUES ('installed', NULL, 0)")
+            cursor.execute(
+                "INSERT INTO installations(installation_id, revision_digest, activation_default) VALUES ('installed', NULL, 0)"
+            )
             cursor.execute(
                 "INSERT INTO operations VALUES ('op', 'installed', 'prepared', ?)",
                 (json.dumps(result),),
@@ -602,3 +607,31 @@ def test_exact_operation_read_and_projection_preserve_guarded_transaction():
         assert (
             registry.authority_projection(operation_result=None)["installations"] == []
         )
+
+
+def test_v2_alias_migration_preserves_legacy_projection_and_digest(tmp_path):
+    from tldw_chatbook.Plugins.authority import empty_snapshot, snapshot_digest
+    from tldw_chatbook.Plugins.registry import PluginRegistry, _schema_statements
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    path = tmp_path / "registry.sqlite3"
+    with sqlite3.connect(path) as connection:
+        for migration in ("001_initial.sql", "002_authority.sql"):
+            for statement in _schema_statements(migration):
+                connection.execute(statement)
+        connection.execute("INSERT INTO installations VALUES ('old', NULL, 0)")
+        connection.execute("PRAGMA user_version=2")
+    expected = empty_snapshot()
+    expected["installations"] = [
+        {"installation_id": "old", "revision_digest": None, "activation_default": False}
+    ]
+    owner = PluginRuntimeOwner(tmp_path)
+    assert owner.try_acquire()
+    try:
+        with PluginRegistry(path, owner=owner) as registry:
+            actual = registry.authority_projection(operation_result=None)
+            assert registry.schema_version == 3
+            assert actual == expected
+            assert snapshot_digest(actual) == snapshot_digest(expected)
+    finally:
+        owner.close()

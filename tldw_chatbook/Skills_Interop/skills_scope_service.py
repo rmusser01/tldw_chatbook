@@ -106,6 +106,11 @@ class SkillsScopeService:
         payload = dict(result)
         payload.setdefault("backend", mode.value)
         normalized_collection = False
+        if isinstance(payload.get("items"), list):
+            payload["items"] = [
+                self._with_record_id(mode, "skill", item) for item in payload["items"]
+            ]
+            normalized_collection = True
         if isinstance(payload.get("skills"), list):
             payload["skills"] = [
                 self._with_record_id(mode, "skill", item) for item in payload["skills"]
@@ -376,6 +381,7 @@ class SkillsScopeService:
         relative_path: str,
         *,
         mode: SkillsBackend | str | None = None,
+        plugin_admission: str | None = None,
     ) -> dict[str, Any]:
         """Read a bundled file of a LOCAL trusted skill (runtime skill_file seam).
 
@@ -410,7 +416,15 @@ class SkillsScopeService:
         service = self._require_service(SkillsBackend.LOCAL)
         self._enforce_policy("skills.read_file.launch.local")
         return await self._maybe_await(
-            service.read_skill_file(skill_name, relative_path)
+            service.read_skill_file(
+                skill_name,
+                relative_path,
+                **(
+                    {"plugin_admission": plugin_admission}
+                    if plugin_admission is not None
+                    else {}
+                ),
+            )
         )
 
     def enforce_install_remote(self) -> None:

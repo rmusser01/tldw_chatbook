@@ -5019,6 +5019,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_trace_preparation",
         "automatic_work_chain_id",
         "_synthetic_fallback",
+        "provider_work_callback",
         "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
@@ -5040,6 +5041,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_trace_preparation",
         "automatic_work_chain_id",
         "_synthetic_fallback",
+        "provider_work_callback",
         "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
@@ -12216,3 +12218,20 @@ async def test_routed_snapshot_url_pin_preserves_ordinary_registry_edits(family,
     suffix = "/v1/chat/completions" if family == "openai_compatible" else ""
     assert resolved.base_url == expected + suffix
     assert all(url.startswith(expected) for url in requests)
+
+
+@pytest.mark.asyncio
+async def test_stream_signal_delegates_retained_provider_work_without_owning_cancellation():
+    future = asyncio.get_running_loop().create_future()
+    close = lambda: None
+    seen = []
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    assert not signals.register_provider_work(future, close)
+    signals.provider_work_callback = (
+        lambda completion, closer: seen.append((completion, closer)) or True
+    )
+    assert signals.register_provider_work(future, close)
+    assert seen == [(future, close)]
+    assert not future.cancelled()
+    assert "provider_work_callback" not in repr(signals)
+    future.set_result(None)

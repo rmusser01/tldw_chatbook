@@ -343,3 +343,93 @@ macOS/APFS, including missing/rolled-back SQLite before and after marker publica
 Tests isolate config/data/marker storage before imports and verify imported module
 and effective profile provenance. This is not hardware power-loss, real OS-keychain,
 Windows, Linux, synchronized-root or network-filesystem qualification.
+
+
+## Native Console skills (F5)
+
+The app lazily owns one `PluginService` beneath `config.get_user_data_dir()`.
+Protected authority uses `default_plugin_authority_dir(default_local_skills_store_dir(profile_root))`,
+inside the existing sensitive Skills trust subtree. Package/registry storage remains
+under the separate `profile_root/plugins` directory.
+Construction, Skills listing, and synchronous Console configuration capture do
+not open plugin storage or keyring. Explicit async operations start one persistent
+storage thread/event loop; coordinator, SQLite, protected authority, and runtime
+owner are created, used, and closed on that thread. The existing connection-owner
+context also retires newly opened native workspace lookup handles when this
+worker ends, preserving previously borrowed and custom owners. Call `bootstrap(passphrase)`
+for first setup, or `unlock(passphrase)` for an existing profile; unlock completes
+recovery before publishing metadata. UI management is a separate increment.
+
+Typed `review_install`, `review_trust`, and `review_activation` return expiring
+`PluginReview` records; `commit(review, operation_id)` uses the same authenticated
+durable pipeline. Installation alone is disabled and untrusted. Activation
+reviews specify `workspace_id=None` for the global default or the actual captured
+workspace ID and exact `inherit`, `enabled`, or `disabled` intent. Global defaults
+cannot inherit. The Console sentinels `global` and `workspace-default` are not
+valid new override targets; only an explicit `None` edits the global default.
+Already authenticated historical sentinel records retain generation fencing.
+Missing/archived named workspaces refuse use rather than falling
+back to global. Explicit workspace disable wins over the global default.
+
+Schema v3 (`003_installation_alias.sql`) persists the authenticated installation
+alias. A first installation uses the package name; a collision adds the first
+eight installation-ID characters, extending the checked suffix if needed. The
+alias belongs to the installation and must remain unchanged through future
+update/rename/removal operations. Human names are `alias:skill-id`, owned record
+IDs are `plugin:installation-id:skill:skill-id`, and model tools use a separate
+63-character `plugin_` plus hashed identity. Duplicate model names are excluded.
+Old snapshots without aliases retain their exact canonical bytes/digests and gain
+no alias, trust, or runtime grant. Standalone edits, deletion, overwrite imports,
+export, scripts, and standalone trust paths refuse owned identities.
+
+Native portable `SKILL.md` frontmatter remains strict. Chatbook behavior uses
+string entries under `metadata`:
+
+```yaml
+metadata:
+  context: "fork"                 # "inline" (default) or "fork"
+  user_invocable: "true"          # exact "true" / "false"
+  disable_model_invocation: "false"
+  argument_hint: "[change description]"
+allowed-tools: ""                  # explicitly no child tools
+```
+
+Malformed recognized metadata blocks execution. Unknown metadata is inert.
+Manual-only skills remain explicitly invocable but are absent from model tool
+catalogs. Empty allowed-tools never inherits the parent's tools. Unsupported
+nonempty portable tool restrictions and dependencies whose runtime owner is not
+yet available remain blockers. No package scripts or other source code execute.
+
+Console freezes a metadata-only maximum at capture, with its actual workspace and
+fresh pending turn identity. That cache is eligibility only. `admit` revalidates
+current authenticated authority and exact retained bytes, intersects the frozen
+maximum, and restores metadata from authenticated definitions. New enablements
+wait for a new turn. Current checks also run before injection, invocation, reads,
+launch/dispatch, and approval acceptance. Unrelated scope changes do not revoke
+an unchanged admitted scope. Package bodies/arguments enter attributed untrusted
+user context as whole blocks, limited to 8 KiB each and 32 KiB per send. Literal
+arguments are not template-expanded. Final agent sends account for all surviving
+host-attributed instruction and file-result blocks. Live typed text carries only
+content-free attribution beside its text; provider JSON and durable projections
+exclude that sidecar. Marker-looking user or standalone text never creates it.
+History pruning removes plugin blocks whole, and removed blocks do not consume
+later sends' budgets. Console's existing skill spawn runner,
+permission review, child tool ceilings, budgets, and lineage remain authoritative.
+
+`bind_run` records exact actual root/child IDs, optional fleet handle, parent ID,
+originating pending/turn/workspace/revision, lease, cancellation callback and
+terminal event before host effects. A pending identity cannot widen, change its
+turn, or bind a second unrelated root. `LivePluginFences.live_lock` protects only
+short live admission/record operations; storage and lease cleanup stay outside
+it. `fences.seal` and `live_runs()` do not wait on the storage loop. Sealing alone
+does not implement cancellation: F6 consumes these exact callbacks and owners.
+A rejected pre-spawn reservation is settled because the host has not launched.
+Already bound work remains retained until actual `complete_run` terminal evidence;
+returning/cancelling a caller or retiring pending custody does not settle children.
+Direct-provider custody also retains the existing gateway worker futures through
+`ConsoleProviderStreamSignals.provider_work_callback`; consumer exit settles only
+after every retained worker/closer reports actual terminal completion.
+Permanent app shutdown drains Console and then closes the plugin service;
+navigation keeps its owner alive. F7 supplies update/revision drain and retention;
+M4 supplies plugin MCP ownership. These later paths must preserve these identities
+and current-authority checks.

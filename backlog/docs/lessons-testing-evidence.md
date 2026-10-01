@@ -17238,3 +17238,26 @@ fixtures made the final 404-case run pass without a descriptor warning.
 Use the owner's shutdown and native worker wrapper at a proven settlement
 boundary. GC and a larger leak threshold cannot retire strongly retained native
 leases, and foreign-thread forced close would violate borrower ownership.
+
+
+## TASK-32672: qualify the actual protected store and native worker lifetime
+
+The reviewed native-skill worker built `profile/trust/plugins`, while the shared
+protected accessor built `profile/skills/trust/plugins`. An accessor-only test
+passed but never inspected the live worker. A regression starting PluginService
+proved the mismatch; the worker now uses that accessor, and actual snapshot,
+intent, certificate and reset paths are tested against the sensitive-path boundary.
+
+The first 62 passing native checks still grew 231 descriptors. A per-case native
+file census identified storage-thread WorkspaceDB caches and Console work-chain
+AgentRunsDB caches. Calling their owners from the UI thread could not retire them.
+Reusing `operation_owned_connection` across the storage worker and the existing
+Console agent worker wrapper for work-chain offloads closes newly opened caches
+on their owning threads. Real lease checks first failed at both settlement
+boundaries; GC thresholds and borrower safeguards were left unchanged.
+
+The same integration exposed a conditional context-carrier import that shadowed
+its global import during continuation restoration, and stale standalone test
+doubles advertising `_load_index` instead of current `_visible_records`. Remove
+the redundant local import and update the double; never bypass current profile
+admission or restore an obsolete production catalog path to make those tests pass.

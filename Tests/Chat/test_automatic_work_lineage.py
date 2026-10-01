@@ -20,6 +20,7 @@ from Tests.Chat.test_console_fleet_wake import (
     _terminal_subagent_run,
 )
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_enabled", [True, False])

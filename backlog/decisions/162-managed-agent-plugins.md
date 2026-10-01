@@ -142,3 +142,14 @@ authenticating registry presence does not imply that a revision was reviewed.
 Tombstones survive removal of installation rows. Closed authority mappings and
 operation results contain references and stable authority generations, not token
 material or live process state.
+
+
+### Native skill admission integration (F5)
+
+Registry schema v3 adds an optional installation alias. Pre-alias authenticated
+snapshots omit null aliases from their canonical projection, preserving exact
+bytes and digests; an upgrade never grants review, activation, or execution.
+The app wiring lives in the current service-wiring and lifecycle modules. Plugin
+authority is nested beneath the canonical protected Skills trust directory;
+its worker uses the existing connection ownership context for native workspace
+lookup caches, and Console work-chain offloads use the existing agent worker owner.

@@ -364,7 +364,7 @@ git diff --check
 - Consumes: F4 committed authority and existing ToolProvider/list_catalog/load_schema/invoke and Console skill resolution seams.
 - Produces: PluginAdmission.capture(installation_id: str, workspace_id: str | None, run_id: str) -> RunPluginSnapshot; check(snapshot: RunPluginSnapshot, component_id: str) -> None raises PluginUnavailable. RunPluginSnapshot is frozen and carries revision, selection, workspace, mappings, installation/scope generations and dependency requirements. PluginSkillProvider implements the existing ToolProvider protocol. effective_activation(default: bool, override: str) -> bool supports only inherit/enabled/disabled.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_explicit_workspace_disable_beats_global_default():
@@ -374,9 +374,9 @@ def test_explicit_workspace_disable_beats_global_default():
     assert effective_activation(False, "enabled")
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_native_skill_flow.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_native_skill_flow.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def effective_activation(default: bool, override: str) -> bool:
@@ -387,20 +387,20 @@ def effective_activation(default: bool, override: str) -> bool:
     raise ValueError("plugin_activation_invalid")
 ```
 
-  - [ ] 3.1. Extend plugin_stack with real Console/provider composition. Install a native skill, explicitly trust/enable it, invoke through the production skill resolver and assert the final provider input includes attributed untrusted context.
-  - [ ] 3.2. Capture actual workspace identity and immutable selected revision at run admission. Check current authenticated authority before every new injection/invoke/launch and approval acceptance; an unrelated namespace marker advance triggers revalidation rather than cancelling all scopes.
-  - [ ] 3.3. Implement dependency-aware tool eligibility, inline/fork metadata and whole-block 8 KiB/32 KiB context limits. Empty agent/skill tool restrictions never become inherit; new enablements wait for new run admission.
-  - [ ] 3.4. Add package-owned projections to Skills listing/detail and reject standalone update/delete/import-overwrite against owned IDs at service entry, not only in the UI.
+  - [x] 3.1. Extend plugin_stack with real Console/provider composition. Install a native skill, explicitly trust/enable it, invoke through the production skill resolver and assert the final provider input includes attributed untrusted context.
+  - [x] 3.2. Capture actual workspace identity and immutable selected revision at run admission. Check current authenticated authority before every new injection/invoke/launch and approval acceptance; an unrelated namespace marker advance triggers revalidation rather than cancelling all scopes.
+  - [x] 3.3. Implement dependency-aware tool eligibility, inline/fork metadata and whole-block 8 KiB/32 KiB context limits. Empty agent/skill tool restrictions never become inherit; new enablements wait for new run admission.
+  - [x] 3.4. Add package-owned projections to Skills listing/detail and reject standalone update/delete/import-overwrite against owned IDs at service entry, not only in the UI.
 
 **Failure and successful-control matrix:** Workspace A versus B/default, invalid workspace IDs, missing dependencies, manual-only use, forked instruction authority, tamper after review, new capability mid-run, alias collisions and standalone skill successful controls. A pure activation test is only the first RED; the Console flow is mandatory.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_native_skill_flow.py Tests/Plugins/test_admission.py Tests/Chat/test_console_skill_resolver.py Tests/Agents/test_skill_tool_provider.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32672 --plain

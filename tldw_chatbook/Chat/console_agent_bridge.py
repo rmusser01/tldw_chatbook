@@ -1036,7 +1036,14 @@ def _append_to_last_user_message(
             content, str
         ):
             result = list(messages)
-            result[index] = {**message, "content": f"{content}\n\n{block}"}
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            result[index] = {
+                **message,
+                "content": carry_plugin_context(
+                    f"{content}\n\n{block}", content, block
+                ),
+            }
             return result, True
     return messages, False
 
@@ -4113,7 +4120,7 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
         context.get("available_skills") if isinstance(context, Mapping) else None
     )
     return [
-        item
+        (dict(item, name=item["tool_name"]) if item.get("plugin_owned") else item)
         for item in (available or [])
         if isinstance(item, Mapping)
         and item.get("name")
@@ -4178,10 +4185,13 @@ def _non_colliding_skill_entries(
         | set(canvas_names)
         | RUNTIME_TOOL_NAMES
     )
+    eligible = _eligible_skill_entries(context)
+    names = [str(item["name"]) for item in eligible]
     return [
         item
-        for item in _eligible_skill_entries(context)
+        for item in eligible
         if str(item["name"]) not in collision_names
+        and names.count(str(item["name"])) == 1
     ]
 
 
@@ -4569,7 +4579,14 @@ def _compose_run_registry_and_allowed(
     # only possible outcome is a refusal -- a UX improvement layered on top
     # of the choke point, which stays load-bearing on its own.
     if eligible and not ephemeral:
-        registry.register_provider(SkillToolProvider(eligible))
+        ordinary = [row for row in eligible if not row.get("plugin_owned")]
+        owned = [row for row in eligible if row.get("plugin_owned")]
+        if ordinary:
+            registry.register_provider(SkillToolProvider(ordinary))
+        if owned:
+            from tldw_chatbook.Plugins.skill_provider import PluginSkillProvider
+
+            registry.register_provider(PluginSkillProvider(owned))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
     allowed_tools = (
         tuple(builtin_names)
@@ -4911,18 +4928,7 @@ def build_console_first_request_plan(
     )
     messages = agent_messages
     if turn_bundle_block:
-        messages = [dict(message) for message in agent_messages]
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
-            content = message.get("content")
-            if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
-                content, str
-            ):
-                messages[index] = {
-                    **message,
-                    "content": f"{content}\n\n{turn_bundle_block}",
-                }
-                break
+        messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -5073,7 +5079,9 @@ class _BridgeSkillRunner:
         local_names: tuple[str, ...] = (),
         skill_file_bindings: SkillFileBindings | None = None,
         definition_digests: Mapping[str, str] | None = None,
+        plugin_entries: Sequence[Mapping[str, Any]] = (),
     ) -> None:
+        self._plugin_entries = {str(row["tool_name"]): row for row in plugin_entries}
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
@@ -5092,10 +5100,17 @@ class _BridgeSkillRunner:
                 if local is None and hasattr(self._skills_service, "trust_service"):
                     local = self._skills_service
                 trust = getattr(local, "trust_service", None)
+                plugin_entry = self._plugin_entries.get(name)
                 current_digest = (
-                    trust.current_fingerprint_digest(name)
-                    if trust is not None
-                    else None
+                    local.plugin_service.current_definition(
+                        name, plugin_entry["plugin_admission"]
+                    )
+                    if plugin_entry is not None
+                    else (
+                        trust.current_fingerprint_digest(name)
+                        if trust is not None
+                        else None
+                    )
                 )
                 if current_digest != expected_digest:
                     raise SkillTrustBlockedError(
@@ -5104,7 +5119,24 @@ class _BridgeSkillRunner:
                         trust_status="quarantined_modified",
                     )
             result = asyncio.run(
-                self._skills_service.execute_skill(name, mode="local", args=args)
+                self._skills_service.execute_skill(
+                    name,
+                    mode="local",
+                    args=args,
+                    **(
+                        {
+                            "plugin_admission": self._plugin_entries[name][
+                                "plugin_admission"
+                            ]
+                        }
+                        if name in self._plugin_entries
+                        else {}
+                    ),
+                )
+            )
+        except PermissionError:
+            return ToolResult(
+                ok=False, error="Plugin authority changed; review and retry."
             )
         except SkillTrustBlockedError as exc:
             return ToolResult(
@@ -5145,7 +5177,12 @@ class _BridgeSkillRunner:
                 f"{'' if r.get('is_text', True) else ', binary'})"
                 for r in refs
             )
-            rendered = f"{rendered}\n\nBundled files (readable via skill_file): {rows}"
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            rendered = carry_plugin_context(
+                f"{rendered}\n\nBundled files (readable via skill_file): {rows}",
+                rendered,
+            )
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
@@ -5796,6 +5833,7 @@ class ConsoleAgentBridge:
         # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
         # leaves cancellation exactly as it was.
         revoke_approvals: Callable[[str], object] | None = None,
+        plugin_cancel_root: Callable[[], object] | None = None,
         on_tool_terminal: Callable[[str, str, str], object] | None = None,
         on_tool_result_terminal: (
             Callable[[str, str, str, ToolResult], object] | None
@@ -5818,12 +5856,12 @@ class ConsoleAgentBridge:
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
         project_instruction_nested_max_bytes: int | None = None,
         run_budget: RunBudget | None = None,
-        confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
-        | None = None,
-        on_project_instruction_activation: Callable[
-            [ProjectInstructionActivationEvent], None
-        ]
-        | None = None,
+        confirm_project_instruction_dispatch: (
+            Callable[[InstructionSnapshot], str] | None
+        ) = None,
+        on_project_instruction_activation: (
+            Callable[[ProjectInstructionActivationEvent], None] | None
+        ) = None,
         propagate_trace_call_persistence_errors: bool = False,
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
         trace_request: PreparedConsoleRequest | None = None,
@@ -5954,6 +5992,20 @@ class ConsoleAgentBridge:
         context: Mapping[str, Any] = skills_context or {}
         if self._skills_service is not None and skills_context is None:
             context = asyncio.run(self._skills_service.get_context(mode="local"))
+        plugin_service = getattr(
+            getattr(self._skills_service, "local_service", None), "plugin_service", None
+        )
+        if plugin_service is not None and any(
+            item.get("plugin_owned") for item in context.get("available_skills", ())
+        ):
+            context = asyncio.run(
+                plugin_service.admit(context, context["plugin_run_id"])
+            )
+        plugin_entries = tuple(
+            row
+            for row in context.get("available_skills", ())
+            if row.get("plugin_owned")
+        )
         run_workspace_id = workspace_id
         run_is_ephemeral = bool(workspace_ephemeral)
         if self._store is not None and workspace_id is None:
@@ -6195,6 +6247,9 @@ class ConsoleAgentBridge:
             for item in _eligible_skill_entries(context)
             if item.get("name") and item.get("definition_digest")
         }
+        admitted_skill_definition_digests.update(
+            (entry["name"], entry["definition_digest"]) for entry in plugin_entries
+        )
         if self._skills_service is not None:
             local_skills = getattr(self._skills_service, "local_service", None)
             if local_skills is None and hasattr(
@@ -6204,6 +6259,11 @@ class ConsoleAgentBridge:
             trust_service = getattr(local_skills, "trust_service", None)
 
             def current_skill_definition_digest(skill_name: str) -> str | None:
+                for entry in plugin_entries:
+                    if skill_name in {entry["name"], entry["tool_name"]}:
+                        return plugin_service.current_definition(
+                            skill_name, entry["plugin_admission"]
+                        )
                 if trust_service is None:
                     return None
                 return trust_service.current_fingerprint_digest(skill_name)
@@ -6211,12 +6271,25 @@ class ConsoleAgentBridge:
             skill_file_bindings = SkillFileBindings(
                 authorized=set(),
                 reader=lambda skill_name, path: asyncio.run(
-                    self._skills_service.read_skill_file(skill_name, path, mode="local")
+                    self._skills_service.read_skill_file(
+                        skill_name,
+                        path,
+                        mode="local",
+                        **next(
+                            (
+                                {"plugin_admission": entry["plugin_admission"]}
+                                for entry in plugin_entries
+                                if skill_name in {entry["name"], entry["tool_name"]}
+                            ),
+                            {},
+                        ),
+                    )
                 ),
                 current_definition_digest=current_skill_definition_digest,
             )
             skill_runner = _BridgeSkillRunner(
                 skills_service=self._skills_service,
+                plugin_entries=plugin_entries,
                 skill_names=first_request_plan.skill_names,
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
@@ -7112,6 +7185,23 @@ class ConsoleAgentBridge:
                 on_timeout=on_baseline_timeout,
             )
 
+        if plugin_entries:
+            original_review = review_tool_calls
+            original_dispatch = before_tool_dispatch
+
+            def review_tool_calls(calls, kind):
+                bind_plugin_actor()
+                plugin_service.check_entries_from_agent(plugin_entries)
+                decisions = original_review(calls, kind) if original_review else {}
+                plugin_service.check_entries_from_agent(plugin_entries)
+                return decisions
+
+            def before_tool_dispatch(calls, pure_runtime_tools):
+                bind_plugin_actor()
+                if original_dispatch is not None:
+                    original_dispatch(calls, pure_runtime_tools)
+                plugin_service.check_entries_from_agent(plugin_entries)
+
         run_log_writer = None
         if scratch_root is not None and scratch_lease is not None:
             from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
@@ -7197,10 +7287,90 @@ class ConsoleAgentBridge:
                 progress_owner_id=progress_owner_id,
             )
             message_inbox = self.message_store.get_inbox(progress_owner_id)
+        plugin_root_id = ""
+
+        def bind_plugin_root(actual_run_id: str) -> None:
+            nonlocal plugin_root_id
+            plugin_root_id = actual_run_id
+            if plugin_entries:
+                if plugin_cancel_root is None:
+                    raise PermissionError(
+                        "Plugin run cancellation owner is unavailable."
+                    )
+
+                def cancel_root():
+                    plugin_cancel_root()
+                    if revoke_approvals is not None:
+                        revoke_approvals(actual_run_id)
+
+                plugin_service.bind_run(plugin_entries, actual_run_id, cancel_root)
+
+        def bind_plugin_actor() -> None:
+            from tldw_chatbook.Agents.run_context import current_run_actor
+
+            actor = current_run_actor()
+            if actor is None:
+                raise PermissionError("Plugin run identity is unavailable.")
+            actual_run_id = actor.run_id
+            if actor.kind == "primary":
+                bind_plugin_root(actual_run_id)
+                return
+            handle = next(
+                (
+                    item
+                    for item in service.fleet_snapshot()
+                    if item.run_id == actual_run_id
+                ),
+                None,
+            )
+            if handle is None:
+                if actor.parent_run_id != plugin_root_id or plugin_cancel_root is None:
+                    raise PermissionError("Plugin child ownership is unavailable.")
+
+                def cancel_inline_child():
+                    plugin_cancel_root()
+                    if revoke_approvals is not None:
+                        revoke_approvals(actual_run_id)
+
+                plugin_service.bind_run(
+                    plugin_entries,
+                    actual_run_id,
+                    cancel_inline_child,
+                    parent_run_id=actor.parent_run_id,
+                )
+                return
+            plugin_service.bind_run(
+                plugin_entries,
+                actual_run_id,
+                lambda: service.cancel_subagent(handle.handle_id),
+                handle.handle_id,
+                parent_run_id=actor.parent_run_id,
+            )
+
+        def plugin_run_terminal(actual_run_id: str) -> None:
+            if plugin_entries:
+                plugin_service.complete_run(actual_run_id)
+            if on_run_terminal is not None:
+                on_run_terminal(actual_run_id)
+
+        def plugin_checked_chat_call(**kwargs):
+            if plugin_entries:
+                bind_plugin_actor()
+                plugin_service.check_entries_from_agent(plugin_entries)
+                from tldw_chatbook.Plugins.context import check_send_context
+
+                kwargs["messages_payload"] = check_send_context(
+                    kwargs["messages_payload"]
+                )
+            result = adapter.chat_call(**kwargs)
+            if plugin_entries:
+                plugin_service.check_entries_from_agent(plugin_entries)
+            return result
+
         service = AgentService(
             self._db,
             registry,
-            chat_call=adapter.chat_call,
+            chat_call=plugin_checked_chat_call if plugin_entries else adapter.chat_call,
             runtime_capacity=self.runtime_capacity,
             work_origin=work_origin,
             work_chain_id=work_chain_id,
@@ -7243,7 +7413,7 @@ class ConsoleAgentBridge:
             on_tool_terminal=on_tool_terminal,
             on_tool_result_terminal=on_tool_result_terminal,
             on_run_terminal=lambda run_id: self._on_live_run_terminal(
-                run_id, on_run_terminal
+                run_id, plugin_run_terminal if plugin_entries else on_run_terminal
             ),
             run_model_scope=functools.partial(
                 self._live_usage_run_scope,

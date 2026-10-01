@@ -36,7 +36,7 @@ SKILLS_LIST_COMMAND_NAME = "skills"
 MENTION_SIGIL = "$"
 """Leading character of a Codex-style skill mention (``$skill-name``)."""
 
-_MENTION_TOKEN = re.compile(r"[A-Za-z0-9-]+")
+_MENTION_TOKEN = re.compile(r"[A-Za-z0-9.-]+:[A-Za-z0-9-]+|[A-Za-z0-9-]+")
 _BACKTICK_RUN = re.compile(r"`+")
 
 SKILL_MENTION_SKIPPED_NOTE = (
