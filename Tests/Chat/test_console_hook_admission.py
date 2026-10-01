@@ -433,6 +433,32 @@ async def test_a_worker_that_cannot_start_releases_the_send(hook_file):
 
 
 @pytest.mark.asyncio
+async def test_a_continuation_that_fails_before_its_review_releases_the_send(
+    hook_file, monkeypatch
+):
+    """TASK-33621.28 review: the continuation's FIRST step must already be
+    inside the ``try`` whose ``finally`` releases the Send. Its deferred
+    diagnostics import sat above that ``try``, so a raise there left
+    ``_busy`` set and refused every later Send as "already in progress"
+    until restart. A ``None`` in ``sys.modules`` makes that import raise."""
+    import sys
+
+    owner = HookPermissions()
+    started: list = []
+    hooks, stash, dispatch, sent = _handoff_controller(
+        owner, _approving_review(owner), started
+    )
+    await hooks.dispatch(stash.text, session_id="a", stash=stash, dispatch=dispatch)
+    assert len(started) == 1 and hooks._busy
+    monkeypatch.setitem(
+        sys.modules, "tldw_chatbook.Chat.console_send_diagnostics", None
+    )
+    with pytest.raises(ImportError):
+        await started[0]
+    assert not hooks._busy and sent == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("factory", ["lazy", "eager"])
 async def test_in_worker_task_is_true_only_on_a_workers_own_task(factory):
     """``in_worker_task`` under both task factories.

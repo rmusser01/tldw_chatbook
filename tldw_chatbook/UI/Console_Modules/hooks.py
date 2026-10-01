@@ -207,9 +207,12 @@ class ConsoleHooksController:
         stash: ConsoleDraftStash | None,
         dispatch: Callable[[], Awaitable[ConsolePromptDispatchResult]],
     ) -> ConsolePromptDispatchResult:
-        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
-
         try:
+            # Inside the try: nothing before it may skip releasing the Send.
+            from tldw_chatbook.Chat.console_send_diagnostics import (
+                send_diagnostic_scope,
+            )
+
             # The worker inherits the Send's diagnostic attempt, whose UI
             # scopes closed as awaiting_review; record how the Send ended.
             async with send_diagnostic_scope("hook_review_continuation") as diagnostic:
