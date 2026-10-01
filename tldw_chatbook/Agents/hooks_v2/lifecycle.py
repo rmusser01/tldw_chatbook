@@ -7,9 +7,10 @@ import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import replace
-from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 from ..agent_models import AgentConfig, RunBudget, RunOutcome
 from .checkpoints import HookCheckpointError, HookCheckpointStore
@@ -42,7 +43,7 @@ def lifecycle_event(
         "protocol_version": 2,
         "event_id": uuid4().hex,
         "event": name,
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": utc_now_iso(),
         "runtime_session_id": session_id,
         "initiator": initiator,
         "origin": "host_lifecycle",

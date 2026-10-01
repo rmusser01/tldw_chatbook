@@ -6,12 +6,12 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 if TYPE_CHECKING:
     from tldw_chatbook.Plugins.models import PackageInspection
@@ -548,8 +548,6 @@ class PluginRegistry:
             ),
         )
         if phase == "complete":
-            from datetime import datetime
-
             if (
                 result["revision_digest"]
                 and result["kind"] in {"install", "update"}
@@ -567,7 +565,7 @@ class PluginRegistry:
                         + ":"
                         + result["revision_digest"],
                         "revision:" + result["installation_id"],
-                        json.dumps({"observed_at": datetime.now(UTC).isoformat()}),
+                        json.dumps({"observed_at": utc_now_iso()}),
                     ),
                 )
             cursor.execute(
@@ -575,7 +573,7 @@ class PluginRegistry:
                 (
                     "observed:" + result["operation_id"],
                     result["operation_id"],
-                    json.dumps({"observed_at": datetime.now(UTC).isoformat()}),
+                    json.dumps({"observed_at": utc_now_iso()}),
                 ),
             )
 

@@ -813,3 +813,64 @@ All 186 branch-changed Python files parse, whole-branch/working whitespace check
 pass, and the two conflict owners plus changed progress test add no Ruff diagnostics
 against the predecessor/latest-dev baselines. Targeted checks only: this remains a
 draft for review, without a full-suite, original-host or cross-platform claim.
+
+
+## PR #2946 CI repair and current-dev rebase — 2026-10-01
+
+Rebased all 21 PR commits onto dev
+`83c2c9810d5d09406c85e1f027541b846ead93aa` before repairing the failed
+fast-lane and derived-artifact checks. Kept both branches' evidence lessons,
+reused dev's exact `ConsoleDurableTurnCommit.user_parent_message_id` instead of
+a duplicate optional field, and preserved both pending-hook Stop and dev's
+queue-disabled reason/Redirect reservation and focus behavior.
+
+The published CI run `36848847083` passed its 1,183-case main group (plus one
+empty parameterization), but its admission group failed two stale controller
+fixtures. Both omitted the now-required `bind_turn_request` coordinator seam;
+one then waited forever for a task that had already failed. The fixtures now
+model the existing no-active-chain coordinator contract, and the startup wait
+is bounded. Production binding remains required. Local paired reproduction:
+`hooks-pr2946-runtime-red.xml`, two failures; corrected cases plus actual continuation
+migration/index checks: `hooks-pr2946-fixes.xml`, **7 passed in 4.225s**.
+
+The exact admission-sensitive CI selection now passes **123 cases in 137.445s**,
+with the existing TASK-32873 captured-attach fixture xfail retained and excluded
+from qualification (`hooks-pr2946-admission.xml`). Mounted composer Stop,
+Enter/collapse, Redirect resize, focus typing, queue reason, fresh saved-fork
+lineage and pending-hook cancellation controls: **15 passed in 266.384s**, no
+skips (`hooks-pr2946-rebase-ui.xml`).
+
+Owner coverage exposed a further production interaction with dev's denial-reason
+projection: an approved, settled MCP result was copied even when no denial text
+was appended, breaking the original owner's exact typed-evidence identity.
+`hooks-pr2946-owners.xml` retains **178 passes / one failure**; the isolated
+approval case also failed (`hooks-pr2946-approval-isolated.xml`). The shared MCP
+owner now returns its original result when the error text is unchanged. Denial
+text still uses its existing bounded projection. No permission, definition,
+raw-result, currentness or evidence check was relaxed. Connected initializers
+(all three branches), normal MCP provider and strict typed hook invocation:
+**140 passed in 31.766s**, no skips (`hooks-pr2946-mcp-fixed.xml`).
+Fresh covering hook pipeline/lifecycle and native inspection/coordinator/Cursor/
+Codex owner run: **179 passed in 96.365s**, no skips or failures
+(`hooks-pr2946-owners-final.xml`).
+
+Derived-artifact repairs follow existing contracts:
+
+- ADR-173's shared `utc_now_iso()` replaces six new offset-format writers in
+  lifecycle events, tool events, inspection evidence and registry receipts;
+  monotonic budgets and tolerant old timestamp reads are unchanged.
+- The existing continuation table joins the SQL identifier allowlist. A real,
+  populated foreign-key conversation-delete query plan proves use of its receipt
+  index with no ANALYZE/statistics; the census points to that runnable test.
+- Reviewed fixed diagnostic/exception-type messages and the encrypted authority
+  snapshot's private atomic sink are included in the production inventory.
+  The sink writes an already authenticated/encrypted snapshot, not plaintext
+  source bodies. No exclusion or gate was weakened.
+
+Fresh timestamp, schema-table, index-plan and diagnostic-inventory checks pass;
+all generated CSS bundles reproduce under project Python 3.12.11. Design-token
+checks: **8 passed in 21.22s**. All **189 branch/working Python files** parse,
+changed ranges/new owners are formatted, shared files add no Ruff diagnostics
+against rebased HEAD, and whitespace checks pass. Existing ADR-162/163/173 apply;
+these repairs add no new runtime, authority or storage boundary. Local evidence
+remains targeted and does not replace a new remote CI run or bot review.

@@ -17471,3 +17471,16 @@ failures. A separate stale cancellation test had always requested cancellation b
 dispatch while asserting an in-flight message; actual start/release/finish events now
 exercise the intended behavior. Keep profile selection explicit and test ordering out
 of authority expectations; do not weaken production recovery checks to quiet tests.
+
+
+## A display-only copy broke approved MCP hook evidence
+
+**PR #2946, 2026-10-01.** After rebasing onto dev's denial-reason support, the
+connected SessionStart initializer's approval branch failed while allow-state
+controls passed. The approval and tool execution both succeeded, but an
+unconditional `replace(result, error=unchanged_text)` produced a new result
+identity after the MCP owner transferred its typed evidence. Returning the
+original result when text is unchanged fixed it without relaxing exact evidence
+consumption. The connected approval initializer plus normal MCP/strict hook
+neighbors passed 140 cases. Exercise both persisted Allow and actual Ask/approval
+when verifying result projections across an identity-bound evidence boundary.

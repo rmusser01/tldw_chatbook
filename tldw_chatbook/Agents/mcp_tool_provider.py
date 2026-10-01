@@ -1330,9 +1330,8 @@ class MCPToolProvider:
         )
         from .approval_provenance import append_denial_reason
 
-        return replace(
-            result, error=append_denial_reason(result.error, decisions or {}, tool_id)
-        )
+        error = append_denial_reason(result.error, decisions or {}, tool_id)
+        return result if error == result.error else replace(result, error=error)
 
     # -- internals ----------------------------------------------------------
 

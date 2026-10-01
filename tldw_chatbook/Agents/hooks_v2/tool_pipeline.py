@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field, replace
-from datetime import UTC
 
 from jsonschema import validators
 from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry
 from referencing.exceptions import Unresolvable
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 from .engine import HookEngine, HookEventOutcome
 from .models import HookEvent
@@ -351,7 +352,6 @@ class ToolHookRun:
         self._rendered[event.event_id] = tuple(rows)
 
     def _event(self, name, definition, data):
-        from datetime import datetime
         from uuid import uuid4
 
         from .causality import current_chain
@@ -361,7 +361,7 @@ class ToolHookRun:
             "protocol_version": 2,
             "event_id": uuid4().hex,
             "event": name,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": utc_now_iso(),
             "runtime_session_id": self.session_id,
             "run_id": self.run_id,
             "turn_id": self.turn_id,

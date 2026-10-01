@@ -2,8 +2,9 @@
 
 import hashlib
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 from .adapters.portable import ComponentLimitError, inventory_package
 from .models import Diagnostic, DialectCandidate, InspectionEvidence, PackageInspection
@@ -58,7 +59,10 @@ def inspect_package(
 
 
 def inspect_capture(
-    capture: PackageCapture, *, dialect: str | None = None, catalog_overlay: dict | None = None
+    capture: PackageCapture,
+    *,
+    dialect: str | None = None,
+    catalog_overlay: dict | None = None,
 ) -> PackageInspection:
     """Interpret exactly the captured bytes (also used by materialization)."""
     diagnostics = list(capture.diagnostics) + list(capture.errors)
@@ -237,7 +241,7 @@ def inspect_capture(
                 adapter=selected.adapter_version,
                 revision=capture.digest,
                 platform=sys.platform,
-                observed_at=datetime.now(UTC).isoformat(),
+                observed_at=utc_now_iso(),
             )
             inventory = {
                 key: row.model_copy(update={"evidence": (evidence,)})
@@ -295,7 +299,7 @@ def inspect_capture(
     evidence = InspectionEvidence(
         revision=capture.digest,
         platform=sys.platform,
-        observed_at=datetime.now(UTC).isoformat(),
+        observed_at=utc_now_iso(),
     )
     inventory = {
         key: record.model_copy(update={"evidence": (evidence,)})

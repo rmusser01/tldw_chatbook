@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:29'
-updated_date: '2026-10-01 06:37'
+updated_date: '2026-10-01 23:07'
 labels:
   - plugins
   - implementation
@@ -50,4 +50,6 @@ Reason: implements the accepted normal MCP hook invocation, same-owner checkpoin
 
 <!-- SECTION:NOTES:BEGIN -->
 Integrated H6 through actual current Console/MCP/checkpoint/native custody owners. Preserved H3 approval provenance through exact capture transfer; strict wire normalization, causal/dependency/context staging and bounded no-connect/no-prompt teardown are qualified. Fixed repeated catalog polling by reusing fresh exact normal definition checks at dispatch and acceptance, preserving permission checks and one/three-second deadlines. Final 162-node native covering set completed through documented corrections; 247 boundary/normal neighbors pass plus 123 earlier interrupt neighbors. Authored Ruff/format, syntax, whitespace and shared-baseline parity pass. ADR162/163 apply; evidence and platform/provider/GUI/full-suite limits in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. Native managed graph/application composition remains I1.
+
+PR #2946 current-dev integration preserves original typed-result identity when denial text is unchanged. Connected initializer approval reproduced the regression; all initializer branches, normal MCP provider and strict hook execution pass 140 checks. Existing ADR-162/163 apply; evidence and bounded denial projection remain intact. See the 2026-10-01 CI-repair section of Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

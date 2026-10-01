@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:25'
-updated_date: '2026-10-01 04:16'
+updated_date: '2026-10-01 23:07'
 labels:
   - plugins
   - implementation
@@ -49,4 +49,6 @@ Reason: implements accepted scheduler continuation admission, durable deduplicat
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented bounded Stop scheduling through existing queue/runtime owners, atomic v74 deduplication receipts, inherited budgets, untrusted machine input and fixed Interrupt/SessionEnd observation windows. Preserved actual cancellation and maintenance custody; reused finite worker connection retirement. Final targeted H5 qualification: 105 passed in 453.52s, no warnings/skips; 133 queue/dispatch/maintenance controls passed and 1,000 real turns passed in 465.05s. Additional archive/fleet/log controls: 85 passed, two failures reproduced on frozen pre-H5 production; pre-existing dispatch/Stop fixture failures also recorded without weakening guards. New hooks/tests Ruff+format, parse, whitespace and shared diagnostic comparison pass; exact v74 wheel resource verified. ADR-162/163/063 apply. Evidence and platform limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 derived-artifact repair registers the existing continuation table in the SQL identifier allowlist and pins the actual populated conversation DELETE cascade query plan without ANALYZE. Migration/runtime ownership is unchanged; the focused repaired-runtime plus migration group passes 7 cases. Existing ADR-163 applies; exact evidence is in the integration report.
 <!-- SECTION:NOTES:END -->

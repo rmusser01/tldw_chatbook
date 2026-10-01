@@ -212,3 +212,51 @@ def test_uncertain_dispatch_restart_retains_machine_identity_without_replay(tmp_
         )
     finally:
         db.close()
+
+
+def test_conversation_cascade_uses_receipt_index_without_statistics(tmp_path):
+    """Deleting a conversation searches its receipt index without ANALYZE."""
+    db, conversation = _db_and_conversation(tmp_path / "cascade-plan.db")
+    try:
+        repository = ConsoleDispatchRepository(db)
+        parent = _insert(db, repository, _acceptance(conversation))
+        _settle(repository, parent)
+        child = _insert(
+            db,
+            repository,
+            replace(
+                _acceptance(conversation, suffix="plan-child"),
+                origin="queued",
+                queue_entry_id="plan-machine",
+                parent_message_id=parent.assistant_message_id,
+                continuation_receipt=ContinuationReceipt(
+                    "plan-parent",
+                    "plan-stop",
+                    parent.assistant_message_id,
+                    "plan-chain",
+                    1,
+                ),
+            ),
+        )
+        _settle(repository, child)
+        connection = db.get_connection()
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        plan = "\n".join(
+            row["detail"]
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN DELETE FROM conversations WHERE id=?",
+                (conversation,),
+            )
+        )
+        assert (
+            "USING COVERING INDEX idx_hook_continuation_receipts_conversation" in plan
+        )
+        assert "SCAN console_hook_continuation_receipts" not in plan
+    finally:
+        db.close()

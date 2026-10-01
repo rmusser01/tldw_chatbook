@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-01 01:28'
+updated_date: '2026-10-01 23:07'
 labels:
   - plugins
   - implementation
@@ -44,4 +44,6 @@ ADR required: yes (amend existing accepted contracts; no new permission or stora
 
 <!-- SECTION:NOTES:BEGIN -->
 Reused reviewed H4 session/child/compaction producers and shared checkpoint/context retirement. Current-dev additions reuse exact persistent HookPermissions consent for v2 definitions, launch serialization, Console review and canonical Settings Advanced Config; malformed source blocks admission. Common durable hydration now publishes exact parent IDs while preserving batched version reads. Final core 404 passed with no skips/warnings; consent/UI 150 passed; frozen 1,000-turn stress passed. Two unchanged recovery failures reproduce against pre-H3 source and are explicitly recorded for continuation assessment. Test-owned runtime/worker cleanup removed aggregate descriptor warnings. Full Ruff/format on 22 owned files; shared diagnostics unchanged; syntax, whitespace and design-token checks pass. Existing ADR163/197 amended and linked, no new storage/dependency/permission owner. Detailed commands/limitations: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 rebase onto dev 83c2c9810d5d09406c85e1f027541b846ead93aa reuses its exact committed user-parent field and updates two runtime test doubles to the required coordinator binding contract. Admission group: 123 passes and one retained upstream TASK-32873 xfail; mounted composer/fork/Stop integration: 15 passes. New timestamp writes reuse ADR-173 canonical UTC helper; no production admission guard was weakened.
 <!-- SECTION:NOTES:END -->
