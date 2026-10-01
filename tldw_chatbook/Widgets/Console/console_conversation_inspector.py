@@ -1084,6 +1084,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 type(exc).__name__,
                 _failure_site(exc),
             )
+            self.notify(
+                "Couldn't change the trace view. Details are in the log file.",
+                severity="error",
+                markup=False,
+            )
         finally:
             self._viewer_profile_confirm_running = False
 

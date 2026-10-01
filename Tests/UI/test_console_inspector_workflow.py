@@ -641,7 +641,11 @@ async def test_trace_view_key_and_button_confirm_full_and_keep_the_inspector_liv
 async def test_a_failing_trace_view_confirm_logs_where_it_raised(monkeypatch):
     """PR #2944 review: the confirm worker's guard logged the exception class
     alone. It names the raising frame and the Chatbook frame above it, as
-    identifiers -- never the message -- and the profile stays Safe."""
+    identifiers -- never the message -- and the profile stays Safe.
+
+    PR #2945 review: it only logged, so a failed Safe -> Full change was
+    silent. It shows the same error toast the sibling project-folder recovery
+    worker does, never with the message, and never parsed as markup."""
     from loguru import logger
 
     from tldw_chatbook.Widgets.Console import console_conversation_inspector
@@ -677,6 +681,14 @@ async def test_a_failing_trace_view_confirm_logs_where_it_raised(monkeypatch):
             )
             assert app.screen is modal and modal.is_running
             assert modal.viewer_profile is TraceViewerProfile.SAFE
+            toasts = [(n.message, n.severity, n.markup) for n in app._notifications]
+            assert toasts == [
+                (
+                    "Couldn't change the trace view. Details are in the log file.",
+                    "error",
+                    False,
+                )
+            ], toasts
     finally:
         logger.remove(sink_id)
     failures = [line for line in lines if "Trace view change failed" in line]
