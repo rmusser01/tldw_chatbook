@@ -562,14 +562,22 @@ async def test_pump_loop_ended_matches_what_textual_does_to_the_pump(how, ends):
 
 
 class _Ticker(Widget):
-    """A child whose own interval ticks for as long as its pump lives."""
+    """A child whose own interval ticks, and whose own worker runs, for as
+    long as its pump lives."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, unmount_raises: bool = False) -> None:
         super().__init__()
+        self.unmount_raises = unmount_raises
         self.ticks = 0
+        self.worker = None
 
     def on_mount(self) -> None:
         self.set_interval(0.01, self._tick)
+        self.worker = self.run_worker(asyncio.sleep(3600))
+
+    def on_unmount(self) -> None:
+        if self.unmount_raises:
+            raise RuntimeError(_CANARY)
 
     def _tick(self) -> None:
         self.ticks += 1
@@ -578,9 +586,11 @@ class _Ticker(Widget):
 class _DyingScreen(Screen):
     """Mounts a ticking child, ticks itself and starts a worker, then dies:
     in ``on_mount`` (Textual's ``_pre_process``) or, once mounted, in a
-    dispatched handler (``_process_messages_loop``)."""
+    dispatched handler (``_process_messages_loop``). ``unmount_raises`` names
+    whose ``on_unmount`` raises during the teardown: ``"screen"`` or
+    ``"child"``."""
 
-    def __init__(self, death: str, *, unmount_raises: bool = False) -> None:
+    def __init__(self, death: str, *, unmount_raises: str | None = None) -> None:
         super().__init__()
         self.death = death
         self.unmount_raises = unmount_raises
@@ -590,7 +600,7 @@ class _DyingScreen(Screen):
         self.worker = None
 
     def compose(self) -> ComposeResult:
-        yield _Ticker()
+        yield _Ticker(unmount_raises=self.unmount_raises == "child")
 
     async def on_mount(self) -> None:
         self.ticker = self.query_one(_Ticker)
@@ -606,7 +616,7 @@ class _DyingScreen(Screen):
         self.mounted = True
 
     def on_unmount(self) -> None:
-        if self.unmount_raises:
+        if self.unmount_raises == "screen":
             raise RuntimeError(_CANARY)
 
     def _tick(self) -> None:
@@ -656,19 +666,25 @@ def _torn_down(app, node) -> bool:
     return node not in app._registry and node._parent is None and not node.is_running
 
 
+def _cancelled(app, worker) -> bool:
+    return worker.state == WorkerState.CANCELLED and worker not in app.workers
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("installed", [True, False], ids=["installed", "pushed"])
 @pytest.mark.parametrize("death", ["mount", "dispatch"])
 async def test_a_retired_screen_is_torn_down_however_its_loop_ended(death, installed):
-    """PR #2945 review (round 3). A screen that raises in compose/mount ends
-    in ``_pre_process``, and Textual returns from ``_process_messages`` without
-    the ``_message_loop_exit`` that tears a dispatch-killed screen down. Once
-    ``retire_dead_pump`` popped and forgot it, it stayed attached and in
-    ``app._registry`` with its child's interval still ticking (30 ticks in
-    0.3 s), and ``remove()`` could not reach it: its ``Prune`` goes to a queue
-    no loop reads. Both deaths must end in the same state: the screen and its
-    child unregistered and detached, no timer of theirs ticking, the screen's
-    worker cancelled, the screen beneath in charge."""
+    """PR #2945 review (round 3). A screen whose mount raises (here in
+    ``on_mount``) ends in ``_pre_process``, and Textual returns from
+    ``_process_messages`` without the ``_message_loop_exit`` that tears a
+    dispatch-killed screen down. (An ordinary exception inside ``compose()``
+    is not this path: Textual's ``Widget._compose`` catches it and the screen
+    keeps running.) Once ``retire_dead_pump`` popped and forgot it, it stayed
+    attached and in ``app._registry`` with its child's interval still ticking
+    (30 ticks in 0.3 s), and ``remove()`` could not reach it: its ``Prune``
+    goes to a queue no loop reads. Both deaths must end in the same state:
+    the screen and its child unregistered and detached, no timer of theirs
+    ticking, their workers cancelled, the screen beneath in charge."""
     app = _KeepAliveApp()
     async with app.run_test() as pilot:
         content, dying = await _kill_and_retire(
@@ -687,9 +703,10 @@ async def test_a_retired_screen_is_torn_down_however_its_loop_ended(death, insta
         ticks = (ticker.ticks, dying.ticks)
         await asyncio.sleep(0.3)
         assert (ticker.ticks, dying.ticks) == ticks, "a dead screen's timer ticked"
-        assert await _poll(
-            lambda: dying.worker.state == WorkerState.CANCELLED, timeout=5
-        )
+        for worker in (dying.worker, ticker.worker):
+            assert await _poll(lambda w=worker: _cancelled(app, w), timeout=5), (
+                f"{type(worker.node).__name__}'s worker is {worker.state.name}"
+            )
         assert app.screen is content and content.is_running
         assert dying not in app.screen_stack
         assert not app.is_screen_installed(dying)
@@ -697,11 +714,25 @@ async def test_a_retired_screen_is_torn_down_however_its_loop_ended(death, insta
 
 
 @pytest.mark.asyncio
-async def test_a_dead_screen_whose_unmount_raises_is_still_dropped():
+@pytest.mark.parametrize(
+    ("raiser", "site"),
+    [("screen", "_DyingScreen.on_unmount:"), ("child", "_Ticker.on_unmount:")],
+    ids=["screen", "child"],
+)
+async def test_a_dead_screen_whose_unmount_raises_is_still_dropped(raiser, site):
     """The mount-death teardown dispatches Unmount, as Textual's own loop exit
     does. A handler that raises there stops ``_message_loop_exit`` before its
     last steps, so the screen is dropped from the DOM and the registry anyway,
-    and the failure is logged by class and site -- never its message."""
+    and the failure is logged by class and site -- never its message.
+
+    PR #2945 review (round 4): its workers must still be cancelled. Textual
+    dispatches subclass-first, so a node's own ``on_unmount`` runs before
+    ``Widget._on_unmount`` (which cancels that node's workers) and, by
+    raising, stops the dispatch first. When the screen's raised, the screen's
+    worker kept running after the drop (and could later exit the app); when
+    the child's raised, its task failed, the screen's ``gather`` of its
+    children raised before the screen's Unmount, and both workers kept
+    running."""
     from loguru import logger
 
     lines: list[str] = []
@@ -715,16 +746,24 @@ async def test_a_dead_screen_whose_unmount_raises_is_still_dropped():
         app = _KeepAliveApp()
         async with app.run_test() as pilot:
             _content, dying = await _kill_and_retire(
-                app, pilot, death="mount", installed=False, unmount_raises=True
+                app, pilot, death="mount", installed=False, unmount_raises=raiser
             )
             ticker = dying.ticker
+            assert ticker is not None
             assert await _poll(lambda: _torn_down(app, dying), timeout=5)
-            assert await _poll(lambda: _torn_down(app, ticker), timeout=5)
+            if raiser == "screen":
+                # The child unmounted cleanly before the screen's own raised.
+                assert await _poll(lambda: _torn_down(app, ticker), timeout=5)
+            assert await _poll(lambda: not ticker.is_running, timeout=5)
+            for worker in (dying.worker, ticker.worker):
+                assert await _poll(lambda w=worker: _cancelled(app, w), timeout=5), (
+                    f"{type(worker.node).__name__}'s worker is {worker.state.name}"
+                )
             assert app.kinds == ["screen"], app.kinds
     finally:
         logger.remove(sink_id)
     teardown = [line for line in lines if line.startswith("Dead screen teardown")]
     assert len(teardown) == 1, lines
     assert "RuntimeError at " in teardown[0], teardown
-    assert "_DyingScreen.on_unmount:" in teardown[0], teardown
+    assert site in teardown[0], teardown
     assert _CANARY not in teardown[0]

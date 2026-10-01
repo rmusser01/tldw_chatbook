@@ -283,9 +283,21 @@ async def _finish_unmounted_screen(app: Any, screen: Screen) -> None:
     message-pump context as Textual does, once the screen is off every stack.
     It is scheduled with ``app.call_next``, the way ``App._prune`` schedules
     its own wait for removed nodes.
+
+    An ``on_unmount`` that raises, on the screen or on a node below it, stops
+    that teardown part-way. Textual dispatches subclass-first, so a node's own
+    handler runs before ``Widget._on_unmount``; by raising, it skips that
+    method's ``cancel_node``. A child's raise also fails the ``gather`` that
+    comes before the screen's own Unmount. So the screen is dropped from the
+    DOM and the registry anyway, and the app's ``WorkerManager`` cancels the
+    workers of every node the screen held when this started: a worker left
+    running could still fail and exit the app. Both steps are no-ops after a
+    clean teardown.
     """
     if screen._parent is None:
         return
+    # Every node this teardown is meant to unmount, listed before it detaches any.
+    subtree = list(screen.walk_children(with_self=True))
     try:
         with screen._context():
             try:
@@ -309,6 +321,10 @@ async def _finish_unmounted_screen(app: Any, screen: Screen) -> None:
             parent._nodes._remove(screen)
             screen._detach()
         app._registry.discard(screen)
+        # What `Widget._on_unmount` does for each node, for one whose own
+        # `on_unmount` raised first (or never ran): no dead node's worker runs on.
+        for node in subtree:
+            app.workers.cancel_node(node)
 
 
 def _release_pending_result(screen: Screen) -> None:
