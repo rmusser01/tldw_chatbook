@@ -8415,6 +8415,13 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     text-style: bold;
 }
 
+
+#console-stop-generation.console-stop-active:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 .console-control-label,
 .console-staged-context-row,
 .console-staged-context-summary,

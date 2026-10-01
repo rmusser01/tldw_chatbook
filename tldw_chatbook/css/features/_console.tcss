@@ -2513,6 +2513,15 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     text-style: bold;
 }
 
+/* TASK-33625.1: the rule above (id + class) outranks the global
+   `Button:focus` cue (type + pseudo-class), so a Tab-focused Stop painted
+   exactly like an unfocused one. Restate the shared focus cue here. */
+#console-stop-generation.console-stop-active:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 .console-control-label,
 .console-staged-context-row,
 .console-staged-context-summary,

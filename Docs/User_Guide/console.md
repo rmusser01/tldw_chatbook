@@ -99,9 +99,10 @@ Top to bottom:
 - **Composer row** — a slim one-row bar (it grows with your draft, up to
   eight rows, and shrinks back as the draft empties) marked by a one-column edge on its left that brightens and
   thickens while the composer has focus — the "Composer ▾" collapse toggle, the draft area
-  ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
-  and **Save**; a **Stop** button appears between Send and Mic while a
-  reply is streaming. **Send** is genuinely disabled whenever a send can't
+  ("Ask, command, or paste task..."), then **Send** and **Dictate** (Attach
+  and Save live behind **Menu**); while a reply is streaming Send reads
+  **Queue** and a **Stop** button appears at the right end of the row
+  (**Ctrl+G** also stops it). **Send** is genuinely disabled whenever a send can't
   go through — nothing typed yet, setup incomplete, or a reply still
   streaming — and the reason shows inline next to it (e.g. "Send blocked —
   choose a model to continue ›"), so you never have to hover to find out
@@ -719,6 +720,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | n / p (Inspector focused) | Move to the next / previous named Inspector section, without wrapping or taking over editable input |
 | Ctrl+K | Open the "Switch Session" conversation finder |
 | Ctrl+T | New Console tab |
+| Ctrl+G | Stop this tab's run (only while one is running; shown in the footer then) |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
 | Alt+M | Quick "Model" popover |
 | Alt+C | Open or close the Context (left) rail |
@@ -733,7 +735,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 While Console is the active screen, the command palette (**Ctrl+P**) also
 gains "Console: …" entries for these same actions. Slash commands
 (`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
-`/redirect`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+`/redirect`, `/stop`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
 
 **Steering a running turn.** `/steer <guidance>` delivers text into the
 *currently running* agent turn — it is read before the next model call, after
@@ -746,7 +748,9 @@ the 4,000-character steering cap.
 
 **Redirecting a running turn.** When the current response is already going
 wrong, `/redirect <correction>` — or the **Redirect** button that appears next
-to **Stop** while a run is active (it sends whatever is typed in the composer)
+to **Stop** while a run is active where the composer row has room for it (it
+sends whatever is typed in the composer; **Ctrl+P → Console: Redirect this
+tab's run** does the same at any width)
 — cuts off the in-flight model response and re-runs the turn: completed tool
 results from the turn are kept, the partial text you watched stream stays as
 context, and your correction lands as a plain user message. Contrast with
@@ -763,7 +767,8 @@ finish untouched. The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
 than proceeding. Any attempted send while it's active is refused with a
 plain notice and how to clear it; `/emergency-stop clear` resumes normal
-operation immediately, no restart needed.
+operation immediately, no restart needed. To end just this tab's in-flight
+run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 
 ## Related settings & docs
 
