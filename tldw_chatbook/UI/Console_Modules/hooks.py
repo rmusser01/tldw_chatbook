@@ -62,11 +62,13 @@ def in_worker_task() -> bool:
     that pump's task runs again.)
 
     Returns:
-        True when the calling task is the current worker's own task (or that
-        worker's first step under the eager factory), so awaiting a review
-        here blocks no message pump. False on any pump -- including one that
-        merely inherited a worker's contextvar -- and when there is no worker
-        or Textual no longer exposes ``Worker._task``.
+        True when the calling task is the current worker's own task, or when
+        that worker has no task yet (its first step under the eager factory),
+        so awaiting a review there blocks no message pump. The one pump that
+        also sees True is one started inside that same first step, and only
+        during its own first step, as above. False on every other pump --
+        including one that merely inherited a worker's contextvar -- and when
+        there is no worker or Textual no longer exposes ``Worker._task``.
     """
     try:
         worker = get_current_worker()
