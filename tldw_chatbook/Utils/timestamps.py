@@ -91,6 +91,31 @@ def parse_utc(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def as_utc(value: object) -> datetime | None:
+    """Read a column that may already be a ``datetime`` as aware UTC.
+
+    SQLite's declared-type parsing returns some timestamp columns as a
+    ``datetime``; other adapters and live state carry a string. Naive means UTC.
+
+    Args:
+        value: A ``datetime``, a :func:`parse_utc` string, or anything else.
+
+    Returns:
+        The instant in UTC, or ``None`` for an unreadable string or any
+        other type.
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        try:
+            return parse_utc(value)
+        except ValueError:
+            return None
+    return None
+
+
 #: Matches exactly the canonical shape YYYY-MM-DDTHH:MM:SS.mmmZ (years
 #: 1000-9999). Used by :func:`is_canonical_utc`; the format guard (ADR-173
 #: AC#2) asserts timestamp-bearing writes produce this.

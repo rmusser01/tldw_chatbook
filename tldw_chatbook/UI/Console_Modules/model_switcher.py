@@ -29,6 +29,7 @@ from ...Chat.console_generation_settings_metadata import (
     parse_console_generation_settings,
 )
 from ...DB.base_db import run_owned_db_call
+from ...Utils.timestamps import as_utc
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_store import ConsoleChatSession
@@ -68,26 +69,6 @@ class ModelPairUse:
         return f"{text} in this chat" if self.in_this_chat else text
 
 
-def _utc(value: object) -> datetime | None:
-    """Read a datetime or ISO timestamp as UTC (naive means UTC).
-
-    SQLite's declared-type parsing already returns ``last_modified`` as a
-    datetime; live sessions carry an ISO string.
-    """
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-    else:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
 def live_model_pair_uses(sessions: Iterable[ConsoleChatSession]) -> list[ModelPairUse]:
     """Return the pairs of open Console sessions. UI thread only.
 
@@ -107,7 +88,7 @@ def live_model_pair_uses(sessions: Iterable[ConsoleChatSession]) -> list[ModelPa
     uses = []
     for session in sessions:
         settings = session.settings
-        when = _utc(session.updated_at)
+        when = as_utc(session.updated_at)
         if settings is None or not settings.model or when is None:
             continue
         uses.append(ModelPairUse(settings.provider, settings.model, when))
@@ -137,7 +118,7 @@ def persisted_model_pair_uses(
         if conversation_id not in metadata:
             continue
         snapshot = parse_console_generation_settings(metadata[conversation_id]).snapshot
-        when = _utc(row.get("last_modified"))
+        when = as_utc(row.get("last_modified"))
         if snapshot is None or not snapshot.model or when is None:
             continue
         uses.append(ModelPairUse(snapshot.provider, snapshot.model, when))

@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from typing import Any, Mapping, Sequence
 
 from loguru import logger
@@ -67,6 +66,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Utils.timestamps import as_utc
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 __all__ = [
@@ -540,24 +540,6 @@ async def prepare_console_session_data(
     return await asyncio.to_thread(read) if threaded else read()
 
 
-def _stored_updated_at(last_modified: object) -> str | None:
-    """Return a row's ``last_modified`` in the session ``updated_at`` shape.
-
-    SQLite's declared-type parsing returns a datetime; other adapters may
-    return an ISO string. Naive means UTC. Anything else is ``None``.
-    """
-    if isinstance(last_modified, str):
-        try:
-            last_modified = datetime.fromisoformat(last_modified)
-        except ValueError:
-            return None
-    if not isinstance(last_modified, datetime):
-        return None
-    if last_modified.tzinfo is None:
-        last_modified = last_modified.replace(tzinfo=UTC)
-    return last_modified.astimezone(UTC).isoformat()
-
-
 async def hydrate_console_session(
     *,
     app: Any,
@@ -725,9 +707,9 @@ async def hydrate_console_session(
     # Opening a saved chat is not a use of it. Keep the row's last change as
     # the session's recency, as a session restored at startup keeps its saved
     # updated_at (Switch model RECENT, the conversation switcher's ages).
-    stored_updated_at = _stored_updated_at(conversation.get("last_modified"))
+    stored_updated_at = as_utc(conversation.get("last_modified"))
     if stored_updated_at is not None:
-        session.updated_at = stored_updated_at
+        session.updated_at = stored_updated_at.isoformat()
     try:
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)
