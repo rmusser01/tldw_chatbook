@@ -628,3 +628,16 @@ route explicit host-proof reconciliation/cleanup resume through these APIs.
 **I7** must use service shutdown's admission-close/drain/final-clean order and
 preserve a failed shutdown's dirty evidence. None of these handoffs adds a second
 process owner, force-delete path, or plugin-controlled authority.
+
+
+MCP hook invocation (H6) uses the existing normal tool owner, exact live
+schema/profile/persona/permission checks and already-connected eligible
+sessions. Only qualified original-wire typed results can create hook effects.
+Required nested postevents settle before result authority is rechecked; validation
+never replays the tool or recreates an approval. Initialization uses a private
+prospective Console view and requires independently qualified dependency
+readiness. Unknown managed graph declarations remain unavailable until native
+registration supplies them. Teardown cannot connect, prompt or create context;
+Interrupt and SessionEnd keep their original one/three-second deadlines.
+Cancellation retains the original request/validator and source/root custody
+until actual terminal evidence, even after the visible waiter returns.

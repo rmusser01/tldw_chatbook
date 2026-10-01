@@ -233,6 +233,38 @@ class HookCheckpointStore:
         if failed:
             raise HookCheckpointError("required hook checkpoint failed")
 
+    def assert_continuation_dependencies(
+        self, parent_id: str, *, required_handler_ids: tuple[str, ...] | None
+    ) -> None:
+        """Check a nested operation's actual prerequisites in its live ancestry.
+
+        Work fulfilling an event is not the parent's next model input. It may
+        run while unrelated owning-event barriers remain pending, but cannot
+        ignore an owning OR dependent requirement named by its resolved tool.
+        This query never removes, settles or reparents the outer barriers.
+        """
+        with self._condition:
+            owners = self.owners(parent_id)
+            if required_handler_ids is None:
+                raise HookCheckpointError("hook dependency mapping unknown")
+            selected = frozenset(required_handler_ids)
+            failed = any(
+                (owning | dependent) & selected
+                for owner, (owning, dependent) in self._failures.items()
+                if owner in owners
+            )
+            pending = False
+            for entry in self._entries.values():
+                if entry.owner_id not in owners:
+                    continue
+                relevant = (entry.requirements | entry.dependencies) & selected
+                pending |= bool(entry.pending and relevant)
+                failed |= bool(entry.failed & relevant)
+            if failed:
+                raise HookCheckpointError("required hook checkpoint failed")
+            if pending:
+                raise HookCheckpointError("required hook checkpoint pending")
+
     def assert_next_input_allowed(
         self, owner_id: str, *, required_handler_ids: tuple[str, ...] | None = ()
     ) -> None:

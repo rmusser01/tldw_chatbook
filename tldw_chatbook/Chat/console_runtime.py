@@ -3009,15 +3009,20 @@ class ConsoleRuntime:
         from tldw_chatbook.DB.base_db import operation_owned_connection
 
         with operation_owned_connection(getattr(store.persistence, "db", None)):
-            configuration = controller.resolve_turn_configuration_snapshot(session_id)
+            values = controller._hook_authority_values(session_id)
             return (
                 session.workspace_id,
-                configuration.workspace_roots,
-                configuration.project_authority,
+                values["workspace_roots"],
+                values["project_authority"],
             )
 
     async def prepare_hooks_v2(
-        self, session_id: str, *, reason="startup", initiator="manual"
+        self,
+        session_id: str,
+        *,
+        reason="startup",
+        initiator="manual",
+        configuration=None,
     ):
         """Initialize only at validated execution admission, never at view access."""
         from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
@@ -3113,6 +3118,27 @@ class ConsoleRuntime:
             lifecycle.context_key = context_key
             self._hooks_v2_lifecycles[session_id] = lifecycle
             engine.lifecycle_owner = lifecycle
+        pending_scope = None
+        if configuration is not None:
+            pending_scope = lifecycle.open_scope()
+            lifecycle.turn_scope = pending_scope
+            self._chat_controller._hooks_v2_submissions[asyncio.current_task()] = (
+                lifecycle,
+                pending_scope,
+                session_id,
+            )
+            try:
+                if engine.mcp_executor is not None:
+                    context = (
+                        await self._chat_controller.compose_prospective_hook_context(
+                            configuration, lifecycle, pending_scope
+                        )
+                    )
+                    engine.mcp_executor.bind_context(context)
+            except BaseException:
+                lifecycle.close_scope(pending_scope)
+                lifecycle.turn_scope = None
+                raise
         if not lifecycle.live:
             token = lifecycle.reserve(
                 lifecycle.event(
@@ -3126,9 +3152,14 @@ class ConsoleRuntime:
                 lifecycle.publish(token)
             except BaseException:
                 lifecycle.cancel(token)
+                if pending_scope is not None:
+                    lifecycle.close_scope(pending_scope)
+                    lifecycle.turn_scope = None
                 # A failed provisional initialization has no live session effects.
                 self._hooks_v2_lifecycles.pop(session_id, None)
                 raise
+        if configuration is not None and engine.mcp_executor is not None:
+            engine.mcp_executor.retain_runtime(session_id)
         return lifecycle
 
     def get_hooks_v2(self, session_id: str) -> Any:
@@ -3144,8 +3175,8 @@ class ConsoleRuntime:
                 else (self._hooks_v2_engines.get(session_id),)
             )
         # Currentness reads take the map lock from the checkpoint condition.
-        # Never enter checkpoints while holding the map lock. Seal ordinary
-        # engine admission before any checkpoint wait or teardown publication.
+        # Never enter checkpoints while holding the map lock. Fence admission
+        # and cancel immediately, before any checkpoint condition can block.
         for engine in engines:
             if engine is not None:
                 engine.begin_close()

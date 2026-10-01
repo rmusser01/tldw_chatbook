@@ -704,3 +704,46 @@ def test_settled_operation_failure_compacts_without_removing_the_live_gate(depen
         store.assert_next_input_allowed("next-turn", required_handler_ids=("required",))
     if dependent:
         store.assert_next_input_allowed("next-turn", required_handler_ids=())
+
+
+@pytest.mark.parametrize("dependency", [False, True])
+def test_continuation_queries_real_parent_without_inheriting_outer_input_barrier(
+    dependency,
+):
+    store = checkpoint_store()
+    store.bind_owner("ancestor")
+    store.bind_owner("parent", "ancestor")
+    token = store.begin(
+        post_event(),
+        () if dependency else ("initializer",),
+        dependency_requirements=("initializer",) if dependency else (),
+        owner_id="ancestor",
+    )
+    store.assert_continuation_dependencies("parent", required_handler_ids=())
+    with pytest.raises(RuntimeError, match="pending"):
+        store.assert_continuation_dependencies(
+            "parent", required_handler_ids=("initializer",)
+        )
+    with pytest.raises(RuntimeError, match="unknown"):
+        store.assert_continuation_dependencies("parent", required_handler_ids=None)
+    store.fail(token, "initialization refused")
+    store.assert_continuation_dependencies("parent", required_handler_ids=())
+    with pytest.raises(RuntimeError, match="failed"):
+        store.assert_continuation_dependencies(
+            "parent", required_handler_ids=("initializer",)
+        )
+    store.close_owner("parent")
+    with pytest.raises(RuntimeError, match="closed"):
+        store.assert_continuation_dependencies("parent", required_handler_ids=())
+
+
+def test_continuation_does_not_remove_outer_terminal_requirements():
+    store = checkpoint_store()
+    store.bind_owner("parent")
+    token = store.begin(post_event(), ("outer",), owner_id="parent")
+    store.assert_continuation_dependencies("parent", required_handler_ids=())
+    with pytest.raises(RuntimeError, match="pending"):
+        store.assert_next_input_allowed("parent")
+    store.accept(token, success("outer"))
+    store.assert_next_input_allowed("parent")
+    store.assert_continuation_dependencies("parent", required_handler_ids=("outer",))

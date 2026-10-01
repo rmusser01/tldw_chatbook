@@ -8356,6 +8356,31 @@ class AgentService:
                 ),
             )
 
+            if self._hooks_v2_engine.mcp_executor is not None:
+                from .hooks_v2.mcp_executor import MCPHookContext
+
+                self._hooks_v2_engine.mcp_executor.bind_context(
+                    MCPHookContext(
+                        registry=self.registry,
+                        lifecycle=self._hooks_v2_lifecycle,
+                        parent_scope=run_id,
+                        run_id=run_id,
+                        session_id=self._hooks_v2_session_id,
+                        allowed_names=frozenset(config.allowed_tools),
+                        current=lambda: not should_cancel(),
+                        required_handler_ids=lambda _definition: (
+                            self._hooks_v2_required_handler_ids(run_id)
+                            if self._hooks_v2_required_handler_ids is not None
+                            else ()
+                        ),
+                        turn_id=self._hooks_v2_turn_id,
+                        parent_run_id=parent_run_id,
+                        input_scope=run_id,
+                        definition_resolver=resolve_hook_definition,
+                    ),
+                    run_id=run_id,
+                )
+
         deps = LoopDeps(
             prepare_hook_call=hook_run.prepare_call if hook_run else None,
             accept_hook_preparation=hook_run.validate_dispatch if hook_run else None,
@@ -8703,6 +8728,8 @@ class AgentService:
                                 )
                             ],
                         )
+            if hook_run is not None and self._hooks_v2_engine.mcp_executor is not None:
+                self._hooks_v2_engine.mcp_executor.retire_context(run_id)
             if (
                 parent_run_id is None
                 and self._hooks_v2_lifecycle is not None

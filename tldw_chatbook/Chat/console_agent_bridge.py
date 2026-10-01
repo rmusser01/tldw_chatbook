@@ -4393,6 +4393,51 @@ def _warn_shadowed_mcp_name_once(name: str) -> None:
     )
 
 
+def _compose_prospective_hook_context(
+    configuration,
+    *,
+    mcp_provider,
+    lifecycle,
+    input_scope,
+    current,
+    runtime_current,
+    workspace_id,
+    ephemeral,
+):
+    """Use normal catalog composition privately inside one validated admission."""
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+
+    registry, allowed, _builtins, _locals = _compose_run_registry_and_allowed(
+        configuration.skill_context_maximum,
+        mcp_provider=mcp_provider,
+        workspace_id=workspace_id,
+        ephemeral=ephemeral,
+        persona_policy_rules=configuration.persona_policy_rules,
+    )
+
+    def requirements(definition):
+        owner = registry.resolve_owner_for_name(definition.name)
+        provider = getattr(owner[1], "_provider", owner[1]) if owner else None
+        # Managed graph declarations are owned by I1; absence is unknown.
+        return () if type(provider) is MCPToolProvider else None
+
+    return MCPHookContext(
+        registry=registry,
+        lifecycle=lifecycle,
+        parent_scope=input_scope,
+        run_id=input_scope,
+        session_id=configuration.session_id,
+        allowed_names=frozenset(allowed),
+        current=current,
+        required_handler_ids=requirements,
+        workspace_id=workspace_id,
+        turn_id=input_scope,
+        input_scope=input_scope,
+        runtime_current=runtime_current,
+    )
+
+
 def _compose_run_registry_and_allowed(
     context: Mapping[str, Any],
     *,

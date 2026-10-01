@@ -7,6 +7,8 @@ required checkpoints, context acceptance and scheduler integration.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import os
 import time
@@ -21,6 +23,10 @@ from .matching import UnsupportedEventField, matches_handler
 from .models import HookEvent, HookHandler, HookResult
 from .ownership import HookProcessOwner, HostProcessOwner
 from .validation import handler_phase, parse_event
+
+_teardown_continuation = contextvars.ContextVar(
+    "hook_teardown_continuation", default=None
+)
 
 
 def _envelope(event: HookEvent) -> dict:
@@ -63,6 +69,7 @@ class _ExecutionState:
     identity: tuple
     deadline: float
     teardown: bool = False
+    continuation_of: object | None = None
     active_seconds: float = 0.0
     closed: bool = False
     busy: bool = False
@@ -130,6 +137,7 @@ class _Delivery:
     teardown: bool
     task: asyncio.Task | None = None
     job: object | None = None
+    mcp_context: object | None = None
 
 
 class HookEngine:
@@ -184,6 +192,11 @@ class HookEngine:
         self._deliveries: set[_Delivery] = set()
         self._close_task: asyncio.Task | None = None
         self._reconcile_task: asyncio.Task | None = None
+        self.mcp_executor = None
+        if any(handler.type == "mcp_tool" for handler in self.definitions):
+            from .mcp_executor import MCPHookExecutor
+
+            self.mcp_executor = MCPHookExecutor(self)
 
     @classmethod
     def from_config(cls, config, authority_check, budget_owner, **kwargs):
@@ -217,6 +230,30 @@ class HookEngine:
             result.update(reserved)
         return result
 
+    def _current_continuation(self):
+        state = _teardown_continuation.get()
+        if (
+            type(state) is _ExecutionState
+            and state.issuer is self._scope_issuer
+            and state.teardown
+            and not state.closed
+            and time.monotonic() < state.deadline
+        ):
+            return state
+        return None
+
+    @contextlib.contextmanager
+    def _continuation_scope(self, execution):
+        root = execution.continuation_of or execution
+        if root.issuer is not self._scope_issuer or not root.teardown:
+            yield
+            return
+        token = _teardown_continuation.set(root)
+        try:
+            yield
+        finally:
+            _teardown_continuation.reset(token)
+
     def begin_event(
         self, event: HookEvent, *, teardown: bool = False
     ) -> HookEventExecution:
@@ -227,13 +264,22 @@ class HookEngine:
         identity = tuple((key, item) for key, item in value.items() if key != "data")
         now = time.monotonic()
         deadline = now + ({"Interrupt": 1.0, "SessionEnd": 3.0}.get(event.event, 180.0))
+        continuation = self._current_continuation()
+        if event.event not in {"PreToolUse", "PostToolUse", "PostToolUseFailure"}:
+            continuation = None
         with self._lock:
             if teardown and event.event not in {"Interrupt", "SessionEnd"}:
                 raise ValueError("invalid teardown event")
             if self._sealed_at is not None:
                 deadline = min(deadline, self._sealed_at + 3.0)
         return HookEventExecution._issue(
-            _ExecutionState(self._scope_issuer, identity, deadline, teardown)
+            _ExecutionState(
+                self._scope_issuer,
+                identity,
+                min(deadline, continuation.deadline) if continuation else deadline,
+                teardown or continuation is not None,
+                continuation_of=continuation,
+            )
         )
 
     def _execution_state(self, execution: HookEventExecution) -> _ExecutionState | None:
@@ -401,7 +447,7 @@ class HookEngine:
                 if config:
                     return config
                 with self._lock:
-                    if self._sealed_at is not None and not teardown:
+                    if self._sealed_at is not None and not execution.teardown:
                         return HookEventOutcome(
                             failures=(HookFailure("", "admission_closed", True),)
                         )
@@ -472,7 +518,13 @@ class HookEngine:
         except UnsupportedEventField:
             return failed("unsupported_matcher")
         with self._lock:
-            if self._teardown_closed or (
+            continuation = state.continuation_of
+            continuation_live = (
+                continuation is not None
+                and not continuation.closed
+                and time.monotonic() < continuation.deadline
+            )
+            if (self._teardown_closed and not continuation_live) or (
                 self._sealed_at is not None and not state.teardown
             ):
                 return failed("admission_closed")
@@ -577,6 +629,30 @@ class HookEngine:
                         ),
                     )
                 )
+            if handler.type == "mcp_tool" and self.mcp_executor is not None:
+                try:
+                    job = delivery.job = self.mcp_executor.start(
+                        event,
+                        handler,
+                        ticket,
+                        execution,
+                        delivery.cancel,
+                        context=delivery.mcp_context,
+                    )
+                except (ValueError, PermissionError):
+                    return HookEventOutcome(
+                        failures=(
+                            self._failure(
+                                handler,
+                                event,
+                                "hook_mcp_context_unavailable",
+                                dependency=execution.dependencies.get(
+                                    handler.id, (None,)
+                                )[0],
+                            ),
+                        )
+                    )
+                return await asyncio.shield(job.task)
             if handler.type != "command":
                 return HookEventOutcome(
                     failures=(
@@ -648,7 +724,15 @@ class HookEngine:
         if not outcome.accepted:
             return True
         with self._lock:
-            if self._sealed_at is not None or not self.enabled:
+            continuation = self._current_continuation()
+            if not self.enabled or (
+                self._sealed_at is not None
+                and (
+                    continuation is None
+                    or event.event
+                    not in {"PreToolUse", "PostToolUse", "PostToolUseFailure"}
+                )
+            ):
                 return False
         by_id = {handler.id: handler for handler in self.definitions}
         try:
@@ -686,11 +770,22 @@ class HookEngine:
                 state.dependencies = dict(previous.dependencies)
         except ValueError:
             return False
+        # Snapshot the exact host view before acquiring the engine lock: its
+        # currentness enters the checkpoint owner, whose acceptance takes this
+        # lock in the opposite direction. A queued notification cannot borrow a
+        # later replacement or teardown view.
+        admission_context = None
+        if self.mcp_executor is not None:
+            try:
+                admission_context = self.mcp_executor._context(event)
+            except PermissionError:
+                pass
         admitted = False
         with self._lock:
+            continuation = self._execution_state(execution).continuation_of
             if (
-                self._teardown_closed
-                or (self._sealed_at is not None and not teardown)
+                (self._teardown_closed and continuation is None)
+                or (self._sealed_at is not None and not execution.teardown)
                 or self.invalid_admissions
                 or not self.enabled
             ):
@@ -714,11 +809,21 @@ class HookEngine:
                         continue
                     if handler.effects or handler.required or dependency:
                         continue
+                    mcp_context = None
+                    if handler.type == "mcp_tool" and self.mcp_executor is not None:
+                        if admission_context is None:
+                            raise PermissionError("hook_mcp_context_unavailable")
+                        mcp_context = admission_context
                     ticket = self.budget_owner.reserve(event.runtime_session_id, True)
-                except (ValueError, BudgetExceeded):
+                except (ValueError, PermissionError, BudgetExceeded):
                     self.notification_omissions += 1
                     continue
-                delivery = _Delivery(ticket, asyncio.Event(), teardown)
+                delivery = _Delivery(
+                    ticket,
+                    asyncio.Event(),
+                    execution.teardown,
+                    mcp_context=mcp_context,
+                )
                 self._deliveries.add(delivery)
 
                 def submit(d=delivery, h=handler):
@@ -753,7 +858,11 @@ class HookEngine:
     @property
     def cleanup_pending(self) -> bool:
         with self._lock:
-            return bool(self._deliveries or self.processes.records)
+            return bool(
+                self._deliveries
+                or self.processes.records
+                or (self.mcp_executor is not None and self.mcp_executor.cleanup_pending)
+            )
 
     @property
     def teardown_deadline(self) -> float | None:
@@ -799,6 +908,8 @@ class HookEngine:
             await asyncio.wait(
                 tasks, timeout=max(0, self._sealed_at + 3.0 - time.monotonic())
             )
+        if self.mcp_executor is not None:
+            self.mcp_executor.retire_teardown()
         for job in tuple(self.processes.records.values()):
             job.stop()
         tasks |= {
@@ -808,6 +919,8 @@ class HookEngine:
             await asyncio.wait(
                 tasks, timeout=max(0, self._sealed_at + 8.0 - time.monotonic())
             )
+        if self.mcp_executor is not None:
+            await self.mcp_executor.close(deadline=self._sealed_at + 8.0)
         # A callback can be slow or fail. The retained task/records survive the
         # bounded close caller; another wait never extends this close deadline.
         self._reconcile_task = asyncio.create_task(self.processes.reap_pending())

@@ -288,6 +288,28 @@ class ConnectionOwnership:
             profile.plugin_owner["session_isolation"],
         )
         owner_id = self._owner_id(snapshot)
+        from tldw_chatbook.Agents.mcp_tool_provider import (
+            check_mcp_invocation_policies,
+            current_mcp_invocation_policies,
+        )
+
+        check_mcp_invocation_policies()
+        if current_mcp_invocation_policies():
+            # Hook invocation may reuse only this exact scope's existing lease.
+            # It may not attach a sibling, reserve idle custody or launch.
+            for connection in tuple(self.connections.values()):
+                if (
+                    connection.key == key
+                    and owner_id in connection.owners
+                    and connection.session is not None
+                    and self.local.client.sessions.get(connection.connection_id)
+                    is connection.session
+                    and not self._session_unavailable(connection.session)
+                    and connection.close is None
+                    and not connection.leases_settled
+                ):
+                    return connection.connection_id
+            raise PermissionError("hook_mcp_connection_required")
         for prior in tuple(self.connections.values()):
             if (
                 prior.key == key
@@ -417,6 +439,15 @@ class ConnectionOwnership:
             request.token = await self._reserve(
                 connection, context.snapshot, request=request
             )
+            from tldw_chatbook.Agents.mcp_tool_provider import (
+                check_mcp_invocation_policies,
+                current_mcp_invocation_policies,
+            )
+
+            policies = current_mcp_invocation_policies()
+            if policies and policies[-1].on_owned_request is not None:
+                policies[-1].on_owned_request(self.plugins, request.token)
+            check_mcp_invocation_policies()
             await self._publish(
                 request.token,
                 {
@@ -447,6 +478,15 @@ class ConnectionOwnership:
                     context.check_permission()
                 if automatic_work is not None:
                     automatic_work.check()
+                check_mcp_invocation_policies()
+                if current_mcp_invocation_policies() and (
+                    connection.close is not None
+                    or connection.leases_settled
+                    or self.local.client.sessions.get(identity)
+                    is not connection.session
+                    or self._session_unavailable(connection.session)
+                ):
+                    raise PermissionError("hook_mcp_connection_required")
                 request.dispatched = True
                 result = await call(identity, tool_name, arguments)
                 request.outcome = result.dispatch_state

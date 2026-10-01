@@ -17317,3 +17317,145 @@ can retry successfully; do not conflate failed start with cancelled waiting.
 ### M4: separate explicit cancellation from a short timeout race
 
 While qualifying scoped MCP connections, the credential cancellation control waited for an unrelated real HTTP request before cancelling a 30 ms blocked lookup. It failed with TimeoutError both on M4 and frozen committed M3 production (`hooks-m4-credential-cancel-probe.xml`, `hooks-m4-auth-m3-baseline.xml`). The cancellation case now cancels the positively started actual backend call before peer I/O, with its separate finite bound; the timeout and second-lookup controls retain 30 ms and the no-late-wire assertions. A competing earlier timeout is not evidence that cancellation was exercised.
+
+## Python statvfs does not expose macOS MNT_LOCAL
+
+**TASK-32669, managed plugin runtime owner, 2026-09-15.** A qualification probe
+against the actual local APFS worktree returned `os.statvfs(path).f_flag == 0`.
+Using that field as a Darwin mount-flags bitmask would either reject the working
+local control or encourage an unsafe local-default fallback. Native Darwin
+`statfs64`, with its layout verified against the installed SDK `sys/mount.h`,
+reported the required `MNT_LOCAL` and APFS identity. Read filesystem-specific
+flags through the qualified platform API, test a real successful local path,
+and refuse missing/unknown probe results. A successful OS lock still does not
+establish that a local directory is not synchronized by third-party software.
+
+## A successful subprocess suite can depend on an uncommitted child bootstrap
+
+**TASK-32677 / H2 review F3, 2026-09-16.** The recorded 173-pass five-file run
+used `/private/tmp/h2-profile/run_py.sh`, whose PYTHONPATH injected a temporary
+`sitecustomize.py` into command-hook children. The committed tests asserted that
+shim existed and that every profile path started with `/private/tmp/`. The
+custom-environment run was valid for that setup, but did not establish standalone
+committed-test reproducibility. A fresh parent without the shim produced **1
+failed, 1 passed** for real-command/normalization controls; a repository-local
+basetemp produced **1 failed, 1 error** at the hard-coded prefix assertion.
+
+The fix moved child isolation into `Tests/hooks_v2_process_support.py`. Children
+use `python -I`, import the explicit checkout, install network/DNS refusal before
+application imports, and assert null keyring and the actual precreated fixture
+data directory. The same two controls then passed under the repository-local
+basetemp without an external child shim. Keep subprocess bootstrap/policy in the
+repository and qualify the documented command from a fresh parent environment;
+record exact checkout and fixture-root provenance instead of assuming one OS's
+temporary-directory spelling.
+
+## Development dependencies can hide missing runtime package declarations
+
+**TASK-32678 / H3 packaging qualification, 2026-09-16.** Offline schema
+controls passed in the development environment while `jsonschema` appeared only
+in the `dev` extra and the production pipeline directly imported `referencing`
+without a core declaration. Actual setuptools base-distribution metadata checks
+then produced **2 failed, 1 passed**: both schema requirements were absent while
+the existing Pydantic control passed. Declaring both production dependencies in
+core produced **3 passed**; built-wheel metadata confirmed they had no extra
+marker. An isolated `python -I -S` smoke imported 165 application modules from
+the extracted wheel and exercised internal-reference validation and external
+reference refusal against controlled existing dependencies.
+
+A development test pass does not establish a normal installation's dependency
+closure. Check built distribution requirements for every new production import
+and verify wheel-code provenance separately. The controlled smoke above reused
+read-only installed dependencies; it did not prove fresh full dependency
+resolution or another platform's package set.
+
+## Real Console acceptance must feed compaction lineage checks
+
+During TASK-32679/H4 hook integration, helper compaction tests passed while the
+actual Console plus SQLite path refused its memory commit: cached newly accepted
+user/assistant rows did not yet carry their persisted parent links. The existing
+`_durable_context_snapshots` projection trusted those cached fields, and the
+repository correctly rejected a lineage that was not one ordered parent chain.
+The same projection made a just-committed manual hook-context handoff look stale.
+
+A controlled probe executed the exact pre-H4 `_durable_context_snapshots` method
+from BASE `8192f1fb1fdd0da929b2c776db1a2c8ee95f0457` and the corrected method against
+the same genuine durable Console acceptance. It observed two parent mismatches
+for the baseline method and zero for the corrected projection. This was a method
+comparison in the current isolated test environment, not a full baseline-checkout
+qualification. Production correction reads the authoritative persisted parent
+and version, retaining the existing commit guard.
+
+For changes spanning Console acceptance and branch-memory commits, include the
+real durable submit/cache hydration path and the real repository guard. A helper
+that appends already-hydrated rows or accepts a fabricated compaction result
+cannot expose this boundary. Preserve the refusal and successful control rather
+than changing the fixture to bypass authoritative ancestry checks.
+
+
+## A Future timeout does not prove the service has not published its audit
+
+**TASK-32681 / M1 review I1, 2026-09-17.** The controlled stdio/client/service/
+provider run passed399 targeted tests, but a focused review probe delayed the
+service immediately after its real audit append and before cross-thread Future
+publication. One new tool invocation grew the log from one control row to three:
+`blocked`, `success`, `success`. The first two rows described the same call.
+The provider correctly returned uncertain completion, yet its fallback assumed
+the timeout meant the service had not audited and wrote a contradictory row.
+
+The repaired owner shares one per-invocation publication claim before audit I/O.
+Actual-path tests in `Tests/MCP/test_typed_tool_results.py` stall both sides of
+publication, exercise bridge-first and service-first orderings, and cover write/
+thread-start failure and bounded fallback saturation. Test-owned writers are
+released and joined before profile teardown. Final targeted coverage passed266
+tests; the original and final counts overlap. R59 preserves best-effort audit
+semantics: claiming publication is not proof that a row reached disk.
+
+When a synchronous caller times out while an async owner is completing, test
+the publication window itself. Future cancellation acknowledges the bridge
+handle; it does not prove the operation, cleanup or audit never happened.
+Coordinate publication before I/O, preserve uncertainty, and keep slow logging
+out of caller waits without adding unbounded background work.
+
+## A transport closed flag can precede actual resource closure
+
+**TASK-32682, direct MCP transport Fix1, 2026-09-17.** The initial HTTP close path cancelled whole caller tasks before entering its resource-close finally block. A caller performing asynchronous cancellation cleanup outlived the client owner's five-second bound; the owner was dropped while the HTTP pool remained open, and a closed-admission latch made repeated close return early. During repair, inspection of installed HTTPX 0.28.1 showed that `AsyncClient.aclose()` sets CLOSED before awaiting the lower transport. An injected lower-close failure then proved `is_closed=True` while an actual keep-alive connection remained open; retrying client close could silently do nothing.
+
+**What to do.** Track completion of the connection-owned request scope separately from arbitrary caller finalization, retain one cleanup operation across interrupted waits, and distinguish admission closure from successful resource cleanup. Verify captured real connections and the pool, not only flags. A still-pending close can finish later; a failed close cannot be declared successful from a no-op retry. Keep failed ownership unready instead of replacing it, and never treat local socket closure as proof that a remote invocation settled. The final 558-test targeted run also preserved stdio slow-reap ordering after a shared-field type check initially selected both transports.
+
+## A retained generation counter does not protect a recreated reference
+
+**TASK-32683, MCP credential owner self-review, 2026-09-17.** Revocation tombstones prevented ordinary reuse, but completely deleting the fake protected credential record let the original setter recreate the same reference at generation one. An opaque binding could then match an older reviewed reference/generation despite containing replacement credentials. The actual deletion regression reproduced the accepted upsert; the authenticated authority model also capped generations at signed64-bit values, so merely widening or randomizing the generation would change the existing contract.
+
+**What to do.** Distinguish new reference creation from mutation of an existing reference. The MCP owner now mints immutable UUID references for creation, requires the current protected record for named mutations, retains tombstones and refuses generation overflow. After record loss, create and review a fresh reference rather than implicitly recreating old authority. Keep successful new-reference creation and normal same-binding renewal controls beside the missing-record refusal; this fixture evidence does not claim actual OS keychain interoperability.
+
+## An adapter must preserve authority checks across its new awaits
+
+**TASK-32684, owned MCP Fix1, 2026-09-17.** The initial owned-tool integration passed789 targeted tests, but review found two gaps in the newly composed path. Existing best-effort persona and kill-switch helpers treated read failures as usable underlying authority. A new owned dispatch branch also returned before the standalone path's post-connect automatic-work check. Nine real-peer regressions then failed after successful controls: unavailable required policy still permitted calls or advertisement, and pausing a real accepted automatic-work ledger during connect/reserve/publish still allowed dispatch.
+
+**What to do.** Check the failure semantics of reused policy helpers and carry the actual accepted-work context through every new setup await. Recheck at the final scheduled dispatch boundary, keep pre-dispatch reservation cleanup exact, and preserve settled or uncertain lower outcomes when authority changes after dispatch. The repaired tests cover all three setup waits, failed catalog recomposition, late settled responses and actual lost HTTP responses without replay. Final affected verification passed163 tests plus111 ordinary feature tests, with overlapping counts. This evidence qualifies those paths; it does not establish arbitrary external-server or cross-process restart behavior.
+
+
+## Tool dispatch permission must remain current when hook effects are accepted
+
+**TASK-32685, H6 review I1, 2026-09-17.** The initial MCP hook executor used the normal permission owner for dispatch, then waited for required post hooks before accepting returned context. A real stdio review probe changed that tool to Deny during the wait. A fresh ordinary call correctly refused, yet the earlier result still supplied native instructions: one failing revocation case beside one passing unchanged-authority control. Rechecking only hook authority after the wait did not check the original tool permission.
+
+The fix attaches a private read-only owner check to the exact returned result and original call identity. It runs after post settlement and after the final asynchronous hook-authority wait, preserving the original one-time approval without prompting or dispatching again. Actual owned-service controls hold the second check after the MCP request has already completed: cancellation or deadline expiry must retain the same lifetime ticket until that worker really exits. Final affected verification passed252 tests; the ordinary exact-three run passed83, overlapping. The earlier larger run's FD growth418 remains unexplained and is not resolved by these smaller passing runs.
+
+**What to do.** Test revocation across every asynchronous boundary before effects become visible, using the same normal owner and a successful control. Preserve exact original grant identity, and track validation completion separately from request or waiter completion.
+
+
+### R74 — MCP hook notification currentness must qualify actual dispatch
+
+During current-dev H6 integration, real Console Interrupt/SessionEnd counters
+showed no notification dispatch although the observer saw zero execution
+tickets. Repeated full catalog capture inside lifecycle polling consumed the
+original one/three-second clocks; an observation worker could also still be
+running after execution tickets reached zero. Reusing the exact normal live
+catalog check at dispatch/result acceptance removed the duplication without
+caching permission or extending deadlines. The tests now join observation and
+worker custody and use actual peer counters, including changed live discovery.
+Native custody fixtures also separate their configured budget plus existing
+settlement wait from observer bounds; cancelling an observer is not completion.
+Evidence: `hooks-h6-live-boundaries.xml`, `hooks-h6-custody-final.xml` and
+`hooks-h6-final-boundaries.xml` in the 2026-09-30 integration review.

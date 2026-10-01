@@ -4163,6 +4163,17 @@ class UnifiedMCPControlPlaneService:
                     return _ResolvedHubTest(tool=candidate)
         return None
 
+    def tool_definition_current(self, tool: HubTool) -> bool:
+        """Check one captured tool against the existing live catalog owner."""
+        resolved = self._resolve_hub_test(tool.server_key, tool.name)
+        return bool(
+            resolved is not None
+            and resolved.tool.executable
+            and not resolved.tool.stale
+            and definition_hash(resolved.tool.description, resolved.tool.input_schema)
+            == definition_hash(tool.description, tool.input_schema)
+        )
+
     def _resolve_hub_test_for_profile(
         self, server_key: str, tool_name: str, profile_id: str
     ) -> _ResolvedHubTest | None:

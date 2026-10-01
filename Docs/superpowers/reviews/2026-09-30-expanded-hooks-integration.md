@@ -621,3 +621,65 @@ HTTP/credential/native neighbors: 125 passed plus one short cancellation-control
 Four new Python files pass Ruff and formatter. Changed Python parses, shared Ruff diagnostics have no additions, and git diff whitespace checks pass. ADR-162/163 and operation/spec/plan notes updated; the timing incident is recorded in the testing-evidence lesson.
 
 Limits: actual macOS/POSIX native children, SQLite/crypto/protected source owners and controlled loopback HTTP peers. No external-server session-isolation, OS keychain/OAuth, foreign host, cross-platform or full-suite claim. These qualify the owned service/catalog API; native managed graph/application composition is I1 and absent declarations still refuse. No new transport/permission/lifecycle runtime or automatic MCP startup was added.
+
+
+## H6 — TASK-32685 normal MCP hook invocation
+
+Integrated reviewed H6 increment `d98450ee01..cdeb1687b6` through the current
+Console, AgentService, ToolHookRun, checkpoint, MCP and native custody owners.
+Strict original-wire results are error-first, bounded by the entire original
+payload, and accept only the declared structured/single-text/exact-mirror/empty
+forms. Request-local restrictions narrow the normal invocation; provisional
+initialization grants no accepted root or extra permission. Recursion, original
+approval provenance, nested context staging, required postevents, dependency
+readiness, observation pools and bounded teardown use the existing owners.
+Unknown managed graph requirements refuse until I1 supplies the native graph.
+
+The current H3 approval-only dataclass projection initially discarded exact
+capture identity: six real approved/session paths failed. The provider's one
+internal projection helper now transfers only the exact captured object's
+witness, under the same capture lock. Arbitrary replacements and late owned
+refusals do not acquire it. Regressions cover all six approval projections.
+
+Actual Console qualification exposed repeated full-catalog I/O in lifecycle
+currentness. The probe now compares live workspace/project/profile/persona
+fields; the normal MCP owner uses its existing exact live catalog resolver at
+hook dispatch and result acceptance. Vanished, disconnected, stale or changed
+definitions refuse and record a normal metadata-only audit. Permission and
+kill-switch checks remain fresh. Real Interrupt and SessionEnd peers prove
+one/three-second clocks were retained; no production timeout was extended.
+
+RED artifacts: original-wire missing-feature control, six approval projections
+(`/private/tmp/hooks-h6-approval-red.xml`), and a valid actual Console probe
+(`/private/tmp/hooks-h6-currentness-valid-red.xml`). The first command-only probe
+had no MCP executor and was a harness error, not behavioral evidence. Temporary
+frame observers were removed. A faulthandler diagnostic itself stalled inside
+CPython's cancellation lock; its exact owned children/process were terminated
+and that diagnostic is not application qualification.
+
+Targeted native/Console/post/result covering set: 162 nodes, zero skips;
+`/private/tmp/hooks-h6-final-native.xml` had 159 passes and three observer/audit
+expectation failures. The two custody observers now allow their same finite
+five-second configured handler budget plus the existing five-second settlement
+wait, and shield the original owner. Cancellation/revocation/deadline retain
+that exact ticket and request/validator until actual completion: all four
+controls passed, 83.21 s (`hooks-h6-custody-final.xml`). The definition refusal
+now has its normal audit row and all MCP execution/result tests pass in the
+final boundary run below. These reruns complete the same covering set; counts
+are not additive. Earlier narrow actual Console controls passed 13/13 in
+31.40 s (`hooks-h6-live-boundaries.xml`).
+
+Final hook results/execution, ordinary MCP provider, scheduler and typed-result
+neighbors: **247 passed, 74.15 s**, zero skips (`hooks-h6-final-boundaries.xml`).
+Earlier interrupt/budget/provider neighbors: 123 passed. Pytest exit reported
+shared-temp garbage cleanup warnings from pre-existing unrelated test trees;
+no deletion of those trees or global leak-free claim was made. Authored Python
+passes Ruff/formatter; changed Python parses, whitespace passes, and shared
+Ruff diagnostics have no additions against pre-H6 HEAD. All four ACs self-
+reviewed; ADR-162/163 and operation/spec/plan notes updated.
+
+Limits: actual local macOS native storage/source owners, owned child processes,
+and repository-controlled stdio/loopback HTTP peers. No external vendor host,
+real OS keychain/OAuth, GUI, full-suite or cross-platform qualification. Native
+managed application composition remains I1; no parallel permission/runtime,
+implicit connection or grant bypass was added.

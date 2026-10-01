@@ -44,6 +44,7 @@ import json
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -99,6 +100,155 @@ from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 # so the module stays off the UI-ready census path.
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+
+@dataclass(frozen=True)
+class MCPBridgeObservation:
+    """Existing invocation observations, not a resource owner.
+
+    `completed` records the ACTUAL service coroutine's finally block, never
+    concurrent Future cancellation. Owned nested requests additionally require
+    their exact PluginRunOwnership.completed terminal evidence.
+    """
+
+    future: concurrent.futures.Future
+    dispatch: MCPDispatchObservation
+    completed: threading.Event
+
+
+@dataclass(frozen=True)
+class MCPInvocationPolicy:
+    """Request-local narrowing supplied by an existing hook delivery owner.
+
+    No field authorizes a tool or grants a connection. Deadlines are absolute;
+    callbacks suspend existing tickets and observe existing lower custody only.
+    """
+
+    current: Callable[[], bool]
+    deadline: float
+    cancel_event: Any
+    allow_approval: bool
+    wait_scope: Callable
+    approval_deadline: Callable[[], float] | None = None
+    on_bridge: Callable | None = None
+    on_owned_request: Callable | None = None
+
+    def check(self) -> None:
+        try:
+            accepted = (
+                not self.cancel_event.is_set()
+                and time.monotonic() < self.deadline
+                and self.current()
+            )
+        except Exception:  # noqa: BLE001 -- unavailable authority is refusal
+            accepted = False
+        if not accepted:
+            raise PermissionError("hook_mcp_authority_refused")
+
+
+_invocation_policies: ContextVar[tuple[MCPInvocationPolicy, ...]] = ContextVar(
+    "mcp_invocation_policies", default=()
+)
+
+
+def current_mcp_invocation_policies() -> tuple[MCPInvocationPolicy, ...]:
+    """Return host constraints inherited by the current normal MCP invocation."""
+    return _invocation_policies.get()
+
+
+def check_mcp_invocation_policies() -> None:
+    for policy in current_mcp_invocation_policies():
+        policy.check()
+
+
+@contextlib.contextmanager
+def restrict_mcp_invocation(policy: MCPInvocationPolicy):
+    """Add narrowing constraints; nested work cannot replace parent constraints."""
+    policy.check()
+    token = _invocation_policies.set((*current_mcp_invocation_policies(), policy))
+    try:
+        yield
+    finally:
+        _invocation_policies.reset(token)
+
+
+class MCPResultCapture:
+    """One normal invocation's pre-display evidence; grants no authority.
+
+    Only the exact final ToolResult may claim its corresponding payload. A
+    replaced late-revocation/refusal result cannot inherit earlier wire evidence.
+    Closing a capture prevents a late worker from repopulating it.
+    """
+
+    def __init__(self, provider: MCPToolProvider):
+        self._provider = provider
+        self._lock = threading.Lock()
+        self._value = None
+        self._closed = False
+
+    def _record(self, provider, raw, projected, current=None):
+        with self._lock:
+            if not self._closed and provider is self._provider:
+                if self._value is not None:
+                    self._closed = True
+                    self._value = None
+                else:
+                    self._value = (raw, projected, current)
+
+    def _reproject(self, provider, previous: ToolResult, projected: ToolResult):
+        # Only the normal owner's approval-only projection can transfer evidence.
+        with self._lock:
+            if (
+                not self._closed
+                and provider is self._provider
+                and self._value is not None
+                and self._value[1] is previous
+            ):
+                raw, _previous, current = self._value
+                self._value = (raw, projected, current)
+
+    def _take(self, result: ToolResult):
+        with self._lock:
+            value, self._value = self._value, None
+            accepted = not self._closed and value is not None and value[1] is result
+            self._closed = True
+            return value if accepted else None
+
+    def consume(self, result: ToolResult) -> MCPToolResult | None:
+        """Consume once, only after the enclosing normal invoker has returned."""
+        value = self._take(result)
+        return value[0] if value is not None else None
+
+    def consume_authorized(
+        self, result: ToolResult
+    ) -> tuple[MCPToolResult, Callable[[], None]] | None:
+        """Transfer exact result evidence and its original owner's read-only check."""
+        value = self._take(result)
+        return (
+            (value[0], value[2]) if value is not None and value[2] is not None else None
+        )
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._value = None
+
+
+_result_capture: ContextVar[MCPResultCapture | None] = ContextVar(
+    "mcp_result_capture", default=None
+)
+
+
+@contextlib.contextmanager
+def capture_mcp_result(provider: MCPToolProvider):
+    """Capture typed evidence through the SAME normal provider invocation."""
+    capture = MCPResultCapture(provider)
+    token = _result_capture.set(capture)
+    try:
+        yield capture
+    finally:
+        capture.close()
+        _result_capture.reset(token)
+
 
 SOURCE = "mcp"
 
@@ -896,6 +1046,15 @@ class MCPToolProvider:
 
     # -- invocation (WORKER THREAD) ----------------------------------------
 
+    def hook_target(self, server_key: str, tool_name: str) -> str | None:
+        """Resolve an exact existing catalog identity; never discover or connect."""
+        matches = [
+            name
+            for name, (tool, _state) in self._entry_by_llm_name.items()
+            if tool.server_key == server_key and tool.name == tool_name
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         """Execute one tool call. WORKER THREAD. Never raises, never hangs unbounded.
 
@@ -930,7 +1089,13 @@ class MCPToolProvider:
         """
         from .automatic_work_runtime import current_automatic_work
 
-        with self._invoke_lock:
+        with self._serialized_invocation() as admitted:
+            if not admitted:
+                return ToolResult.blocked("hook_mcp_authority_refused")
+            try:
+                check_mcp_invocation_policies()
+            except PermissionError:
+                return ToolResult.blocked("hook_mcp_authority_refused")
             automatic_work = current_automatic_work()
             if automatic_work is not None:
                 try:
@@ -942,6 +1107,32 @@ class MCPToolProvider:
                         dispatch_state="not_started",
                     )
             return self._invoke_locked(tool_id, args)
+
+    @contextlib.contextmanager
+    def _serialized_invocation(self):
+        """Retain hook lifetime custody while waiting for this normal owner."""
+        policies = current_mcp_invocation_policies()
+        if not policies:
+            with self._invoke_lock:
+                yield True
+            return
+        acquired = False
+        try:
+            try:
+                with contextlib.ExitStack() as waits:
+                    for policy in policies:
+                        waits.enter_context(policy.wait_scope("provider"))
+                    while not acquired:
+                        check_mcp_invocation_policies()
+                        acquired = self._invoke_lock.acquire(timeout=0.05)
+                check_mcp_invocation_policies()
+            except PermissionError:
+                yield False
+                return
+            yield True
+        finally:
+            if acquired:
+                self._invoke_lock.release()
 
     def _invoke_locked(self, tool_id: str, args: dict) -> ToolResult:
         """``invoke()``'s actual body -- entered ONLY while holding
@@ -995,6 +1186,20 @@ class MCPToolProvider:
         tool, _cached_state = entry
         call_args = dict(args or {})
 
+        if current_mcp_invocation_policies():
+            try:
+                self._check_current_definition(tool)
+            except Exception:  # noqa: BLE001 -- hook authority fails closed
+                self._safe_side_effect(
+                    lambda: self._service.record_tool_decision(
+                        tool.server_key, tool.name,
+                        decision=UNRESOLVED_DENIED_DECISION,
+                        initiator="agent", error_category="definition_changed",
+                    ),
+                    tool, what="record hook definition refusal",
+                )
+                return ToolResult.blocked("hook_mcp_definition_changed")
+
         # Cheap hardening (Minor 5): a kill switch flipped after
         # compose_catalog() (or between a T6 batch-review stamp and this
         # dispatch) must still block execution -- checked before the
@@ -1023,7 +1228,11 @@ class MCPToolProvider:
         # any run this is `""`, which matches no stamp a review hook ever
         # writes, so such a call falls through to the fresh gate below --
         # the same path it took before batch review existed.
-        stamped = self._stamped_decision_detail(current_run_id(), tool_id)
+        stamped = (
+            None
+            if current_mcp_invocation_policies()
+            else self._stamped_decision_detail(current_run_id(), tool_id)
+        )
         # A raw None remains absent, even when its metadata wrapper exists.
         if stamped is not None and stamped.decision is not None:
             return self._apply_verdict(
@@ -1067,7 +1276,7 @@ class MCPToolProvider:
             # (and the model-facing execution record) distinct so Findings
             # mode can tell "server default was allow" apart from "the
             # user approved this session".
-            return replace(
+            return self._reviewed_result(
                 self._execute(tool, call_args, decision=APPROVED_SESSION_DECISION),
                 approval_decision="approved",
             )
@@ -1075,7 +1284,9 @@ class MCPToolProvider:
         # state == "ask"
         if self._arg_rule_allows_safe(tool, call_args):
             return self._execute(tool, call_args, decision="allowed")
-        if self._approval_callback is None:
+        if self._approval_callback is None or any(
+            not policy.allow_approval for policy in current_mcp_invocation_policies()
+        ):
             # Same `DENY_REFUSAL` copy, same audit token (task-32280): there
             # was no surface to ask on, so nobody was shown a card and
             # nobody said no.
@@ -1093,7 +1304,12 @@ class MCPToolProvider:
             effects=approval_effects_for_tool(tool),
         )
         try:
-            decisions = self._approval_callback([pending])
+            with contextlib.ExitStack() as waits:
+                for policy in current_mcp_invocation_policies():
+                    policy.check()
+                    waits.enter_context(policy.wait_scope("approval"))
+                decisions = self._approval_callback([pending])
+            check_mcp_invocation_policies()
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(
                 ok=False,
@@ -1220,6 +1436,13 @@ class MCPToolProvider:
             )
             return False
 
+    def _reviewed_result(self, result: ToolResult, *, approval_decision) -> ToolResult:
+        projected = replace(result, approval_decision=approval_decision)
+        capture = _result_capture.get()
+        if capture is not None:
+            capture._reproject(self, result, projected)
+        return projected
+
     def _apply_verdict(
         self, verdict: str, tool: HubTool, args: dict, *, unanswered: bool = False
     ) -> ToolResult:
@@ -1245,7 +1468,7 @@ class MCPToolProvider:
         only ever save that one redundant write.
         """
         if verdict == "approve_once":
-            return replace(
+            return self._reviewed_result(
                 self._execute(tool, args, decision="approved"),
                 approval_decision=None if unanswered else "approved",
             )
@@ -1259,7 +1482,7 @@ class MCPToolProvider:
                 what="approve_for_session",
             )
             decision = APPROVED_SESSION_DECISION if already_approved else "approved"
-            return replace(
+            return self._reviewed_result(
                 self._execute(tool, args, decision=decision),
                 approval_decision=None if unanswered else "approved",
             )
@@ -1273,7 +1496,7 @@ class MCPToolProvider:
                     f"{tool.server_key}/{tool.name} -- high-risk tags are "
                     "never quieted by an argument rule; approving once"
                 )
-                return replace(
+                return self._reviewed_result(
                     self._execute(tool, args, decision="approved"),
                     approval_decision=None if unanswered else "approved",
                 )
@@ -1291,7 +1514,7 @@ class MCPToolProvider:
                 tool,
                 what="add_tool_arg_rule",
             )
-            return replace(
+            return self._reviewed_result(
                 self._execute(tool, args, decision="approved"),
                 approval_decision=None if unanswered else "approved",
             )
@@ -1310,7 +1533,7 @@ class MCPToolProvider:
                 tool,
                 what="set_tool_state",
             )
-            return replace(
+            return self._reviewed_result(
                 self._execute(tool, args, decision="approved"),
                 approval_decision=None if unanswered else "approved",
             )
@@ -1360,6 +1583,67 @@ class MCPToolProvider:
                 f"MCPToolProvider: record_tool_decision failed for {tool.server_key}/{tool.name}: {exc}"
             )
 
+    def _check_current_definition(self, tool: HubTool) -> None:
+        """Use the actual service's live definition owner when available."""
+        check = getattr(self._service, "tool_definition_current", None)
+        if callable(check) and not check(tool):
+            raise PermissionError("hook_mcp_definition_changed")
+
+    def _check_result_permission(self, tool, args, decision):
+        """Read normal current gates without consuming a grant or prompting."""
+        from .persona_policy import PersonaToolPolicy, persona_floor_state
+
+        # Result acceptance requires a positive read; the ordinary display
+        # path's best-effort fallback cannot mint native effects on failure.
+        if self._service.get_kill_switch():
+            raise PermissionError("hook_mcp_permission_changed")
+        state = self._service.gate_tool_test(tool, **self._profile_kwargs())
+        if self._persona_policy_provider is not None:
+            policy = self._persona_policy_provider()
+            if policy is not None:
+                if not isinstance(policy, PersonaToolPolicy):
+                    raise PermissionError("hook_mcp_persona_unavailable")
+                state = persona_floor_state(state, policy, tool.name)
+        if state.state not in {"allow", "ask"}:
+            raise PermissionError("hook_mcp_permission_changed")
+        if (
+            decision == "allowed"
+            and state.state != "allow"
+            and not self._arg_rule_allows_safe(tool, args)
+        ):
+            raise PermissionError("hook_mcp_permission_changed")
+        if (
+            decision == APPROVED_SESSION_DECISION
+            and not self._is_session_approved_safe(tool)
+        ):
+            raise PermissionError("hook_mcp_permission_changed")
+        if decision not in {"allowed", "approved", APPROVED_SESSION_DECISION}:
+            raise PermissionError("hook_mcp_grant_unavailable")
+
+    def _result_currentness(self, tool, args, decision) -> Callable[[], None]:
+        """Bind the original call's identity; this check cannot execute a tool."""
+        from .automatic_work_runtime import current_automatic_work
+
+        original_context = copy_context()
+        profile = self._profile_kwargs()
+        arguments = json.dumps(args, sort_keys=True, allow_nan=False)
+        automatic_work = current_automatic_work()
+
+        def check():
+            if self._profile_kwargs() != profile:
+                raise PermissionError("hook_mcp_profile_changed")
+            if not any(
+                current_tool == tool
+                for current_tool, _state in self._entry_by_llm_name.values()
+            ):
+                raise PermissionError("hook_mcp_definition_changed")
+            self._check_current_definition(tool)
+            if automatic_work is not None:
+                automatic_work.check()
+            self._check_result_permission(tool, json.loads(arguments), decision)
+
+        return lambda: original_context.copy().run(check)
+
     def _execute(self, tool: HubTool, args: dict, *, decision: str) -> ToolResult:
         """Run the tool via the main loop. NEVER raises, NEVER hangs unbounded.
 
@@ -1394,6 +1678,8 @@ class MCPToolProvider:
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         observation = MCPDispatchObservation()
+        execution_completed = threading.Event()
+        result_currentness = None
         started = time.monotonic()
         typed_entry = getattr(self._service, "execute_hub_tool_result", None)
         execute = (
@@ -1403,6 +1689,8 @@ class MCPToolProvider:
             from .automatic_work_runtime import current_automatic_work
 
             automatic_work = current_automatic_work()
+            if _result_capture.get() is not None:
+                result_currentness = self._result_currentness(tool, args, decision)
             if automatic_work is not None:
                 # An approval may have arrived after this chain stopped.
                 automatic_work.check()
@@ -1422,23 +1710,43 @@ class MCPToolProvider:
                     registered_argument_names=schema_argument_names(tool.input_schema),
                 )
 
+            async def execute_observed():
+                try:
+                    check_mcp_invocation_policies()
+                    return await create_execution()
+                finally:
+                    execution_completed.set()
+
+            policies = current_mcp_invocation_policies()
+            # Ordinary submissions retain their exact original coroutine and
+            # transfer/close contract. Only hooks need this completion observer.
+            execution_factory = execute_observed if policies else create_execution
+
             if automatic_work is not None:
                 async def execute_authorized():
                     # Scheduling on the main loop can itself wait. Bind the
                     # captured authority and check again at actual dispatch.
-                    with automatic_work.scope():
-                        automatic_work.check()
-                        return await create_execution()
+                    try:
+                        with automatic_work.scope():
+                            automatic_work.check()
+                            return await execution_factory()
+                    finally:
+                        execution_completed.set()
 
                 execution_coroutine = execute_authorized()
             else:
-                execution_coroutine = create_execution()
+                execution_coroutine = execution_factory()
             with observe_dispatch(observation):
                 future = asyncio.run_coroutine_threadsafe(
                     execution_coroutine,
                     self._main_loop,
                 )
+            if policies and policies[-1].on_bridge is not None:
+                policies[-1].on_bridge(
+                    MCPBridgeObservation(future, observation, execution_completed)
+                )
             raw_result = future.result(timeout=timeout)
+            check_mcp_invocation_policies()
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
             if future is None and execution_coroutine is not None:
                 try:
@@ -1504,7 +1812,14 @@ class MCPToolProvider:
                         error="bridge execution failed: mcp_execution_failed",
                     )
             return ToolResult(ok=False, error=error, dispatch_state=dispatch_state)
-        return self._format_result(raw_result)
+        return self._format_result(raw_result, current=result_currentness)
+
+    def _format_result(self, raw_result: Any, *, current=None) -> ToolResult:
+        projected = self._format_display_result(raw_result)
+        capture = _result_capture.get()
+        if capture is not None and isinstance(raw_result, MCPToolResult):
+            capture._record(self, raw_result, projected, current)
+        return projected
 
     def _server_session_character_write_refusal(self, tool: HubTool) -> str | None:
         """Refuse ADR-183's character writes from a server-backed session.
@@ -1538,7 +1853,7 @@ class MCPToolProvider:
 
         return SERVER_REFUSAL
 
-    def _format_result(self, raw_result: Any) -> ToolResult:
+    def _format_display_result(self, raw_result: Any) -> ToolResult:
         dispatch_state = "settled"
         try:
             if isinstance(raw_result, MCPToolResult):

@@ -67,7 +67,9 @@ class HookBudgetOwner:
                     runtime = ready.popleft()
                     queue = self._queues[observation][runtime]
                     while queue and (queue[0].released or queue[0]._waiter.cancelled()):
-                        queue.popleft().release()
+                        skipped = queue.popleft()
+                        if not skipped._retain_on_cancel:
+                            skipped.release()
                     if not queue:
                         self._queues[observation].pop(runtime, None)
                         missed = 0
@@ -97,8 +99,9 @@ class HookTicket:
         self.active = False
         self.released = False
         self._waiter: asyncio.Future | None = None
+        self._retain_on_cancel = False
 
-    async def acquire(self) -> None:
+    async def acquire(self, *, retain_on_cancel: bool = False) -> None:
         if asyncio.get_running_loop() is not self.owner.loop:
             raise RuntimeError("hook ticket belongs to another loop")
         with self.owner._lock:
@@ -108,6 +111,7 @@ class HookTicket:
                 return
             if self._waiter is not None:
                 raise RuntimeError("ticket is already queued")
+            self._retain_on_cancel = retain_on_cancel
             self._waiter = self.owner.loop.create_future()
             queues = self.owner._queues[self.observation]
             queue = queues.setdefault(self.runtime_id, deque())
@@ -119,7 +123,21 @@ class HookTicket:
         try:
             await self._waiter
         except asyncio.CancelledError:
-            self.release()
+            if retain_on_cancel:
+                # Remove this exact queued waiter before dropping its handle.
+                # Cancellation is not terminal proof for a suspended MCP request.
+                with self.owner._lock:
+                    queue = self.owner._queues[self.observation].get(self.runtime_id)
+                    if queue is not None:
+                        try:
+                            queue.remove(self)
+                        except ValueError:
+                            pass
+                    if self.active:
+                        self.suspend()
+                    self._waiter = None
+            else:
+                self.release()
             raise
 
     def suspend(self) -> None:

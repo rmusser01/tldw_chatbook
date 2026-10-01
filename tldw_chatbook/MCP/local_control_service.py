@@ -622,6 +622,14 @@ class LocalMCPControlService:
                 capability discovery fails.
             OSError: Snapshot persistence fails.
         """
+        from tldw_chatbook.Agents.mcp_tool_provider import (
+            check_mcp_invocation_policies,
+            current_mcp_invocation_policies,
+        )
+
+        check_mcp_invocation_policies()
+        if current_mcp_invocation_policies():
+            raise PermissionError("hook_mcp_connection_required")
         self._require_allowed("mcp.external_profiles.launch.local")
         profile = self.store.get_profile(profile_id)
         if profile is None:
@@ -767,6 +775,12 @@ class LocalMCPControlService:
         *,
         typed_result: bool = False,
     ) -> MCPToolResult | dict[str, Any]:
+        from tldw_chatbook.Agents.mcp_tool_provider import (
+            check_mcp_invocation_policies,
+            current_mcp_invocation_policies,
+        )
+
+        check_mcp_invocation_policies()
         self._require_allowed("mcp.external_profiles.trigger.local")
         from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
 
@@ -795,8 +809,15 @@ class LocalMCPControlService:
 
             return project_tool_result(result)
         sessions = getattr(client, "sessions", {})
+        if current_mcp_invocation_policies():
+            from .connection_ownership import ConnectionOwnership
+
+            session = sessions.get(profile_id)
+            if session is None or ConnectionOwnership._session_unavailable(session):
+                raise PermissionError("hook_mcp_connection_required")
         if profile_id not in sessions:
             await self.connect_profile(profile_id)
+        check_mcp_invocation_policies()
         if automatic_work is not None:
             automatic_work.check()
         if typed_result:

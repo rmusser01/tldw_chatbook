@@ -165,6 +165,32 @@ class PluginMCPProvider(MCPToolProvider):
         if decision == "approved-session" and not self._is_session_approved_safe(tool):
             raise PermissionError("plugin_permission_changed")
 
+    def _check_result_permission(self, tool, args, decision):
+        # Called under the original invocation's captured permission profile.
+        self._check_permission(tool, args, decision)
+
+    def _result_currentness(self, tool, args, decision):
+        current = super()._result_currentness(tool, args, decision)
+        snapshot = self.snapshot
+        mapping = dict(self._tool_mappings[tool.tool_id])
+
+        def check():
+            current()
+            if (
+                self.snapshot != snapshot
+                or self._tool_mappings.get(tool.tool_id) != mapping
+            ):
+                raise PermissionError("plugin_result_authority_changed")
+            self.plugins.fences.check_snapshot(snapshot)
+            self.plugins._call_from_agent(
+                lambda: self.plugins._admission.check(snapshot, mapping["component_id"])
+            )
+            # That existing owner check can wait; re-read permission/automatic
+            # authority after it, preserving the original same-call approval.
+            current()
+
+        return check
+
     def _apply_verdict(self, verdict, tool, args, *, unanswered=False):
         try:
             self._check_permission(tool, args)

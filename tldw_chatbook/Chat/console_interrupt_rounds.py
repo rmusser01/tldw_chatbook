@@ -645,6 +645,7 @@ class InterruptRoundHost:
         owning_session_id: str,
         deadline: float | None,
         is_parked: bool,
+        hard_deadline: float | None = None,
         announce_detached: Callable[[], bool] | None = None,
         human_wait_run_id: str | None = None,
         on_cancelled: Callable[[], None] | None = None,
@@ -690,6 +691,8 @@ class InterruptRoundHost:
             deadline: Initial ``time.monotonic()`` deadline, or None to wait
                 indefinitely. Finite budgets advance only while the owning
                 session's FIFO head can be answered on the visible Console.
+            hard_deadline: Optional absolute host deadline, including parked and
+                hidden time. It never resets or pauses with the UI clock.
             is_parked: True when the round belongs to a non-viewed session.
             announce_detached: Detached-view announcer; returns True when
                 it announced instead of mounting.
@@ -705,11 +708,25 @@ class InterruptRoundHost:
             ``"decided"``, ``"cancelled"``, ``"timeout"`` or ``"revoked"``.
         """
         event: threading.Event = state["event"]
+
+        def hard_expired():
+            return hard_deadline is not None and time.monotonic() >= hard_deadline
+
+        notified_outcomes = set()
+
+        def notify_outcome(value):
+            if value in notified_outcomes:
+                return
+            notified_outcomes.add(value)
+            callback = on_timeout if value == "timeout" else on_cancelled
+            if callback is not None:
+                callback()
+
         if not self.register_round(kind, round_id, state, check_revoked=check_revoked):
             if on_outcome is not None:
                 on_outcome("revoked")
             return "revoked"
-        if kind in {"approval", "skill_install", "skill_script", "worktree_merge"}:
+        if not hard_expired() and kind in {"approval", "skill_install", "skill_script", "worktree_merge"}:
             with self.lock:
                 notify_hook = not state.get("run_hook_notified", False)
                 state["run_hook_notified"] = True
@@ -726,7 +743,7 @@ class InterruptRoundHost:
             and kind in {"approval", "skill_install", "skill_script"}
             and callable(publish_decision)
         )
-        if retained_decision:
+        if retained_decision and not hard_expired():
             # The controller's accepted-time metadata uses this same lock.
             # Enter the hook only after releasing the registration lock.
             is_head = publish_decision(
@@ -767,7 +784,9 @@ class InterruptRoundHost:
         try:
             app = getattr(self._seams, "app", None)
             park_toast = getattr(self._seams, "park_pending_approval", None)
-            if retained_decision:
+            if hard_expired():
+                pass
+            elif retained_decision:
                 if self._seams._approval_view_is_detached() or is_parked or not is_head:
                     self._seams._announce_hidden_decision(
                         kind, owning_session_id, round_id
@@ -811,30 +830,49 @@ class InterruptRoundHost:
                 # permission summary INSIDE the human-wait mark so the
                 # summariser's own model call never counts against the
                 # owning run's tool clock.
-                if before_wait is not None:
+                if before_wait is not None and not hard_expired():
                     before_wait()
-                while not event.wait(self.POLL_SECONDS):
+                while True:
+                    if hard_expired():
+                        notify_outcome("timeout")
+                        outcome = "timeout"
+                        break
+                    remaining = (
+                        max(0, hard_deadline - time.monotonic())
+                        if hard_deadline is not None
+                        else self.POLL_SECONDS
+                    )
+                    if event.wait(min(self.POLL_SECONDS, remaining)):
+                        break
                     if self._seams._is_session_cancelled(
                         session_id,
                         cancel_event=state.get("cancel_event"),
                         visit_event=state.get("visit_event"),
                     ):
-                        if on_cancelled is not None:
-                            on_cancelled()
+                        notify_outcome("cancelled")
                         outcome = "cancelled"
                         break
                     if retained_decision:
                         self._seams.expire_pending_decisions()
                     self.refresh_decision_clocks()
                     if clock is not None and clock.remaining <= 0:
-                        if on_timeout is not None:
-                            on_timeout()
+                        notify_outcome("timeout")
                         outcome = "timeout"
                         break
             if retained_decision and state.get("terminal_reason") == "timeout":
                 outcome = "timeout"
-                if on_timeout is not None:
-                    on_timeout()
+                notify_outcome("timeout")
+            # A pre-set or just-arrived answer cannot evade the absolute bound.
+            if hard_expired():
+                outcome = "timeout"
+                notify_outcome("timeout")
+            elif hard_deadline is not None and self._seams._is_session_cancelled(
+                session_id,
+                cancel_event=state.get("cancel_event"),
+                visit_event=state.get("visit_event"),
+            ):
+                outcome = "cancelled"
+                notify_outcome("cancelled")
             if check_revoked:
                 with self.lock:
                     if bool(state.get("revoked")):

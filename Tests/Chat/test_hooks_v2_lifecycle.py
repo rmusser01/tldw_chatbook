@@ -420,3 +420,702 @@ async def test_absent_v2_control_does_not_treat_invalid_config_as_absence(
     hook_file.write_text(toml.dumps(raw))
     with pytest.raises(RuntimeError, match="Review enabled hooks"):
         await case.runtime.prepare_hooks_v2(case.session.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nested", [False, True, "approval"])
+async def test_actual_console_admission_runs_connected_mcp_initializer(
+    tmp_path, nested
+):
+    import asyncio
+
+    from Tests.MCP.test_typed_tool_results import (
+        controlled_service,
+        controlled_stdio_client,
+    )
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+    rig = _controller_rig(tmp_path)
+    chacha, app, _runs, store, session, gateway, _bridge, controller = rig
+    runtime = ConsoleRuntime(app=app)
+    app.console_runtime = runtime
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        app.unified_mcp_service = service
+        from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        if nested != "approval":
+            service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        positive = await service.execute_hub_tool_result(
+            "local:fixture",
+            "fixture",
+            {"payload": {"structuredContent": {"version": 2, "decision": "pass"}}},
+        )
+        assert positive.dispatch_state == "settled" and not positive.is_error
+        handlers = parse_handlers(
+            [
+                {
+                    "id": "native-init",
+                    "event": "SessionStart",
+                    "type": "mcp_tool",
+                    "server": "local:fixture",
+                    "tool": "fixture",
+                    "required": True,
+                    "effects": ["context"],
+                    "require_context": True,
+                    "input": {
+                        "payload": {
+                            "structuredContent": {
+                                "version": 2,
+                                "decision": "pass",
+                                "context": [
+                                    {
+                                        "text": "Console MCP runtime instructions",
+                                        "lifetime": "runtime",
+                                    }
+                                ],
+                            }
+                        }
+                    },
+                }
+            ]
+        )
+        if nested:
+            import json
+
+            payload = {
+                "version": 2,
+                "decision": "pass",
+                "context": [
+                    {
+                        "text": "Only the triggering turn receives this",
+                        "lifetime": "turn",
+                    }
+                ],
+            }
+            handlers += (
+                command(
+                    "print(" + repr(json.dumps(payload)) + ")",
+                    effects=["context"],
+                    required=True,
+                ),
+            )
+        engine = runtime.ensure_hooks_v2(session.id, handlers, lambda *_: True)
+        approved_tickets = []
+        if nested == "approval":
+            app.call_from_thread = lambda callback, *args, **kwargs: callback(
+                *args, **kwargs
+            )
+
+            def decide(payload):
+                if payload is None:
+                    return
+                assert engine.budget_owner.snapshot()["tickets"] == 1
+                assert engine.budget_owner.snapshot()["execution"] == 0
+                approved_tickets.append(next(iter(engine.mcp_executor._jobs)).ticket)
+                controller.resolve_pending_approval(
+                    {row["llm_name"]: "approve_once" for row in payload["calls"]},
+                    round_id=payload["round_id"],
+                )
+
+            view = SimpleNamespace(
+                app=app, console_view_hooks=lambda: {"set_pending_approval": decide}
+            )
+            app.screen = view
+            generation = runtime.attach_view(view)
+            runtime.finish_view_reconciliation(view, generation)
+        try:
+            result = await asyncio.wait_for(
+                controller.submit_draft("hello", session_id=session.id), 10
+            )
+            assert result.accepted, result
+            assert gateway.payloads
+            assert "Console MCP runtime instructions" in str(gateway.payloads)
+            assert len(service.execution_log.read_recent()) == 2
+            assert engine.budget_owner.snapshot()["tickets"] == 0
+            if nested == "approval":
+                assert len(approved_tickets) == 1 and approved_tickets[0].released
+                assert not controller._pending_approval_rounds
+            if nested:
+                assert "Only the triggering turn receives this" in str(gateway.payloads)
+                gateway.payloads.clear()
+                again = await controller.submit_draft(
+                    "second input", session_id=session.id
+                )
+                assert again.accepted
+                assert "Only the triggering turn receives this" not in str(
+                    gateway.payloads
+                )
+                assert "Console MCP runtime instructions" in str(gateway.payloads)
+                assert len(service.execution_log.read_recent()) == 2
+        finally:
+            await runtime.close_hooks_v2()
+            chacha.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode", ["approve", "late_answer", "timeout", "cancel", "observation"]
+)
+async def test_hook_approval_uses_actual_retained_round_deadline_and_cancellation(mode):
+    import asyncio
+    import contextlib
+    import threading
+    import time
+
+    from Tests.UI.test_console_mcp_approval import _build_controller, _FakeApp, _pending
+    from tldw_chatbook.Agents.mcp_tool_provider import (
+        MCPInvocationPolicy,
+        restrict_mcp_invocation,
+    )
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    controller.app = _FakeApp()
+    received = []
+    policy = MCPInvocationPolicy(
+        current=lambda: True,
+        deadline=time.monotonic() + 3,
+        cancel_event=threading.Event(),
+        allow_approval=mode != "observation",
+        wait_scope=lambda _kind: contextlib.nullcontext(),
+        approval_deadline=lambda: approval_end,
+    )
+    approval_end = time.monotonic() + (
+        0.12 if mode in {"late_answer", "timeout"} else 2
+    )
+
+    def show(payload):
+        if payload is None:
+            return
+        received.append(payload)
+        if mode in {"approve", "late_answer"}:
+            if mode == "late_answer":
+                time.sleep(0.18)
+            controller.resolve_pending_approval(
+                {"mcp__srv__tool": "approve_once"}, round_id=payload["round_id"]
+            )
+        if mode == "cancel":
+            policy.cancel_event.set()
+
+    controller.set_pending_approval = show
+
+    def request():
+        with restrict_mcp_invocation(policy):
+            return controller.request_mcp_approvals([_pending()], session_id=session.id)
+
+    pending = asyncio.create_task(asyncio.to_thread(request))
+    try:
+        answer = await asyncio.wait_for(asyncio.shield(pending), 2)
+        assert answer["mcp__srv__tool"] == (
+            "approve_once"
+            if mode == "approve"
+            else "timeout"
+            if mode in {"late_answer", "timeout"}
+            else "deny"
+        )
+        assert bool(received) is (mode != "observation")
+        assert not controller._pending_approval_rounds
+        if mode != "approve":
+            assert not controller._parked_approval_payloads
+    finally:
+        policy.cancel_event.set()
+        await asyncio.wait_for(pending, 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["sibling", "cancel", "overflow"])
+async def test_failed_console_initialization_discards_nested_turn_context(
+    tmp_path, failure
+):
+    import asyncio
+    import json
+
+    from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
+    from Tests.MCP.test_typed_tool_results import (
+        controlled_service,
+        controlled_stdio_client,
+    )
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    chacha, app, _runs, store, session, gateway, _bridge, controller = _controller_rig(
+        tmp_path
+    )
+    runtime = ConsoleRuntime(app=app)
+    app.console_runtime = runtime
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    release, started = tmp_path / "release-sibling", tmp_path / "sibling-started"
+    direct_blocks = [{"text": "Runtime context", "lifetime": "runtime"}]
+    nested_blocks = [{"text": "Discarded nested secret", "lifetime": "turn"}]
+    if failure == "overflow":
+        direct_blocks = [{"text": "r" * 3000, "lifetime": "runtime"}] * 3
+        nested_blocks = [{"text": "n" * 3600, "lifetime": "turn"}] * 4
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        app.unified_mcp_service = service
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        handlers = list(
+            parse_handlers(
+                [
+                    {
+                        "id": "initializer",
+                        "event": "SessionStart",
+                        "type": "mcp_tool",
+                        "required": True,
+                        "server": "local:fixture",
+                        "tool": "fixture",
+                        "effects": ["context"],
+                        "input": {
+                            "payload": {
+                                "structuredContent": {
+                                    "version": 2,
+                                    "decision": "pass",
+                                    "context": direct_blocks,
+                                }
+                            }
+                        },
+                    }
+                ]
+            )
+        )
+        nested_body = json.dumps(
+            {"version": 2, "decision": "pass", "context": nested_blocks}
+        )
+        handlers.append(
+            hook_command(
+                "nested-pre",
+                effects=["context"],
+                required=True,
+                code=f"print({nested_body!r})",
+            )
+        )
+        if failure == "overflow":
+            handlers.append(
+                hook_command(
+                    "nested-post",
+                    event="PostToolUse",
+                    effects=["context"],
+                    required=True,
+                    code=f"print({nested_body!r})",
+                )
+            )
+        else:
+            wait = f"while not Path({str(release)!r}).exists(): time.sleep(.01)"
+            code = (
+                f"from pathlib import Path;import time;Path({str(started)!r}).touch();"
+            )
+            code += f"exec({wait!r})" if failure == "cancel" else "raise SystemExit(1)"
+            handlers.append(
+                hook_command("sibling", event="SessionStart", required=True, code=code)
+            )
+        engine = runtime.ensure_hooks_v2(session.id, tuple(handlers), lambda *_: True)
+        pending = asyncio.create_task(
+            controller.submit_draft("first", session_id=session.id)
+        )
+        try:
+            if failure == "cancel":
+                for _ in range(400):
+                    if started.exists():
+                        break
+                    await asyncio.sleep(0.01)
+                assert started.exists(), "enclosing sibling never started"
+                pending.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
+            else:
+                assert not (await asyncio.wait_for(pending, 6)).accepted
+            assert not gateway.payloads
+            assert len(service.execution_log.read_recent()) == 1
+            release.touch()
+            await runtime.close_hooks_v2(session.id)
+            runtime.ensure_hooks_v2(
+                session.id,
+                (command(name="SessionStart", required=True),),
+                lambda *_: True,
+            )
+            result = await controller.submit_draft("replacement", session_id=session.id)
+            assert result.accepted and gateway.payloads
+            assert "Discarded nested secret" not in str(gateway.payloads)
+            assert "Runtime context" not in str(gateway.payloads)
+            assert engine.budget_owner.snapshot()["tickets"] == 0
+        finally:
+            release.touch()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            await runtime.close_hooks_v2()
+            chacha.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "success",
+        "guard_denies",
+        "requires_context",
+        "ask",
+        "stale",
+        "dependency_pending",
+        "requirements_changed",
+        "cap_exhausted",
+        "definition_changed",
+    ],
+)
+async def test_actual_console_teardown_mcp_uses_captured_runtime_and_normal_guards(
+    tmp_path, mode
+):
+    import json
+    import time
+    from dataclasses import replace
+
+    from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
+    from Tests.MCP.test_typed_tool_results import (
+        controlled_service,
+        controlled_stdio_client,
+    )
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    chacha, app, _runs, store, session, gateway, _bridge, controller = _controller_rig(
+        tmp_path
+    )
+    runtime = ConsoleRuntime(app=app)
+    app.console_runtime = runtime
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        app.unified_mcp_service = service
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        if mode != "ask":
+            service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        handlers = [command(name="SessionStart", required=True)]
+        handlers.extend(
+            parse_handlers(
+                [
+                    {
+                        "id": "teardown",
+                        "event": "SessionEnd",
+                        "type": "mcp_tool",
+                        "server": "local:fixture",
+                        "tool": "fixture",
+                        "effects": [],
+                        "input": {
+                            "payload": {
+                                "structuredContent": {"version": 2, "decision": "pass"}
+                            }
+                        },
+                    }
+                ]
+            )
+        )
+        if mode in {"guard_denies", "requires_context"}:
+            output = {
+                "version": 2,
+                "decision": "deny" if mode == "guard_denies" else "pass",
+            }
+            if mode == "requires_context":
+                output["context"] = [
+                    {"text": "No input owner remains", "lifetime": "turn"}
+                ]
+            handlers.append(
+                hook_command(
+                    "normal-guard",
+                    required=True,
+                    effects=["deny"] if mode == "guard_denies" else ["context"],
+                    code=f"print({json.dumps(output)!r})",
+                )
+            )
+        engine = runtime.ensure_hooks_v2(session.id, tuple(handlers), lambda *_: True)
+        prompts = []
+        controller.set_pending_approval = prompts.append
+        try:
+            assert (
+                await controller.submit_draft("hello", session_id=session.id)
+            ).accepted
+            assert gateway.payloads
+            assert not service.execution_log.read_recent()
+            view = engine.mcp_executor._runtime_contexts[session.id]
+            assert view.input_scope is None and view.run_id == view.lifecycle.scope_id
+            assert view.budget_run_id != view.run_id
+            if mode == "stale":
+                service.set_tool_state("local:fixture", "fixture", "deny", tool=tool)
+            if mode == "definition_changed":
+                discovery = await client.describe_server("fixture")
+                discovery["tools"][0]["description"] = "changed after admission"
+                service.local_service.store.save_discovery_snapshot(
+                    "fixture", discovery
+                )
+            if mode == "dependency_pending":
+                view.lifecycle.checkpoints.begin(
+                    view.lifecycle.event("Stop"),
+                    ("initializer",),
+                    owner_id=view.parent_scope,
+                )
+                engine.mcp_executor._runtime_contexts[session.id] = replace(
+                    view, required_handler_ids=lambda _definition: ("initializer",)
+                )
+            if mode == "requirements_changed":
+                state = {"ids": ()}
+                engine.mcp_executor._runtime_contexts[session.id] = replace(
+                    view, required_handler_ids=lambda _definition: state["ids"]
+                )
+                original = engine.notify_teardown
+
+                def changed(event):
+                    state["ids"] = ("new-required-initializer",)
+                    return original(event)
+
+                engine.notify_teardown = changed
+            if mode == "cap_exhausted":
+                from tldw_chatbook.Agents.run_tool_policy import RunToolPolicy
+
+                name, _provider = view.resolve(handlers[1])
+                caps = RunToolPolicy({name: 1})
+                view.registry.set_run_tool_policy(caps)
+                assert caps.check(view.budget_run_id, name)[0]
+            started = time.monotonic()
+            await runtime.close_hooks_v2(session.id)
+            assert time.monotonic() - started < 8.5
+            # A real counter call proves whether the peer saw the notification.
+            counter = await client.call_tool_result(
+                "fixture", "fixture", {"counter": True}
+            )
+            assert counter.content[0]["text"] == ("2" if mode == "success" else "1"), (
+                dict(engine.notification_failures),
+                engine.notification_omissions,
+                engine.budget_owner.snapshot(),
+            )
+            assert not prompts
+            assert (
+                engine.budget_owner.snapshot()["tickets"]
+                == engine.budget_owner.snapshot()["execution"]
+                == 0
+            )
+            denied = await engine.fire_async(
+                engine.lifecycle_owner.event("SessionStart", data={"reason": "startup"})
+            )
+            assert not denied.allowed
+            await runtime.close_hooks_v2(session.id)
+            again = await client.call_tool_result(
+                "fixture", "fixture", {"counter": True}
+            )
+            assert again.content[0]["text"] == ("3" if mode == "success" else "2")
+        finally:
+            await runtime.close_hooks_v2()
+            chacha.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["success", "slow_guard", "closed"])
+async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadline(
+    tmp_path, mode
+):
+    import asyncio
+    import time
+    from uuid import uuid4
+
+    from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
+    from Tests.MCP.test_typed_tool_results import (
+        controlled_service,
+        controlled_stdio_client,
+    )
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    chacha, app, _runs, store, session, gateway, _bridge, controller = _controller_rig(
+        tmp_path
+    )
+    runtime = ConsoleRuntime(app=app)
+    app.console_runtime = runtime
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked_stream(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        yield "done"
+
+    gateway.stream_chat = blocked_stream
+    async with controlled_stdio_client(tmp_path) as client:
+        service = await controlled_service(tmp_path, client)
+        app.unified_mcp_service = service
+        tool = HubTool(
+            server_key="local:fixture",
+            server_label="fixture",
+            source="local",
+            name="fixture",
+            description="",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        service.set_tool_state("local:fixture", "fixture", "allow", tool=tool)
+        handlers = [command(name="SessionStart", required=True)]
+        handlers.extend(
+            parse_handlers(
+                [
+                    {
+                        "id": "interrupt",
+                        "event": "Interrupt",
+                        "type": "mcp_tool",
+                        "server": "local:fixture",
+                        "tool": "fixture",
+                        "effects": [],
+                        "input": {
+                            "payload": {
+                                "structuredContent": {"version": 2, "decision": "pass"}
+                            }
+                        },
+                    }
+                ]
+            )
+        )
+        if mode == "slow_guard":
+            handlers.append(
+                hook_command(
+                    "slow-guard",
+                    required=True,
+                    effects=["deny"],
+                    code='import time;time.sleep(20);print(\'{"version":2,"decision":"pass"}\')',
+                )
+            )
+        engine = runtime.ensure_hooks_v2(session.id, tuple(handlers), lambda *_: True)
+        request = ConsoleTurnCustodyRequest(
+            turn_id=str(uuid4()),
+            session_id=session.id,
+            draft="hello",
+            configuration=controller.resolve_turn_configuration_snapshot(session.id),
+        )
+        turn = runtime.accept_turn(request)
+        pending = asyncio.create_task(runtime.wait_for_turn(turn))
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            stamp = time.monotonic()
+            assert controller.stop_active_run()
+            controller.stop_active_run()
+            if mode == "closed":
+                runtime._seal_hooks_v2(session.id)
+            release.set()
+            await asyncio.wait_for(pending, 5)
+            for _ in range(400):
+                if not engine.cleanup_pending and not any(
+                    engine.budget_owner.snapshot().values()
+                ):
+                    break
+                await asyncio.sleep(0.01)
+            assert time.monotonic() - stamp < (2.5 if mode == "slow_guard" else 2)
+            assert engine.budget_owner.snapshot()["tickets"] == 0
+            counter = await client.call_tool_result(
+                "fixture", "fixture", {"counter": True}
+            )
+            assert counter.content[0]["text"] == ("2" if mode == "success" else "1"), (
+                dict(engine.notification_failures),
+                engine.notification_omissions,
+                engine.budget_owner.snapshot(),
+            )
+        finally:
+            release.set()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            await runtime.close_hooks_v2()
+            chacha.close()
+
+
+@pytest.mark.asyncio
+async def test_hook_currentness_does_not_read_unrelated_skill_catalog(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.Chat.console_chat_controller as module
+    from Tests.MCP.test_typed_tool_results import (
+        controlled_service,
+        controlled_stdio_client,
+    )
+
+    chacha, app, runs, store, session, _gateway, _bridge, controller = _controller_rig(
+        tmp_path
+    )
+    runtime = ConsoleRuntime(app=app)
+    app.console_runtime = runtime
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    async with controlled_stdio_client(tmp_path) as client:
+        app.unified_mcp_service = await controlled_service(tmp_path, client)
+        from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+        teardown = parse_handlers(
+            [
+                {
+                    "id": "teardown",
+                    "event": "SessionEnd",
+                    "type": "mcp_tool",
+                    "server": "local:fixture",
+                    "tool": "fixture",
+                    "effects": [],
+                }
+            ]
+        )[0]
+        engine = runtime.ensure_hooks_v2(
+            session.id,
+            (command(name="SessionStart", required=True), teardown),
+            lambda *_: True,
+        )
+        try:
+            assert (
+                await controller.submit_draft("hello", session_id=session.id)
+            ).accepted
+            view = engine.mcp_executor._runtime_contexts[session.id]
+
+            def unrelated_catalog(*_args, **_kwargs):
+                raise AssertionError("hook currentness read unrelated skill catalog")
+
+            monkeypatch.setattr(
+                module, "capture_skill_context_maximum", unrelated_catalog
+            )
+            assert view.current()
+        finally:
+            await runtime.close_hooks_v2()
+            await runtime.dispose()
+            runs.close()
+            chacha.close()
