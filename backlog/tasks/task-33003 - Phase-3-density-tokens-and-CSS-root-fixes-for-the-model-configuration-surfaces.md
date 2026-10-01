@@ -286,4 +286,14 @@ Phase 3 ships as one PR. Chat settings becomes a dense form: one-row controls, f
   - Back to On read "Esc close", and Esc closed the modal.
   - The app log had 0 tracebacks. The scratch profile was deleted afterwards.
 - console_settings_modal.py is unchanged (7,764). No CSS changed. console.md's close-guard paragraph says what counts.
+**cubic review on PR #2937 (2026-09-30): 60 threads.**
+- 29 on the QA drivers, probes and probe plugins: removed (5468e496f4). They were local one-off harnesses with machine-specific paths. qa/model-config-p3-2026-09-28/README.md says how the captures were taken. The four 120x40 scrolled-end captures in task-7 (each byte-identical to its at-rest twin) and the task-2 focus crops (which mixed two views) were removed as evidence errors.
+- 7 on backlog and Docs records: corrected (efe3593c92), including the ruling that .2 AC#8 is met.
+- 24 on captures, each triaged against origin/dev 198a697e51 (a live scratch worktree where needed):
+  - Phase 3 regression, fixed (4f70a1cc3a): at 140x42 the inspector floor left the detail pane too narrow for its action rows, and Privacy's "Open Advanced Config" was cut to "Open Adva". Below 84 columns the rows now stack. test_settings_action_rows_keep_every_button_whole was red at 120x42 and 140x42.
+  - A claimed 3:1 surface under 3:1, fixed (67af8f1467): Textual's focus tint lifted the Select popover's fill, so its edge measured 2.71:1. It is 3.05:1 now. test_console_settings_select_popover_edge_keeps_3_to_1 was red on textual-dark and textual-light.
+  - Out of Phase 3's scope: Library frames (TASK-33003.15 already covers them); the top tab-bar separator, the active tab outline, the shared Collapsible frame and the Console rail rules (new rider TASK-33641.1).
+  - Pre-existing at origin/dev, with new riders: the Lab GGUF source row (TASK-33641.2), the Image and Video backend name column (TASK-33641.3), and a recurring reminder whose next run shows "—" (TASK-33641.4). The Context-view label gap is already TASK-33006.6. The 120x40 inspector crops are unchanged from base, and 120 columns is below the owner's full-screen sizes, so no rider was filed.
+  - The rest were false positives or capture artefacts, each answered in its thread: a scrollbar thumb, a colour-only highlight, a group heading, a harness cut at column 211, a box that continues below the scroll viewport, the Console's own Inspect toggle, and an Evals pair that is identical by design.
+- Boot CSS: 607,691 -> 607,750 bytes (+59), within the 608,090 budget. The bare-type rule ratchet is unchanged (the fast-path ratchet passes). console_settings_modal.py is unchanged at 7,764 lines.
 <!-- SECTION:NOTES:END -->
