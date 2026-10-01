@@ -140,13 +140,32 @@ def test_a_different_connection_never_receives_the_result():
     other_endpoint = _identity(connection_identity=("llama_cpp", "http://127.0.0.1:8080"))
     other_key = _identity(credential_source="environment", credential_revision=5)
     for asked in (other_endpoint, other_key):
-        # Draft stores only ever return exact connections.
+        # Neither the owner nor any draft store hands over another connection.
+        assert owner.evidence_for(asked) is None
         assert _linked_store(app).evidence_for(asked) is None
 
 
-def test_changed_saved_endpoint_or_credential_reads_changed_since_test():
+def test_a_discarded_draft_test_leaves_the_saved_connection_untested():
+    """Review I-2: testing a draft endpoint, then discarding it, must not make
+    the never-tested saved connection read 'changed since test'."""
     app = SimpleNamespace()
-    assert _settle(_linked_store(app), _identity(), REFUSED)
+    settings_store = _linked_store(app)
+    draft = _identity(connection_identity=("llama_cpp", "http://127.0.0.1:8080"))
+    assert _settle(settings_store, draft, REACHABLE)
+    assert settings_store.invalidate()  # Revert discards the draft.
+
+    saved = _identity(draft_generation=3)
+    assert provider_connection_evidence(app).evidence_for(saved) is None
+    assert _linked_store(app).evidence_for(saved) is None
+
+
+def test_changed_saved_endpoint_or_credential_never_reuses_older_evidence():
+    """AC#4: a changed endpoint or credential is another connection. The owner
+    never hands it the older record, and the surface still holding that
+    record projects it as changed since test."""
+    app = SimpleNamespace()
+    store = _linked_store(app)
+    assert _settle(store, _identity(), REFUSED)
     owner = provider_connection_evidence(app)
     readiness = ProviderReadiness(
         provider="llama_cpp",
@@ -163,10 +182,12 @@ def test_changed_saved_endpoint_or_credential_reads_changed_since_test():
         _identity(connection_identity=("llama_cpp", "http://127.0.0.1:8080")),
         _identity(credential_source="environment", credential_revision=5),
     ):
-        stale = owner.evidence_for(changed)
-        assert stale is not None and stale.identity != changed
+        assert owner.evidence_for(changed) is None
+        assert store.evidence_for(changed) is None
         snapshot = readiness.snapshot(
-            selected_model="model-a", evidence=stale, current_identity=changed
+            selected_model="model-a",
+            evidence=store.latest_evidence(),
+            current_identity=changed,
         )
         # Older evidence is marked, never reused as this connection's result.
         assert snapshot.endpoint == "changed_since_test"
@@ -210,8 +231,8 @@ def test_unsaved_draft_evidence_applies_only_to_that_draft_until_rebased():
     )
     assert _settle(store, tested, REACHABLE)
     owner = provider_connection_evidence(app)
-    # The saved connection does not see an unsaved typed key's result.
-    assert owner.evidence_for(saved).identity != saved
+    # The saved connection sees nothing of an unsaved typed key's result.
+    assert owner.evidence_for(saved) is None
 
     lease = store.begin_save(tested)
     assert store.rebase_after_save(
@@ -239,17 +260,118 @@ def test_stale_and_duplicate_settlements_are_rejected_per_connection():
     assert owner.version == version + 1
 
 
-def test_an_older_observation_never_overwrites_a_newer_one():
+def test_an_earlier_begun_publication_never_overwrites_a_later_one():
     owner = ProviderConnectionEvidence()
     identity = _identity()
-    newer = datetime.now().astimezone()
-    owner.publish(ProviderTestEvidence(identity, "unreachable", (), "timeout", observed_at=newer))
-    owner.publish(
-        ProviderTestEvidence(
-            identity, "reachable", ("model-a",), observed_at=newer - timedelta(minutes=5)
-        )
+    assert owner.publish(
+        ProviderTestEvidence(identity, "unreachable", (), "timeout"), order=2
+    )
+    assert not owner.publish(
+        ProviderTestEvidence(identity, "reachable", ("model-a",)), order=1
     )
     assert owner.evidence_for(identity).endpoint == "unreachable"
+
+
+def test_a_probe_begun_earlier_that_settles_last_never_overwrites_a_newer_one():
+    """Review I-1: Settings 't' hangs on a dead server; Chat settings starts a
+    probe after the server recovers and settles reachable first. The late
+    timeout must not replace that fresher result in the shared owner."""
+    app = SimpleNamespace()
+    settings_store, chat_settings_store = _linked_store(app), _linked_store(app)
+    hung = settings_store.begin(_identity(draft_generation=3))
+    recovered = chat_settings_store.begin(_identity(draft_generation=8))
+    assert chat_settings_store.settle(recovered, REACHABLE)
+    late = ProviderProbeResult("unreachable", (), "timeout")
+    # Settings still shows the result its own probe produced ...
+    assert settings_store.settle(hung, late)
+    assert settings_store.evidence_for(_identity(draft_generation=3)).endpoint == (
+        "unreachable"
+    )
+    # ... but the shared owner keeps the probe that began last.
+    owner = provider_connection_evidence(app)
+    assert owner.evidence_for(_identity()).endpoint == "reachable"
+
+
+def test_a_clock_stepping_backward_never_reorders_results(monkeypatch):
+    from tldw_chatbook.Chat import provider_test_evidence as evidence_module
+
+    noon = datetime(2026, 10, 1, 12, 0).astimezone()
+    times = iter([noon, noon - timedelta(hours=1)])
+    monkeypatch.setattr(evidence_module, "_local_now", lambda: next(times))
+    app = SimpleNamespace()
+    store = _linked_store(app)
+    assert _settle(store, _identity(), REFUSED)
+    assert _settle(store, _identity(), REACHABLE)  # The clock stepped back.
+    later = provider_connection_evidence(app).evidence_for(_identity())
+    assert later.endpoint == "reachable"
+    assert later.observed_at == noon - timedelta(hours=1)
+
+
+def test_rebinding_an_earlier_result_never_makes_it_newer():
+    """A model-only edit rebinds Chat settings' earlier result to its next
+    draft; the rebind is not a new observation, so the shared owner keeps
+    the newer result another surface settled meanwhile."""
+    app = SimpleNamespace()
+    chat_settings_store, settings_store = _linked_store(app), _linked_store(app)
+    first = _identity(draft_generation=1)
+    assert _settle(chat_settings_store, first, REFUSED)
+    earlier = chat_settings_store.evidence_for(first)
+    assert _settle(settings_store, _identity(draft_generation=4), REACHABLE)
+    owner = provider_connection_evidence(app)
+    version = owner.version
+
+    rebound = _identity(draft_generation=2)
+    assert _settle(chat_settings_store, rebound, replace(earlier, identity=rebound))
+    token = chat_settings_store.begin_generation(rebound)
+    generation = ProviderTestEvidence(
+        rebound, "not_tested", (), generation="failed", generation_category="timeout"
+    )
+    assert chat_settings_store.settle_generation(token, generation)
+
+    assert owner.evidence_for(rebound).endpoint == "reachable"
+    assert owner.evidence_for(rebound).generation == "not_tested"
+    assert owner.version == version
+
+
+def test_republishing_the_same_facts_at_the_same_time_is_not_a_change():
+    owner = ProviderConnectionEvidence()
+    seen = ProviderTestEvidence(
+        _identity(), "reachable", ("model-a",), observed_at=datetime.now().astimezone()
+    )
+    assert owner.publish(seen, order=1)
+    version = owner.version
+    assert not owner.publish(seen, order=2)
+    assert owner.version == version
+
+
+def test_a_connection_that_sends_no_key_is_one_connection_whatever_names_it():
+    """Review finding 5: Chat settings takes an explicit credential_source,
+    Settings takes what resolves; they disagree only when no key resolves
+    (e.g. credential_source = "stored" with no key). Both send nothing, so
+    both are the same connection."""
+    owner = ProviderConnectionEvidence()
+    refused = ProviderTestEvidence(
+        _identity(credential_source="stored"), "unreachable", (), "connection_refused"
+    )
+    assert owner.publish(refused, order=1)
+    for source in ("none", "environment"):
+        found = owner.evidence_for(_identity(credential_source=source))
+        assert found is not None and found.endpoint == "unreachable"
+    keyed = _identity(credential_source="stored", credential_revision=5)
+    assert owner.evidence_for(keyed) is None
+    # A later fact under another label merges into the same record.
+    assert owner.publish(
+        ProviderTestEvidence(
+            _identity(credential_source="none"),
+            "not_tested",
+            (),
+            generation="failed",
+            generation_category="timeout",
+        ),
+        order=2,
+    )
+    merged = owner.evidence_for(_identity())
+    assert (merged.endpoint, merged.generation) == ("unreachable", "failed")
 
 
 def test_read_through_never_matches_an_identity_begin_would_refuse():
@@ -328,7 +450,10 @@ def test_store_without_an_active_app_stays_draft_only():
     assert store.evidence_for(_identity()) is not None
 
 
-@pytest.mark.parametrize("observed_at", ["09:30", 1700000000])
-def test_observed_time_must_be_a_datetime(observed_at):
+@pytest.mark.parametrize(
+    "observed_at",
+    ["09:30", 1700000000, datetime(2026, 10, 1, 9, 30)],  # noqa: DTZ001 - naive on purpose
+)
+def test_observed_time_must_be_an_aware_datetime(observed_at):
     with pytest.raises(ValueError):
         ProviderTestEvidence(_identity(), "reachable", (), observed_at=observed_at)

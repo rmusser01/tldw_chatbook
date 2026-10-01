@@ -40,7 +40,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextPolicyError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
-    first_configured_endpoint,
+    effective_provider_endpoint, first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.console_provider_support import (
@@ -5712,18 +5712,14 @@ class ConsoleSettingsModal(
         provider_key = self._discovery_provider_key(self._active_provider)
         if not provider_key:
             return None
-        connection_identity = (
-            discovery_identity.connection_identity
-            if discovery_identity is not None
-            else canonical_connection_identity(
-                provider_key, _PROVIDER_DEFAULT_IDENTITY_ENDPOINT
-            )
-        )
+        if discovery_identity is not None:
+            connection_identity = discovery_identity.connection_identity
+        else:  # TASK-33005.1: no base URL typed -> the endpoint a send uses, as Settings keys it.
+            typed = self._discovery_endpoint_value(self._active_provider)
+            endpoint = None if typed else effective_provider_endpoint(provider_key, None, self._provider_settings(provider_key))
+            connection_identity = canonical_connection_identity(provider_key, endpoint or _PROVIDER_DEFAULT_IDENTITY_ENDPOINT)
         if connection_identity is None:
             return None
-        # TASK-33005.1: the revision is the sent key's digest, as on every surface.
-        readiness = get_provider_readiness(provider_key, self._app_config, background_credentials=True)
-        api_key = readiness.api_key
         if entry is not None:
             api_key, source = resolve_entry_credential(entry)
             state = (
@@ -5745,9 +5741,10 @@ class ConsoleSettingsModal(
                 if source
                 else "none"
             )
-        else:
-            provider_settings = self._provider_settings(provider_key)
-            credential_source = configured_provider_credential_source(provider_settings)
+        else:  # TASK-33005.1: the revision is the sent key's digest, as on every surface.
+            readiness = get_provider_readiness(provider_key, self._app_config, background_credentials=True)
+            api_key = readiness.api_key
+            credential_source = configured_provider_credential_source(self._provider_settings(provider_key))
         if credential_source is None:
             if readiness.api_key_source is None:
                 credential_source = "none"
@@ -6372,12 +6369,13 @@ class ConsoleSettingsModal(
             self._announce_verification_result(result)
 
         # Selecting a sole returned model advances the modal's exact model
-        # generation. Re-publish the same bounded endpoint evidence against
-        # that synchronously rebound identity so readiness stays current.
+        # generation. Rebind the settled evidence (not a new observation, so
+        # its time and begin order hold) to that synchronously rebound identity.
         rebound = self._current_connection_probe_identity()
-        if rebound is not None and rebound != identity:
+        settled = self._connection_evidence_store.evidence_for(identity)
+        if rebound is not None and rebound != identity and settled is not None:
             rebound_token = self._connection_evidence_store.begin(rebound)
-            self._connection_evidence_store.settle(rebound_token, result)
+            self._connection_evidence_store.settle(rebound_token, replace(settled, identity=rebound))
         self._sync_readiness_display()
 
     def _announce_verification_result(

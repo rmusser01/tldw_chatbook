@@ -10,6 +10,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
+from itertools import count
 from threading import Lock, RLock
 from typing import TYPE_CHECKING, Literal, Protocol
 from unicodedata import category as unicode_category
@@ -480,7 +481,10 @@ class ProviderTestEvidence:
     def __post_init__(self) -> None:
         if type(self.identity) is not ProviderDraftIdentity:
             raise ValueError("Provider evidence identity is invalid.")
-        if self.observed_at is not None and type(self.observed_at) is not datetime:
+        if self.observed_at is not None and (
+            type(self.observed_at) is not datetime
+            or self.observed_at.utcoffset() is None
+        ):
             raise ValueError("Provider evidence observation time is invalid.")
         if (
             type(self.endpoint) is not str
@@ -544,10 +548,19 @@ class _MutationResult(Protocol):
     conflict: bool
 
 
+#: TASK-33005.1: process-wide begin order. The shared owner keeps the result
+#: of the probe that BEGAN last, so a slow probe settling late on one surface
+#: never overwrites a newer one from another (and a clock step cannot either).
+_BEGIN_ORDER = count(1)
+
+
 class _ProviderTestToken:
     """Opaque, single-use capability for settling one current probe."""
 
-    __slots__ = ()
+    __slots__ = ("order",)
+
+    def __init__(self) -> None:
+        self.order = next(_BEGIN_ORDER)
 
     def __repr__(self) -> str:
         return "<ProviderTestToken>"
@@ -556,7 +569,10 @@ class _ProviderTestToken:
 class _ProviderGenerationTestToken:
     """Opaque, single-use capability for settling one generation probe."""
 
-    __slots__ = ()
+    __slots__ = ("order",)
+
+    def __init__(self) -> None:
+        self.order = next(_BEGIN_ORDER)
 
     def __repr__(self) -> str:
         return "<ProviderGenerationTestToken>"
@@ -575,9 +591,11 @@ class ProviderTestEvidenceStore:
     """Thread-safe draft-scoped owner of one surface's latest probe evidence.
 
     TASK-33005.1: a store built with ``app`` (a callable returning the running
-    app) publishes every settled fact to that app's
+    app) publishes every observed fact to that app's
     :class:`ProviderConnectionEvidence` and reads the other surfaces' facts
-    back for an exact connection. Without one it is draft-only, as before.
+    back for an exact connection. A rebound earlier result (a
+    ``ProviderTestEvidence`` outcome) was published when it was observed, so
+    it is not published again. Without ``app`` the store is draft-only.
     """
 
     def __init__(self, app: Callable[[], object] | None = None) -> None:
@@ -692,7 +710,8 @@ class ProviderTestEvidenceStore:
             )
             self._evidence = settled
             self._advance_operation()
-        self._publish(settled, generation=False)
+        if type(outcome) is not ProviderTestEvidence:
+            self._publish(settled, token.order, generation=False)
         return True
 
     def begin_generation(self, identity: ProviderDraftIdentity) -> object:
@@ -803,7 +822,8 @@ class ProviderTestEvidenceStore:
             self._evidence = settled
             self._generation_cancel_restore = None
             self._advance_generation_operation()
-        self._publish(settled, endpoint=False)
+        if type(outcome) is not ProviderTestEvidence:
+            self._publish(settled, token.order, endpoint=False)
         return True
 
     def evidence_for(
@@ -824,8 +844,7 @@ class ProviderTestEvidenceStore:
             if identity.draft_generation < self._latest_generation:
                 return None
         shared = self._shared()
-        found = shared.evidence_for(identity) if shared is not None else None
-        return found if found is not None and found.identity == identity else None
+        return shared.evidence_for(identity) if shared is not None else None
 
     def latest_evidence(self) -> ProviderTestEvidence | None:
         """Return the latest bounded snapshot for changed-since-test projection."""
@@ -1000,9 +1019,9 @@ class ProviderTestEvidenceStore:
             if can_preserve and evidence is not None:
                 self._evidence = replace(evidence, identity=saved_identity)
             self._advance_operation()
-            rebased = self._evidence if can_preserve else None
-        if rebased is not None:
-            self._publish(rebased)
+        shared = self._shared() if can_preserve else None
+        if shared is not None:
+            shared.carry(tested_identity, saved_identity)
         return can_preserve
 
     def _shared(self) -> ProviderConnectionEvidence | None:
@@ -1018,13 +1037,16 @@ class ProviderTestEvidenceStore:
     def _publish(
         self,
         evidence: ProviderTestEvidence,
+        order: int,
         *,
         endpoint: bool = True,
         generation: bool = True,
     ) -> None:
         shared = self._shared()
         if shared is not None:
-            shared.publish(evidence, endpoint=endpoint, generation=generation)
+            shared.publish(
+                evidence, order=order, endpoint=endpoint, generation=generation
+            )
 
     def _reject_settlement(
         self,
@@ -1169,8 +1191,11 @@ class ProviderConnectionEvidence:
     :func:`provider_connection_evidence`), never persisted. A connection is a
     ``ProviderDraftIdentity`` without its surface-local ``draft_generation``:
     provider, custom endpoint id, canonical endpoint, credential source and
-    :func:`connection_credential_revision`. Surfaces publish settled facts
-    through their draft stores; the Console reads here directly.
+    :func:`connection_credential_revision`. Surfaces publish observed facts
+    through their draft stores; the Console reads here directly. A reader
+    only ever gets its own connection's record: an unsaved draft's result
+    stays with that draft, and a changed connection reads as untested here
+    (the surface still holding the older result marks it changed since test).
     """
 
     def __init__(self) -> None:
@@ -1178,12 +1203,13 @@ class ProviderConnectionEvidence:
         # ponytail: one record per connection ever tested this process; it
         # only grows with explicit tests, so no eviction until that matters.
         self._records: dict[tuple[object, ...], ProviderTestEvidence] = {}
-        self._latest: dict[tuple[str, str | None], tuple[object, ...]] = {}
+        #: Per connection: begin order of the endpoint and generation facts held.
+        self._orders: dict[tuple[object, ...], tuple[int, int]] = {}
         self._version = 0
 
     @property
     def version(self) -> int:
-        """Monotonic count of accepted publications, for cheap change polling."""
+        """Monotonic count of record changes, for cheap change polling."""
 
         return self._version
 
@@ -1191,78 +1217,114 @@ class ProviderConnectionEvidence:
         self,
         evidence: ProviderTestEvidence,
         *,
+        order: int,
         endpoint: bool = True,
         generation: bool = True,
     ) -> bool:
-        """Merge the settled facets of ``evidence`` into its connection's record.
+        """Merge the observed facets of ``evidence`` into its connection's record.
 
         Only terminal facts move (a ``testing`` or changed-since-test marker is
-        a surface's draft state), and an older observation never overwrites a
-        newer one.
+        a surface's draft state). Each facet keeps the observation whose probe
+        began last, whenever it settled.
+
+        Args:
+            evidence: The settled evidence.
+            order: Begin order of the probe that observed it (its token's).
+            endpoint: Whether to take the endpoint facet.
+            generation: Whether to take the generation facet.
 
         Returns:
             Whether the record changed.
         """
 
-        if type(evidence) is not ProviderTestEvidence:
+        if type(evidence) is not ProviderTestEvidence or type(order) is not int:
             return False
         take_endpoint = endpoint and evidence.endpoint in _PROBE_ENDPOINT_FACETS
         take_generation = generation and evidence.generation in {"succeeded", "failed"}
-        if not (take_endpoint or take_generation):
-            return False
-        observed_at = evidence.observed_at or _local_now()
-        identity = replace(evidence.identity, draft_generation=0)
-        key = _connection_key(identity)
         with self._lock:
+            return self._merge(
+                evidence.identity,
+                evidence,
+                order if take_endpoint else 0,
+                order if take_generation else 0,
+            )
+
+    def carry(
+        self, tested: ProviderDraftIdentity, saved: ProviderDraftIdentity
+    ) -> bool:
+        """Give the connection a Save produced the tested connection's facts.
+
+        Called only after a save that wrote exactly the tested values (the
+        draft store's rebase), e.g. a typed key that is now the stored key.
+        Each fact keeps its begin order, so a newer result is never replaced.
+
+        Returns:
+            Whether the saved connection's record changed.
+        """
+
+        if {type(tested), type(saved)} != {ProviderDraftIdentity}:
+            return False
+        with self._lock:
+            key = _connection_key(tested)
             record = self._records.get(key)
-            if (
-                record is not None
-                and record.observed_at is not None
-                and observed_at < record.observed_at
-            ):
+            if record is None:
                 return False
-            if take_endpoint:
-                record = _replace_endpoint_evidence(
-                    record,
-                    identity=identity,
-                    endpoint=evidence.endpoint,
-                    model_ids=evidence.model_ids,
-                    category=evidence.category,
-                )
-            if take_generation:
-                record = _replace_generation_evidence(
-                    record,
-                    identity=identity,
-                    generation=evidence.generation,
-                    category=evidence.generation_category,
-                )
-            self._records[key] = replace(record, observed_at=observed_at)
-            self._latest[(identity.provider_key, identity.custom_endpoint_id)] = key
-            self._version += 1
-        return True
+            return self._merge(saved, record, *self._orders[key])
 
     def evidence_for(
         self, identity: ProviderDraftIdentity
     ) -> ProviderTestEvidence | None:
-        """Return what is known about ``identity``'s connection.
-
-        Returns:
-            The connection's record re-stamped with ``identity``; or, when only
-            another connection of the same provider was tested, that record
-            unchanged -- its identity no longer matches, so readers project it
-            as changed since test instead of reusing it; else ``None``.
-        """
+        """Return ``identity``'s connection record re-stamped with it, else ``None``."""
 
         if type(identity) is not ProviderDraftIdentity:
             return None
         with self._lock:
             record = self._records.get(_connection_key(identity))
-            if record is None:
-                latest = self._latest.get(
-                    (identity.provider_key, identity.custom_endpoint_id)
-                )
-                return None if latest is None else self._records[latest]
-        return replace(record, identity=identity)
+        return None if record is None else replace(record, identity=identity)
+
+    def _merge(
+        self,
+        identity: ProviderDraftIdentity,
+        evidence: ProviderTestEvidence,
+        endpoint_order: int,
+        generation_order: int,
+    ) -> bool:
+        """Take each offered facet (order > 0) that began after the held one."""
+
+        key = _connection_key(identity)
+        record = self._records.get(key)
+        # The record keeps its first identity, so both facets stay one record.
+        identity = (
+            record.identity if record else replace(identity, draft_generation=0)
+        )
+        held_endpoint, held_generation = self._orders.get(key, (0, 0))
+        merged = record
+        if endpoint_order > held_endpoint:
+            held_endpoint = endpoint_order
+            merged = _replace_endpoint_evidence(
+                merged,
+                identity=identity,
+                endpoint=evidence.endpoint,
+                model_ids=evidence.model_ids,
+                category=evidence.category,
+            )
+        if generation_order > held_generation:
+            held_generation = generation_order
+            merged = _replace_generation_evidence(
+                merged,
+                identity=identity,
+                generation=evidence.generation,
+                category=evidence.generation_category,
+            )
+        if merged is record:
+            return False
+        self._orders[key] = (held_endpoint, held_generation)
+        merged = replace(merged, observed_at=evidence.observed_at or _local_now())
+        if merged == record and merged.observed_at == record.observed_at:
+            return False  # Same facts at the same time: nothing for readers.
+        self._records[key] = merged
+        self._version += 1
+        return True
 
 
 def provider_connection_evidence(owner: object) -> ProviderConnectionEvidence:
@@ -1288,7 +1350,10 @@ def _connection_key(identity: ProviderDraftIdentity) -> tuple[object, ...]:
         identity.provider_key,
         identity.custom_endpoint_id,
         identity.connection_identity,
-        identity.credential_source,
+        # Revision 0 sends no key, whichever source names it: Chat settings
+        # reads an explicit credential_source, Settings what resolves, and
+        # they differ only when nothing does (e.g. "stored" with no key).
+        identity.credential_source if identity.credential_revision else "none",
         identity.credential_revision,
     )
 

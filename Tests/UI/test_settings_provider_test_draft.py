@@ -2252,9 +2252,21 @@ async def test_returning_to_settings_shows_the_shared_test_result(request):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "llama_settings",
+    [
+        {"api_url": "http://localhost:8080"},
+        # Review M-5: a stored key, so the credential revision is not 0.
+        {"api_url": "http://localhost:8080", "api_key": "sk-llama-stored-test-key"},
+        # Review finding 5: Chat settings reads the explicit source ("stored"),
+        # Settings what resolves (nothing) -- still one keyless connection.
+        {"api_url": "http://localhost:8080", "credential_source": "stored"},
+    ],
+    ids=["keyless", "stored-key", "stored-source-without-key"],
+)
 @private_profile_test
 async def test_settings_test_result_reaches_chat_settings_for_the_same_connection(
-    request,
+    llama_settings, request
 ):
     """TASK-33005.1 (AC#1): a Settings 't' on the saved llama.cpp connection
     is what Chat settings shows for that connection -- the two surfaces keep
@@ -2270,13 +2282,14 @@ async def test_settings_test_result_reaches_chat_settings_for_the_same_connectio
 
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
-    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    app.app_config["api_settings"] = {"llama_cpp": dict(llama_settings)}
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _test_reachable_llama_cpp(screen, pilot)
+        tested = screen._provider_current_draft_identity()
 
         await host.push_screen(
             ConsoleSettingsModal(
@@ -2298,3 +2311,55 @@ async def test_settings_test_result_reaches_chat_settings_for_the_same_connectio
         assert evidence.endpoint == "reachable"
         assert evidence.model_ids == ("llama-3",)
         assert "Endpoint · Reachable" in _readiness_text(modal)
+        assert identity.credential_revision == tested.credential_revision
+        assert (identity.credential_revision != 0) is ("api_key" in llama_settings)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_cloud_provider_is_one_connection_in_settings_and_chat_settings(
+    request,
+):
+    """Review I-3: with no base URL, Chat settings keyed a cloud provider on a
+    sentinel endpoint and Settings had no identity at all, so a cloud result
+    could never cross surfaces. Both now key the endpoint a send uses."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsContextEstimate,
+    )
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {"openai": {"api_key": "sk-cloud-saved-test-key"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        in_settings = _active_destination_screen(host)._provider_current_draft_identity()
+        await host.push_screen(
+            ConsoleSettingsModal(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4o"),
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4o"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        in_chat_settings = host.screen._current_connection_probe_identity()
+
+    assert in_settings is not None and in_chat_settings is not None
+    assert in_settings.connection_identity == canonical_connection_identity(
+        "openai", "https://api.openai.com/v1"
+    )
+    assert replace(in_settings, draft_generation=0) == replace(
+        in_chat_settings, draft_generation=0
+    )

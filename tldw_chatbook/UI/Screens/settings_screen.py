@@ -91,6 +91,7 @@ from ...Chat.local_reasoning import (
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
+    builtin_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
     safe_endpoint_display,
@@ -13962,6 +13963,12 @@ class SettingsScreen(BaseAppScreen):
             values = self._provider_setting_values_mapping()
         provider = str(values.get("provider") or "").strip()
         endpoint = str(values.get("endpoint") or "").strip()
+        if provider and not endpoint and not self._provider_endpoint_value(provider):
+            # TASK-33005.1: no endpoint saved or typed -> the built-in one a
+            # send uses, the connection Chat settings and the Console key.
+            endpoint = builtin_provider_endpoint(
+                provider_config_key(provider), self._provider_config(provider)
+            ) or ""
         if not provider or not endpoint:
             return None
         credential_source = self._provider_current_credential_source(provider)
