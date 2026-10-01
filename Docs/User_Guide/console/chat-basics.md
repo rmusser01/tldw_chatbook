@@ -436,8 +436,8 @@ of the next prompt, and **Manage** plus a state-specific action such as
   the draft stays in the composer and the strip beside the button reads
   "Queue opens once this turn is accepted". Once the turn is accepted, an
   empty draft reads "Type to queue". A regenerate or continue never opens the
-  queue, so once one is streaming the strip reads "Wait for the current run
-  to finish" instead.
+  queue, so from the moment one starts (provider validation included) the
+  strip reads "Wait for the current run to finish" instead.
 - **Queue full** preserves the draft and asks you to manage the existing 10;
   the strip reads "Queue full — manage it to make room".
 - Neither is a provider problem: these queue messages never say "finish

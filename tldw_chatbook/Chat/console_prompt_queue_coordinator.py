@@ -223,8 +223,14 @@ class ConsolePromptQueueCoordinator:
             (chain and chain.accepted_live_turn)
             or session_id in self._dispatch_recoveries
         )
+        # TASK-33620.4 review: "preparing before acceptance" promises that a
+        # queue opens once this turn is accepted, which only a prompt-chain
+        # turn ever is. A chainless run (regenerate / continue / agent wake /
+        # manual summary) in the same status occupies the slot but never
+        # opens a queue, so it is not "preparing".
         preparing = (
-            status
+            chain is not None
+            and status
             in {
                 ConsoleRunStatus.VALIDATING,
                 ConsoleRunStatus.RETRYING,

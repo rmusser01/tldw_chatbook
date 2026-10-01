@@ -34,7 +34,6 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import (
     DelayedWaitingGateway,
-    WaitingGateway,
     _build_console_send_test_app,
     _configure_native_ready_console,
     _configure_openai_missing_api_key,
@@ -300,10 +299,13 @@ async def test_held_healthy_run_reads_running_on_every_surface_and_never_setup()
 async def test_held_regenerate_names_the_run_wait_not_a_queue_that_never_opens():
     """Review follow-up: regenerate (like continue and an agent wake) never
     creates a prompt chain, so it is never queue-accepted and the queue never
-    opens behind it. Mid-stream the composer must name the run it is waiting
-    on -- not promise a queue -- and never provider setup."""
-    gateway = WaitingGateway()
-    gateway.release.set()  # the first, ordinary turn streams straight through
+    opens behind it. Through provider validation AND mid-stream the composer
+    must name the run it is waiting on -- not promise a queue -- and never
+    provider setup."""
+    gateway = DelayedWaitingGateway()
+    # The first, ordinary turn validates and streams straight through.
+    gateway.validation_release.set()
+    gateway.release.set()
     app = _build_console_send_test_app()
     _configure_native_ready_console(app, model="test-model")
     app.console_provider_gateway_factory = lambda: gateway
@@ -325,10 +327,30 @@ async def test_held_regenerate_names_the_run_wait_not_a_queue_that_never_opens()
         assistant_id = store.active_leaf(store.active_session_id)
         assert assistant_id is not None
 
-        # Hold the regenerate mid-stream (the provider double, not the seam).
+        # Hold the regenerate at the provider double (not the seam): first in
+        # validation, where the coordinator's run status alone used to read as
+        # a prompt turn "preparing before acceptance" ...
+        gateway.validation_started = asyncio.Event()
+        gateway.validation_release = asyncio.Event()
         gateway.started = asyncio.Event()
         gateway.release = asyncio.Event()
         regenerate = asyncio.create_task(controller.regenerate_message(assistant_id))
+        await asyncio.wait_for(
+            gateway.validation_started.wait(), timeout=_SETTLE_TIMEOUT
+        )
+        await _settle(console, pilot)
+        assert controller.run_state.status is ConsoleRunStatus.VALIDATING
+        violations = _composer_queue_violations(
+            composer, expected="Wait for the current run to finish"
+        )
+        assert not violations, "[regenerate, validating] " + "; ".join(violations)
+        assert "queue" not in str(composer._send_disabled_reason).lower()
+        activity = controller.prompt_queue_coordinator.activity(store.active_session_id)
+        assert activity.occupies_slot and not activity.accepted_live_turn
+        assert not activity.preparing_before_acceptance
+
+        # ... then mid-stream.
+        gateway.validation_release.set()
         await asyncio.wait_for(gateway.started.wait(), timeout=_SETTLE_TIMEOUT)
         await _settle(console, pilot)
         assert controller.run_state.status is ConsoleRunStatus.STREAMING
