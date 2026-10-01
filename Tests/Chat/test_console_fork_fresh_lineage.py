@@ -429,6 +429,46 @@ def test_discarded_reply_is_named_by_its_state_not_its_placeholder_text() -> Non
     )
 
 
+def test_quoted_row_text_is_never_parsed_as_markup() -> None:
+    """A refusal quotes user/model text into markup-parsing surfaces.
+
+    The action guide ``Static``, the Fork button's tooltip and ``notify``
+    toasts all render a plain string through ``Content.from_markup``, so an
+    unescaped ``[/]`` raised ``MarkupError`` and ``[@click=...]`` added a link.
+    """
+    from textual.content import Content
+
+    question = "[/] [b]b[/b] [@click=app.quit]x[/]"
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+        ephemeral=True,
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content=question)
+    discarded = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="Response discarded."
+    )
+    store._nodes_by_session[session.id][discarded.id].status = "discarded"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+    later = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a2"
+    )
+
+    for message_id, lead in (
+        (discarded.id, "Discarded messages cannot be forked."),
+        (
+            later.id,
+            "The discarded Assistant reply above this message can't be copied "
+            "into a fork.",
+        ),
+    ):
+        painted = Content.from_markup(store.fork_eligibility(message_id).reason)
+        assert painted.plain == (
+            f'{lead} Fork from the User message "{question}" instead.'
+        )
+        assert painted.spans == []
+
+
 @pytest.mark.asyncio
 async def test_temporary_chat_help_between_turns_forks_the_whole_exchange(
     tmp_path,

@@ -53,6 +53,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
 )
 from tldw_chatbook.Utils.input_validation import (
     CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,
+    escape_markup,
     validate_console_fork_title,
 )
 
@@ -441,7 +442,10 @@ def describe_console_fork_row(message: ConsoleChatMessage) -> str:
 
     A row that is not complete leads with its state ("failed Assistant
     reply"), and only real text is quoted as a short excerpt -- never a
-    discarded row's placeholder or a reply that is still streaming.
+    discarded row's placeholder or a reply that is still streaming. The
+    excerpt is markup-escaped: every surface showing a fork refusal (the
+    action guide ``Static``, the Fork tooltip, ``notify`` toasts) parses
+    Textual content markup, and a quoted ``[/]`` raised ``MarkupError``.
     """
 
     kind = _CONSOLE_FORK_ROW_KINDS.get(message.role, "message")
@@ -453,7 +457,8 @@ def describe_console_fork_row(message: ConsoleChatMessage) -> str:
     )
     if len(text) > _CONSOLE_FORK_ROW_EXCERPT_CHARS:
         text = text[: _CONSOLE_FORK_ROW_EXCERPT_CHARS - 1].rstrip() + "…"
-    return f'{label} "{text}"' if text else label
+    # Escaped after the cut, so a ``[`` the cut leaves is still escaped.
+    return f'{label} "{escape_markup(text)}"' if text else label
 
 
 def _console_fork_row_problem(
