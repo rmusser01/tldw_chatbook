@@ -30,12 +30,15 @@ dismissing it where the app pump is alive -- FAILS instead of passing as the
 expected XFAIL (``raises=AssertionError`` let exactly that go green).
 
 Every test releases the stranded result callback in a ``finally`` so a red
-run still tears down instead of hanging the suite.
+run still tears down instead of hanging the suite, and ``_open_review_from``
+releases a review it already pushed when its own checks fail, before that
+``finally`` exists.
 """
 
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 from textual import events
@@ -136,16 +139,28 @@ async def _open_review_from(route: str, host, pilot):
         composer.focus()
         await pilot.pause()
         _key(host, "enter", "\r")
-    # Mounted, not merely pushed: dismissing it before its on_mount ran
-    # raised NoMatches there and buried the real failure under it.
-    assert await _until(
-        lambda: (
-            isinstance(host.screen, ConsoleHooksReviewModal) and host.screen.is_mounted
-        ),
-        10,
-    ), f"{route}: the hook review never opened"
-    modal = host.screen
-    return console, modal, modal._result_callbacks[-1].requester
+    try:
+        # Mounted, not merely pushed: dismissing it before its on_mount ran
+        # raised NoMatches there and buried the real failure under it.
+        assert await _until(
+            lambda: (
+                isinstance(host.screen, ConsoleHooksReviewModal)
+                and host.screen.is_mounted
+            ),
+            10,
+        ), f"{route}: the hook review never opened"
+        modal = host.screen
+        return console, modal, modal._result_callbacks[-1].requester
+    except Exception:
+        # The caller's `finally` has not started yet, so release a review
+        # this already pushed here: its result callback is stranded on the
+        # blocked pump that pushed it, and run_test's teardown awaits that
+        # pump's task -- the run would hang instead of failing.
+        for screen in list(host.screen_stack):
+            if isinstance(screen, ConsoleHooksReviewModal) and screen._result_callbacks:
+                await _until(lambda screen=screen: screen.is_mounted, 5)
+                await _release(host, screen, screen._result_callbacks[-1].requester)
+        raise
 
 
 async def _release(host, modal, requester) -> None:
@@ -187,6 +202,52 @@ async def test_console_pump_runs_again_after_the_send_review_is_dismissed(
             )
         finally:
             await _release(host, modal, requester)
+
+
+async def test_a_failed_open_check_still_releases_the_review_it_opened(
+    hook_file, monkeypatch
+):
+    """PR #2944 review: each test opened the review BEFORE its ``try``, so a
+    failure inside ``_open_review_from`` once the review was pushed -- its
+    mounted check timing out -- skipped the ``finally`` and left the result
+    callback stranded on the pump that pushed it. Textual's teardown awaits
+    that blocked pump's task (``MessagePump._close_messages``), so the run
+    would hang to the suite timeout instead of failing. The helper must
+    release what it opened before its error propagates."""
+    real_until = _until
+
+    async def wait_then_time_out(predicate, seconds):
+        # Wait for real, then report a timeout: the review IS open, exactly
+        # what a mount that finishes past the deadline leaves behind.
+        await real_until(predicate, seconds)
+        return False
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen
+        module = sys.modules[__name__]
+        monkeypatch.setattr(module, "_until", wait_then_time_out)
+        with pytest.raises(AssertionError, match="the hook review never opened"):
+            await _open_review_from("send-button", host, pilot)
+        monkeypatch.setattr(module, "_until", real_until)
+        stranded = [
+            screen
+            for screen in host.screen_stack
+            if isinstance(screen, ConsoleHooksReviewModal)
+        ]
+        try:
+            assert not stranded, "the failed open left its review on the stack"
+            assert await _until(lambda: not console._hooks._busy, 5), (
+                "the Send behind the failed open never settled"
+            )
+            assert await _pump_runs(console), "the Console pump is still blocked"
+        finally:
+            # A red run must still tear down.
+            for modal in stranded:
+                if modal._result_callbacks:
+                    await _release(host, modal, modal._result_callbacks[-1].requester)
 
 
 @_FREEZE
