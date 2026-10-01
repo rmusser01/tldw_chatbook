@@ -466,11 +466,15 @@ of the next prompt, and **Manage** plus a state-specific action such as
   paused without a failed turn behind it, shows `Paused` with **Resume**. A
   prompt that could not start shows `Start refused` with **Try again**.
   Context changes require **Review** followed by **Use current** before
-  draining resumes. If the conversation changed while the queue was paused,
-  **Resume** or **Retry** sends nothing: a notice says the conversation
-  changed, and the shelf switches to `Context changed` with **Review**.
-  **Use current** then sends the next waiting prompt; it does not re-run the
-  failed or stopped turn.
+  draining resumes. An edit, a delete, a compaction, or a failed **Retry
+  stopped** all change the conversation. After such a change, **Resume**,
+  **Resume next**, **Try again**, and **Retry** (or **Retry failed** and
+  **Retry stopped** in Manage) send nothing: a notice says the conversation
+  has changed, and the shelf switches to `Context changed` with **Review**.
+  A pending response's **Retry response**, **Retry anyway**, or **Discard**
+  still settles that response, but the prompts waiting behind it stop at the
+  same review. **Use current** then sends the next waiting prompt; it does
+  not re-run the failed or stopped turn.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.
