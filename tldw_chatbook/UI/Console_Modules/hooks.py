@@ -40,12 +40,37 @@ def same_captured_draft(
     )
 
 
-def _in_worker() -> bool:
+def in_worker_task() -> bool:
+    """Return whether the running task IS a Textual worker's own task.
+
+    ``get_current_worker()`` alone is not enough: it reads a contextvar, and
+    Textual starts a screen's message pump with ``create_task``, which copies
+    the caller's contextvars. A Console pushed by tab navigation (which runs
+    in the app's ``screen-navigation`` worker) therefore answers "in a
+    worker" in every handler on its pump, and a Send there awaited the whole
+    review on that pump (TASK-33621.28 review). The worker's task is
+    Textual 8's private ``Worker._task``; if a Textual upgrade drops it, this
+    answers False -- the safe side (hand off), which the spoken-send tests
+    in ``Tests/UI/test_console_hook_review_send_freeze.py`` would report.
+
+    ``_task`` is None only during a worker's FIRST step: Textual's
+    ``App.run_async`` installs ``asyncio.eager_task_factory`` (``run_test``
+    does not), so that step runs inside ``create_task``, before the result
+    is assigned. A running worker with no task yet is therefore the current
+    one. (A pump started in that very step also inherits it, but only its
+    own first step could see it so: the worker is assigned its task before
+    that pump's task runs again.)
+    """
     try:
-        get_current_worker()
+        worker = get_current_worker()
     except NoActiveWorker:
         return False
-    return True
+    if not hasattr(worker, "_task"):
+        return False
+    task = worker._task
+    if task is None:
+        return worker.is_running
+    return task is asyncio.current_task()
 
 
 class ConsoleHooksController:
@@ -129,14 +154,15 @@ class ConsoleHooksController:
     ) -> ConsolePromptDispatchResult:
         """Review hooks if the Send needs it, then run the captured dispatch.
 
-        Called outside a Textual worker -- a Send button or Workbench handler
-        on the Console's pump, or Enter's ``app.call_later`` callback on the
-        APP pump -- a Send that needs review returns ``AWAITING_REVIEW`` at
-        once and its review-then-dispatch continuation runs in a worker. That
-        caller's pump must stay free: the app pump delivers every key and
-        click the review needs, so awaiting the review there froze the whole
-        app, Ctrl+Q included (TASK-33621.28). A worker caller (spoken "send")
-        awaits the whole continuation and gets its settled outcome.
+        Called anywhere but a worker's own task -- a Send button or Workbench
+        handler on the Console's pump, or Enter's ``app.call_later`` callback
+        on the APP pump -- a Send that needs review returns
+        ``AWAITING_REVIEW`` at once and its review-then-dispatch continuation
+        runs in a worker. That caller's pump must stay free: the app pump
+        delivers every key and click the review needs, so awaiting the review
+        there froze the whole app, Ctrl+Q included (TASK-33621.28). A worker
+        caller (spoken "send") awaits the whole continuation and gets its
+        settled outcome. ``in_worker_task`` decides which, by task identity.
         """
         if self._busy:
             return self._refused(
@@ -152,7 +178,7 @@ class ConsoleHooksController:
             if (
                 not snapshot.ready
                 and self._start_worker is not None
-                and not _in_worker()
+                and not in_worker_task()
             ):
                 continuation = self._continue_in_worker(
                     snapshot, generation, session_id, stash, dispatch
@@ -181,10 +207,17 @@ class ConsoleHooksController:
         stash: ConsoleDraftStash | None,
         dispatch: Callable[[], Awaitable[ConsolePromptDispatchResult]],
     ) -> ConsolePromptDispatchResult:
+        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+
         try:
-            return await self._continue(
-                snapshot, generation, session_id, stash, dispatch
-            )
+            # The worker inherits the Send's diagnostic attempt, whose UI
+            # scopes closed as awaiting_review; record how the Send ended.
+            async with send_diagnostic_scope("hook_review_continuation") as diagnostic:
+                result = await self._continue(
+                    snapshot, generation, session_id, stash, dispatch
+                )
+                diagnostic.outcome = result.status.value
+                return result
         finally:
             self._busy = False
 
@@ -208,7 +241,9 @@ class ConsoleHooksController:
             or self._session() != session_id
             or not same_captured_draft(self._stash(), stash)
         ):
-            return self._refused(session_id, "Draft, chat or hooks changed; Send again.")
+            return self._refused(
+                session_id, "Draft, chat or hooks changed; Send again."
+            )
         # The captured continuation is consumed before the normal dispatcher awaits.
         self._generation += 1
         return await dispatch()

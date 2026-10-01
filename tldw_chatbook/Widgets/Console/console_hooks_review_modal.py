@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -16,7 +17,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, Static
 
 from tldw_chatbook.Constants import TAB_SETTINGS
-from tldw_chatbook.UI.Console_Modules.hooks import HookReviewResult
+from tldw_chatbook.UI.Console_Modules.hooks import HookReviewResult, in_worker_task
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -450,9 +451,17 @@ async def request_hook_review(
     ``call_next`` (see ``ConsoleHooksReviewModal.answer``), but the APP pump
     delivers every key and click the modal needs, so awaiting it on the app
     pump -- a handler or an ``app.call_later`` callback -- still freezes the
-    whole app (TASK-33621.28). ``ConsoleHooksController.dispatch`` hands a
-    non-worker Send's review to a worker for exactly this reason.
+    whole app (TASK-33621.28). ``ConsoleHooksController.dispatch`` hands the
+    review of a Send made off a worker's own task to a worker for exactly
+    this reason.
     """
+    if not in_worker_task():
+        # W003 cannot see this await (the modal settles its own answer), so
+        # a new caller on a pump is reported here rather than found frozen.
+        logger.error(
+            "Hook review awaited outside a worker task: the caller's message "
+            "pump is blocked until the review closes (TASK-33621.28)."
+        )
     modal = ConsoleHooksReviewModal(
         snapshot=snapshot,
         waiting_for_send=waiting,

@@ -280,3 +280,54 @@ async def test_dismissal_during_row_refresh_does_not_query_removed_modal(hook_fi
         release.set()
         await asyncio.wait_for(refresh, 5)
         assert synced == []
+
+
+@pytest.mark.parametrize("caller", ["worker", "plain-task"])
+async def test_a_review_awaited_off_a_worker_task_is_logged(caller, hook_file):
+    """TASK-33621.28 review: W003 cannot see ``request_hook_review``'s await
+    (the modal settles its own answer), and the freeze it caused on the app
+    pump logged nothing. A caller off a worker task is now an ERROR in the
+    app log; a worker caller -- every caller today -- is not. Run under
+    ``asyncio.eager_task_factory``, as Textual's ``run_async`` runs the real
+    app (``run_test`` does not): there a worker's first step runs before
+    ``Worker._task`` is set, and the live hfrf1 run logged a false ERROR."""
+    from loguru import logger
+
+    errors: list[str] = []
+    sink = logger.add(
+        lambda message: errors.append(message.record["message"]),
+        level="ERROR",
+        filter=lambda record: "TASK-33621.28" in record["message"],
+    )
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(120, 40)) as pilot:
+            loop = asyncio.get_running_loop()
+            previous = loop.get_task_factory()
+            loop.set_task_factory(asyncio.eager_task_factory)
+            try:
+                console = host.screen
+                owner = console._console_runtime().ensure_hook_permissions()
+                snapshot = await asyncio.to_thread(owner.snapshot)
+                review = console._request_console_hooks_review(
+                    snapshot, False, lambda: None
+                )
+                if caller == "worker":
+                    worker = console.run_worker(review, group="test-hook-review")
+                    pending = worker.wait()
+                else:
+                    pending = asyncio.ensure_future(review)
+                async with asyncio.timeout(5):
+                    while not isinstance(host.screen, ConsoleHooksReviewModal):
+                        await pilot.pause(0.01)
+                await _wait_for_selector(host.screen, pilot, "#console-hooks-review")
+                await pilot.press("escape")
+                result = await asyncio.wait_for(pending, 5)
+                assert result.kind == "cancel" and host.screen is console
+            finally:
+                loop.set_task_factory(previous)
+    finally:
+        logger.remove(sink)
+    assert len(errors) == (1 if caller == "plain-task" else 0), errors

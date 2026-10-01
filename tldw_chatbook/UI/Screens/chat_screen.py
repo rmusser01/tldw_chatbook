@@ -18922,10 +18922,10 @@ class ChatScreen(BaseAppScreen):
                 as a real one.
 
         Returns:
-            Whether the draft was actually queued as a user turn. The button
-            path discards this; the spoken-command path (`Console, send.`)
-            needs it, because every refusal below returns without sending and
-            an ack that says otherwise is simply wrong.
+            Whether the draft was queued as a user turn: False on a refusal,
+            and while a worker owns the Send's hook review (TASK-33621.28). The
+            button path discards this; the spoken path (`Console, send.`) runs
+            in a worker, so it waits for that review and acks the real outcome.
         """
         event.stop()
         return await self._send_console_message_from_visible_action(
@@ -18957,7 +18957,8 @@ class ChatScreen(BaseAppScreen):
             sent = await self._send_console_message_from_visible_action_observed(
                 session_id=session_id, pending_send_token=pending_send_token
             )
-            diagnostic.outcome = "dispatched" if sent else "not_dispatched"
+            if sent or diagnostic.outcome != "awaiting_review":  # TASK-33621.28
+                diagnostic.outcome = "dispatched" if sent else "not_dispatched"
             return sent
 
     async def _send_console_message_from_visible_action_observed(
@@ -18969,11 +18970,11 @@ class ChatScreen(BaseAppScreen):
         """Route the visible Console send action through the native controller.
 
         Returns:
-            True once the draft has been queued as a user turn; False on every
-            refusal -- an empty draft with no attachment, a `/`-command or
-            unknown-command dispatch (which never sends by design), and every
-            gate inside `_dispatch_console_draft_send`. Each refusal has
-            already shown its own toast or system row.
+            True once the draft has been queued as a user turn. False on every
+            refusal (an empty draft with no attachment, a `/`-command or
+            unknown-command dispatch, any `_dispatch_console_draft_send` gate),
+            each with its own toast or system row, and while a worker owns the
+            Send's hook review (TASK-33621.28).
         """
         # A scheduled Enter callback may consume only its own capture.
         # Mouse/Workbench sends have no token and always read the live draft.
@@ -22696,9 +22697,9 @@ class ChatScreen(BaseAppScreen):
                 self._console_pending_send = None
                 return
             # Enter and Send converge on the same visible-action handler.
-            # Scheduling it on the app pump preserves the keypress snapshot
-            # while app-owned runtime custody, not a screen worker or timer,
-            # owns accepted work.
+            # Scheduling it on the app pump preserves the keypress snapshot;
+            # app-owned runtime custody owns accepted work, except that a Send
+            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
             self.app.call_later(
                 partial(
                     self._send_console_message_from_visible_action,

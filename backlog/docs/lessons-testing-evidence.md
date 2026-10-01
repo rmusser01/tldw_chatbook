@@ -17189,3 +17189,39 @@ the Ctrl+K session switcher on the same build ignored it too.
 harness app says the app pump is alive, nothing more. Before claiming "Ctrl+Q
 works while X is open", check the real `TldwCli` binding's `priority` or
 drive the live app. Name such a harness test for what it proves.
+
+## 2026-09-30 — `get_current_worker()` answers "worker" on a pump started from a worker (TASK-33621.28 review)
+
+**Incident.** The hook-review freeze fix decided whether to hand a Send's
+review to a worker by asking `get_current_worker()`. All 12 harness tests and
+three live runs passed. An independent review then opened the Console by
+clicking its tab (`default_tab = "library"`) and clicked Send: the log showed
+`ui_dispatch status=refused duration_ms=16328`, i.e. the review had been
+awaited inline on the Console pump for 16 s, against `awaiting_review` at
+191 ms when the Console was the startup screen. `active_worker` is a
+contextvar, and Textual starts each message pump with `create_task`, which
+copies the caller's context. Tab navigation runs in the app's
+`screen-navigation` worker, so every handler on a navigated screen's pump
+"is in" that long-finished worker. `ConsoleHarness` pushes `ChatScreen` from
+`on_mount` on the app pump, and every live run booted straight into the
+Console, so neither could see it.
+
+**What to do.** To ask "am I running in a worker?", compare tasks:
+`asyncio.current_task() is worker._task` (`hooks.in_worker_task`), never
+the contextvar alone. A test of any "am I in a worker / on a pump" decision
+needs a negative control that pushes the screen from a worker
+(`Tests/UI/test_console_hook_review_send_freeze.py::NavigatedConsoleHarness`,
+or the pure-Textual `_dispatch_from_textual` in
+`Tests/Chat/test_console_hook_admission.py`), and a live check should reach
+the screen by navigation, not only as the startup screen.
+
+**Second trap, same round.** The task-identity fix passed every test, and the
+first live run then logged the new "review awaited outside a worker task"
+ERROR from inside a worker. Textual's `App.run_async` (the real app) installs
+`asyncio.eager_task_factory`; `App.run_test` does not. Under the eager
+factory a worker's first step runs inside `create_task`, before
+`Worker._task` is assigned, so the check was False exactly there. Anything
+that depends on when a task first runs (task identity, ordering between a
+caller and the task it starts) needs a test under the eager factory too:
+`loop.set_task_factory(asyncio.eager_task_factory)` around the test (the
+`_task_factory` helper in the freeze test file), restored in `finally`.

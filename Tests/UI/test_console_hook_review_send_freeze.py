@@ -19,8 +19,11 @@ pump awaiting the future, so the callback could never run:
 
 The fix has two halves, and these tests need both. The review's answer is a
 future the modal settles in its own ``dismiss`` (no pump has to flush it), and
-a Send outside a worker hands its review-then-dispatch continuation to a
-worker, so no pump -- the app's least of all -- waits for the user's answer.
+a Send made anywhere but a worker's own task hands its review-then-dispatch
+continuation to a worker, so no pump -- the app's least of all -- waits for
+the user's answer. "A worker's own task" is decided by task identity: a
+Console reached by tab navigation has a pump that inherited the navigation
+worker's contextvar (``NavigatedConsoleHarness`` below).
 
 Input after the review opens is delivered the way the terminal driver does
 (``_key``), not through Pilot, whose idle wait never returns while a pump is
@@ -29,18 +32,26 @@ blocked: pre-fix, these tests fail on a bounded poll instead of hanging.
 Every test releases the review in a ``finally`` so a red run still tears down
 instead of hanging the suite, and ``_open_review_from`` releases a review it
 already pushed when its own checks fail, before that ``finally`` exists.
+
+These tests reach into Textual internals on purpose, pinned to Textual 8.x:
+``app._driver.send_message`` (driver-style input), and, only to tear down a
+red run, ``modal._result_callbacks[-1].requester`` and its
+``_flush_next_callbacks()``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 
 import pytest
 from textual import events
 from textual.widgets import Button
+from textual.worker import NoActiveWorker, get_current_worker
 
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_workbench_contract import (
     ConsoleHarness,
     _configure_native_ready_console,
@@ -51,6 +62,7 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptDispatchResult,
     ConsolePromptDispatchStatus,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
     ConsoleHooksReviewModal,
@@ -65,6 +77,30 @@ CANCELLED = "Send cancelled; draft kept."
 ROUTES = ["send-button", "workbench-send", "enter"]
 
 
+class NavigatedConsoleHarness(ConsolidatedCSSApp):
+    """Push the Console from a worker, as clicking its tab does.
+
+    ``TldwCli._dispatch_screen_navigation`` runs navigation in the app's
+    ``screen-navigation`` worker, and Textual starts the pushed screen's pump
+    with ``create_task``, which copies that worker's contextvars -- so every
+    handler on the Console's pump still finds it through
+    ``get_current_worker()``. ``ConsoleHarness`` pushes from ``on_mount`` on
+    the app pump and cannot show this. (Not a ``ConsoleHarness`` subclass:
+    Textual runs every class's ``on_mount`` along the MRO, so its push would
+    run as well.)
+    """
+
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        async def navigate() -> None:
+            await self.push_screen(ChatScreen(self.app_instance))
+
+        self.run_worker(navigate(), group="screen-navigation")
+
+
 def _key(app, key: str, char: str | None = None) -> None:
     """Deliver a key the way the terminal driver does, through the app pump,
     without Pilot's idle wait (which itself never returns while a pump is
@@ -72,6 +108,20 @@ def _key(app, key: str, char: str | None = None) -> None:
     event = events.Key(key, char)
     event.set_sender(app)
     app._driver.send_message(event)
+
+
+@contextlib.contextmanager
+def _task_factory(factory: str):
+    """``eager`` is how the real app runs: Textual's ``App.run_async``
+    installs ``asyncio.eager_task_factory``, and ``run_test`` does not."""
+    loop = asyncio.get_running_loop()
+    previous = loop.get_task_factory()
+    if factory == "eager":
+        loop.set_task_factory(asyncio.eager_task_factory)
+    try:
+        yield
+    finally:
+        loop.set_task_factory(previous)
 
 
 async def _until(predicate, seconds: float) -> bool:
@@ -167,7 +217,10 @@ def _answer(host, modal, answer: str) -> None:
     if answer == "escape":
         _key(host, "escape")
         return
-    button_id = {"allow-all": "console-hooks-allow-all", "not-now": "console-hooks-cancel"}
+    button_id = {
+        "allow-all": "console-hooks-allow-all",
+        "not-now": "console-hooks-cancel",
+    }
     modal.query_one(f"#{button_id[answer]}", Button).focus()
     _key(host, "enter", "\r")
 
@@ -313,6 +366,119 @@ async def test_allow_all_resumes_the_captured_send_exactly_once(route, hook_file
             assert console._console_runtime().ensure_hook_permissions().snapshot().ready
         finally:
             await _release(host, modal, requester)
+
+
+@pytest.mark.parametrize("route", ["send-button", "workbench-send"])
+@pytest.mark.parametrize(
+    ("answer", "factory"),
+    [("escape", "lazy"), ("allow-all", "lazy"), ("allow-all", "eager")],
+)
+async def test_a_console_reached_by_navigation_never_awaits_review_on_its_pump(
+    route, answer, factory, hook_file
+):
+    """TASK-33621.28 review finding: on a Console reached by tab navigation,
+    the Send button and Workbench send awaited the whole review on the
+    Console pump (live: ``ui_dispatch status=refused duration_ms=16328``),
+    because the pump inherited the navigation worker as ``active_worker``.
+    No deadlock -- the modal settles its own answer -- but the Console was
+    blocked for the whole review. ``eager`` runs it under the task factory
+    the real app runs with (see ``_task_factory``)."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    notices = _record_notices(app)
+    host = NavigatedConsoleHarness(app)
+    with _task_factory(factory):
+        await _run_navigated_review(host, route=route, answer=answer, notices=notices)
+
+
+async def _run_navigated_review(host, *, route, answer, notices):
+    async with host.run_test(size=(120, 40)) as pilot:
+        assert await _until(
+            lambda: isinstance(host.screen, ChatScreen) and host.screen.is_mounted,
+            10,
+        ), "the navigation worker never mounted the Console"
+        console = host.screen
+        await pilot.pause()
+        inherited: list = []
+
+        def note_worker() -> None:
+            try:
+                inherited.append(get_current_worker())
+            except NoActiveWorker:
+                inherited.append(None)
+
+        console.call_later(note_worker)
+        assert await _until(lambda: inherited, 5)
+        # The negative control: this harness reproduces navigation only if
+        # the Console's pump really did inherit the navigation worker.
+        assert inherited[0] is not None and inherited[0].group == "screen-navigation"
+        calls = _record_dispatch(console)
+        console, composer, modal, requester = await _open_review_from(
+            route, host, pilot
+        )
+        try:
+            await _assert_pumps_run(host, console, f"{route}, review open")
+            _answer(host, modal, answer)
+            if answer == "allow-all":
+                assert await _until(lambda: calls == [DRAFT], 5), (
+                    f"{route}: the approved Send never dispatched: {calls!r}"
+                )
+            else:
+                assert await _until(lambda: CANCELLED in notices, 5), (
+                    f"{route}: no refusal copy: {notices!r}"
+                )
+                assert calls == [] and composer.draft_text() == DRAFT
+            assert await _until(
+                lambda: host.screen is console and not console._hooks._busy, 5
+            ), f"{route}: the Send never settled"
+            await _assert_pumps_run(host, console, f"{route}, after the review")
+        finally:
+            await _release(host, modal, requester)
+
+
+async def test_a_handed_off_send_records_its_reviewed_outcome(hook_file, monkeypatch):
+    """TASK-33621.28 review finding: a handed-off Send was logged
+    ``ui_action not_dispatched`` even when Allow all then sent it. The UI
+    scopes now close as ``awaiting_review``, and the worker records
+    ``hook_review_continuation`` with the real status, all under one attempt."""
+    from tldw_chatbook.Chat.console_send_diagnostics import SendDiagnostic
+
+    stages: list[tuple[str, str, str]] = []
+    record = SendDiagnostic.record
+
+    def recording(self, phase, status="entered", **fields):
+        stages.append((self.attempt_id, phase, status))
+        return record(self, phase, status, **fields)
+
+    monkeypatch.setattr(SendDiagnostic, "record", recording)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen
+        calls = _record_dispatch(console)
+        console, _composer, modal, requester = await _open_review_from(
+            "send-button", host, pilot
+        )
+        try:
+            _answer(host, modal, "allow-all")
+            assert await _until(
+                lambda: (
+                    ("hook_review_continuation", "sent")
+                    in {(phase, status) for _, phase, status in stages}
+                ),
+                5,
+            ), stages
+            assert calls == [DRAFT]
+        finally:
+            await _release(host, modal, requester)
+    settled = [(phase, status) for _, phase, status in stages if status != "entered"]
+    assert settled == [
+        ("ui_dispatch", "awaiting_review"),
+        ("ui_action", "awaiting_review"),
+        ("hook_review_continuation", "sent"),
+    ]
+    assert len({attempt for attempt, _, _ in stages}) == 1
 
 
 async def test_the_app_pump_answers_ctrl_q_while_the_enter_review_is_open(hook_file):

@@ -79,7 +79,11 @@ W003 (census ratchet, TASK-33621.13)
     That is not a licence to await it on the APP pump: the app pump delivers
     the keys that dismiss the modal, so awaiting any screen's answer there
     still freezes the app, and W003 cannot see that either. The Console hands
-    a non-worker Send's review to a worker; the runtime proof is
+    a Send's review to a worker unless the caller IS a worker's own task
+    (``hooks.in_worker_task``: a screen pushed from a worker inherits that
+    worker's contextvar, so ``get_current_worker()`` alone answers "worker"
+    on its pump), and ``request_hook_review`` logs an ERROR when awaited off
+    one; the runtime proof is
     ``Tests/UI/test_console_hook_review_send_freeze.py``. Known limitation:
     the hand-rolled shape is recognized only when ONE
     function creates the future, pushes and awaits it. A helper that creates

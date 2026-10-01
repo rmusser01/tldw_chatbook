@@ -300,36 +300,122 @@ async def test_a_cancelled_handed_off_review_refuses_and_releases_the_send(hook_
     assert sent == [] and not hooks._busy
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("caller", ["ready-snapshot", "worker"])
-async def test_a_ready_send_or_a_worker_caller_never_hands_off(hook_file, caller):
-    """Nothing to review, or a caller that IS a worker (spoken "send"): the
-    Send is awaited inline and its caller gets the settled outcome."""
-    import contextvars
-
-    from textual.worker import active_worker
-
-    owner = HookPermissions()
-    if caller == "ready-snapshot":
-        pending = owner.snapshot()
-        owner.approve(pending, [pending.rows[0].entry.key])
-
+def _approving_review(owner):
     async def review(snapshot, waiting, on_cancel):
         return HookReviewResult(
             "ready", owner.approve(snapshot, [snapshot.rows[0].entry.key])
         )
 
+    return review
+
+
+@pytest.mark.asyncio
+async def test_a_ready_send_never_hands_off(hook_file):
+    """Nothing to review: the Send is awaited inline even off a worker."""
+    owner = HookPermissions()
+    pending = owner.snapshot()
+    owner.approve(pending, [pending.rows[0].entry.key])
     started: list = []
-    hooks, stash, dispatch, sent = _handoff_controller(owner, review, started)
-    context = contextvars.copy_context()
-    if caller == "worker":
-        context.run(active_worker.set, object())
-    result = await asyncio.get_running_loop().create_task(
-        hooks.dispatch(stash.text, session_id="a", stash=stash, dispatch=dispatch),
-        context=context,
+    hooks, stash, dispatch, sent = _handoff_controller(
+        owner, _approving_review(owner), started
+    )
+    result = await hooks.dispatch(
+        stash.text, session_id="a", stash=stash, dispatch=dispatch
     )
     assert result.status is ConsolePromptDispatchStatus.SENT
     assert started == [] and sent == ["original"] and not hooks._busy
+
+
+async def _dispatch_from_textual(caller, hooks, stash, dispatch):
+    """Run ``hooks.dispatch`` from a real Textual caller (no ChatScreen).
+
+    ``worker`` is a worker's own task, as a spoken "send" is. ``screen-pump``
+    is a handler on a screen pushed from the app pump (``ConsoleHarness``).
+    ``navigated-screen-pump`` is a handler on a screen pushed from a WORKER,
+    as tab navigation pushes the Console (``TldwCli._dispatch_screen_
+    navigation`` runs it in the ``screen-navigation`` worker). Textual starts
+    a pump with ``create_task``, which copies the caller's contextvars, so
+    that pump's handlers still find the navigation worker through
+    ``get_current_worker()``.
+
+    Returns:
+        The dispatch result and the worker ``get_current_worker()`` answered
+        with on the calling task (``None`` for ``NoActiveWorker``).
+    """
+    from textual.app import App
+    from textual.screen import Screen
+    from textual.worker import NoActiveWorker, get_current_worker
+
+    seen: list = []
+
+    async def send():
+        try:
+            seen.append(get_current_worker())
+        except NoActiveWorker:
+            seen.append(None)
+        seen.append(
+            await hooks.dispatch(
+                stash.text, session_id="a", stash=stash, dispatch=dispatch
+            )
+        )
+
+    app = App()
+    async with app.run_test():
+        if caller == "worker":
+            await app.run_worker(send(), group="test-hook-send").wait()
+        else:
+            screen = Screen()
+            if caller == "navigated-screen-pump":
+
+                async def navigate():
+                    await app.push_screen(screen)
+
+                await app.run_worker(navigate(), group="screen-navigation").wait()
+            else:
+                await app.push_screen(screen)
+            screen.call_later(send)
+            async with asyncio.timeout(5):
+                while len(seen) < 2:
+                    await asyncio.sleep(0.01)
+    return seen[1], seen[0]
+
+
+@pytest.mark.asyncio
+async def test_a_worker_caller_awaits_its_review_and_gets_the_outcome(hook_file):
+    """A caller that IS a worker's task (spoken "send") waits for the review
+    and gets the settled outcome, so its acknowledgement can be true."""
+    owner = HookPermissions()
+    started: list = []
+    hooks, stash, dispatch, sent = _handoff_controller(
+        owner, _approving_review(owner), started
+    )
+    result, worker = await _dispatch_from_textual("worker", hooks, stash, dispatch)
+    assert worker is not None
+    assert result.status is ConsolePromptDispatchStatus.SENT
+    assert started == [] and sent == ["original"] and not hooks._busy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller", ["screen-pump", "navigated-screen-pump"])
+async def test_a_screen_handler_hands_its_review_to_a_worker(hook_file, caller):
+    """TASK-33621.28 review: a handler must never await the review on its
+    pump -- including on a Console reached by tab navigation, whose pump
+    inherits the navigation worker as ``active_worker``. Asking
+    ``get_current_worker()`` alone answered "in a worker" there, so the Send
+    button and Workbench send awaited the whole review on the Console pump."""
+    owner = HookPermissions()
+    started: list = []
+    hooks, stash, dispatch, sent = _handoff_controller(
+        owner, _approving_review(owner), started
+    )
+    result, worker = await _dispatch_from_textual(caller, hooks, stash, dispatch)
+    for continuation in started:
+        continuation.close()
+    # The negative control: only the navigated pump inherits a worker, so
+    # this case really is the one get_current_worker() alone gets wrong.
+    assert (worker is not None) is (caller == "navigated-screen-pump")
+    assert result.status is ConsolePromptDispatchStatus.AWAITING_REVIEW
+    assert len(started) == 1 and sent == []
 
 
 @pytest.mark.asyncio
@@ -339,10 +425,64 @@ async def test_a_worker_that_cannot_start_releases_the_send(hook_file):
     def refuse(continuation):
         raise RuntimeError("screen is closing")
 
-    hooks, stash, dispatch, sent = _handoff_controller(
-        owner, lambda *args: None, []
-    )
+    hooks, stash, dispatch, sent = _handoff_controller(owner, lambda *args: None, [])
     hooks._start_worker = refuse
     with pytest.raises(RuntimeError, match="screen is closing"):
         await hooks.dispatch(stash.text, session_id="a", stash=stash, dispatch=dispatch)
     assert not hooks._busy and sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("factory", ["lazy", "eager"])
+async def test_in_worker_task_is_true_only_on_a_workers_own_task(factory):
+    """``in_worker_task`` under both task factories.
+
+    Textual's own ``App.run_async`` installs ``asyncio.eager_task_factory``;
+    ``run_test`` does not. Under the eager factory a worker's first step
+    runs inside ``create_task``, before ``Worker._task`` is assigned -- the
+    live hfrf1 run showed the review guard logging a false ERROR from
+    exactly there, while every (lazy) test passed.
+    """
+    from textual.app import App
+    from textual.screen import Screen
+
+    from tldw_chatbook.UI.Console_Modules.hooks import in_worker_task
+
+    seen: dict[str, bool] = {}
+
+    async def in_worker():
+        seen["worker first step"] = in_worker_task()
+        await asyncio.sleep(0)
+        seen["worker after a suspension"] = in_worker_task()
+
+    def on_pump(label):
+        return lambda: seen.__setitem__(label, in_worker_task())
+
+    app = App()
+    async with app.run_test():
+        loop = asyncio.get_running_loop()
+        previous = loop.get_task_factory()
+        if factory == "eager":
+            loop.set_task_factory(asyncio.eager_task_factory)
+        try:
+            await app.run_worker(in_worker(), group="probe").wait()
+            pushed, navigated = Screen(), Screen()
+            await app.push_screen(pushed)
+            pushed.call_later(on_pump("screen pushed from the app pump"))
+
+            async def navigate():
+                await app.push_screen(navigated)
+
+            await app.run_worker(navigate(), group="screen-navigation").wait()
+            navigated.call_later(on_pump("screen pushed from a worker"))
+            async with asyncio.timeout(5):
+                while len(seen) < 4:
+                    await asyncio.sleep(0.01)
+        finally:
+            loop.set_task_factory(previous)
+    assert seen == {
+        "worker first step": True,
+        "worker after a suspension": True,
+        "screen pushed from the app pump": False,
+        "screen pushed from a worker": False,
+    }
