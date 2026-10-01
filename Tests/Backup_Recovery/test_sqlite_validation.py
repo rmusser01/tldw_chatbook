@@ -76,6 +76,54 @@ def test_real_installed_core_and_fts_survive(core_store):  # noqa: F811
             ).fetchone() == (1,)
 
 
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+def test_installed_reference_does_not_materialize_catalog_per_statement(
+    core_store,  # noqa: F811
+    monkeypatch,
+):
+    _, path, store, _ = core_store
+    store.close()
+    owner = validation._installed_owner("db.chachanotes.primary")
+    catalog = validation._catalog
+    calls = []
+
+    def observed(connection):
+        result = catalog(connection)
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(validation, "_catalog", observed)
+    assert validate_candidate(owner, path, Event(), migrate=False) == ()
+    assert len(calls) == 2 and calls[0] == calls[1]
+
+
+@pytest.mark.parametrize("limit,value", [("_CATALOG_LIMIT", 0), ("_CATALOG_BYTES", 1)])
+def test_reference_catalog_limits_refuse_before_next_installed_statement(
+    monkeypatch, limit, value
+):
+    from tldw_chatbook.DB import private_sqlite
+
+    connect = private_sqlite.connect_private_sqlite
+    tables = []
+
+    def observed(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+
+        def authorize(action, first, second, database, source):
+            if action == sqlite3.SQLITE_CREATE_TABLE:
+                tables.append(first)
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(authorize)
+        return connection
+
+    monkeypatch.setattr(private_sqlite, "connect_private_sqlite", observed)
+    monkeypatch.setattr(validation, limit, value)
+    with pytest.raises(ValueError, match="^sqlite_resource_limit$"):
+        validation._reference(("CREATE TABLE naïve(x)", "CREATE TABLE extra(y)"))
+    assert tables == ["naïve"]
+
+
 @pytest.fixture
 def legacy_fts_metadata(monkeypatch):
     """Replay SQLite 3.37's declaration callbacks on a real frozen candidate."""

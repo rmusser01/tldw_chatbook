@@ -418,8 +418,20 @@ def _reference(schema):
             others = [sql for sql in schema if sql not in tables]
             for sql in tables + others:
                 # AUTOINCREMENT and FTS create their own internal/shadow tables.
-                existing = {row[3] for row in _catalog(reference)}
-                if sql in existing:
+                # Keep the same bounds without copying the growing catalog
+                # into Python before every installed statement.
+                count, size, existing = reference.execute(
+                    "SELECT COUNT(*), COALESCE(SUM("
+                    "length(CAST(COALESCE(type,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(name,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(tbl_name,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(sql,'') AS BLOB))),0), "
+                    "COALESCE(MAX(sql = ?),0) FROM sqlite_schema",
+                    (sql,),
+                ).fetchone()
+                if count > _CATALOG_LIMIT or size > _CATALOG_BYTES:
+                    raise ValueError("sqlite_resource_limit")
+                if existing:
                     continue
                 reference.execute(sql)
             catalog = _catalog(reference)
