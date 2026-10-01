@@ -132,11 +132,19 @@ def retire_dead_pump(
 
 
 def _raise_site(error: BaseException) -> str:
-    """``module.qualname:line`` of the frame that raised ``error`` and, when
-    that frame is outside the package, of the innermost Chatbook frame too.
+    """Where ``error`` was raised, for a log line: identifiers only.
 
-    Identifiers only, never the message or a file path -- the shape
-    ``_handle_exception`` records for the original error (TASK-32533).
+    ``module.qualname:line`` of the raising frame and, when that frame is
+    outside the package, of the innermost Chatbook frame too -- the pair
+    ``_handle_exception`` records for the original error (TASK-32533). Never
+    the message or a file path: either can carry a folder path or prompt
+    text. The Conversation Inspector's worker failures log it too.
+
+    Args:
+        error: A caught exception.
+
+    Returns:
+        The site, or ``"unknown"`` for an exception with no traceback.
     """
     raised = chatbook = None
     tb = error.__traceback__

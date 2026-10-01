@@ -3915,7 +3915,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "ced8ea221af985c9e6b4",
+      "diagnostic_digest": "5652358cb4d646c98079",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Console/console_conversation_inspector.py",
       "reason": "remaining Chatbook production diagnostic owner"

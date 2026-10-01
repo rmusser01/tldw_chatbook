@@ -36,6 +36,7 @@ from textual.widgets import (
 )
 from textual.worker import Worker, WorkerState
 
+from tldw_chatbook.app_keep_alive import _raise_site
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_display_state import (
@@ -113,36 +114,6 @@ _NEXT_SEND_WORKER_GROUP = "console-inspector-next-send"
 _PROJECT_INSTRUCTION_RECOVERY_WORKER_GROUP = "console-inspector-project-instructions"
 # Same reason for the Safe -> Full trace-view confirmation.
 _VIEWER_PROFILE_WORKER_GROUP = "console-inspector-viewer-profile"
-
-
-def _failure_site(error: BaseException) -> str:
-    """Where ``error`` was raised, for a log line: identifiers only.
-
-    ``module.qualname:line`` of the raising frame and, when that frame is
-    outside the package, of the innermost Chatbook frame too -- the pair the
-    app exception handler records (TASK-32533). Never the message or a file
-    path: either can carry a folder path or prompt text.
-
-    Args:
-        error: A caught exception.
-
-    Returns:
-        The site, or ``"unknown"`` for an exception with no traceback.
-    """
-    raised = chatbook = None
-    tb = error.__traceback__
-    while tb is not None:
-        frame = tb.tb_frame
-        raised = (
-            f"{frame.f_globals.get('__name__', '?')}."
-            f"{frame.f_code.co_qualname}:{tb.tb_lineno}"
-        )
-        if raised.startswith("tldw_chatbook."):
-            chatbook = raised
-        tb = tb.tb_next
-    if raised is None:
-        return "unknown"
-    return raised if chatbook in (None, raised) else f"{raised} via {chatbook}"
 
 
 _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
@@ -1083,7 +1054,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             logger.warning(
                 "Trace view change failed: {} at {}",
                 type(exc).__name__,
-                _failure_site(exc),
+                _raise_site(exc),
             )
             self.notify(
                 "Couldn't change the trace view. Details are in the log file.",
@@ -1220,7 +1191,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             logger.warning(
                 "Project instruction recovery failed: {} at {}",
                 type(exc).__name__,
-                _failure_site(exc),
+                _raise_site(exc),
             )
             self.notify(
                 "Couldn't update project instructions. Details are in the log file.",
