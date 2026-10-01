@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
@@ -7,7 +8,9 @@ from dataclasses import dataclass, field
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the save-time check.)
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from types import MappingProxyType
+from typing import Any, Literal, Mapping
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
@@ -298,17 +301,104 @@ def _sanitize_env_literals(env: Mapping[str, Any] | None) -> dict[str, str]:
 
 
 @dataclass(frozen=True)
+class TransportProfile:
+    """Closed resolved launch record; literal argv/env values are never normalized.
+
+    Secrets and variable resolution belong to the caller, not this transport.
+    HTTP credential bindings are supplied by the later credential owner.
+    """
+
+    profile_id: str
+    transport: Literal["stdio", "streamable_http"] = "stdio"
+    protocol_version: str = "2026-07-28"
+    command: str = ""
+    args: tuple[str, ...] = ()
+    env: Mapping[str, str] | None = None
+    url: str = ""
+    development_loopback: bool = False
+
+    def __post_init__(self) -> None:
+        from .protocol_profiles import protocol_profile
+
+        _validate_profile_id(self.profile_id)
+        protocol_profile(self.protocol_version)
+        object.__setattr__(self, "args", tuple(self.args))
+        if self.env is not None:
+            object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        if self.transport not in {"stdio", "streamable_http"}:
+            raise ValueError("mcp_transport_unsupported")
+        if type(self.development_loopback) is not bool:
+            raise ValueError("mcp_origin_invalid")
+        if self.transport == "stdio":
+            if (
+                not isinstance(self.command, str)
+                or not self.command
+                or self.url
+                or self.development_loopback
+            ):
+                raise ValueError("mcp_profile_invalid")
+            if any(not isinstance(arg, str) or "\0" in arg for arg in self.args):
+                raise ValueError("mcp_profile_invalid")
+            if self.env is not None and any(
+                not isinstance(k, str) or not isinstance(v, str) or "\0" in k + v
+                for k, v in self.env.items()
+            ):
+                raise ValueError("mcp_profile_invalid")
+        else:
+            if self.command or self.args or self.env is not None:
+                raise ValueError("mcp_profile_invalid")
+            parsed = urlsplit(self.url)
+            try:
+                loopback = ipaddress.ip_address(parsed.hostname or "").is_loopback
+            except ValueError:
+                loopback = False
+            if (
+                not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or "#" in self.url
+                or any(ord(c) < 33 for c in self.url)
+                or parsed.scheme not in {"https", "http"}
+                or (
+                    parsed.scheme == "http"
+                    and not (self.development_loopback and loopback)
+                )
+            ):
+                raise ValueError("mcp_origin_invalid")
+            _ = parsed.port
+
+
+def _validate_profile_transport_fields(data: Mapping[str, Any]) -> None:
+    """Reject unsupported HTTP fields before legacy stdio coercion drops them."""
+    if any(key in data for key in ("headers", "auth", "credentials")):
+        raise ValueError("mcp_authentication_unsupported")
+    if data.get("transport", "stdio") != "streamable_http":
+        return
+    for key in ("env", "env_placeholders", "env_literals", "legacy_env_literals"):
+        value = data.get(key)
+        if value is not None and value != {}:
+            raise ValueError("mcp_authentication_unsupported")
+    if data.get("command") not in (None, "") or data.get("args") not in (None, [], ()):
+        raise ValueError("mcp_profile_invalid")
+
+
+@dataclass(frozen=True)
 class LocalExternalMCPProfile:
     profile_id: str
-    command: str
+    command: str = ""
     args: tuple[str, ...] = ()
     env_placeholders: dict[str, str] = field(default_factory=dict)
     env_literals: dict[str, str] = field(default_factory=dict)
     legacy_env_literals: dict[str, str] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    transport: str = "stdio"
+    protocol_version: str = "2025-03-26"
+    url: str = ""
+    development_loopback: bool = False
 
     def __post_init__(self) -> None:
+        _validate_profile_transport_fields(vars(self))
         object.__setattr__(self, "profile_id", _text(self.profile_id))
         object.__setattr__(self, "command", _text(self.command))
         object.__setattr__(
@@ -340,6 +430,10 @@ class LocalExternalMCPProfile:
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
+            "transport": self.transport,
+            "protocol_version": self.protocol_version,
+            "url": self.url,
+            "development_loopback": self.development_loopback,
             "command": self.command,
             "args": list(self.args),
             "env": self.env,
@@ -353,6 +447,10 @@ class LocalExternalMCPProfile:
     def to_storage_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
+            "transport": self.transport,
+            "protocol_version": self.protocol_version,
+            "url": self.url,
+            "development_loopback": self.development_loopback,
             "command": self.command,
             "args": list(self.args),
             "env_placeholders": dict(self.env_placeholders),
@@ -365,6 +463,10 @@ class LocalExternalMCPProfile:
     def to_input_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
+            "transport": self.transport,
+            "protocol_version": self.protocol_version,
+            "url": self.url,
+            "development_loopback": self.development_loopback,
             "command": self.command,
             "args": list(self.args),
             "env_placeholders": dict(self.env_placeholders),
@@ -377,6 +479,7 @@ class LocalExternalMCPProfile:
     def from_input_dict(cls, data: Any) -> "LocalExternalMCPProfile":
         if not isinstance(data, Mapping):
             return cls(profile_id="", command="")
+        _validate_profile_transport_fields(data)
         raw_args = data.get("args")
         args = (
             tuple(str(item).strip() for item in raw_args)
@@ -385,6 +488,10 @@ class LocalExternalMCPProfile:
         )
         return cls(
             profile_id=_text(data.get("profile_id")),
+            transport=data.get("transport", "stdio"),
+            protocol_version=data.get("protocol_version", "2025-03-26"),
+            url=data.get("url", ""),
+            development_loopback=data.get("development_loopback", False),
             command=_text(data.get("command")),
             args=args,
             env_placeholders=_coerce_mapping(data.get("env_placeholders")),
@@ -397,6 +504,7 @@ class LocalExternalMCPProfile:
     def from_storage_dict(cls, data: Any) -> "LocalExternalMCPProfile":
         if not isinstance(data, Mapping):
             return cls(profile_id="", command="")
+        _validate_profile_transport_fields(data)
         raw_args = data.get("args")
         args = (
             tuple(str(item).strip() for item in raw_args)
@@ -415,6 +523,10 @@ class LocalExternalMCPProfile:
                 raw_legacy_env_literals.setdefault(key, value)
         return cls(
             profile_id=_text(data.get("profile_id")),
+            transport=data.get("transport", "stdio"),
+            protocol_version=data.get("protocol_version", "2025-03-26"),
+            url=data.get("url", ""),
+            development_loopback=data.get("development_loopback", False),
             command=_text(data.get("command")),
             args=args,
             env_placeholders=raw_env_placeholders,
@@ -608,6 +720,7 @@ class LocalMCPStoreState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": 2,
             "profiles": [profile.to_storage_dict() for profile in self.profiles],
             "discovery_snapshots": {
                 server_id: dict(snapshot)
@@ -640,7 +753,7 @@ class LocalMCPStoreState:
             )
             if profile.profile_id
             and profile.profile_id not in _RESERVED_EXTERNAL_PROFILE_IDS
-            and profile.command
+            and (profile.command or profile.transport != "stdio")
         )
         governance_rules = tuple(
             rule
@@ -718,15 +831,71 @@ class LocalMCPStore:
             return LocalMCPStoreState()
         payload = self._read_payload()
         if not isinstance(payload, Mapping):
-            return LocalMCPStoreState()
-        return LocalMCPStoreState.from_dict(payload)
+            raise LocalMCPStoreLoadError(self.path, ValueError("mcp_store_invalid"))
+        version = payload.get("schema_version", 1)
+        if type(version) is not int or version not in (1, 2):
+            raise LocalMCPStoreLoadError(
+                self.path, ValueError("mcp_store_schema_unsupported")
+            )
+        if not isinstance(payload.get("profiles", []), list):
+            raise LocalMCPStoreLoadError(self.path, ValueError("mcp_store_invalid"))
+        for key, expected in (
+            ("profiles", list),
+            ("governance_rules", list),
+            ("approval_requests", list),
+            ("runtime_activity", list),
+            ("discovery_snapshots", dict),
+            ("profile_runtime_state", dict),
+        ):
+            if key in payload and not isinstance(payload[key], expected):
+                raise LocalMCPStoreLoadError(self.path, ValueError("mcp_store_invalid"))
+        try:
+            state = LocalMCPStoreState.from_dict(payload)
+        except (TypeError, ValueError) as exc:
+            raise LocalMCPStoreLoadError(
+                self.path, ValueError("mcp_store_invalid")
+            ) from exc
+        if version == 1 and self.path.exists():
+            # Only recognized legacy records migrate; never rewrite malformed state.
+            if any(
+                not isinstance(item, Mapping)
+                or not item.get("profile_id")
+                or not item.get("command")
+                or item.get("transport", "stdio") != "stdio"
+                for item in payload.get("profiles", [])
+            ):
+                raise LocalMCPStoreLoadError(self.path, ValueError("mcp_store_invalid"))
+            for key, records in (
+                ("profiles", state.profiles),
+                ("governance_rules", state.governance_rules),
+                ("approval_requests", state.approval_requests),
+                ("runtime_activity", state.runtime_activity),
+            ):
+                source = payload.get(key, [])
+                if key == "profiles":
+                    # Preserve the existing reserved-ID quarantine during migration.
+                    source = [
+                        item
+                        for item in source
+                        if item.get("profile_id") not in _RESERVED_EXTERNAL_PROFILE_IDS
+                    ]
+                if len(source) != len(records):
+                    raise LocalMCPStoreLoadError(
+                        self.path, ValueError("mcp_store_invalid")
+                    )
+            migrated = {**payload, **state.to_dict()}
+            self._write_payload(migrated)
+        return state
 
     @mcp_sources.guarded
     def save(self, state: LocalMCPStoreState) -> None:
+        self._write_payload(state.to_dict())
+
+    @mcp_sources.guarded
+    def _write_payload(self, payload: dict[str, Any]) -> None:
         from .recovery_activation import require_store_write
 
         require_store_write(self, "mcp.local")
-        payload = state.to_dict()
         payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
         mcp_sources.write_json(self, payload)
 
@@ -772,14 +941,36 @@ class LocalMCPStore:
             profile.to_input_dict()
         )
         profile_id = _validate_profile_id(canonical_profile.profile_id)
-        command = _require_non_empty_field(
-            canonical_profile.command, "command", "Local MCP profile"
+        command = canonical_profile.command
+        if canonical_profile.transport == "stdio":
+            command = _require_non_empty_field(command, "command", "Local MCP profile")
+        TransportProfile(
+            profile_id=profile_id,
+            transport=canonical_profile.transport,
+            protocol_version=canonical_profile.protocol_version,
+            command=command,
+            args=canonical_profile.args,
+            url=canonical_profile.url,
+            development_loopback=canonical_profile.development_loopback,
+            env=(
+                canonical_profile.env
+                if canonical_profile.transport == "stdio"
+                else None
+            ),
         )
+        if canonical_profile.transport == "streamable_http" and canonical_profile.env:
+            raise ValueError("mcp_authentication_unsupported")
         # TASK-26013: refuse a dangerous command shape at save time, naming the
         # matched rule and leaving the stored list untouched.
-        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from tldw_chatbook.MCP.spawn_guard import (
+            screen_spawn_command,  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        )
 
-        _spawn_verdict = screen_spawn_command(command, canonical_profile.args)
+        _spawn_verdict = (
+            screen_spawn_command(command, canonical_profile.args)
+            if canonical_profile.transport == "stdio"
+            else None
+        )
         if _spawn_verdict is not None:
             raise ValueError(
                 f"Local MCP profile command refused: {_spawn_verdict.reason} "
@@ -791,6 +982,10 @@ class LocalMCPStore:
         )
         saved_profile = LocalExternalMCPProfile(
             profile_id=profile_id,
+            transport=canonical_profile.transport,
+            protocol_version=canonical_profile.protocol_version,
+            url=canonical_profile.url,
+            development_loopback=canonical_profile.development_loopback,
             command=command,
             args=canonical_profile.args,
             env_placeholders=canonical_profile.env_placeholders,
@@ -1248,8 +1443,12 @@ class LocalMCPStore:
     def _launch_config_signature(
         self,
         profile: LocalExternalMCPProfile,
-    ) -> tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]:
+    ) -> tuple[str, str, str, bool, str, tuple[str, ...], tuple[tuple[str, str], ...]]:
         return (
+            profile.transport,
+            profile.protocol_version,
+            profile.url,
+            profile.development_loopback,
             profile.command,
             profile.args,
             tuple(sorted(profile.env.items())),

@@ -263,7 +263,12 @@ class LocalMCPControlService:
                 {
                     **profile.to_dict(),
                     "discovery_snapshot": snapshot,
-                    "is_connected": profile.profile_id in active_sessions,
+                    "is_connected": (
+                        profile.profile_id in active_sessions
+                        and not getattr(
+                            active_sessions[profile.profile_id], "_closed", False
+                        )
+                    ),
                 }
             )
         return servers
@@ -312,15 +317,42 @@ class LocalMCPControlService:
         profile_id = profile.profile_id
 
         client = self._get_client()
-        resolved_env = self._build_spawn_env(profile)
-        connected = await client.connect_to_server(
-            profile.profile_id,
-            profile.command,
-            args=list(profile.args),
-            env=resolved_env,
-        )
+        from .local_store import TransportProfile
+
+        if hasattr(client, "connect_profile"):
+            connected = await client.connect_profile(
+                TransportProfile(
+                    profile_id=profile.profile_id,
+                    transport=profile.transport,
+                    protocol_version=profile.protocol_version,
+                    command=profile.command,
+                    args=profile.args,
+                    env=(
+                        self._build_spawn_env(profile)
+                        if profile.transport == "stdio"
+                        else None
+                    ),
+                    url=profile.url,
+                    development_loopback=profile.development_loopback,
+                )
+            )
+        elif profile.transport == "stdio" and profile.protocol_version == "2025-03-26":
+            # Explicit legacy injected-client compatibility, without claiming HTTP.
+            connected = await client.connect_to_server(
+                profile.profile_id,
+                profile.command,
+                args=list(profile.args),
+                env=self._build_spawn_env(profile),
+            )
+        else:
+            raise RuntimeError("mcp_transport_unsupported")
         if connected is False:
-            raise RuntimeError(f"Failed to connect profile: {profile.profile_id}")
+            diagnostic = getattr(client, "connection_diagnostics", {}).get(
+                profile.profile_id
+            )
+            raise RuntimeError(
+                diagnostic or f"Failed to connect profile: {profile.profile_id}"
+            )
 
         session = getattr(client, "sessions", {}).get(profile_id)
         try:

@@ -3,7 +3,7 @@
 Status: Accepted (2026-09-15) — written specification reviewed; implementation pending.
 Date: 2026-09-15
 Related Task: [TASK-32645](../tasks/task-32645%20-%20Design-managed-plugins-and-expanded-hook-runtime.md)
-Supersedes: N/A
+Supersedes: [ADR-111](111-mcp-remote-transport-and-client-dependency.md), only for direct generic Streamable HTTP transport ownership.
 Extends: [ADR-009](009-local-skill-trust-boundary.md)
 Companion: [ADR-163](163-expanded-console-hook-runtime.md)
 
@@ -101,6 +101,42 @@ these boundaries and ADR-009's offline-tamper protection.
 The detailed state matrix, schemas, resource limits, compatibility behavior and
 acceptance criteria are in the linked specification. No runtime feature is
 declared implemented by this ADR.
+
+## Direct MCP transport ownership (R4, 2026-09-17)
+
+This decision partially supersedes [ADR-111](111-mcp-remote-transport-and-client-dependency.md)
+for Chatbook's direct generic Streamable HTTP connection. The existing
+`MCPClient` and core `httpx` own that connection. Local/unified/provider services
+retain permission, readiness, definition-hash and audit ownership; transport
+code preserves complete typed/raw results and host-observed uncertain outcomes.
+No federation manager, parallel policy plane or new mandatory vendor client is
+introduced. The reciprocal ADR-111 amendment records the inspected upstream
+revisions and why they do not provide this boundary.
+
+Qualify the named 2026-07-28, 2025-11-25 and 2025-03-26 profiles through actual
+transport exchanges: current per-request metadata/discovery and older
+initialize/session behavior are distinct. Existing stdio profiles remain
+readable. An uncertain invocation is never replayed on reconnect. Streamable
+HTTP SSE responses are supported according to the selected profile; this does
+not authorize fallback to deprecated HTTP+SSE transport, weakened TLS or
+forwarding credentials across origins. Supported explicit credential bindings
+are a separate integration; generic OAuth and hosted connector access remain
+unclaimed until their actual owners are implemented and qualified.
+
+[TASK-32682](../tasks/task-32682%20-%20Add-qualified-direct-Streamable-HTTP-MCP-transport.md)
+and the [MCP delivery plan](../../Docs/superpowers/plans/2026-09-15-plugin-mcp.md)
+implement this reconciliation. Recording the owner does not itself establish
+wire conformance or runtime qualification.
+
+Version negotiation preserves the selected era (R60). A recognized modern
+unsupported-version error cannot trigger legacy initialization. Select only a
+different qualified modern revision; otherwise report unsupported version,
+including offers containing only legacy/unknown versions or the rejected
+version itself. Explicit legacy profiles may negotiate either qualified legacy
+revision. A user may select a legacy profile for a separate connection attempt;
+no automatic handshake change or uncertain invocation replay follows a failure.
+This conservative interpretation of the linked specification may require that
+manual selection for some dual-era servers; changing it requires qualification.
 
 ## Alternatives considered
 
@@ -300,3 +336,14 @@ Pending root groups authenticate their action (create/delete/attach) and explici
 An authenticated `cleaned_absent` root remains a tombstone: reconciliation may confirm its missing leaf only through its exact current no-follow ancestry and original binding. Any unexpected leaf or replaced/missing ancestry refuses; a missing `present` root is never completed absence. Reviewed whole-root proof, generation advancement and boot rebinding rules still apply.
 
 Shutdown seals ordinary service admission before finalization and rejects queued ordinary callbacks on the worker. Already executing calls must finish before clean can be published; a refused close continues to admit exact terminal settlement, not new authority work. The final checkpoint remains the last protected publication. Later root grants preserve all still-owned original epochs, and every cleanup phase retains the original review deadline; expiry leaves pending recovery for a fresh explicit review.
+
+### Literal MCP endpoint queries (R61)
+
+Preserve literal routing query parameters in an MCP endpoint URL, including
+duplicates and empty values. They are visible configuration, not credential
+references, and changing the full endpoint invalidates its discovery. Do not
+expand placeholders/environment values or insert host credentials into URLs.
+Host authorization uses its selected-origin credential service. Existing
+HTTPS/explicit-loopback, userinfo/fragment and redirect restrictions still apply.
+This follows the [Agent Plugins endpoint contract](https://agent-plugins.org/specification)
+without adding a blanket query-string restriction.

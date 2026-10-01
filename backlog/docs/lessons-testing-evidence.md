@@ -17285,3 +17285,19 @@ I/O preserves best-effort audit semantics and uncertain caller completion.
 Current controlled-peer checks reach the real append using an event before
 claiming this race; a short timeout that expires during admission proves only
 a refusal before dispatch. Test-owned stalled writers are released and joined.
+
+
+## HTTP admission closure is not pool cleanup proof
+
+**TASK-32682 integration, 2026-09-30.** A real keep-alive peer plus injected lower
+HTTPX close failure showed `is_closed=True` while the captured connection remained
+open. The retained close task failed, and repeating client close could not repair
+that lower failure. Separately, this branch's native maintenance owner initially
+refused every HTTP session because it qualified subprocess handles only.
+
+**What to do.** Keep raw HTTP effects under the existing producer/source guards,
+qualify the concrete resource owner and retain one cleanup operation across waits.
+Require successful pool cleanup, not a closed flag or missing catalog, before
+reopening maintenance. Failed cleanup remains unready; a stalled cleanup can
+finish later. Test actual pools and subprocess neighbors before changing shared
+connection retirement.

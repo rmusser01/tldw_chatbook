@@ -520,3 +520,49 @@ Limits: controlled stdlib peers, actual local processes/threads and production
 client/control-plane code; no third-party plugin execution, external MCP server,
 HTTP transport, full-suite or cross-platform qualification claim. M2 owns direct
 HTTP and protocol profiles; H6 owns MCP hook effect normalization.
+
+
+## M2 — TASK-32682 qualified direct transports
+
+Integrated reviewed `68ebe2accb` below the current client/store/control-plane
+owners. Explicit profiles qualify stdio and Streamable HTTP for 2026-07-28,
+2025-11-25 and 2025-03-26. Modern per-request metadata/routing and legacy
+initialize/session/notification flow share bounded strict M1 results. Discovery
+never invokes tools; JSON/SSE, bounded legacy GET resumption, pagination,
+unsupported capabilities and versions produce explicit readiness diagnostics.
+HTTPS or explicit numeric loopback development origins only, no redirects,
+proxy inheritance, TLS weakening or invocation replay. Recognized legacy profile
+stores migrate to schema 2 using the existing protected atomic writer; malformed
+state is retained. ADR-162 reciprocally partially supersedes ADR-111 for the
+accepted direct generic transport boundary; unrelated server/OAuth rules remain.
+
+Preserved current producer/recovery/source decorators and actual stdio timeout
+settlement. HTTP raw request/notify use those same guards. Maintenance qualifies
+only concrete subprocess or HTTP client owners, retains accepted call chains and
+one pool cleanup task, and requires positive native exit or successful actual
+pool closure before resume. A closed HTTPX client bit or empty session map is
+not proof. Failed lower closure stays fenced; stalled closure can rejoin its
+original task. Ordinary resume requires fresh explicit discovery, never replay.
+
+Actual direct-entry RED retained the successful M1 stdio control; four added
+native HTTP maintenance controls failed before the current-owner adapter.
+Final direct transport/profile/schema/control-plane suite: **180 passed, 42.49s**,
+no warnings/skips; `/private/tmp/hooks-m2-qualified.xml`. Typed-result/catalog/tool
+neighbors: **319 passed, 73.86s**, no warnings/skips, four documented pre-M1 local
+hub deadline baselines deselected; `/private/tmp/hooks-m2-m1-neighbors.xml`.
+Actual native stdio recovery/maintenance/unknown-owner/pending-child and upper
+service settlement controls: **12 passed, 45.32s**, no warnings/skips;
+`/private/tmp/hooks-m2-native-final.xml`. The controlled upper peer now advertises
+its implemented capabilities and forwards the real dispatch observation rather
+than assuming unadvertised catalogs are executable. Five new HTTP controls also
+verify raw storage-pause refusal before wire, all three maintenance profiles,
+retained stalled cleanup and failed lower closure. New Python passes Ruff and
+formatter; all changed Python parses, whitespace passes, and shared Ruff has no
+additions against pre-M2 HEAD. No dependency or second permission owner added.
+
+Limits: controlled repository-owned stdio and loopback HTTP interoperability
+fixtures on local macOS, not vendor certification. Official MCP versioned transport
+sources were checked; earlier mcp-unified source inspection remains historical
+bounded evidence, not a fresh vendor-release claim. No external server/provider,
+full-suite, cross-platform, generic OAuth, MRTR, subscriptions or standalone
+push-listener qualification. M3 owns credential mapping and H6 MCP hook effects.

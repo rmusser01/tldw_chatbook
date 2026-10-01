@@ -427,6 +427,14 @@ rules. Only args, env values and cwd expand portable PLUGIN_ROOT/PLUGIN_DATA;
 command tokens, URLs and headers do not. Set host-controlled variables last.
 See the [portable MCP runtime contract](https://agent-plugins.org/client-implementers/mcp-runtime).
 
+Direct transport ownership follows the reciprocal partial supersession in
+[ADR-162](../../../backlog/decisions/162-managed-agent-plugins.md) and
+[ADR-111](../../../backlog/decisions/111-mcp-remote-transport-and-client-dependency.md):
+the existing `MCPClient`/`httpx` connection retains Chatbook's current permission,
+registry and audit boundaries. The amendment covers direct Streamable HTTP
+only, preserving the historical decision and unrelated future OAuth/transport
+scope. Protocol qualification remains a separate implementation gate.
+
 Direct generic Streamable HTTP is a prerequisite. The existing tldw_server
 MCP API wrapper is not evidence of that capability. Implement it behind the
 existing MCP client interface using the existing HTTP stack, with versioned
@@ -452,6 +460,16 @@ Use side-effect-free discovery for detection; do not probe with tools/call.
 Connection readiness is host state even when the wire protocol is stateless.
 Unknown versions and optional unimplemented capabilities produce clear
 unsupported diagnostics. No arbitrary protocol extensions are advertised.
+
+Negotiation stays within the selected protocol era (R60). After a recognized
+modern unsupported-version error, select only a different qualified modern
+revision; with no such revision, report unsupported version. An offer containing
+only legacy/unknown versions, or repeating the rejected version, does not cause
+legacy initialization or a retry loop. Explicit legacy initialize may negotiate
+either qualified legacy revision, but rejects modern/unknown counteroffers.
+Selecting a legacy profile is a separate explicit connection attempt. This
+conservative reading of the versioning contract can require manual selection for
+some dual-era servers; it never authorizes replay of an uncertain invocation.
 
 Use host-managed credentials, explicit header/token mappings and the existing
 authentication service for supported OAuth flows. Unsupported authentication
@@ -1362,3 +1380,70 @@ change execution authority, infer remote completion or authorize replay. An
 unscheduled fallback does not consume an otherwise available service publication.
 Capacity remains held until the actual writer exits. A stalled filesystem write
 may retain that one daemon writer and metadata until it returns or process exit.
+
+### M2 direct connection API and qualification limits (TASK-32682)
+
+The connection uses the existing `MCPClient.connect_profile(TransportProfile)`
+readiness/cleanup owner. `TransportProfile`, owned by `MCP/local_store.py`, is a
+closed resolved stdio/Streamable HTTP record, with explicit protocol version,
+URL and loopback-development selection. Resolved stdio arguments/environment
+retain literal strings. Manual-profile storage keeps its legacy normalization
+and migrates recognized records to JSON schema 2 atomically; unknown/malformed
+authoritative stores are not replaced. Transport/version/endpoint changes clear
+stored discovery. Service authentication failures expose fixed diagnostics.
+
+M1 exact raw result-value spans and private dispatch evidence survive both JSON
+and SSE. HTTP dispatch becomes uncertain at httpcore's request-header write
+trace, after connection setup; only validated terminal typed/RPC results settle
+it. Cancellation or transport cleanup never proves remote completion. The
+existing unified service remains the timeout/audit owner. No request is replayed
+on reconnect, session expiry, header mismatch or uncertain response loss.
+
+HTTP admission closes before resource teardown. Request scopes drain independently
+of arbitrary caller finalization. The existing five-second client cleanup bound
+still applies: a cancelled wait leaves the same cleanup task and unready session
+owned for a later close attempt, with its live catalog withdrawn. A pending close
+may finish and then ordinary disconnect/reconnect can release/reuse the profile.
+An actual lower close failure remains incomplete and cannot be automatically
+replaced: HTTPX marks its client closed before closing the pool, so that flag or
+a second no-op client close cannot establish resource closure. Local cleanup
+never settles an uncertain remote outcome or authorizes invocation replay.
+
+The three explicit profiles have controlled stdio and HTTP JSON/SSE exchanges.
+Legacy HTTP can resume identified SSE responses using GET/Last-Event-ID and
+respects retry within the existing deadline; modern HTTP never uses protocol
+sessions, GET resumption or initialized/cancelled notifications. Legacy
+unsupported server requests receive method errors; optional capabilities are
+not advertised. Modern input-required results remain explicitly unsupported.
+Unadvertised catalogs are omitted with diagnostics. List-change observations
+retire readiness; reconnection rediscovers definitions through ordinary owners.
+
+Bounds apply to identity-encoded raw bytes before JSON/SSE decode: 1 MiB per
+HTTP exchange including resumption, 1,024 events per stream, three resumptions,
+M1's 768 KiB complete-result cap/depth 64, and the shared 100-page/10,000-item
+catalog limits. Non-identity Content-Encoding is refused before decompression.
+Modern MCP routing values use the specified UTF-8 Base64 sentinel when needed;
+invalid header annotations exclude their tool, preserving ordinary siblings
+and raw schema constraints. Custom/authentication header bindings and arbitrary
+Unicode-to-octet mapping are not yet a supported transport input; M3/M4 own them.
+
+HTTPS uses httpx's normal trust checks with redirects and environment proxies
+disabled. Plain HTTP is restricted to explicitly selected numeric loopback
+origins; localhost-name resolution is not implicitly authorized. The controlled
+HTTP fixtures qualify loopback exchanges, not public HTTPS-server trust stores,
+OAuth, arbitrary vendor servers, other operating systems or complete portable
+plugin conformance. Standalone legacy push listeners and modern subscription
+listeners are not activated; request-scoped SSE and legacy GET response
+resumption are separate supported behaviors. Optional mcp-unified integration
+retains the predecessor's unavailable-extra qualification gap.
+
+### Literal MCP endpoint queries (R61)
+
+Preserve literal routing query parameters in an MCP endpoint URL, including
+duplicates and empty values. They are visible configuration, not credential
+references, and changing the full endpoint invalidates its discovery. Do not
+expand placeholders/environment values or insert host credentials into URLs.
+Host authorization uses its selected-origin credential service. Existing
+HTTPS/explicit-loopback, userinfo/fragment and redirect restrictions still apply.
+This follows the [Agent Plugins endpoint contract](https://agent-plugins.org/specification)
+without adding a blanket query-string restriction.
