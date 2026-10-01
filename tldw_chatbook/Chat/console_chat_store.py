@@ -7410,7 +7410,19 @@ class ConsoleChatStore:
         return ConsoleForkEligibility(True)
 
     def fork_source_message_ids(self, message_id: str) -> tuple[str, ...]:
-        """Return the rows a fork through ``message_id`` copies, root first."""
+        """Return the rows a fork through ``message_id`` copies, root first.
+
+        Args:
+            message_id: The fork boundary's native id.
+
+        Returns:
+            The active path through ``message_id`` minus excluded command
+            notes (``console_fork_source_ids``).
+
+        Raises:
+            KeyError: If ``message_id`` belongs to no session.
+            ValueError: If ``message_id`` is not on its session's active path.
+        """
         with self._fork_source_lock:
             session_id = self._message_session_index[message_id]
             nodes = self._nodes_by_session.get(session_id, {})

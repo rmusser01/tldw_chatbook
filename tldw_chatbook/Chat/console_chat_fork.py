@@ -413,6 +413,12 @@ def console_fork_skips(message: ConsoleChatMessage) -> bool:
     live parent link is still checked against its nearest saved ancestor (which
     may be a saved SYSTEM row); the durable commit's source re-check walks past
     saved SYSTEM rows.
+
+    Args:
+        message: A native node on the fork source's active path.
+
+    Returns:
+        True when the node is left out of the copied lineage.
     """
 
     return message.role is ConsoleMessageRole.SYSTEM
@@ -424,6 +430,15 @@ def console_fork_source_ids(
     nodes: Mapping[str, ConsoleChatMessage],
 ) -> list[str]:
     """Return the active path through ``boundary_id`` minus skipped notes.
+
+    Args:
+        active_ids: The session's active path, root first.
+        boundary_id: The selected fork boundary; always kept.
+        nodes: The session's native nodes by id. An id missing here is kept,
+            so the caller's eligibility check refuses it.
+
+    Returns:
+        The ids a fork through ``boundary_id`` copies, root first.
 
     Raises:
         ValueError: If ``boundary_id`` is not on ``active_ids``.
@@ -446,6 +461,13 @@ def describe_console_fork_row(message: ConsoleChatMessage) -> str:
     excerpt is markup-escaped: every surface showing a fork refusal (the
     action guide ``Static``, the Fork tooltip, ``notify`` toasts) parses
     Textual content markup, and a quoted ``[/]`` raised ``MarkupError``.
+
+    Args:
+        message: The row to name.
+
+    Returns:
+        The row's kind, led by its state unless complete, plus a quoted
+        excerpt when it holds real text, e.g. ``User message "first q"``.
     """
 
     kind = _CONSOLE_FORK_ROW_KINDS.get(message.role, "message")
@@ -543,6 +565,9 @@ def console_fork_prefix_refusal(
         visible_content: Returns a row's visible text; ``ValueError`` refuses.
         can_fork: Full eligibility of an earlier boundary. Every row before the
             blocking one already passed here, so it cannot recurse further.
+
+    Returns:
+        The user-facing refusal, or ``None`` when every copied row passes.
     """
 
     for index, native_id in enumerate(prefix):
@@ -589,6 +614,12 @@ def check_console_fork_saved_tail(
     saved and linked to the row before it. Unsaved command notes were never
     written and are skipped. A refusal names the first row that breaks the
     chain (TASK-33621.10); no boundary up to that row can be forked.
+
+    Args:
+        active_path: The session's active path, root first.
+        nodes: The session's native nodes by id.
+        boundary_id: The selected fork boundary on ``active_path``.
+        active_leaf_id: The conversation's saved active leaf id.
 
     Raises:
         ValueError: User-facing wording when the saved chain is broken.
