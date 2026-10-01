@@ -1544,7 +1544,7 @@ async def test_real_paused_queue_without_failed_turn_offers_resume_that_drains(
 # ---------------------------------------------------------------------------
 
 CONTEXT_CHANGED_NOTICE = (
-    "The conversation changed while the queue was paused. Review it before resuming."
+    "The conversation has changed. Review it before the queue continues."
 )
 
 

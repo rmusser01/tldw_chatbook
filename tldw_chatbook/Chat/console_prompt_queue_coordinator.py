@@ -35,10 +35,13 @@ if TYPE_CHECKING:
 
 _AUTHORIZATION_KEY = object()
 
-# Shown when a Resume or Retry press stops at a context review instead of
-# running anything (TASK-33621.19).
+# Shown when a press that would run the queue stops at a context review
+# instead (TASK-33621.19). It names no cause and no time, because the change
+# need not be the user's or happen during the pause: an edit, a delete, a
+# compaction, or a failed regeneration the queue itself ran all move the
+# context epoch.
 CONTEXT_CHANGED_REVIEW_NOTICE = (
-    "The conversation changed while the queue was paused. Review it before resuming."
+    "The conversation has changed. Review it before the queue continues."
 )
 
 
