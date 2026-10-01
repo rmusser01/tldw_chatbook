@@ -986,3 +986,71 @@ notification). Unknown dependency state remains dependency-required for the
 owning capability coordinator; explicit/event-control failure scope is unchanged.
 These outcomes contain no exception text. `CancelledError` retains its original
 cancellation semantics and cannot release unsettled process custody.
+
+### H3 integration contracts (R48–R49)
+
+H3 consumes the exact app-owned immutable H2 session through a read-only runtime
+accessor. It does not initialize H4 sessions. Engine-issued event scopes capture
+host dependency status once for phase planning, execution and failure scope;
+unknown dependency status remains required and cannot enter the lossy lane.
+
+Post-event checkpoint queries accept host-resolved required handler IDs for the
+next input/capability use. Explicit/event requirements always gate their owner;
+dependency-only requirements gate only the selected dependent work. An empty
+selection means positively independent work, never missing dependency resolution.
+Unknown mappings refuse admission. Normal settlement joins every pending required
+post-event, then retains each failure's original scope. I1 owns plugin graph
+mapping; H3 does not create a graph or import Plugins into the hook engine.
+
+`ToolResult.dispatch_state` is optional host provenance: `not_started`, `settled`,
+or `uncertain`. Actual host permission/capacity/start gates publish `not_started`;
+known returned/raised calls are `settled`; an unresolved worker after abandonment
+or timeout is `uncertain`. Remote payload fields and error prose cannot establish
+this state. Not-started results emit neither tool post event. Uncertain results
+retain uncertainty in PostToolUse and never fabricate PostToolUseFailure or replay
+settled tool work. Known errors install both distinct requirements before result
+publication. Lower provider adapters must preserve honest host provenance.
+
+H3 context uses the existing live `PluginContextText` carrier with separate
+`HookContextOrigin` records (R50). User hooks have no invented installation.
+Genuine package origins accompanying hook material remain linked attribution;
+the same block is charged once. Copying and whole-block assembly preserve both
+origin sets. The host-neutral final model-send check enforces hook4KiB/block,
+16KiB/event, package8KiB/block and combined32KiB/send, including multimodal text.
+H3 stages whole rendered contributions before accepting/releasing a checkpoint.
+Only the final checked transport copy loses its live sidecars.
+
+H3 candidate validation is offline (R51): `jsonschema`'s selected validator uses
+`referencing.Registry()` with its no-retrieval default. Embedded/internal refs
+remain supported; unavailable external/file refs fail with fixed metadata before
+hook execution or permission review. No URI, payload, network or filesystem fetch
+is authorized by a tool schema. Future adapters must supply reviewed local schema
+resources rather than silently dropping unresolved constraints.
+
+The concrete preparation entry is `prepare_tool(event, engine, *, definition)`;
+`definition` is a host `ToolDefinitionSnapshot` containing immutable JSON schema,
+name/ID/source and catalog/provider generation. Transformers and required/final
+validators run once on one issued scope. The runtime retains that same scope
+through the legacy final guard, then executes optional context and schedules
+observations before permission review. A denied candidate closes its remaining
+scope at run settlement without executing the optional tail. Dispatch rechecks
+exact argument bytes and current definitions; existing argument repair cannot
+change an approved candidate. Catalog dispatch checks again after repair/gates.
+Live call-object ownership, including explicitly bound host reconstructions,
+separates repeated or missing model call IDs.
+
+`ToolHookRun` supplies `prepare_call`, `validate_dispatch`, `install_result`,
+`admit_input` and `settle` to the existing loop/service. Completion requirements
+are installed idempotently before definitive terminal callbacks, observational
+callbacks (including inline skills), common result publication, next-model
+admission and normal run persistence. Both known-failure events are installed
+before either is allowed to complete. Terminal admission joins all pending
+required events even when another has already failed, then reports failure in
+its original scope. Neither failure nor uncertainty replays a tool.
+
+R52 declares `jsonschema>=4.26,<5` and directly imported
+`referencing>=0.37,<1` as core runtime requirements. The old dev-only jsonschema
+declaration cannot satisfy a base install. These floors match the qualified
+installed APIs; no missing-validator fallback or schema retrieval is permitted.
+Offline wheel import qualification may reuse controlled existing dependency files;
+it does not claim fresh full dependency resolution or broader platform support.

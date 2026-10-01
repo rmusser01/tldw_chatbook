@@ -5193,6 +5193,7 @@ class ConsoleAgentBridge:
         # harnesses) means this bridge never wires a hooks engine at all.
         ensure_run_hooks: Callable[[], Any] | None = None,
         app_config: Mapping[str, Any] | None = None,
+        get_hooks_v2: Callable[[str], Any] | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
@@ -5229,6 +5230,7 @@ class ConsoleAgentBridge:
         # the spawn resolver's readiness gate does not depend on host
         # credentials.
         self._app_config = app_config
+        self._get_hooks_v2 = get_hooks_v2
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -7216,6 +7218,13 @@ class ConsoleAgentBridge:
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             guard_tool_calls=guard_tool_calls,
+            hooks_v2_engine=(
+                self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
+            ),
+            hooks_v2_session_id=session_id,
+            hooks_v2_turn_id=assistant_message_id,
+            # Standalone work has no plugin dependency graph.
+            hooks_v2_required_handler_ids=lambda _run_id: (),
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,

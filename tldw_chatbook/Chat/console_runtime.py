@@ -2956,6 +2956,11 @@ class ConsoleRuntime:
             self._hooks_v2_engines[session_id] = engine
             return engine
 
+    def get_hooks_v2(self, session_id: str) -> Any:
+        """Return the exact pinned snapshot, including disabled/closed requirements."""
+        with self._run_hooks_lock:
+            return self._hooks_v2_engines.get(session_id)
+
     def _seal_hooks_v2(self, session_id: str | None = None) -> None:
         with self._run_hooks_lock:
             engines = (
@@ -3706,6 +3711,7 @@ class ConsoleRuntime:
             # singleton through the same runtime a mounted Console uses --
             # never a view, so headless wake runs reach it identically.
             ensure_run_hooks=self.ensure_run_hooks,
+            get_hooks_v2=self.get_hooks_v2,
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO

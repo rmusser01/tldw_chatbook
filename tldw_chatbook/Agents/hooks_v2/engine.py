@@ -20,7 +20,7 @@ from .command_executor import CommandExecutor
 from .matching import UnsupportedEventField, matches_handler
 from .models import HookEvent, HookHandler, HookResult
 from .ownership import HookProcessOwner, HostProcessOwner
-from .validation import parse_event
+from .validation import handler_phase, parse_event
 
 
 def _envelope(event: HookEvent) -> dict:
@@ -66,6 +66,17 @@ class _ExecutionState:
     active_seconds: float = 0.0
     closed: bool = False
     busy: bool = False
+    dependencies: dict[str, tuple[bool, str | None]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class HookHandlerPlan:
+    """Host phase/requirement projection from an engine-issued event scope."""
+
+    handler_id: str
+    phase: str
+    dependency_required: bool
+    explicit_required: bool
 
 
 @dataclass(frozen=True, init=False, slots=True, eq=False)
@@ -228,6 +239,51 @@ class HookEngine:
             return None
         return state
 
+    def plan_handlers(
+        self, execution: HookEventExecution, event: HookEvent
+    ) -> tuple[HookHandlerPlan, ...]:
+        """Capture dependency state once, without executing or filtering requirements.
+
+        Disabled/sealed definitions remain visible. An unsupported controlling
+        matcher is preserved for execution to refuse with its actual scope.
+        """
+        value = _envelope(event)
+        parse_event(value)
+        with self._lock:
+            state = self._execution_state(execution)
+            if (
+                state is None
+                or state.closed
+                or state.busy
+                or time.monotonic() >= state.deadline
+                or state.identity
+                != tuple((k, v) for k, v in value.items() if k != "data")
+            ):
+                raise ValueError("invalid event execution")
+            plans = []
+            for handler in self.definitions:
+                if handler.event != event.event:
+                    continue
+                try:
+                    if not matches_handler(handler, event):
+                        continue
+                except UnsupportedEventField:
+                    pass
+                if handler.id not in state.dependencies:
+                    state.dependencies[handler.id] = self._dependency_status(
+                        handler, event
+                    )
+                dependency, _failure = state.dependencies[handler.id]
+                plans.append(
+                    HookHandlerPlan(
+                        handler.id,
+                        handler_phase(handler, dependency_required=dependency),
+                        dependency,
+                        handler.required,
+                    )
+                )
+            return tuple(plans)
+
     def _dependency_status(self, handler, event) -> tuple[bool, str | None]:
         try:
             return bool(self._dependency_required(handler, event)), None
@@ -376,7 +432,13 @@ class HookEngine:
                 failures=(HookFailure(handler_id, "unknown_handler", True),)
             )
 
+        state = self._execution_state(execution)
+
         def failed(code, *, dependency=None):
+            if dependency is None and state is not None:
+                captured = state.dependencies.get(handler.id)
+                if captured is not None:
+                    dependency = captured[0]
             return HookEventOutcome(
                 failures=(self._failure(handler, event, code, dependency=dependency),)
             )
@@ -413,7 +475,9 @@ class HookEngine:
                 state.deadline = min(state.deadline, self._sealed_at + 3.0)
             if time.monotonic() >= state.deadline or state.active_seconds >= 60:
                 return failed("event_deadline")
-            dependency, dependency_failure = self._dependency_status(handler, event)
+            if handler.id not in state.dependencies:
+                state.dependencies[handler.id] = self._dependency_status(handler, event)
+            dependency, dependency_failure = state.dependencies[handler.id]
             if dependency_failure:
                 return failed(dependency_failure, dependency=dependency)
             observation = (
@@ -444,7 +508,14 @@ class HookEngine:
                 delivery.job.stop()
             execution.close()
             return HookEventOutcome(
-                failures=(self._failure(handler, event, "event_deadline"),),
+                failures=(
+                    self._failure(
+                        handler,
+                        event,
+                        "event_deadline",
+                        dependency=state.dependencies.get(handler.id, (None,))[0],
+                    ),
+                ),
                 outstanding_cleanup=(handler.id,),
             )
         except asyncio.CancelledError:
@@ -490,11 +561,29 @@ class HookEngine:
                 failure = "cancelled"
             if failure:
                 return HookEventOutcome(
-                    failures=(self._failure(handler, event, failure),)
+                    failures=(
+                        self._failure(
+                            handler,
+                            event,
+                            failure,
+                            dependency=execution.dependencies.get(handler.id, (None,))[
+                                0
+                            ],
+                        ),
+                    )
                 )
             if handler.type != "command":
                 return HookEventOutcome(
-                    failures=(self._failure(handler, event, "executor_unavailable"),)
+                    failures=(
+                        self._failure(
+                            handler,
+                            event,
+                            "executor_unavailable",
+                            dependency=execution.dependencies.get(handler.id, (None,))[
+                                0
+                            ],
+                        ),
+                    )
                 )
             deadline = min(
                 execution.deadline,
@@ -530,7 +619,16 @@ class HookEngine:
                 result.failure = "cancelled"
             if result.failure:
                 return HookEventOutcome(
-                    failures=(self._failure(handler, event, result.failure),),
+                    failures=(
+                        self._failure(
+                            handler,
+                            event,
+                            result.failure,
+                            dependency=execution.dependencies.get(handler.id, (None,))[
+                                0
+                            ],
+                        ),
+                    ),
                     outstanding_cleanup=(job.id,) if result.cleanup_pending else (),
                 )
             return HookEventOutcome(accepted=((handler.id, result.result),))
@@ -540,18 +638,47 @@ class HookEngine:
             with self._lock:
                 self._deliveries.discard(delivery)
 
+    def effects_current(self, event: HookEvent, outcome: HookEventOutcome) -> bool:
+        """Recheck staged effects at host acceptance; this grants no permission."""
+        if not outcome.accepted:
+            return True
+        with self._lock:
+            if self._sealed_at is not None or not self.enabled:
+                return False
+        by_id = {handler.id: handler for handler in self.definitions}
+        try:
+            return all(
+                handler_id in by_id
+                and self.authority_check(by_id[handler_id], event, "accept")
+                for handler_id, _result in outcome.accepted
+            )
+        except Exception:  # noqa: BLE001 -- host callback failure retains requirements
+            return False
+
+    def notify_planned(self, execution: HookEventExecution, event: HookEvent) -> bool:
+        """Publish optional observations without rereading captured requirements."""
+        self.plan_handlers(execution, event)
+        return self._notify(event, teardown=False, planned=execution)
+
     def notify(self, event: HookEvent) -> bool:
         return self._notify(event, teardown=False)
 
     def notify_teardown(self, event: HookEvent) -> bool:
         return self._notify(event, teardown=True)
 
-    def _notify(self, event, *, teardown):
+    def _notify(self, event, *, teardown, planned=None):
         # Reserve every matching handler synchronously so queue capacity bounds
         # submissions even when called faster than the owner loop can dispatch.
         try:
             execution = self.begin_event(event, teardown=teardown)
             value = _envelope(event)
+            if planned is not None:
+                previous = self._execution_state(planned)
+                if previous is None or previous.closed:
+                    return False
+                state = self._execution_state(execution)
+                state.deadline = previous.deadline
+                state.dependencies = dict(previous.dependencies)
         except ValueError:
             return False
         admitted = False
@@ -569,9 +696,14 @@ class HookEngine:
                 try:
                     if not matches_handler(handler, event):
                         continue
-                    dependency, dependency_failure = self._dependency_status(
-                        handler, event
-                    )
+                    state = self._execution_state(execution)
+                    if handler.id not in state.dependencies:
+                        if planned is not None:
+                            continue
+                        state.dependencies[handler.id] = self._dependency_status(
+                            handler, event
+                        )
+                    dependency, dependency_failure = state.dependencies[handler.id]
                     if dependency_failure:
                         self.notification_failures[dependency_failure] += 1
                         continue

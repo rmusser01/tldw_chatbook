@@ -68,9 +68,46 @@ and Linux/live providers/full dependency resolution were not qualified.
 All four ACs self-reviewed. Existing ADR163/148/197 apply; H2 spec/ADR163
 interfaces are updated. No new dependency, storage or permission owner.
 
+## TASK-32678 — transformations and post-event checkpoints
+
+Reused reviewed H3 checkpoint `8192f1fb1f`. Frozen transformed arguments pass
+legacy guards and existing permission review; current catalog/schema identities
+are checked again before dispatch. Required postevents hold both next model input
+and terminal persistence. Current approval provenance, sensitive projections,
+worktree tool policy and guarded native workers survive the integration.
+
+Unchanged baseline initially stopped at **11 passed, 1 failed** after a switched
+profile made hook admission unavailable. Correct selected-profile fixture:
+**135 passed**. Public behavior/core metadata RED: **3 failed, 2 passed**; the
+barrier was missing and schema packages were dev-only/undeclared. Core H3:
+**116 passed**. Skill and capacity fixture failures reproduce against exported
+pre-H3 `d7432e3396` source; their selected-profile markers are repaired. The
+capacity test now establishes physical worker startup and holds resources until
+explicit release; its artificial old ten-second hold could expire during real
+recovery admission. The terminal hook test likewise allows bounded cold startup
+for its six controlled children while retaining deterministic held acceptance.
+
+Final covering command:
+
+```sh
+.venv/bin/python -m pytest Tests/Agents/test_hooks_v2_tool_pipeline.py Tests/Agents/test_hooks_v2_post_checkpoints.py Tests/Agents/test_hooks_v2_execution.py Tests/Packaging/test_hooks_v2_dependencies.py Tests/Agents/test_post_tool_dispatch_hook.py Tests/Chat/test_console_run_hooks_regressions.py Tests/Agents/test_agent_runtime.py Tests/Agents/test_skill_tool_spawn.py Tests/Agents/test_agent_models.py Tests/Agents/test_agent_runtime_review_hook.py Tests/Agents/test_tool_catalog.py Tests/Agents/test_tool_catalog_owner_cache.py Tests/Agents/test_tool_catalog_concurrency.py Tests/Agents/test_tool_record_projection.py Tests/Agents/test_tool_timeout_wall_clamp.py Tests/Agents/test_tool_call_abandon.py Tests/Agents/test_tool_worker_capacity.py Tests/Agents/test_execution_capacity.py -x -q --tb=short --show-capture=no --timeout=120 --basetemp=/private/tmp/expanded-hooks-h3-qualified-final --junitxml=/private/tmp/expanded-hooks-h3-qualified-final.xml
+```
+
+**514 passed in 88.47s**, zero skips. Seven hook/new test files pass full
+Ruff/format; Console regression tests pass full Ruff. Changed Python parses,
+TOML and whitespace pass. Shared Ruff debt is unchanged (models/runtime/service/
+catalog/bridge/ConsoleRuntime: 3/20/51/10/27/30); the skill fixture improves 2 to 1.
+Offline validation rejects external refs without retrieval; base distribution
+metadata declares the qualified jsonschema/referencing bounds.
+
+Host carrier/copy/multimodal mixed-origin budgets are qualified directly. Native
+Plugin context wrapper/graph composition remains the foundation task. H3 consumes
+pinned sessions; H4 creates lifecycle producers. Existing ADR163/162/197 apply;
+all four ACs self-reviewed. No full suite, live provider, graphical UI, Windows/
+Linux execution or fresh complete dependency resolution is claimed.
+
 ## Remaining requested order
 
-- TASK-32678: input transformations and post-event barriers.
 - TASK-32679: session/child/compaction events.
 - TASK-32680: Stop continuations and teardown.
 - TASK-32685: MCP hooks, including required MCP/plugin prerequisites.

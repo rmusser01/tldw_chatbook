@@ -1779,6 +1779,34 @@ class SkillToolProvider:
         )
 
 
+@dataclass(frozen=True)
+class ToolDefinitionSnapshot:
+    """Detached exact schema and host owner generation for hook preparation."""
+
+    tool_id: str
+    name: str
+    provider: str
+    parameters_json: str
+    generation: int
+    owner_generation: int
+
+    @classmethod
+    def from_schema(cls, schema, provider, generation, owner_generation):
+        return cls(
+            schema.id,
+            schema.name,
+            provider,
+            json.dumps(
+                schema.parameters,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ),
+            generation,
+            owner_generation,
+        )
+
+
 class ToolCatalogRegistry:
     """Ordered provider registry: catalog, search, schema, invocation."""
 
@@ -2108,6 +2136,32 @@ class ToolCatalogRegistry:
         record = self._ensure_catalog_cache().by_id.get(tool_id)
         return record.source if record is not None else None
 
+    def snapshot_for_hook(self, name: str) -> ToolDefinitionSnapshot:
+        """Resolve current host identity and schema under the catalog lock."""
+        with self._catalog_lock:
+            record = self._owner_record_for_name(name)
+            if record is None:
+                raise ValueError("tool unavailable")
+            if (
+                name in CANVAS_RESERVED_TOOL_NAMES
+                and not self._authenticated_canvas_name(record.provider, name)
+            ):
+                raise ValueError("Canvas authority unavailable")
+            if self._ephemeral and not (
+                self._authenticated_canvas_name(record.provider, name)
+                or self._authenticated_builtin_library_name(record.provider, name)
+            ):
+                from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
+
+                if tool_blocked_reason(name, source=record.source, ephemeral=True):
+                    raise ValueError("temporary session tool unavailable")
+            schema = record.provider.load_schema(record.tool_id)
+            if schema.id != record.tool_id or schema.name != name:
+                raise ValueError("tool schema identity changed")
+            return ToolDefinitionSnapshot.from_schema(
+                schema, record.source, self._catalog_generation, id(record.provider)
+            )
+
     def load_schema(self, tool_id: str) -> ToolSchema:
         provider = self._owner_and_id(tool_id)
         if provider is None:
@@ -2222,10 +2276,25 @@ class ToolCatalogRegistry:
             )
         return repaired
 
-    def invoke_by_name(self, name: str, args: dict) -> ToolResult:
-        record = self._owner_record_for_name(name)
+    def invoke_by_name(
+        self,
+        name: str,
+        args: dict,
+        *,
+        expected_definition: ToolDefinitionSnapshot | None = None,
+    ) -> ToolResult:
+        with self._catalog_lock:
+            if expected_definition is not None:
+                try:
+                    if self.snapshot_for_hook(name) != expected_definition:
+                        return ToolResult.blocked("reviewed tool definition changed")
+                except Exception:  # noqa: BLE001 -- fail closed
+                    return ToolResult.blocked("reviewed tool definition unavailable")
+            record = self._owner_record_for_name(name)
         if record is None:
-            return ToolResult(ok=False, error=f"Unknown tool: {name}")
+            return ToolResult(
+                ok=False, error=f"Unknown tool: {name}", dispatch_state="not_started"
+            )
         tool_id, provider = record.tool_id, record.provider
         if name in CANVAS_RESERVED_TOOL_NAMES:
             if not self._authenticated_canvas_name(provider, name):
@@ -2249,7 +2318,17 @@ class ToolCatalogRegistry:
         # `provider.invoke` below because this method has two dispatch sites and
         # is the one line every provider is reached through -- the same reason
         # the ephemeral gate and the call caps live here.
+        original_args = (
+            json.dumps(args, sort_keys=True, allow_nan=False)
+            if expected_definition is not None
+            else None
+        )
         args = self._coerce_arguments(name, tool_id, provider, args)
+        if (
+            expected_definition is not None
+            and json.dumps(args, sort_keys=True, allow_nan=False) != original_args
+        ):
+            return ToolResult.blocked("reviewed tool arguments changed during coercion")
         # Workspace assistant defaults (Task 7): persona-policy call caps,
         # refused BEFORE dispatch in the exact error-`ToolResult` shape the
         # unknown-tool branch above uses. Narrowing-only -- a capped tool is
@@ -2258,7 +2337,8 @@ class ToolCatalogRegistry:
         if self._run_tool_policy is not None:
             allowed, refusal = self._run_tool_policy.check(current_run_id(), name)
             if not allowed:
-                return ToolResult(ok=False, error=refusal)
+                return ToolResult(ok=False, error=refusal, dispatch_state="not_started")
+
         # THE choke point for the temporary-session ("not saved locally")
         # guarantee. Every provider's invoke() is reached through this one
         # line, so gating here -- rather than in each provider -- is what
@@ -2268,17 +2348,26 @@ class ToolCatalogRegistry:
         # everything else refused); an unresolvable source refuses too.
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
+        def invoke_current() -> ToolResult:
+            if expected_definition is not None:
+                try:
+                    if self.snapshot_for_hook(name) != expected_definition:
+                        return ToolResult.blocked("reviewed tool definition changed")
+                except Exception:  # noqa: BLE001 -- fail closed
+                    return ToolResult.blocked("reviewed tool definition unavailable")
+            return provider.invoke(tool_id, args)
+
         if self._ephemeral:
             if self._authenticated_canvas_name(provider, name):
-                return provider.invoke(tool_id, args)
+                return invoke_current()
             if self._authenticated_builtin_library_name(provider, name):
-                return provider.invoke(tool_id, args)
+                return invoke_current()
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
 
             reason = tool_blocked_reason(name, source=record.source, ephemeral=True)
             if reason is not None:
                 return ToolResult.blocked(reason)
-        return provider.invoke(tool_id, args)
+        return invoke_current()
 
     def timeout_for(self, name: str) -> float | None:
         """Resolve a tool's per-call timeout override by LLM-facing name.

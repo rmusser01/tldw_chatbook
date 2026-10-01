@@ -225,7 +225,7 @@ git diff --check
 - Consumes: H2 engine and existing guard_tool_calls/post_tool_call dependency injection before approval exemptions and result truncation.
 - Produces: async prepare_tool(event: HookEvent, engine: HookEngine) -> PreparedHookCall returns exact original/final arguments, effects and definition/owner generations. HookCheckpointStore.begin(event: HookEvent, requirements: tuple[str, ...]) -> str; accept(token: str, result: HookEventOutcome) -> None; fail(token: str, reason: str) -> None; assert_next_input_allowed(owner_id: str) -> None. Checkpoints enter pending before completion publication; accepted context and release use one synchronized operation.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 import pytest
@@ -242,9 +242,9 @@ async def test_next_model_step_cannot_overtake_required_post_hook(post_hook_case
     assert case.next_input_context() == "reviewed"
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Agents/test_hooks_v2_tool_pipeline.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Agents/test_hooks_v2_tool_pipeline.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def freeze_candidate(arguments: dict) -> bytes:
@@ -252,20 +252,20 @@ def freeze_candidate(arguments: dict) -> bytes:
     return json.dumps(arguments, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 ```
 
-  - [ ] 3.1. Build post_hook_case around the real agent dispatch callback and next-input guard with deterministic events; define its six scenario methods and checkpoint_settled event in the same test module. Do not simulate next-input readiness with an unrelated helper.
-  - [ ] 3.2. Run transformers in order and validate every replacement; freeze the candidate, run final validators and context-only handlers, then bind ordinary permission review to that candidate. Revalidate changed arguments before exemptions/approval/dispatch.
-  - [ ] 3.3. Extend the post-tool consumer seam to await/control required effects while preserving old optional callbacks. Install pending checkpoints before any completion consumer can admit a model call or root settlement.
-  - [ ] 3.4. Handle PostToolUse then known-error PostToolUseFailure separately. Commit accepted context and release together; cancelled/revoked results cannot satisfy requirements, and already-settled tool effects are never replayed.
+  - [x] 3.1. Build post_hook_case around the real agent dispatch callback and next-input guard with deterministic events; define its six scenario methods and checkpoint_settled event in the same test module. Do not simulate next-input readiness with an unrelated helper.
+  - [x] 3.2. Run transformers in order and validate every replacement; freeze the candidate, run final validators and context-only handlers, then bind ordinary permission review to that candidate. Revalidate changed arguments before exemptions/approval/dispatch.
+  - [x] 3.3. Extend the post-tool consumer seam to await/control required effects while preserving old optional callbacks. Install pending checkpoints before any completion consumer can admit a model call or root settlement.
+  - [x] 3.4. Handle PostToolUse then known-error PostToolUseFailure separately. Commit accepted context and release together; cancelled/revoked results cannot satisfy requirements, and already-settled tool effects are never replayed.
 
 **Failure and successful-control matrix:** Transformer A then B then final guard C; stale approval hash; preauthorized Canvas call; durable invocation; context-only handler; required effect-free completion; tool error, not-dispatched denial and uncertain remote cancellation; concurrent child/model settlement; valid success on every refusal entry.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Agents/test_hooks_v2_tool_pipeline.py Tests/Agents/test_hooks_v2_post_checkpoints.py Tests/Agents/test_post_tool_dispatch_hook.py Tests/Chat/test_console_run_hooks_regressions.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32678 --plain

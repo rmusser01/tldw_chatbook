@@ -63,6 +63,7 @@ from tldw_chatbook.Chat.console_history_budget import count_console_messages_tok
 
 from .agent_models import (
     WorkOrigin,
+    check_host_context,
     MESSAGE_TOOL_NAMES,
     AGENT_LIFECYCLE_INDEX_BASE,
     AGENT_KIND_PRIMARY,
@@ -743,7 +744,6 @@ class RunLogRequestPlan:
     requested: bool
     eviction_enabled: bool
     min_recent_rounds: int
-
 
 
 def _chat_create_runtime_schemas(
@@ -1973,11 +1973,14 @@ def _call_with_timeout(
             automatic_work.check()
         operation = owner.reserve_tool() if owner is not None else None
     except (CapacityRefused, AutomaticWorkRefused) as exc:
-        return ToolResult(ok=False, error=f"tool call refused: {exc}")
-    box: dict = {}
+        return ToolResult(
+            ok=False, error=f"tool call refused: {exc}", dispatch_state="not_started"
+        )
+    box: dict = {"dispatch_state": "not_started"}
 
     @worker_guard(execution_owner)
     def _admitted_call() -> ToolResult:
+        box["dispatch_state"] = "settled"
         return fn()
 
     def _runner() -> None:
@@ -1988,7 +1991,12 @@ def _call_with_timeout(
             ):
                 if automatic_work is not None:
                     automatic_work.check()
-                box["result"] = _admitted_call()
+                result = _admitted_call()
+                box["result"] = (
+                    dataclasses.replace(result, dispatch_state="settled")
+                    if isinstance(result, ToolResult) and result.dispatch_state is None
+                    else result
+                )
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = str(exc)
         finally:
@@ -2001,7 +2009,11 @@ def _call_with_timeout(
     except BaseException as exc:  # noqa: BLE001 -- failed tool starts return a ToolResult
         if operation is not None:
             operation.finish()
-        return ToolResult(ok=False, error=f"tool worker could not start: {exc}")
+        return ToolResult(
+            ok=False,
+            error=f"tool worker could not start: {exc}",
+            dispatch_state="not_started",
+        )
     deadline = time.monotonic() + seconds
     while worker.is_alive() and time.monotonic() < deadline:
         worker.join(min(_CANCEL_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
@@ -2011,7 +2023,12 @@ def _call_with_timeout(
         ):
             if operation is not None:
                 operation.mark_stopping()
-            return ToolResult(ok=False, error=f"tool call cancelled: {tool_name}", outcome=TOOL_OUTCOME_CANCELLED)
+            return ToolResult(
+                ok=False,
+                error=f"tool call cancelled: {tool_name}",
+                outcome=TOOL_OUTCOME_CANCELLED,
+                dispatch_state="uncertain",
+            )
         if worker.is_alive() and pauses_deadline():
             deadline = time.monotonic() + seconds
     if worker.is_alive():
@@ -2028,9 +2045,14 @@ def _call_with_timeout(
                 else f"tool call timed out after {seconds:g}s: {tool_name}"
             ),
             outcome=TOOL_OUTCOME_TIMEOUT,
+            dispatch_state="uncertain",
         )
     if "error" in box:
-        return ToolResult(ok=False, error=box["error"])
+        return ToolResult(
+            ok=False,
+            error=box["error"],
+            dispatch_state=box.get("dispatch_state", "settled"),
+        )
     result = box.get("result")
     if result is None:
         return ToolResult(ok=False, error=f"tool call produced no result: {tool_name}")
@@ -2076,6 +2098,13 @@ class AgentService:
             Callable[[list[ToolCall], str], dict[str, ToolReviewValue]] | None
         ) = None,
         guard_tool_calls: Callable[[list[ToolCall], str], dict[str, str]] | None = None,
+        hooks_v2_engine: Any = None,
+        hooks_v2_session_id: str | None = None,
+        hooks_v2_turn_id: str | None = None,
+        hooks_v2_required_handler_ids: (
+            Callable[[str], tuple[str, ...] | None] | None
+        ) = None,
+        hooks_v2_render_context: Callable | None = None,
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
@@ -2091,10 +2120,7 @@ class AgentService:
         # bridge ORs into its STREAM-cancel predicate only -- never into
         # LoopDeps.should_cancel, or a redirect would kill the run.
         on_primary_redirect_ready: (
-            Callable[
-                [Callable[[str], str | None], Callable[[], bool]], None
-            ]
-            | None
+            Callable[[Callable[[str], str | None], Callable[[], bool]], None] | None
         ) = None,
         # TASK-25911: explicit prune settings override config resolution
         # (None = resolve from [agents] config; the config default is OFF).
@@ -2102,15 +2128,17 @@ class AgentService:
         # TASK-25912: same override pattern; None = resolve from config
         # ([agents] retire_stale_images, default OFF).
         stale_image_retirement: "StaleImageSettings | None" = None,
-        review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
-        | None = None,
+        review_state_scope: (
+            Callable[[str], "contextlib.AbstractContextManager"] | None
+        ) = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
-        prepare_managed_skill_promotion_tool: Callable[[dict], ToolResult]
-        | None = None,
-        run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
-        | None = None,
-        post_tool_call: Callable[[str, str, dict, str, bool, str], None]
-        | None = None,
+        prepare_managed_skill_promotion_tool: (
+            Callable[[dict], ToolResult] | None
+        ) = None,
+        run_skill_script_tool: (
+            Callable[[str, str, list[str]], ToolResult] | None
+        ) = None,
+        post_tool_call: Callable[[str, str, dict, str, bool, str], None] | None = None,
         fork_chat_tool: Callable[[dict], ToolResult] | None = None,
         new_chat_tool: Callable[[dict], ToolResult] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
@@ -2127,8 +2155,9 @@ class AgentService:
             Callable[[str, str, str, ToolResult], object] | None
         ) = None,
         on_run_terminal: Callable[[str], object] | None = None,
-        child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
-        | None = None,
+        child_model_scope: (
+            Callable[[], "contextlib.AbstractContextManager"] | None
+        ) = None,
         on_child_settled: Callable[[str | None, str], None] | None = None,
         persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
         | None = None,
@@ -2137,8 +2166,9 @@ class AgentService:
         ) = None,
         prepare_provider_continuation_request: bool = False,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
-        confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
-        | None = None,
+        confirm_project_instruction_dispatch: (
+            Callable[[InstructionSnapshot], str] | None
+        ) = None,
         project_instruction_context: InstructionActivationLedger | None = None,
         on_ephemeral_runtime_warning: (
             Callable[[str, tuple[str, ...], int], None] | None
@@ -2207,6 +2237,11 @@ class AgentService:
         # writes them.
         self.review_tool_calls = review_tool_calls
         self.guard_tool_calls = guard_tool_calls
+        self._hooks_v2_engine = hooks_v2_engine
+        self._hooks_v2_session_id = hooks_v2_session_id
+        self._hooks_v2_turn_id = hooks_v2_turn_id
+        self._hooks_v2_required_handler_ids = hooks_v2_required_handler_ids
+        self._hooks_v2_render_context = hooks_v2_render_context
         #: TASK-26010: observational post-completion seam -- (call, result,
         #: duration_seconds, run_id) after EVERY tool call completes, whatever
         #: the outcome. Strictly observational: a raising hook costs nothing
@@ -3155,7 +3190,7 @@ class AgentService:
                     call_kwargs["api_base_url"] = config.base_url
                 resp = self.chat_call(
                     api_endpoint=api_endpoint,
-                    messages_payload=payload,
+                    messages_payload=check_host_context(payload),
                     streaming=False,
                     model=config.model,
                     **call_kwargs,
@@ -3474,6 +3509,8 @@ class AgentService:
         *,
         run_id: str,
         run_actor: CurrentRunActor | None = None,
+        validate_prepared_call: Callable | None = None,
+        install_post_checkpoint: Callable | None = None,
     ):
         """Build this run's ``LoopDeps.invoke_tool``.
 
@@ -3510,6 +3547,13 @@ class AgentService:
         owner = current_execution_owner()
 
         def invoke_tool(call: ToolCall) -> ToolResult:
+            if should_cancel():
+                return ToolResult(
+                    ok=False,
+                    error="tool call cancelled before start",
+                    outcome=TOOL_OUTCOME_CANCELLED,
+                    dispatch_state="not_started",
+                )
             if (
                 call.name not in config.allowed_tools
                 or call.name not in disclosed_names
@@ -3522,8 +3566,31 @@ class AgentService:
                 with use_run_actor(actor), use_tool_call_id(call.call_id):
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
-                        automatic_work.check()
-                    return self.registry.invoke_by_name(call.name, call.args)
+                        from .automatic_work_budget import AutomaticWorkRefused
+
+                        try:
+                            automatic_work.check()
+                        except AutomaticWorkRefused:
+                            return ToolResult.blocked(
+                                "automatic work refused before dispatch"
+                            )
+                    if validate_prepared_call is not None:
+                        try:
+                            definition = validate_prepared_call(call)
+                        except Exception:  # noqa: BLE001 -- fail closed
+                            return ToolResult.blocked(
+                                "hook: final dispatch identity refused"
+                            )
+                        result = self.registry.invoke_by_name(
+                            call.name, call.args, expected_definition=definition
+                        )
+                    else:
+                        result = self.registry.invoke_by_name(call.name, call.args)
+                    return (
+                        dataclasses.replace(result, dispatch_state="settled")
+                        if result.dispatch_state is None
+                        else result
+                    )
 
             if (
                 self.registry.execution_policy_for(call.name)
@@ -3534,6 +3601,7 @@ class AgentService:
                         ok=False,
                         error=f"tool call cancelled before start: {call.name}",
                         outcome=TOOL_OUTCOME_CANCELLED,
+                        dispatch_state="not_started",
                     )
                 try:
                     operation = owner.reserve_tool() if owner is not None else None
@@ -3553,11 +3621,16 @@ class AgentService:
                         result = ToolResult(
                             ok=False,
                             error=f"tool call failed: {call.name}",
+                            dispatch_state="settled",
                         )
                     return result
                 finally:
-                    if operation is not None:
-                        operation.finish()
+                    try:
+                        if install_post_checkpoint is not None:
+                            install_post_checkpoint(call, result)
+                    finally:
+                        if operation is not None:
+                            operation.finish()
                     self._notify_tool_terminal(
                         run_id,
                         call.call_id or call.name,
@@ -3595,6 +3668,7 @@ class AgentService:
                             "(the run's wall-clock budget is exhausted)"
                         ),
                         outcome=TOOL_OUTCOME_TIMEOUT,
+                        dispatch_state="not_started",
                     )
                 # task-31386: a per-call abandon request rides the same
                 # poll as the run-wide Stop, but only inside this wrapper --
@@ -3619,14 +3693,18 @@ class AgentService:
             try:
                 operation = owner.reserve_tool() if owner is not None else None
             except CapacityRefused as exc:
-                return ToolResult(ok=False, error=f"tool call refused: {exc}")
+                return ToolResult(
+                    ok=False,
+                    error=f"tool call refused: {exc}",
+                    dispatch_state="not_started",
+                )
             try:
                 return _invoke()
             finally:
                 if operation is not None:
                     operation.finish()
 
-        if self.post_tool_dispatch is None:
+        if self.post_tool_dispatch is None and install_post_checkpoint is None:
             # AC#5: no observer, no wrapper -- the closure above is returned
             # untouched, so an unconfigured install pays nothing.
             return invoke_tool
@@ -3634,6 +3712,8 @@ class AgentService:
         def observed_invoke_tool(call: ToolCall) -> ToolResult:
             observation_started = self.clock()
             result = invoke_tool(call)
+            if install_post_checkpoint is not None:
+                install_post_checkpoint(call, result)
             self._fire_post_tool_dispatch(
                 call, result, self.clock() - observation_started, run_id
             )
@@ -5597,7 +5677,6 @@ class AgentService:
                 self._fleet_cancels[handle.handle_id] = child_cancel
                 my_handle_ids.append(handle.handle_id)
 
-
                 # PR3b Task 5 (spec Sec 8, Stop-semantics decoupling): with
                 # `subagents_outlive_turn` ON, a child's cancellation is ITS
                 # OWN Event only -- the parent's run-wide probe stays out of
@@ -5991,7 +6070,12 @@ class AgentService:
                     ok=False, error=f"[{err.code}] {err}"
                 )
             if sub_agent_spawns >= config.budget.max_subagents:
-                return ToolResult(ok=False, error="sub-agent budget exhausted")
+                return ToolResult(
+                    ok=False,
+                    error="sub-agent budget exhausted",
+                    # The runtime spawn callback ran; only child admission failed.
+                    dispatch_state="settled",
+                )
             sub_agent_spawns += 1
             # PR3a-1 Task 5 -- CORRECTED after review caught Defect 1: the
             # ceiling must branch on whether THIS child is turn-scoped or
@@ -7096,6 +7180,16 @@ class AgentService:
             should_cancel,
             run_id=run_id,
             run_actor=run_actor,
+            validate_prepared_call=(
+                (lambda call: hook_run.validate_dispatch(call, accept_context=False))
+                if self._hooks_v2_engine is not None
+                else None
+            ),
+            install_post_checkpoint=(
+                (lambda call, result: hook_run.install_result(call, result))
+                if self._hooks_v2_engine is not None
+                else None
+            ),
         )
 
         def invoke_tool(
@@ -7112,10 +7206,16 @@ class AgentService:
                 # is quietly false for exactly the calls users script.
                 # Gated for symmetry with the registry path's no-wrapper rule
                 # (review A-6): no observer, no clock reads.
-                if self.post_tool_dispatch is not None:
+                if self.post_tool_dispatch is not None or hook_run is not None:
                     skill_observation_started = self.clock()
 
                     def _observed_skill_result(result: ToolResult) -> ToolResult:
+                        if result.dispatch_state is None:
+                            result = dataclasses.replace(
+                                result, dispatch_state="settled"
+                            )
+                        if hook_run is not None:
+                            hook_run.install_result(call, result)
                         self._fire_post_tool_dispatch(
                             call,
                             result,
@@ -7152,7 +7252,11 @@ class AgentService:
                 # render/trust round-trip once the shared budget is spent.
                 if sub_agent_spawns >= config.budget.max_subagents:
                     return _observed_skill_result(
-                        ToolResult(ok=False, error="sub-agent budget exhausted")
+                        ToolResult(
+                            ok=False,
+                            error="sub-agent budget exhausted",
+                            dispatch_state="not_started",
+                        )
                     )
                 # PR2a Task 6.5: a SKILL call runs its child INLINE even
                 # when the fleet is on, so it still returns the skill's
@@ -7195,6 +7299,8 @@ class AgentService:
                     call_id=dispatch_call_id,
                     raw_arguments=call.raw_arguments,
                 )
+                if hook_run is not None:
+                    hook_run.bind_dispatch_call(call, dispatch_call)
             return builtin_invoke_tool(dispatch_call)
 
         # task-3 (skills-foundation): reader closure for the skill_file
@@ -7992,7 +8098,65 @@ class AgentService:
                 progress_reader, args, config.budget.max_tool_result_chars
             )
 
+        hook_run = None
+        if self._hooks_v2_engine is not None:
+            from .hooks_v2.tool_pipeline import ToolHookRun
+            from .tool_catalog import ToolDefinitionSnapshot
+
+            def resolve_hook_definition(call):
+                if should_cancel():
+                    raise ValueError("run cancelled")
+                from .automatic_work_runtime import current_automatic_work
+
+                automatic = current_automatic_work()
+                if automatic is not None:
+                    automatic.check()
+                if (
+                    call.name == SPAWN_TOOL_NAME
+                    and call.name not in config.allowed_tools
+                ):
+                    raise ValueError("spawn not permitted")
+                runtime_schema = next(
+                    (schema for schema in runtime_schemas if schema.name == call.name),
+                    None,
+                )
+                if runtime_schema is not None:
+                    return ToolDefinitionSnapshot.from_schema(
+                        runtime_schema, "runtime", 0, id(runtime_schema)
+                    )
+                if (
+                    call.name not in config.allowed_tools
+                    or call.name not in disclosed_names
+                ):
+                    raise ValueError("tool not permitted or disclosed")
+                return self.registry.snapshot_for_hook(call.name)
+
+            hook_run = ToolHookRun(
+                self._hooks_v2_engine,
+                run_id=run_id,
+                session_id=self._hooks_v2_session_id,
+                turn_id=self._hooks_v2_turn_id,
+                resolve_definition=resolve_hook_definition,
+                should_cancel=should_cancel,
+                required_handler_ids=(
+                    (lambda: self._hooks_v2_required_handler_ids(run_id))
+                    if self._hooks_v2_required_handler_ids is not None
+                    else lambda: ()
+                ),
+                render_context=self._hooks_v2_render_context,
+                parent_run_id=parent_run_id,
+            )
+
         deps = LoopDeps(
+            prepare_hook_call=hook_run.prepare_call if hook_run else None,
+            accept_hook_preparation=hook_run.validate_dispatch if hook_run else None,
+            validate_hook_dispatch=(
+                (lambda call: hook_run.validate_dispatch(call, accept_context=False))
+                if hook_run
+                else None
+            ),
+            install_tool_checkpoint=hook_run.install_result if hook_run else None,
+            await_hook_checkpoints=hook_run.admit_input if hook_run else None,
             call_model=call_model,
             call_model_with_continuation=call_model,
             fallback=fallback_runtime,
@@ -8046,14 +8210,17 @@ class AgentService:
             # record which run armed each card -- see the `use_run_actor`
             # wrapper on `run_agent_loop`.)
             review_tool_calls=self._wrap_review_with_observation(
-                (lambda calls: self.review_tool_calls(calls, run_id))
-                if self.review_tool_calls is not None
-                else None,
+                (
+                    (lambda calls: self.review_tool_calls(calls, run_id))
+                    if self.review_tool_calls is not None
+                    else None
+                ),
                 run_id,
             ),
             guard_tool_calls=(
                 (lambda calls: self.guard_tool_calls(calls, run_id))
-                if self.guard_tool_calls is not None else None
+                if self.guard_tool_calls is not None
+                else None
             ),
             is_tool_call_preauthorized=(
                 lambda call: (
@@ -8137,12 +8304,14 @@ class AgentService:
             # PR3b Task 2: the steering producer, under the same predicate.
             send_to_agent=send_to_agent if fleet_active else None,
             send_to_agent_at_step=(
-                lambda target, message, step_index: send_to_agent(
-                    target, message, spawn_step_index=step_index
+                (
+                    lambda target, message, step_index: send_to_agent(
+                        target, message, spawn_step_index=step_index
+                    )
                 )
-            )
-            if fleet_active
-            else None,
+                if fleet_active
+                else None
+            ),
             # PR3b Task 1: a threaded fleet child's coordinator mailbox --
             # and, since TASK-25903, the PRIMARY run's user-steering mailbox
             # (registered below). Both ride the same protocol-coherent
@@ -8162,12 +8331,12 @@ class AgentService:
                 if seeded_steering_with_causes or drain_mailbox_with_causes is not None
                 else None
             ),
-            report_to_supervisor=report_to_supervisor
-            if progress_sender is not None
-            else None,
-            read_agent_messages=read_agent_messages
-            if progress_inbox is not None
-            else None,
+            report_to_supervisor=(
+                report_to_supervisor if progress_sender is not None else None
+            ),
+            read_agent_messages=(
+                read_agent_messages if progress_inbox is not None else None
+            ),
             on_record=on_record,
             project_tool_record=self.registry.project_tool_record,
             has_tool_record_projection=lambda call: (
@@ -8311,6 +8480,20 @@ class AgentService:
             # approved definitive rows must not survive the run that owned them.
             if progress_reader is not None:
                 progress_reader.close()
+            if hook_run is not None:
+                try:
+                    hook_run.settle()
+                except Exception:  # noqa: BLE001 -- fail closed
+                    if not should_cancel():
+                        outcome = RunOutcome(
+                            status=RUN_ERROR,
+                            steps=[
+                                self._service_error_step(
+                                    run_id,
+                                    "Required post hook failed; remediation or cancellation required",
+                                )
+                            ],
+                        )
             self._notify_run_terminal(run_id)
         self._persist(run_id, outcome, durable_handle_ids, budget_tokens_known=budget_tokens_known)
         return run_id, outcome

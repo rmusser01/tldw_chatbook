@@ -187,3 +187,50 @@ admission and final acceptance. Dependency metadata failures become
 this does not promote a dependency-only requirement into an owning-event veto.
 Explicit/event-control requiredness remains intact. Cancellation propagates
 through the retained cleanup path, never as a secret-bearing error message.
+
+### H3 dependency admission and dispatch provenance (R48–R49)
+
+Use host-resolved qualified handler IDs when checking dependent input readiness;
+keep dependency-only failure separate from owning-event requirements. Empty means
+positively independent, while unknown mapping refuses. Normal terminal admission
+joins all pending required postevents before applying their failure scopes. I1
+supplies admitted graph-to-handler mapping; Hooks does not own another graph.
+
+Carry optional host `ToolResult.dispatch_state` (`not_started`, `settled`,
+`uncertain`) from actual dispatch owners to H3's common result boundary. This
+resolves existing ambiguous timeout/cancelled outcomes without inspecting prose.
+Not-started gates emit no tool postevent; uncertain completion cannot establish a
+known execution failure or authorize replay. Preserve permission owners, exact
+approval identity, resource ownership and legacy observational callbacks.
+
+R50 extends the existing live context carrier with separate hook origins and a
+host-neutral mixed send-budget check. This preserves existing whole-block copy
+and transformation behavior without a second carrier or fake package identity.
+Hook blocks use hook limits even when genuinely package-attributed; linked dual
+provenance is charged once. Required acceptance includes the whole rendered
+contribution before checkpoint release, and final model transport validates the
+actual combined send before stripping live sidecars.
+
+H3 R51 uses the installed jsonschema validator with an explicit empty
+`referencing.Registry()` so embedded refs resolve and missing external/file refs
+refuse without retrieval. Diagnostics contain fixed metadata only. A schema is
+not network/filesystem authority; future remote-schema adapters must provide
+reviewed local resources, not discard constraints or enable automatic fetches.
+
+H3 retains the original issued event scope across the legacy final guard:
+transforms/final validators precede that guard, optional context/observations
+follow its acceptance, and ordinary permission review remains authoritative.
+The catalog snapshot and exact argument bytes are rechecked after existing
+argument repair. Owned call objects and exact host reconstruction bindings keep
+repeated/missing model call IDs independent. Idempotent post requirements precede
+all service completion consumers (including definitive and inline-skill callbacks)
+and common publication. Terminal settlement joins all pending required events
+before reporting an existing scoped failure. H4/H5 use the shared context carrier;
+I1 supplies the actual dependency selector and genuine package attribution.
+
+R52 promotes jsonschema into core (`>=4.26,<5`) and declares the direct referencing
+runtime dependency (`>=0.37,<1`), matching qualified installed APIs. Development
+extras cannot supply a production validation boundary implicitly. The dev-only
+duplicate is removed; unrelated pins/extras stay unchanged. Built-wheel metadata
+and isolated offline imports qualify packaging against available dependency files;
+fresh complete dependency resolution remains I7 distribution qualification.
