@@ -4111,6 +4111,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "0295270fa149e7660e13",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/confirmation_dialog.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "73c73f28d3be7ed8a406",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/conversation_selection_dialog.py",

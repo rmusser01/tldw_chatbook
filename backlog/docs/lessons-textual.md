@@ -1361,3 +1361,32 @@ for keyword-only APIs, and give test doubles the real keyword-only
 signatures. Any awaited off-loop work inserted into a swap/compose chain
 also needs helpers to WAIT for the swap's settle flag rather than assume a
 single pause covers it.
+
+
+## `Screen.dismiss()` pops the TOP screen, and the popped screen's waiter is never resolved (TASK-33622.10, 2026-09-30)
+
+**Incident.** Making Ctrl+Q a priority binding let the quit flow push its
+prompt over any open modal. A real-`TldwCli` Pilot test that then had the
+COVERED modal call a bare `self.dismiss()` from its own timer -- what an
+async poll or a worker callback does -- left the quit worker waiting forever:
+`_quit_in_progress` stayed `True` and every later Ctrl+Q was a no-op for the
+session. The same red reproduced for the Console quit prompt, a dirty form's
+discard prompt and Settings' theme-leave prompt.
+
+**Why (Textual 8.2.8).** `Screen.dismiss()` resolves ITS OWN result callback
+and then calls `app.pop_screen()` unconditionally, which pops whatever is on
+top -- not the caller. `App.pop_screen` calls the popped screen's
+`_pop_result_callback()`, which discards the waiter without resolving it, so
+`push_screen_wait` on that prompt never returns. The caller is left on top as
+a zombie whose callback already fired: measured with a two-modal probe, its
+SECOND `dismiss()` raises `asyncio.InvalidStateError` (the waiter's future is
+already done) -- inside a timer that is an app-level exception.
+
+**What to do.** Async self-closing (timers, polls, worker completions) must
+dismiss only when `self.app.screen is self` (ADR-031; the session switcher's
+authority poll and `SafeModalDismissMixin.dismiss_safe_once` both do).
+`VideoPlayerScreen._refresh_status` still does not. A prompt you cannot afford
+to lose (the quit flow's) goes through `await_quit_prompt` in
+`Widgets/confirmation_dialog.py`, which also answers "no answer" when the
+prompt leaves the stack unanswered. Do not "fix" it by cancelling the
+orphaned future: a late `dismiss` would then raise inside the prompt.

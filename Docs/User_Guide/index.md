@@ -96,7 +96,7 @@ letters **c / p / d / l**).
 |-----|--------|
 | F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
-| Ctrl+Q | Quit the app — also while a dialog or picker is open. It asks first when quitting would cancel Console runs or queued prompts, discard unsaved Settings ▸ Theme edits, or discard edits in a dialog that asks before closing (a Schedules form, for example) |
+| Ctrl+Q | Quit the app — also while a dialog or picker is open. It asks first when quitting would cancel Console runs or queued prompts, discard unsaved Settings ▸ Theme edits, or discard edits in a dialog that asks before closing (a Schedules form, for example). If that question closes before you answer it, Chatbook stays open and says "Quit cancelled." |
 | Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
 | F2 / F3 / F4 / F5 / F7 | Switch to Lab / Logs / Settings / Research / Meetings — the five destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
