@@ -815,3 +815,234 @@ async def test_async_explicit_auth_argument_still_applies_same_origin():
         )
     assert len(seen) == 2
     assert all("authorization" in r.headers for r in seen)
+
+
+# ---------------------------------------------------------------------------
+# Client-level auth as a CALLABLE flow, and the production GitHub header
+# shape (task-592)
+# ---------------------------------------------------------------------------
+
+
+class _CallableHeaderAuth(httpx.Auth):
+    """A client-level auth CALLABLE (flow object), not a tuple.
+
+    The task-19733 pin above used the tuple form. This is the second shape
+    named by task-592 -- an ``httpx.Auth`` subclass whose flow mutates the
+    request headers, applied by httpx inside ``send()`` where header
+    stripping cannot reach it.
+    """
+
+    def auth_flow(self, request):
+        request.headers["Authorization"] = f"Bearer {SENTINEL}"
+        yield request
+
+    async def async_auth_flow(self, request):
+        request.headers["Authorization"] = f"Bearer {SENTINEL}"
+        yield request
+
+
+def test_sync_client_level_callable_auth_not_applied_cross_origin():
+    """``httpx.Client(auth=<Auth flow>)`` must not re-attach cross-origin."""
+    seen = []
+    with httpx.Client(
+        transport=_transport(CROSS_ORIGIN_ROUTES, seen),
+        auth=_CallableHeaderAuth(),
+    ) as client:
+        resp = guarded_fetch_httpx(
+            "https://feed.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    assert len(seen) == 2
+    assert seen[0].headers.get("authorization") == f"Bearer {SENTINEL}"
+    assert "authorization" not in seen[1].headers
+    assert SENTINEL not in "".join(seen[1].headers.values())
+
+
+@pytest.mark.asyncio
+async def test_async_client_level_callable_auth_not_applied_cross_origin():
+    """Async guarded fetch, same rule for the callable flow."""
+    seen = []
+    async with httpx.AsyncClient(
+        transport=_transport(CROSS_ORIGIN_ROUTES, seen),
+        auth=_CallableHeaderAuth(),
+    ) as client:
+        resp = await guarded_fetch_httpx_async(
+            "https://feed.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    assert len(seen) == 2
+    assert seen[0].headers.get("authorization") == f"Bearer {SENTINEL}"
+    assert "authorization" not in seen[1].headers
+    assert SENTINEL not in "".join(seen[1].headers.values())
+
+
+@pytest.mark.asyncio
+async def test_async_github_api_client_header_shape_dropped_cross_origin():
+    """The production GitHub client's exact credential shape must not leak.
+
+    ``github_api_client.GitHubAPIClient._build_client`` sets
+    ``Authorization: token ...`` as a CLIENT-DEFAULT header and hands the
+    client to ``guarded_fetch_httpx_async`` with no per-call ``headers=``.
+    This pins that exact shape end to end: authenticated on the original
+    origin, absent on the redirected-to one.
+    """
+    seen = []
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "tldw-chatbook-repo-selector",
+        "Authorization": f"token {SENTINEL}",
+    }
+    async with httpx.AsyncClient(
+        transport=_transport(CROSS_ORIGIN_ROUTES, seen), headers=headers
+    ) as client:
+        resp = await guarded_fetch_httpx_async(
+            "https://feed.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    assert seen[0].headers.get("authorization") == f"token {SENTINEL}"
+    assert "evil.example" in str(seen[1].url)
+    assert "authorization" not in seen[1].headers
+    assert SENTINEL not in "".join(seen[1].headers.values())
+
+
+# ---------------------------------------------------------------------------
+# aiohttp: session-level credentials cannot be stripped, so the helper must
+# refuse the hop (task-592)
+# ---------------------------------------------------------------------------
+
+
+class _FakeAiohttpBody:
+    """Duck-typed ``aiohttp`` response content stream."""
+
+    def __init__(self, body):
+        self._body = body
+
+    async def iter_chunked(self, size):
+        for i in range(0, len(self._body), size):
+            yield self._body[i : i + size]
+
+
+class _FakeAiohttpResp:
+    """Duck-typed ``aiohttp`` response (async context manager)."""
+
+    def __init__(self, status, headers, body, url):
+        from multidict import CIMultiDict
+
+        self.status = status
+        # Real aiohttp headers are case-insensitive; a plain dict would make
+        # ``headers.get("Location")`` miss a lowercase "location" route.
+        self.headers = CIMultiDict(headers)
+        self.content = _FakeAiohttpBody(body)
+        self.url = url
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeAiohttpSessionWithDefaults:
+    """``aiohttp.ClientSession`` with session-level credentials attached.
+
+    Mimics exactly where aiohttp 3.14 applies them -- inside ``get()``:
+    session-default headers are merged under the per-request ones, then
+    ``session.auth`` is encoded into an ``Authorization`` header unless the
+    merged headers already carry one. There is no per-request override that
+    suppresses either (aiohttp raises if you pass both an Authorization
+    header and ``auth``), so a credential seen on the second origin here
+    means it genuinely crossed the origin boundary.
+    """
+
+    def __init__(self, routes, *, auth=None, default_headers=None):
+        from multidict import CIMultiDict
+
+        self.routes = routes
+        self.seen = []
+        self.auth = auth
+        self.headers = CIMultiDict(default_headers or {})
+
+    def get(self, url, **kwargs):
+        from multidict import CIMultiDict
+
+        merged = CIMultiDict(self.headers)
+        merged.update(kwargs.get("headers") or {})
+        if self.auth is not None and "authorization" not in {k.lower() for k in merged}:
+            merged["Authorization"] = self.auth.encode()
+        kwargs = dict(kwargs)
+        kwargs["headers"] = merged
+        self.seen.append((url, kwargs))
+        for prefix, (status, resp_headers, body) in self.routes.items():
+            if url.startswith(prefix):
+                return _FakeAiohttpResp(status, resp_headers, body, url)
+        return _FakeAiohttpResp(404, {}, b"", url)
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_session_level_auth_does_not_follow_cross_origin_redirect():
+    """``aiohttp.ClientSession(auth=...)`` re-applies per hop and cannot be
+    stripped by the helper -- the guarded path must REFUSE the hop instead of
+    forwarding ``BasicAuth`` credentials to the redirected-to origin."""
+    aiohttp = pytest.importorskip("aiohttp")
+    from tldw_chatbook.Utils.egress import EgressFetchError, guarded_fetch_aiohttp
+
+    session = _FakeAiohttpSessionWithDefaults(
+        CROSS_ORIGIN_ROUTES, auth=aiohttp.BasicAuth("alice", SENTINEL)
+    )
+    with pytest.raises(EgressFetchError, match="session-level"):
+        await guarded_fetch_aiohttp(
+            "https://feed.example/start", session=session, max_bytes=1024
+        )
+    # The second origin was never contacted, with or without the credential.
+    assert all("evil.example" not in u for u, _ in session.seen)
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_session_default_credential_header_does_not_follow_cross_origin_redirect():
+    """A session-DEFAULT header (not the ``headers=`` argument) rides inside
+    ``session.get()`` too; a credential-shaped one must refuse the hop."""
+    from tldw_chatbook.Utils.egress import EgressFetchError, guarded_fetch_aiohttp
+
+    session = _FakeAiohttpSessionWithDefaults(
+        CROSS_ORIGIN_ROUTES, default_headers={CUSTOM_HEADER: SENTINEL}
+    )
+    with pytest.raises(EgressFetchError, match="session-level"):
+        await guarded_fetch_aiohttp(
+            "https://feed.example/start", session=session, max_bytes=1024
+        )
+    assert all("evil.example" not in u for u, _ in session.seen)
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_session_credentials_still_work_same_origin():
+    """The refusal is scoped to cross-origin hops: a fetch that never leaves
+    the original origin keeps its session-level credentials (no live caller
+    needs this today, but the helper must not grow a same-origin break)."""
+    aiohttp = pytest.importorskip("aiohttp")
+
+    session = _FakeAiohttpSessionWithDefaults(
+        SAME_ORIGIN_ROUTES, auth=aiohttp.BasicAuth("alice", SENTINEL)
+    )
+    resp = await egress.guarded_fetch_aiohttp(
+        "https://feed.example/start", session=session, max_bytes=1024
+    )
+    assert resp.content == b"done"
+    for _url, kwargs in session.seen:
+        assert kwargs["headers"].get("Authorization") == aiohttp.BasicAuth(
+            "alice", SENTINEL
+        ).encode()
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_bare_session_cross_origin_fetch_still_works():
+    """The crawler's shape -- a bare ``ClientSession()`` with no session-level
+    credentials -- must keep following cross-origin redirects (task-592 AC#3:
+    no live functionality regresses)."""
+    from tldw_chatbook.Utils.egress import guarded_fetch_aiohttp
+
+    session = _FakeAiohttpSessionWithDefaults(CROSS_ORIGIN_ROUTES)
+    resp = await guarded_fetch_aiohttp(
+        "https://feed.example/start", session=session, max_bytes=1024
+    )
+    assert resp.content == b"done"
+    assert "evil.example" in session.seen[1][0]

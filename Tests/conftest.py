@@ -1195,6 +1195,27 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-592/609 (egress hardening arc): the three SSRF/egress
+            # regression suites -- every guarded_fetch_* helper and
+            # create_default_session reads get_cli_setting through the
+            # guarded config loader (check_url_or_raise -> _config_enabled,
+            # default_session_timeout, and GitHubAPIClient.__init__), so all
+            # three files went red with RecoveryRequired("raw_source_
+            # selection_changed") when TASK-32628's admission landed. None of
+            # them re-selects a config itself (verified: no config.toml
+            # writes, no load_cli_config calls); they pin redirect-credential
+            # and host-classification policy and are not in the PR fast lane,
+            # so the reds had gone unnoticed. The same signature and the same
+            # "no config re-selection" check hold for the four caller suites
+            # below (crawler sitemap, GitHub client, download caps wiring,
+            # settings probe), enrolled for the same reason.
+            "test_egress.py",
+            "test_egress_cross_origin_header_allowlist.py",
+            "test_skill_remote_fetch.py",
+            "test_sitemap_crawl_trusted_origins.py",
+            "test_github_api_client.py",
+            "test_download_caps_wiring.py",
+            "test_settings_probe_egress.py",
         }
     )
     test_data_dir = (

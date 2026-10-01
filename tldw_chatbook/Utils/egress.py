@@ -764,6 +764,52 @@ def _hop_headers(
     return filter_cross_origin_headers(headers)
 
 
+#: Credential contract shared by every ``guarded_fetch_*`` helper (task-592):
+#: pass credentials through the helper's ``headers=`` argument (or its
+#: ``auth=`` parameter where one exists) -- never attached to the
+#: client/session object itself. The httpx and requests helpers ENFORCE the
+#: contract by stripping/suppressing transport-object-level credentials on
+#: cross-origin hops; the aiohttp helper cannot (see
+#: :func:`_aiohttp_session_level_credential`) and refuses the hop instead.
+_CREDENTIAL_CONTRACT = (
+    "Credentials must be supplied via this helper's ``headers=`` argument "
+    "(or its ``auth=`` parameter where one exists), never attached to the "
+    "client/session object itself."
+)
+
+
+def _aiohttp_session_level_credential(session) -> str | None:
+    """Name the session-level credential aiohttp would re-attach, if any.
+
+    aiohttp applies ``ClientSession(auth=...)`` and merges the session's
+    default headers INSIDE ``session.get()``: there is no built-request
+    object this module could strip them from, and no per-request override
+    that suppresses them -- aiohttp 3.14 even raises ``ValueError`` if an
+    explicit ``Authorization`` header is combined with an ``auth``
+    argument, so header-injection workarounds are closed off by the library
+    itself. Read through the public ``session.auth``/``session.headers``
+    properties, defensively (duck-typed test doubles without them keep
+    working) and answer which session-level credential, if any, would ride
+    a cross-origin hop.
+
+    Args:
+        session: The ``aiohttp.ClientSession`` (or stand-in) being driven.
+
+    Returns:
+        A short human-facing description of the offending credential
+        (``"auth"`` or ``"default header 'X-...'"``), or ``None`` when the
+        session carries nothing that could not be forwarded safely.
+    """
+    if getattr(session, "auth", None) is not None:
+        return "auth"
+    default_headers = getattr(session, "headers", None)
+    if default_headers is not None:
+        for name in default_headers.keys():
+            if not _may_cross_origin(str(name), has_body=False):
+                return f"default header {str(name)!r}"
+    return None
+
+
 def guarded_fetch_httpx(
     url: str,
     *,
@@ -773,7 +819,14 @@ def guarded_fetch_httpx(
     headers: dict | None = None,
     params: dict | None = None,
 ) -> GuardedResponse:
-    """Capped GET via httpx.Client with per-hop egress re-validation."""
+    """Capped GET via httpx.Client with per-hop egress re-validation.
+
+    Cross-origin hops carry :data:`CROSS_ORIGIN_SAFE_HEADERS` plus the client
+    library's own framing (:data:`_TRANSPORT_HEADERS`) and nothing else, no
+    matter where the header came from: the ``headers`` argument, the client
+    object's default headers, or a client-level ``auth=`` (suppressed on the
+    hop by passing an explicit ``auth=None`` to ``send()``). Credential
+    contract: """ + _CREDENTIAL_CONTRACT
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
         check_url_or_raise(current, trusted_origins=trusted_origins)
@@ -846,14 +899,17 @@ async def guarded_fetch_httpx_async(
     client library's own framing (:data:`_TRANSPORT_HEADERS`) and nothing
     else — no matter whether the header came from the ``headers`` argument,
     from the client object's own default headers (e.g. an
-    ``httpx.AsyncClient(headers=...)``), or from a client-level ``auth=`` (set
-    on the ``httpx.Client``/``AsyncClient`` itself, as opposed to the ``auth``
-    parameter of this function). That last one is applied by httpx inside
-    ``send()``, so it is suppressed by passing an explicit ``auth=None`` on the
-    cross-origin hop rather than by header stripping. ``Content-Type`` would
-    be the one conditional exception (:data:`_BODY_DESCRIBING_HEADERS`), but
-    this helper only ever issues a bodyless GET, so it never applies here.
-    """
+    ``httpx.AsyncClient(headers=...)``, the shape
+    ``Utils/github_api_client._build_client`` uses for its GitHub token), or
+    from a client-level ``auth=`` (set on the ``httpx.Client``/``AsyncClient``
+    itself, as opposed to the ``auth`` parameter of this function — tuple or
+    callable ``httpx.Auth`` flow alike). That last one is applied by httpx
+    inside ``send()``, so it is suppressed by passing an explicit
+    ``auth=None`` on the cross-origin hop rather than by header stripping.
+    ``Content-Type`` would be the one conditional exception
+    (:data:`_BODY_DESCRIBING_HEADERS`), but this helper only ever issues a
+    bodyless GET, so it never applies here. Credential contract:
+    """ + _CREDENTIAL_CONTRACT
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
@@ -1054,9 +1110,11 @@ def guarded_fetch_requests(
 
     Returns the final ``requests.Response`` with ``._content`` preloaded
     (unless ``sink`` is given, in which case bytes stream to ``sink`` and
-    ``.content`` is empty). ``session.auth`` is suppressed on cross-origin
-    hops (credential-stripping rule).
-    """
+    ``.content`` is empty). Cross-origin hops carry
+    :data:`CROSS_ORIGIN_SAFE_HEADERS` only: ``session.auth``, the session's
+    cookies, and its default headers all land on the PREPARED request, which
+    is post-filtered by :func:`strip_cross_origin_request_headers` before it
+    is sent. Credential contract: """ + _CREDENTIAL_CONTRACT
     import requests
 
     sess = session or requests.Session()
@@ -1122,20 +1180,38 @@ async def guarded_fetch_aiohttp(
     headers: dict | None = None,
     timeout=None,
 ) -> GuardedResponse:
-    """Capped GET via aiohttp.ClientSession with per-hop re-validation.
+    """Capped GET via aiohttp.ClientSession with per-hop egress re-validation.
 
     Cross-origin hops carry only :data:`CROSS_ORIGIN_SAFE_HEADERS` out of the
     ``headers`` argument. Unlike the httpx/requests helpers there is no built
-    request object to post-filter here, so a credential set as an
-    ``aiohttp.ClientSession(headers=...)`` DEFAULT is not suppressed — a
-    documented residual, unchanged by task-19733; no live caller does that.
-    """
+    request object to post-filter here, so a credential attached to the
+    SESSION itself (``aiohttp.ClientSession(auth=...)`` or a session-default
+    header) cannot be stripped -- aiohttp applies both inside ``get()`` with
+    no per-request suppression. The helper therefore fails closed (task-592):
+    a cross-origin hop on a session carrying such a credential raises
+    :class:`EgressFetchError` instead of forwarding it. Sessions without
+    session-level credentials (every live caller, e.g. the crawler's bare
+    ``ClientSession()``) are unaffected. Credential contract:
+    """ + _CREDENTIAL_CONTRACT
     from multidict import CIMultiDict
 
     current = url
     for _hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
         is_same_origin = same_origin(url, current)
+        if not is_same_origin:
+            # aiohttp re-applies session-level credentials inside get() and
+            # offers no per-request suppression (see
+            # _aiohttp_session_level_credential); refuse the hop rather than
+            # forward the credential to the redirected-to origin.
+            leak = _aiohttp_session_level_credential(session)
+            if leak is not None:
+                raise EgressFetchError(
+                    f"aiohttp session-level credential ({leak}) cannot be "
+                    "stripped on a cross-origin redirect hop; pass "
+                    "credentials via the headers= argument instead",
+                    url=current,
+                )
         kwargs = {
             "allow_redirects": False,
             "headers": _hop_headers(headers, is_same_origin),
