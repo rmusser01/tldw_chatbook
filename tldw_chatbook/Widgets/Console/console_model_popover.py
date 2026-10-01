@@ -335,6 +335,13 @@ class ConsoleModelPopover(
         text-style: bold;
     }
 
+    /* An unpickable pair (pick-only NEEDS SETUP): $text-muted is AA-gated on
+       every shipped theme (test_theme_contrast); the panel is its base. */
+    ConsoleModelPopover > .console-popover--unpickable {
+        color: $text-muted;
+        background: $panel;
+    }
+
     .console-popover-strip {
         height: auto;
     }
@@ -399,6 +406,7 @@ class ConsoleModelPopover(
         Binding("ctrl+o", "chat_settings", "Chat settings", show=False),
     ]
     SAFE_MODAL_CONTENT = "#console-model-popover"
+    COMPONENT_CLASSES = {"console-popover--unpickable"}
 
     def __init__(
         self,
@@ -1235,9 +1243,8 @@ class ConsoleModelPopover(
         style = Style()
         if not self._selectable(row):
             # Disabled options paint like headers; an unpickable pair is muted.
-            pairs = self.query_one("#console-popover-pairs", OptionList)
-            color = pairs.get_component_rich_style("option-list--option").color
-            style = Style(color=color, bold=False, dim=True)
+            muted = self.get_component_rich_style("console-popover--unpickable")
+            style = Style(color=muted.color, bold=False)
         return Text(
             f"{glyph} {_fit(model, _MODEL_COLUMNS):<{_MODEL_COLUMNS}} "
             f"{_fit(self._display(row.provider), _PROVIDER_COLUMNS):<{_PROVIDER_COLUMNS}} "

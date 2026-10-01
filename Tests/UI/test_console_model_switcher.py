@@ -1694,6 +1694,50 @@ async def test_pick_only_lists_the_same_pairs_and_returns_the_pick_unapplied() -
     assert recorder.submissions == [] and recorder.setup == [] and rebased == []
 
 
+@pytest.mark.parametrize(
+    "theme", ["agentic_terminal", "textual-dark", "pastel_dreams", "solarized_light"]
+)
+async def test_pick_only_needs_setup_rows_are_muted_and_readable(theme) -> None:
+    """TASK-33004.6 AC#2, review fix round 1: a disabled NEEDS SETUP row is
+    painted in $text-muted, unlike a header or a pickable row, and clears
+    4.5:1 on the light themes where the old dimmed ink fell to 1.64:1."""
+    from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
+    recorder = Recorder(ready=frozenset({"llama_cpp"}))
+    app = SwitcherHarness()
+    for shipped in ALL_THEMES:
+        app.register_theme(shipped)
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                providers_models={
+                    "Llama_cpp": ["model-a", "model-b"],
+                    "OpenAI": ["gpt-5.1"],
+                },
+                pick_only=True,
+            ),
+        )
+        pairs = switcher.query_one("#console-popover-pairs", OptionList)
+        kinds = [row.kind for row in switcher._rows]
+        pickable = next(
+            index
+            for index, kind in enumerate(kinds)
+            if kind not in {"header", "info", "setup"} and index != pairs.highlighted
+        )
+        x, top = pairs.region.x + 2, pairs.region.y
+        _, header_ink, _ = _painted_cell(app.screen, x, top + kinds.index("header"))
+        _, pick_ink, _ = _painted_cell(app.screen, x, top + pickable)
+        _, setup_ink, setup_bg = _painted_cell(
+            app.screen, x, top + kinds.index("setup")
+        )
+        assert setup_ink not in {header_ink, pick_ink}, theme
+        assert _ratio(setup_ink, setup_bg) >= 4.5, (theme, setup_ink, setup_bg)
+
+
 async def test_pick_only_never_picks_needs_setup_and_esc_returns_nothing() -> None:
     """TASK-33004.6 AC#2: NEEDS SETUP rows are listed but cannot be
     highlighted or picked, their copy promises no Enter, and Esc returns
@@ -1725,12 +1769,6 @@ async def test_pick_only_never_picks_needs_setup_and_esc_returns_nothing() -> No
         pairs = switcher.query_one("#console-popover-pairs", OptionList)
         setup = [i for i, row in enumerate(switcher._rows) if row.kind == "setup"]
         assert setup and all(pairs.get_option_at_index(i).disabled for i in setup)
-        # Disabled, but not painted like a header: muted and still readable.
-        header = next(i for i, row in enumerate(switcher._rows) if row.kind == "header")
-        x, top = pairs.region.x + 2, pairs.region.y
-        _, header_ink, _ = _painted_cell(app.screen, x, top + header)
-        _, setup_ink, setup_bg = _painted_cell(app.screen, x, top + setup[0])
-        assert setup_ink != header_ink and _ratio(setup_ink, setup_bg) >= 4.5
         lines = list_lines(app, switcher)
         assert line_with(lines, "NEEDS SETUP")
         for line in lines[min(setup) - 1 : max(setup) + 1]:

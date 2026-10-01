@@ -1081,3 +1081,55 @@ async def test_grouped_results_mark_and_highlight_the_committed_model():
         await pilot.press("enter")
         await pilot.pause()
         assert app.selected_models == ["saved/model"]
+
+
+@pytest.mark.asyncio
+async def test_a_committed_model_past_the_result_cap_stays_marked_and_first():
+    """TASK-33004.6 AC#3 on a large catalog (review fix round 1): a committed
+    model past MAX_RESULTS takes the last visible slot, in the flat and the
+    grouped list, so it keeps its mark and Down still lands on it."""
+    cap = ModelSearchPicker.MAX_RESULTS
+    model_ids = _OVER_CAP_IDS
+    committed = model_ids[-1]
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", model_ids),
+        current_model=committed,
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+
+        results = _results(app)
+        prompts = _result_prompts(results)
+        assert len(prompts) == cap
+        assert prompts[: cap - 1] == model_ids[: cap - 1]
+        assert prompts[-1] == f"{committed}  {CURRENT_MARK}"
+        assert results.highlighted == cap - 1
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.selected_models == [committed]
+
+        # Grouped (Chat settings): the unlisted current model is appended last.
+        app.query_one("#apply", Button).focus()
+        await pilot.pause()
+        picker.set_provenance_options(
+            "OpenRouter",
+            tuple(
+                _provenance_option(model_id, ConsoleModelProvenance.CURRENT_CATALOG)
+                for model_id in model_ids[:-1]
+            )
+            + (_provenance_option(committed, ConsoleModelProvenance.SAVED_FALLBACK),),
+        )
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        prompts = _result_prompts(results)
+        assert prompts[-2:] == ["Saved fallback", f"{committed}  {CURRENT_MARK}"]
+        assert len(picker._matches) == cap
+        assert results.highlighted == len(prompts) - 1

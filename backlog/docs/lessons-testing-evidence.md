@@ -17114,3 +17114,37 @@ indistinguishable from "still frozen".
 known bug (the tests now use `FreezeObserved(Exception)`), mark with
 `raises=FreezeObserved`, and keep preconditions as plain asserts, so they FAIL.
 Prove it once with a deliberately broken precondition: it must go red, not xfail.
+
+## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
+
+**What happened.** Pick-only Switch model painted its disabled NEEDS SETUP
+rows as `Style(color=<option colour>, dim=True)`. The pilot test measured
+5.38:1 on the harness's default theme and passed. A probe across all 91
+themes the app can show found 26 of the 70 shipped themes below 4.5:1, with
+pastel_dreams at 1.64:1. Rich `dim` blends the ink toward the background,
+and the light and mid-tone palettes have no margin for that blend. No theme
+gate sees a colour built in Python, because the gates read tcss and theme
+variables.
+
+**What to do.** For a muted or disabled ink, reference `$text-muted`.
+`test_theme_contrast` already holds it to AA on every shipped theme. Where
+an OptionList prompt needs it per option, declare a component class on the
+host with `color: $text-muted; background: $panel` and read
+`get_component_rich_style(...)`. Parametrise the contrast assertion over at
+least one light theme (pastel_dreams, solarized_light), never just the
+harness default.
+
+## Evidence below a list cap never exercises the cap (TASK-33004.6, 2026-09-30)
+
+**What happened.** The ● CURRENT mark and the Down highlight in
+ModelSearchPicker passed their unit tests and a live capture with 15
+configured models. The picker slices its results to `MAX_RESULTS = 20`
+before it marks anything. On an OpenRouter-sized catalog, a committed model
+past row 20 lost both the mark and the highlight, which is the exact bug the
+task fixed. The review found it by reading the slice, not from any test or
+capture.
+
+**What to do.** When a fix is about one item in a capped list, test it with
+more entries than the cap, and with the item past the cap. Run the live
+capture on a catalog of that size too (a scratch `[providers]` list is
+enough).

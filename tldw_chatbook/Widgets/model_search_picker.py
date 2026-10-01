@@ -693,7 +693,7 @@ class ModelSearchPicker(Widget):
         elif not show_empty_query:
             self._hide_results()
             return
-        self._matches = model_ids[: self.MAX_RESULTS]
+        self._matches = self._capped(model_ids, str)
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
         results.clear_options()
@@ -741,7 +741,7 @@ class ModelSearchPicker(Widget):
             for option in options
             if self._display_provenance(option) == provenance
         ]
-        self._matches = ordered_options[: self.MAX_RESULTS]
+        self._matches = self._capped(ordered_options, lambda option: option.model_id)
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
         results.clear_options()
@@ -766,6 +766,24 @@ class ModelSearchPicker(Widget):
                 self._add_result(results, option.model_id, option_id)
         results.display = bool(self._matches)
         self._render_match_status(normalized_query, len(ordered_options))
+
+    def _capped(self, entries: list, model_id_of) -> list:
+        """The first MAX_RESULTS entries; a committed model past the cap takes
+        the last slot, so large catalogs keep its mark and Down (C7(b))."""
+        shown = entries[: self.MAX_RESULTS]
+        committed = next(
+            (
+                entry
+                for entry in entries[self.MAX_RESULTS :]
+                if model_id_of(entry) == self._selected_model
+            ),
+            None,
+        )
+        if committed is not None and self._selected_model not in map(
+            model_id_of, shown
+        ):
+            shown[-1] = committed
+        return shown
 
     def _add_result(
         self, results: OptionList, model_id: str, option_id: str | None = None
