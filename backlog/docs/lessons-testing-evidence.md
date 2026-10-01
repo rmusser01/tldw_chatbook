@@ -16993,6 +16993,21 @@ more entries than the cap, and with the item past the cap. Run the live
 capture on a catalog of that size too (a scratch `[providers]` list is
 enough).
 
+## A key pressed while an Input has focus may never reach the list (cubic review of #2947, 2026-10-01)
+
+**What happened.** `test_switch_model_renders_no_fold_hint` pressed End and
+Home to check Switch model "at the end of the scroll and back at top". Focus
+stays in Find, and Textual's `Input` takes End and Home as caret moves, so
+the pair list never moved and the test passed for the wrong reason. Switching
+to PageDown/PageUp (which the switcher binds to the list) and asserting that
+the highlight moved exposed a real bug: Textual's `OptionList._move_page`
+onto a trailing disabled row (an info line) sets `highlighted` to `None`, so
+Enter had no pair to apply.
+
+**What to do.** When a pilot test presses a navigation key, assert the effect
+the key was meant to have (the highlight or scroll offset changed), not only
+the absence of a symptom. Check what the focused widget binds first.
+
 ## 2026-09-20 — Admission retries need the caller's real lifecycle (TASK-32881)
 
 The connected clone HTTP test reused one request object and proved a stable
