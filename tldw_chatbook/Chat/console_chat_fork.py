@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING, Literal
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from PIL import Image as PILImage
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleMessageStatus,
     GenerationVariantMeta,
@@ -51,6 +53,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
 )
 from tldw_chatbook.Utils.input_validation import (
     CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,
+    escape_markup,
     validate_console_fork_title,
 )
 
@@ -378,6 +381,280 @@ def default_fork_title(source_title: str) -> str:
     source = " ".join(str(source_title or "").split())
     candidate = f"Forked from {source}" if source else "Untitled chat — fork"
     return normalize_fork_title(candidate)
+
+
+_CONSOLE_FORK_ROW_KINDS = {
+    ConsoleMessageRole.USER: "User message",
+    ConsoleMessageRole.ASSISTANT: "Assistant reply",
+    ConsoleMessageRole.SYSTEM: "System note",
+}
+_CONSOLE_FORK_ROW_EXCERPT_CHARS = 40
+# Only these states hold real text; any other row's content is a placeholder
+# ("Response discarded.") or still changing, so it is never quoted.
+_CONSOLE_FORK_QUOTABLE_STATUSES = frozenset({"complete", "stopped", "failed"})
+# An unfinished boundary is waited on, not refused: no fallback is offered.
+_CONSOLE_FORK_UNFINISHED_STATUSES = frozenset({"pending", "streaming"})
+_CONSOLE_FORK_UNLINKED = "isn't linked to the message before it in the saved chat"
+CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE = (
+    "This chat's saved history is unavailable, so it can't be forked."
+)
+CONSOLE_FORK_SAVED_HISTORY_MISMATCH = (
+    "This chat's saved history doesn't match what's on screen, so this message "
+    "can't be forked."
+)
+
+
+def console_fork_skips(message: ConsoleChatMessage) -> bool:
+    """Return whether a native node is left out of a fork (ADR-092 §2).
+
+    The fork source is the USER/ASSISTANT parent chain. SYSTEM rows -- /help,
+    /doctor, unknown-command hints and other command feedback, saved or not --
+    are excluded instead of refusing the fork (TASK-33621.10). A copied row's
+    live parent link is still checked against its nearest saved ancestor (which
+    may be a saved SYSTEM row); the durable commit's source re-check walks past
+    saved SYSTEM rows.
+
+    Args:
+        message: A native node on the fork source's active path.
+
+    Returns:
+        True when the node is left out of the copied lineage.
+    """
+
+    return message.role is ConsoleMessageRole.SYSTEM
+
+
+def console_fork_source_ids(
+    active_ids: Sequence[str],
+    boundary_id: str,
+    nodes: Mapping[str, ConsoleChatMessage],
+) -> list[str]:
+    """Return the active path through ``boundary_id`` minus skipped notes.
+
+    Args:
+        active_ids: The session's active path, root first.
+        boundary_id: The selected fork boundary; always kept.
+        nodes: The session's native nodes by id. An id missing here is kept,
+            so the caller's eligibility check refuses it.
+
+    Returns:
+        The ids a fork through ``boundary_id`` copies, root first.
+
+    Raises:
+        ValueError: If ``boundary_id`` is not on ``active_ids``.
+    """
+
+    boundary_index = list(active_ids).index(boundary_id)
+    return [
+        native_id
+        for native_id in active_ids[:boundary_index]
+        if native_id not in nodes or not console_fork_skips(nodes[native_id])
+    ] + [boundary_id]
+
+
+def describe_console_fork_row(message: ConsoleChatMessage) -> str:
+    """Name one transcript row the way the user sees it.
+
+    A row that is not complete leads with its state ("failed Assistant
+    reply"), and only real text is quoted as a short excerpt -- never a
+    discarded row's placeholder or a reply that is still streaming. The
+    excerpt is markup-escaped: every surface showing a fork refusal (the
+    action guide ``Static``, the Fork tooltip, ``notify`` toasts) parses
+    Textual content markup, and a quoted ``[/]`` raised ``MarkupError``.
+
+    Args:
+        message: The row to name.
+
+    Returns:
+        The row's kind, led by its state unless complete, plus a quoted
+        excerpt when it holds real text, e.g. ``User message "first q"``.
+    """
+
+    kind = _CONSOLE_FORK_ROW_KINDS.get(message.role, "message")
+    label = kind if message.status == "complete" else f"{message.status} {kind}"
+    text = (
+        " ".join(str(message.content or "").split())
+        if message.status in _CONSOLE_FORK_QUOTABLE_STATUSES
+        else ""
+    )
+    if len(text) > _CONSOLE_FORK_ROW_EXCERPT_CHARS:
+        text = text[: _CONSOLE_FORK_ROW_EXCERPT_CHARS - 1].rstrip() + "…"
+    # Escaped after the cut, so a ``[`` the cut leaves is still escaped.
+    return f'{label} "{escape_markup(text)}"' if text else label
+
+
+def _console_fork_row_problem(
+    message: ConsoleChatMessage | None,
+    *,
+    durable: bool,
+    persisted_parent: Callable[[ConsoleChatMessage], str | None],
+    state_is_eligible: Callable[[object, object], bool],
+    visible_content: Callable[[ConsoleChatMessage], str],
+) -> tuple[str, str] | None:
+    """Return ``(boundary_reason, earlier_row_clause)`` or ``None`` if copyable."""
+
+    if message is None:
+        return "Message is not forkable.", "can't be copied into a fork"
+    if message.generation_projection_quarantined:
+        return (
+            "Canonical generation is unavailable; reload before forking.",
+            "has an unavailable canonical generation; reload before forking",
+        )
+    if message.status in _CONSOLE_FORK_UNFINISHED_STATUSES:
+        return "Wait for this message to finish before forking.", "isn't finished yet"
+    if message.status == "discarded":
+        return "Discarded messages cannot be forked.", "can't be copied into a fork"
+    if not state_is_eligible(message.role, message.status):
+        return (
+            "Only complete user messages can be forked."
+            if message.role is ConsoleMessageRole.USER
+            else "Only user and assistant messages can be forked.",
+            "can't be copied into a fork",
+        )
+    try:
+        content = visible_content(message)
+    except ValueError as exc:
+        return str(exc), "can't be copied into a fork"
+    if not content.strip():
+        return (
+            "This partial response has no content to fork."
+            if message.status in {"stopped", "failed"}
+            else "Message must contain stable completed text before forking.",
+            "has no text to copy",
+        )
+    if durable and not message.persisted_message_id:
+        return (
+            "This message has not been saved yet. Try Fork again after it is saved.",
+            "isn't saved yet",
+        )
+    if durable and message.parent_message_id != persisted_parent(message):
+        # No "reopen the chat" advice: a legacy flat-parent chat reloads with
+        # the same missing link, so that promise could not be kept.
+        return (
+            f"This message {_CONSOLE_FORK_UNLINKED}, so it can't be forked.",
+            _CONSOLE_FORK_UNLINKED,
+        )
+    return None
+
+
+def console_fork_prefix_refusal(
+    prefix: Sequence[str],
+    nodes: Mapping[str, ConsoleChatMessage],
+    *,
+    durable: bool,
+    persisted_parent: Callable[[ConsoleChatMessage], str | None],
+    state_is_eligible: Callable[[object, object], bool],
+    visible_content: Callable[[ConsoleChatMessage], str],
+    can_fork: Callable[[str], bool],
+) -> str | None:
+    """Refuse on the first uncopyable lineage row, or return ``None``.
+
+    Every row the fence copies is checked -- including the saved parent link
+    the fence re-checks -- so Fork is never offered for a boundary whose fence
+    would then be refused. A refusal names the blocking row (the selected one,
+    or an EARLIER row it names) and the nearest boundary before that row which
+    ``can_fork`` accepts (TASK-33621.10). An unfinished selected row is waited
+    on, not refused, so it only says to wait.
+
+    Args:
+        prefix: Copied lineage through the boundary (``console_fork_source_ids``).
+        nodes: The session's native nodes by id.
+        durable: Whether the source is a saved conversation.
+        persisted_parent: The saved parent a row's live link must mirror.
+        state_is_eligible: ``(role, status)`` fork-state predicate.
+        visible_content: Returns a row's visible text; ``ValueError`` refuses.
+        can_fork: Full eligibility of an earlier boundary. Every row before the
+            blocking one already passed here, so it cannot recurse further.
+
+    Returns:
+        The user-facing refusal, or ``None`` when every copied row passes.
+    """
+
+    for index, native_id in enumerate(prefix):
+        blocker = nodes.get(native_id)
+        problem = _console_fork_row_problem(
+            blocker,
+            durable=durable,
+            persisted_parent=persisted_parent,
+            state_is_eligible=state_is_eligible,
+            visible_content=visible_content,
+        )
+        if problem is None:
+            continue
+        is_boundary = index == len(prefix) - 1
+        if (
+            is_boundary
+            and blocker is not None
+            and blocker.status in _CONSOLE_FORK_UNFINISHED_STATUSES
+        ):
+            return problem[0]
+        parent_id = prefix[index - 1] if index else None
+        fallback = (
+            f" Fork from the {describe_console_fork_row(nodes[parent_id])} instead."
+            if parent_id and can_fork(parent_id)
+            else " No earlier message can be forked."
+        )
+        if is_boundary:
+            return problem[0] + fallback
+        row = f"The {describe_console_fork_row(blocker)}" if blocker else "A message"
+        return f"{row} above this message {problem[1]}.{fallback}"
+    return None
+
+
+def check_console_fork_saved_tail(
+    active_path: Sequence[str],
+    nodes: Mapping[str, ConsoleChatMessage],
+    boundary_id: str,
+    active_leaf_id: str,
+) -> None:
+    """Refuse unless the live rows after ``boundary_id`` reach the saved leaf.
+
+    The durable fork commit re-reads the saved chain from the conversation's
+    active leaf back to the boundary, so every live row between them must be
+    saved and linked to the row before it. Unsaved command notes were never
+    written and are skipped. A refusal names the first row that breaks the
+    chain (TASK-33621.10); no boundary up to that row can be forked.
+
+    Args:
+        active_path: The session's active path, root first.
+        nodes: The session's native nodes by id.
+        boundary_id: The selected fork boundary on ``active_path``.
+        active_leaf_id: The conversation's saved active leaf id.
+
+    Raises:
+        ValueError: User-facing wording when the saved chain is broken.
+    """
+
+    boundary_index = list(active_path).index(boundary_id)
+    leaf_index = next(
+        (
+            index
+            for index, native_id in enumerate(active_path)
+            if nodes[native_id].persisted_message_id == active_leaf_id
+        ),
+        None,
+    )
+    if leaf_index is None or leaf_index < boundary_index:
+        raise ValueError(CONSOLE_FORK_SAVED_HISTORY_MISMATCH)
+    previous_id = nodes[boundary_id].persisted_message_id
+    for native_id in active_path[boundary_index + 1 : leaf_index + 1]:
+        message = nodes[native_id]
+        if console_fork_skips(message) and message.persisted_message_id is None:
+            continue
+        if (
+            type(message.persisted_message_id) is not str
+            or not message.persisted_message_id
+        ):
+            problem = "isn't saved yet"
+        elif message.parent_message_id != previous_id:
+            problem = _CONSOLE_FORK_UNLINKED
+        else:
+            previous_id = message.persisted_message_id
+            continue
+        raise ValueError(
+            f"The {describe_console_fork_row(message)} further down {problem}, "
+            "so no message up to it can be forked."
+        )
 
 
 def _validate_console_fork_configuration_identity(

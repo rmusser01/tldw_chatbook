@@ -30,9 +30,11 @@ task...".
   it, plus a one-line guide that names the row's icon buttons in words —
   e.g. for an assistant reply: "Guide: j/k select · c Copy · 🔊 Speak ·
   e Edit · f Fork · r ♻ Regenerate · ---> Continue · Esc clear". The guide
-  follows the row: a message without the 🔊 button does not list "Speak".
-  Lower-frequency actions are in the labelled **More…** menu, and image or
-  video controls stay on their media card.
+  follows the row: a message without the 🔊 button does not list "Speak",
+  and a message that cannot be forked drops "f Fork" and ends with
+  "Fork unavailable — <reason>" instead. Lower-frequency actions are in the
+  labelled **More…** menu, and image or video controls stay on their media
+  card.
 - **Composer** — the slim input bar near the bottom, floating one blank
   line clear of the status row above and the footer below. Its one-column
   left edge shows its state (muted at rest, green with a draft, thick blue

@@ -338,7 +338,8 @@ def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
     speak-stop swap reads "⏹ Stop speech" instead of pointing at a 🔊 that
     is not there. Only glyph-only buttons need naming (DS-01); the key
     hints and j/k/Esc framing come from task-362's static guide, which this
-    replaces.
+    replaces. A disabled Fork is never advertised as ``f Fork`` (TASK-33621.10):
+    ``f`` would only repeat the refusal, which the transcript shows instead.
 
     Args:
         actions: The row's actions as returned by
@@ -353,6 +354,8 @@ def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
     segments_by_id = dict(ACTION_GUIDE_SEGMENTS)
     parts: list[str] = []
     for action in actions:
+        if action.action_id == "fork" and not action.enabled:
+            continue
         segment = segments_by_id.get(action.action_id)
         if segment is not None and segment not in parts:
             parts.append(segment)
@@ -1328,6 +1331,11 @@ class ConsoleMessageActionService:
     ) -> str:
         if message.status in {"pending", "streaming"}:
             return "Wait for this message to finish before forking."
+        if not eligibility.eligible:
+            # The store's refusal names the blocking row and the nearest
+            # boundary to fork from instead (TASK-33621.10); the generic
+            # state reasons below only cover a caller with no store verdict.
+            return eligibility.reason or "This message cannot be forked."
         if message.status == "discarded":
             return "Discarded messages cannot be forked."
         if message.status in {"stopped", "failed"} and not message.content.strip():
@@ -1337,6 +1345,4 @@ class ConsoleMessageActionService:
             and not ConsoleMessageActionService._is_assistant_message(message)
         ):
             return "Only complete user messages can be forked."
-        if not eligibility.eligible:
-            return eligibility.reason or "This message cannot be forked."
         return ""

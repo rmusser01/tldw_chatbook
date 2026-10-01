@@ -1368,7 +1368,7 @@ def test_durable_fork_rejects_boundary_outside_database_active_lineage() -> None
         later_answer.id
     ).persisted_message_id
 
-    with pytest.raises(ValueError, match="active leaf"):
+    with pytest.raises(ValueError, match="saved history doesn't match"):
         store.issue_fork_fence(selected.id)
 
 
