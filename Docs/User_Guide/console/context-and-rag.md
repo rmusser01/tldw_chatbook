@@ -611,11 +611,11 @@ surface.
 **Choose folder** and **Enable** open a picker titled "Project instructions
 need a folder" that lists the folders bound to this conversation's workspace.
 Pick one to select it: you return to the Inspector, its state updates, and the
-Inspect **Project** row stops reading **Choose folder**. **Esc** or **Cancel**
-returns to the Inspector with the selection unchanged, and **Disable** turns
-project instructions off. The Default workspace cannot bind folders, so there
-the picker shows only "No eligible folders"; bind one in a named workspace
-first.
+Inspect rail's **Project** row stops reading **Choose folder**. **Esc** or
+**Cancel** returns to the Inspector with the selection unchanged, and
+**Disable** turns project instructions off. The Default workspace cannot bind
+folders, so there the picker shows only "No eligible folders"; bind one in a
+named workspace first.
 
 The choice is stored with the conversation and kept after a restart. In a new
 chat with no messages yet, it is saved in the same step as your first
