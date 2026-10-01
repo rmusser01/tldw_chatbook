@@ -19,6 +19,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_ERROR,
     RUN_STUCK,
 )
+
 if TYPE_CHECKING:
     from .fleet_messages import MessageInbox, MessageSender
 
@@ -376,7 +377,11 @@ class FleetCoordinator:
             if handle is None or handle.run_id is None:
                 return None
             identity = MessageIdentity(
-                handle_id, handle.run_id, parent_run_id, chain_id, handle.agent or "agent"
+                handle_id,
+                handle.run_id,
+                parent_run_id,
+                chain_id,
+                handle.agent or "agent",
             )
             existing = self._progress_senders.get(handle_id)
             if existing is not None:
@@ -599,9 +604,7 @@ class FleetCoordinator:
             A list of copies of all FleetHandle objects.
         """
         with self._lock:
-            return [
-                self._copy_with_queued(h) for h in self._handles.values()
-            ]
+            return [self._copy_with_queued(h) for h in self._handles.values()]
 
     def durable_handle_map(self) -> dict[str, str]:
         """Snapshot process handles that still have a durable run identity.
@@ -717,9 +720,7 @@ class FleetCoordinator:
             oldest = next(iter(self._retained))
             del self._retained[oldest]
 
-    def retain_transcript(
-        self, handle_id: str, messages: "list[dict] | None"
-    ) -> bool:
+    def retain_transcript(self, handle_id: str, messages: "list[dict] | None") -> bool:
         """Retain a finished child's coherent transcript for continuation.
 
         The standalone seam over ``_retain_locked``. Production retention
@@ -754,9 +755,7 @@ class FleetCoordinator:
         with self._lock:
             return self._retain_locked(handle_id, messages)
 
-    def _retain_locked(
-        self, handle_id: str, messages: "list[dict] | None"
-    ) -> bool:
+    def _retain_locked(self, handle_id: str, messages: "list[dict] | None") -> bool:
         """The retention rules + claim. Caller must hold ``self._lock``."""
         handle = self._handles.get(handle_id)
         if handle is None or handle_id in self._live_ids:
@@ -845,9 +844,7 @@ class FleetCoordinator:
                 )
             if entry is None:
                 return None
-            return dataclasses.replace(
-                entry, messages=copy.deepcopy(entry.messages)
-            )
+            return dataclasses.replace(entry, messages=copy.deepcopy(entry.messages))
 
     def get_pruned_identity(self, target_id: str) -> PrunedFleetIdentity | None:
         """Resolve recent pruned identity by handle ID, then run ID.

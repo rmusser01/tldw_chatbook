@@ -113,23 +113,29 @@ def test_writer_lease_revocation_fails_closed_without_recreating_root(tmp_path):
         access_scope=functools.partial(manager.lease, snapshot),
     )
     writer.bind("run-a")
-    assert writer.append(
-        run_id="run-a",
-        kind="primary",
-        type="model",
-        content="before close",
-    ) == 1
+    assert (
+        writer.append(
+            run_id="run-a",
+            kind="primary",
+            type="model",
+            content="before close",
+        )
+        == 1
+    )
 
     with manager.lease(snapshot):
         manager.close("chat-a")
         assert snapshot.root.exists()
 
-    assert writer.append(
-        run_id="run-a",
-        kind="primary",
-        type="model",
-        content="after close",
-    ) is None
+    assert (
+        writer.append(
+            run_id="run-a",
+            kind="primary",
+            type="model",
+            content="after close",
+        )
+        is None
+    )
     assert manager.wait_for_cleanup(timeout_seconds=2.0)
     assert not snapshot.root.exists()
 
@@ -231,9 +237,7 @@ def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_pa
 
     assert writer.log_dir is not None
     tool_results = [
-        record
-        for record in all_records(writer.log_dir)
-        if record.type == "tool_result"
+        record for record in all_records(writer.log_dir) if record.type == "tool_result"
     ]
     assert len(tool_results) == 1
     assert str(scratch) not in tool_results[0].content
@@ -374,8 +378,7 @@ def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
             ("/Users/alice/work/app.py",),
         ),
         (
-            '{"status":"done","path":"/Users/alice/work/app.py",'
-            '"tests":"passed"}',
+            '{"status":"done","path":"/Users/alice/work/app.py","tests":"passed"}',
             ('"status": "done"', '"tests": "passed"', "[local path withheld]"),
             ("/Users/alice/work/app.py",),
         ),
@@ -703,7 +706,9 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         assert value not in persisted
     assert "private internal plan" not in persisted
     assert "private-key-body" not in persisted
-    assert all(any(record.content == value for record in records) for value in safe_values)
+    assert all(
+        any(record.content == value for record in records) for value in safe_values
+    )
 
 
 def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):
