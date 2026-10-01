@@ -421,6 +421,7 @@ from ...Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderGenerationProbeResult,
     ProviderProbeResult,
+    shared_connection_evidence,
 )
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
@@ -2870,7 +2871,11 @@ class ChatScreen(BaseAppScreen):
             provider,
             model,
         )
-        return build_console_settings_readiness(settings, app_config=app_config)
+        return build_console_settings_readiness(
+            settings,
+            app_config=app_config,
+            connection_evidence=shared_connection_evidence(lambda: self.app),
+        )
 
     def _commit_console_settings_submission_live(
         self,
@@ -3225,40 +3230,9 @@ class ChatScreen(BaseAppScreen):
         app_config: Mapping[str, object] | None = None,
     ) -> ProviderProbeResult:
         """Run the existing bounded model-catalog probe for one exact draft."""
-        from .settings_endpoint_probe import (
-            SettingsEndpointProbePurpose,
-            probe_settings_endpoint,
-            provider_probe_result_from_settings_outcome,
-        )
+        from ..Console_Modules.connection_probe import probe_console_connection
 
-        probe_kwargs = {}
-        if identity.custom_endpoint_id is not None:
-            from tldw_chatbook.Chat.custom_endpoint_registry import (
-                entry_for,
-                family_execution_key,
-                resolve_entry_credential,
-            )
-            from tldw_chatbook.Chat.provider_endpoint_contract import (
-                canonical_connection_identity,
-            )
-
-            entry = entry_for(app_config or {}, identity.custom_endpoint_id)
-            if (
-                entry is None
-                or canonical_connection_identity(
-                    family_execution_key(entry.family), entry.base_url
-                )
-                != identity.connection_identity
-            ):
-                return ProviderProbeResult("unreachable", (), "connection_error")
-            probe_kwargs["api_key"] = resolve_entry_credential(entry)[0]
-        outcome = await probe_settings_endpoint(
-            identity.connection_identity[1],
-            provider=identity.provider_key,
-            purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
-            **probe_kwargs,
-        )
-        return provider_probe_result_from_settings_outcome(outcome)
+        return await probe_console_connection(identity, app_config=app_config)
 
     async def _test_console_generation(
         self,
@@ -4794,9 +4768,11 @@ class ChatScreen(BaseAppScreen):
         """Open Console session settings for the active native session."""
         event.stop()
         summary_state = self._build_console_settings_summary_state()
-        recovery_label, _recovery_target, _recovery_tooltip = (
+        recovery_label, recovery_target, _recovery_tooltip = (
             self._console_provider_recovery_action()
         )
+        if recovery_target == "retry":  # TASK-33005.2: one action, no settings.
+            return await self._open_console_provider_recovery()
         await self._open_console_settings(
             focus_model=(
                 self._is_console_choose_model_action(summary_state.action_label)
@@ -7406,7 +7382,7 @@ class ChatScreen(BaseAppScreen):
         self._console_environment_expanded: set[str] = set()
         self._console_environment_poll_timer: Any | None = None
         self._console_credential_poll_timer: Any | None = None
-        self._console_credential_snapshot: tuple[int, str | None] | None = None
+        self._console_credential_snapshot: tuple[int, str | None, int] | None = None
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -9740,7 +9716,9 @@ class ChatScreen(BaseAppScreen):
         # TASK-33620.4: NEVER `active_run` here (the settings modal alone gates
         # on it), so consumers' `wait_for_active_run` guards are belt-and-braces.
         readiness = build_console_settings_readiness(
-            effective_settings, app_config=self._provider_readiness_app_config()
+            effective_settings,
+            app_config=self._provider_readiness_app_config(),
+            connection_evidence=shared_connection_evidence(lambda: self.app),
         )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
@@ -11878,6 +11856,8 @@ class ChatScreen(BaseAppScreen):
             snapshot = (
                 subscription_readiness_revision(),
                 readiness.subscription_status,
+                # TASK-33005.2: a test settled on any surface refreshes once.
+                getattr(shared_connection_evidence(lambda: self.app), "version", 0),
             )
             if snapshot == self._console_credential_snapshot:
                 return
@@ -15110,6 +15090,8 @@ class ChatScreen(BaseAppScreen):
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
             return "Save provider endpoint in Conversation settings before sending."
+        if readiness.recovery_action == "retry_connection":
+            return "Provider unreachable. Retry connection before sending."
         return "Finish provider setup before sending."
 
     def _console_provider_recovery_field(self) -> str:
@@ -20501,6 +20483,10 @@ class ChatScreen(BaseAppScreen):
     async def _open_console_provider_recovery(self) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
         _label, target, _tooltip = self._console_provider_recovery_action()
+        if target == "retry":
+            from ..Console_Modules.connection_probe import retry_console_connection
+
+            return await retry_console_connection(self)
         if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
             await self._open_console_settings(
                 focus_model=(

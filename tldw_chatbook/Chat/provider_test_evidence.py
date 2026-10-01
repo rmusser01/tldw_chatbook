@@ -1028,10 +1028,7 @@ class ProviderTestEvidenceStore:
         """Resolve (once) the app's shared owner; ``None`` keeps this draft-only."""
 
         if self._shared_owner is None and self._app is not None:
-            try:
-                self._shared_owner = provider_connection_evidence(self._app())
-            except (AttributeError, RuntimeError):  # No app: bare screens, units.
-                return None
+            self._shared_owner = shared_connection_evidence(self._app)
         return self._shared_owner
 
     def _publish(
@@ -1343,6 +1340,24 @@ def provider_connection_evidence(owner: object) -> ProviderConnectionEvidence:
             existing = ProviderConnectionEvidence()
             setattr(owner, _OWNER_ATTRIBUTE, existing)
         return existing
+
+
+def shared_connection_evidence(
+    app: Callable[[], object],
+) -> ProviderConnectionEvidence | None:
+    """Return the running app's owner, or ``None`` when there is no app.
+
+    Args:
+        app: Returns the running app (``lambda: self.app`` on a widget).
+
+    Returns:
+        The shared owner, or ``None`` for bare screens and units.
+    """
+
+    try:
+        return provider_connection_evidence(app())
+    except (AttributeError, RuntimeError):  # NoActiveAppError is a RuntimeError.
+        return None
 
 
 def _connection_key(identity: ProviderDraftIdentity) -> tuple[object, ...]:

@@ -93,8 +93,8 @@ _RECOVERY_COPY = {
     ),
     "retry_connection": (
         "Retry connection",
-        "console",
-        "Retry the provider connection",
+        "retry",
+        "Test the provider connection again",
     ),
     "wait_for_active_run": (
         "Run active",

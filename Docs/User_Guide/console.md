@@ -269,6 +269,18 @@ provider**, then **Choose model**) and opens the Console Settings modal.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
+A known connection failure blocks sending too. When a connection test of
+this chat's server — **Test connection & list models** in Chat settings, or
+**Test Provider** in Settings — was refused or timed out, the Console reads
+"Not ready — endpoint unreachable" (the Model section, the Conversation
+settings rows, the Inspector and this card's "Reconnect the provider server"
+step), and the composer reads "Send blocked — retry the connection to
+continue". **Retry connection** tests that same server again in place; it
+opens no settings. If the server now answers, the chat is Ready and Send
+unlocks; if not, a "still unreachable" notice says so. Test results last for
+this session only, and a test of a different endpoint or key never changes
+this chat's readiness.
+
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
 New note view directly. A local-first user who came for notes is not stuck
@@ -519,9 +531,10 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 
 Each row shows the model, the provider's name, its context size (`~` marks
 an estimate), readiness and last use. Readiness comes from your
-configuration only, so it reads "Ready · not tested" or "Not ready · no
-key" (or another reason); the list never claims a provider was verified or
-reachable. Typing filters every provider's saved and cached models in
+configuration plus any connection test of that provider's connection this
+session, so it reads "Ready · not tested" or "Not ready · no key" (or
+another reason, such as "unreachable" after a refused test); the list never
+claims a provider was verified or reachable. Typing filters every provider's saved and cached models in
 memory and highlights the best match; it never starts a model listing or a
 network call. A model id that no list has appears under **TYPED MODEL ID**
 for this chat's provider; type a provider's name first ("Ollama qwen3:32b")

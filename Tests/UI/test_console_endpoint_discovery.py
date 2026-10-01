@@ -642,3 +642,186 @@ async def test_named_entry_adapter_echo_does_not_cancel_pending_probe(adapter):
         release.set()
         evidence = await _settled(modal, pilot)
         assert evidence.endpoint == "reachable"
+
+
+def _stub_llama_network(monkeypatch, server: dict[str, bool]) -> list[str]:
+    """Replace only the network under the real probe (TASK-33005.2).
+
+    Everything above it -- the modal's tester, the Console's retry, the
+    category mapping -- is production code. Returns the probed URLs.
+    """
+    import errno
+
+    import httpx
+
+    import tldw_chatbook.UI.Screens.settings_endpoint_probe as probe_module
+
+    real_probe = probe_module.probe_settings_endpoint
+    probed: list[str] = []
+
+    async def network(request: httpx.Request) -> httpx.Response:
+        if not server["up"]:
+            raise httpx.ConnectError("refused") from OSError(
+                errno.ECONNREFUSED, "refused"
+            )
+        return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+
+    async def probe(base_url, **kwargs):
+        probed.append(base_url)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(network)) as client:
+            return await real_probe(base_url, http_client=client, **kwargs)
+
+    monkeypatch.setattr(probe_module, "probe_settings_endpoint", probe)
+    return probed
+
+
+async def _console_settled(console, pilot, predicate) -> None:
+    """Let the Console's 0.25 s idle poll pick up a settled result."""
+    for _ in range(40):
+        await pilot.pause(0.05)
+        if predicate(console._active_console_settings_readiness()[1]):
+            await pilot.pause(0.3)  # One more tick: the poll repaints.
+            return
+    pytest.fail("Console readiness never moved")
+
+
+def _rail_text(console, selector: str) -> str:
+    widget = console.query_one(selector)
+    return str(getattr(widget, "label", None) or widget.render())
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_refused_chat_settings_test_blocks_console_until_one_retry(
+    request, monkeypatch
+):
+    """TASK-33005.2 (AC#1/#2/#3/#7): the real Chat settings modal's refused
+    test of the active llama.cpp turns the real Console Not ready with a
+    retry, and one Retry after the server starts restores Ready."""
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+
+    server = {"up": False}
+    probed = _stub_llama_network(monkeypatch, server)
+    harness = _ConsoleFlowHarness(_persisted_console_app())
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        assert console._active_console_settings_readiness()[1].blocker is None
+
+        await console._open_console_settings(focus_model=False)
+        await pilot.pause()
+        modal = harness.screen
+        modal.query_one("#console-settings-model-discover", Button).press()
+        assert (await _settled(modal, pilot)).category == "connection_refused"
+        modal.query_one("#console-settings-cancel", Button).press()
+        await pilot.pause()
+        assert harness.screen is console
+        await _console_settled(console, pilot, lambda r: r.blocker is not None)
+
+        readiness = console._active_console_settings_readiness()[1]
+        assert (readiness.blocker, readiness.recovery_action) == (
+            "endpoint_unreachable",
+            "retry_connection",
+        )
+        # Model section (left rail), setup card, Inspector and the
+        # Conversation settings summary all read the same readiness.
+        assert _rail_text(console, "#console-model-section-recovery") == (
+            "Not ready — endpoint unreachable"
+        )
+        assert _rail_text(console, "#console-settings-readiness-row") == (
+            "Not ready — endpoint unreachable"
+        )
+        assert "connection refused" in _rail_text(
+            console, "#console-settings-endpoint-row"
+        )
+        retry = console.query_one("#console-setup-modal-action", Button)
+        assert str(retry.label) == "Retry connection"
+        assert "endpoint unreachable" in console._console_provider_blocker_copy()
+        assert "Retry connection" in console._console_setup_blocked_reason()
+        default = console._console_default_readiness("llama_cpp", "model-a")
+        assert default.blocker == "endpoint_unreachable"  # AC#3
+        reads = len(probed)
+        console._active_console_settings_readiness()
+        console._poll_console_credential_readiness()
+        assert len(probed) == reads  # AC#4: reading never probes.
+
+        # The Conversation settings button (Inspector rail) re-tests too,
+        # with no settings opened; a still-down server stays blocked.
+        summary_button = console.query_one("#console-settings-open", Button)
+        await console.on_console_settings_open(Button.Pressed(summary_button))
+        await console.workers.wait_for_complete()
+        await pilot.pause()
+        assert harness.screen is console
+        assert len(probed) == reads + 1
+        assert console._active_console_settings_readiness()[1].blocker == (
+            "endpoint_unreachable"
+        )
+
+        server["up"] = True
+        retry.press()
+        await _console_settled(console, pilot, lambda r: r.blocker is None)
+
+        assert harness.screen is console  # Retry opened nothing.
+        assert len(probed) == reads + 2
+        assert console._console_setup_blocked_reason() == ""
+        assert console._active_console_settings_readiness()[1].endpoint == "reachable"
+        assert not console.query_one("#console-model-section-recovery").display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_shared_evidence_change_refreshes_the_console_once(request):
+    """TASK-33005.2 (AC#6): a result settled elsewhere reaches the Console
+    through the idle poll's existing gate, in exactly one refresh."""
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderTestEvidenceStore,
+    )
+
+    harness = _ConsoleFlowHarness(_persisted_console_app())
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        console._stop_console_credential_poll_timer()
+        console._poll_console_credential_readiness()
+        refreshes = []
+        real_sync = console._sync_console_settings_summary
+        console._sync_console_settings_summary = lambda: (
+            refreshes.append(1),
+            real_sync(),
+        )
+
+        store = ProviderTestEvidenceStore(lambda: harness)
+        store.settle(
+            store.begin(
+                ProviderDraftIdentity(
+                    provider_key="llama_cpp",
+                    connection_identity=canonical_connection_identity(
+                        "llama_cpp", "http://127.0.0.1:9099"
+                    ),
+                    credential_source="none",
+                    credential_revision=0,
+                    draft_generation=0,
+                )
+            ),
+            ProviderProbeResult("unreachable", (), "timeout"),
+        )
+        for _ in range(3):
+            console._poll_console_credential_readiness()
+        assert len(refreshes) == 1  # Counted before any other tick can run.
+
+        await pilot.pause()
+        assert _rail_text(console, "#console-settings-readiness-row") == (
+            "Not ready — endpoint unreachable"
+        )
