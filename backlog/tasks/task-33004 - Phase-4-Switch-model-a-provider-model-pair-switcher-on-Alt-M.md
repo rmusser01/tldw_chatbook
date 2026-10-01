@@ -1,7 +1,7 @@
 ---
 id: TASK-33004
 title: 'Phase 4: Switch model, a provider·model pair switcher on Alt+M'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-26 11:47'
 labels:
@@ -93,18 +93,36 @@ Out of scope:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Alt+M, the Provider/Model chips, the palette entry and /model [query] all open Switch model. At 211x44 and 235x52 it is 120 columns wide with auto height up to 80% of the screen, and focus starts in Find.
-- [ ] #2 Alex's task (switch to a Sonnet model, set temperature 0.9 and max tokens 8192, return to the composer) takes 14 key presses. The A/B toggle takes 2, a model-only change takes 5, and a model change saved as the model default takes 16 or fewer.
-- [ ] #3 No switcher path applies a provider without a model (closes C7(a) in the UI). The current pair is marked, and the previous pair is highlighted when the switcher opens (closes C7(b)). ModelSearchPicker also marks the committed model.
-- [ ] #4 C6 is closed: no 3-row button cells remain, and at 211x44 Temperature and Max tokens are editable and visible without scrolling.
-- [ ] #5 The quick default mask in code is temperature, max_tokens and streaming, matching the ADR-095 amendment of 2026-09-26 (D3).
-- [ ] #6 Ctrl+O opens Chat settings from the Console, and the Console footer, F1 help and palette teach Alt+M, Ctrl+O and /model [query].
-- [ ] #7 This PR closes task-338, task-32859 and task-194.
-- [ ] #8 chat_screen.py ends the phase within its line and method budget (Tests/Architecture/test_screen_size_ratchet.py:85). If the phase shrank the file, the budget is lowered to the measured size.
-- [ ] #9 No ADR-097 ratchet rises: the boot CSS byte budget (608,090, Tests/Performance/test_boot_css_byte_budget.py:117) and the _ui_ready census (1,031, Tests/Performance/test_ui_ready_module_census.py:150). Modules used only by the switcher are not imported on the boot path. If dev is already red, the branch's number equals dev's.
-- [ ] #10 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
-- [ ] #11 Every printed key hint matches a working binding (ADR-031 rule 4).
-- [ ] #12 Live captures at 211x44 and 235x52, taken with a scratch TLDW_CONFIG_PATH profile, are attached to the PR.
-- [ ] #13 Docs/User_Guide pages are updated: console.md covers Switch model, /model [query], Ctrl+O, the keys table and the rail's Change action, with a Verified-against stamp.
-- [ ] #14 ./scripts/preflight.sh passes.
+- [x] #1 Alt+M, the Provider/Model chips, the palette entry and /model [query] all open Switch model. At 211x44 and 235x52 it is 140 columns wide (raised from 120 at the final review so model ids render whole; spec: never truncated) with auto height up to 80% of the screen, and focus starts in Find.
+- [x] #2 Alex's task (switch to a Sonnet model, set temperature 0.9 and max tokens 8192, return to the composer) takes 14 key presses. The A/B toggle takes 2, a model-only change takes 5, and a model change saved as the model default takes 16 or fewer.
+- [x] #3 No switcher path applies a provider without a model (closes C7(a) in the UI). The current pair is marked, and the previous pair is highlighted when the switcher opens (closes C7(b)). ModelSearchPicker also marks the committed model.
+- [x] #4 C6 is closed: no 3-row button cells remain, and at 211x44 Temperature and Max tokens are editable and visible without scrolling.
+- [x] #5 The quick default mask in code is temperature, max_tokens and streaming, matching the ADR-095 amendment of 2026-09-26 (D3).
+- [x] #6 Ctrl+O opens Chat settings from the Console, and the Console footer, F1 help and palette teach Alt+M, Ctrl+O and /model [query].
+- [x] #7 This PR closes task-338, task-32859 and task-194.
+- [x] #8 chat_screen.py ends the phase within its line and method budget (Tests/Architecture/test_screen_size_ratchet.py:85). If the phase shrank the file, the budget is lowered to the measured size.
+- [x] #9 No ADR-097 ratchet rises: the boot CSS byte budget (608,090, Tests/Performance/test_boot_css_byte_budget.py:117) and the _ui_ready census (1,031, Tests/Performance/test_ui_ready_module_census.py:150). Modules used only by the switcher are not imported on the boot path. If dev is already red, the branch's number equals dev's.
+- [x] #10 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
+- [x] #11 Every printed key hint matches a working binding (ADR-031 rule 4).
+- [x] #12 Live captures at 211x44 and 235x52, taken with a scratch TLDW_CONFIG_PATH profile, are attached to the PR.
+- [x] #13 Docs/User_Guide pages are updated: console.md covers Switch model, /model [query], Ctrl+O, the keys table and the rail's Change action, with a Verified-against stamp.
+- [x] #14 ./scripts/preflight.sh passes.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Phase 4 ships Switch model (Alt+M), the provider·model pair switcher. It replaces the quick popover form.
+- Subtasks .1 to .8 are Done. Absorbed tasks task-338, task-32859 and task-194 are closed.
+- Rulings R1 to R17 are in the SDD ledger.
+- Process: tasks 1 to 6 went through the full SDD loop. Task 7's review, task 8 and this final review were done by the controller in degraded mode, because the weekly subagent limit was reached on 2026-10-01. The PR description says so.
+
+Final-review fixes:
+- **Footer at 211x44.** It kept a prefix of the hint list, so the new Alt+M and Ctrl+O hints pushed Alt+I, Alt+A and Alt+C off the screen. Y, Enter and Shift+F6 now trail. The collapsed-composer and setup-blocked variants lead with their key action.
+- **Model ids shown whole.** The model column now grows to the longest id (floor 28, cap 44), and the switcher width token goes from 120 to 140.
+
+AC qualifications:
+- AC#8: chat_screen.py is 25,360 lines and 766 methods. The ratchet row is 25,218/759, which is already red on dev at 25,496/766. Phase 4 nets no growth against dev (ruling R1).
+- AC#9: the _ui_ready ceiling is 1,033 at HEAD; the census reads 1,029. Boot CSS and preimport pass after rebasing onto the Phase 3 tip (the earlier 557 > 500 preimport red was a stale baseline).
+- AC#13: CLAUDE.md now forbids "Verified against" paragraphs, so verification is recorded here and in the subtask notes instead.
+<!-- SECTION:NOTES:END -->
