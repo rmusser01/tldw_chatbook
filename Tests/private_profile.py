@@ -15,6 +15,9 @@ import pytest
 from pytest_timeout import get_env_settings
 
 _CHILD_NODE = "TLDW_TEST_PRIVATE_PROFILE_NODE"
+_NO_CHILD_FAILURE = (
+    "(the child's JUnit report records no failure or error; see the log tail)"
+)
 
 
 def is_private_profile_child(request: pytest.FixtureRequest) -> bool:
@@ -28,18 +31,21 @@ def _child_failure_report(report: Path) -> str:
     """The child's own failure/error text from its JUnit XML, if it wrote one.
 
     The log tail alone is often teardown noise (DEBUG SQL lines), which left
-    the failing assertion out of the parent's message entirely.
+    the failing assertion out of the parent's message entirely. A report with
+    no failure/error element (exit 5: the child selected nothing) says so,
+    rather than leaving a blank section before the tail.
     """
     try:
         cases = list(ET.parse(report).iter("testcase"))  # nosec B314
     except (OSError, ET.ParseError):
         return "(the child wrote no JUnit report)"
-    return "\n".join(
+    quoted = "\n".join(
         f"--- child {element.tag}: {element.get('message', '')}\n{element.text or ''}"
         for case in cases
         for element in case
         if element.tag in ("failure", "error")
     )
+    return quoted or _NO_CHILD_FAILURE
 
 
 def private_profile_test(function):
