@@ -559,3 +559,85 @@ async def test_a_transient_undo_failure_keeps_undo_on_offer(monkeypatch):
             pilot, lambda: set(_deleted_flags(db, conversation_id).values()) == {0}
         )
         assert len(attempts) == 2
+
+
+@pytest.mark.asyncio
+async def test_undo_keeps_original_attempt_previews():
+    """Undo brings back each reply's "View original attempt" (PR #2941 review).
+
+    Delete used to clear the session's original-attempt cache and the
+    replies' availability flags BEFORE deleting, and Undo restored neither:
+    a restored reply lost its preview, and so did replies outside the
+    deleted subtree. The cache is in-memory only, so nothing could rebuild it.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleCitationNoticeCode,
+        ConsoleCitationPhase,
+        ConsoleCitationPresentation,
+    )
+
+    app = _build_test_app()
+    db = attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        rows = [
+            ("u1", "user", None),
+            ("a1", "assistant", "u1"),
+            ("u2", "user", "a1"),
+            ("a2", "assistant", "u2"),
+        ]
+        seeded = await _open_rows(console, db, rows, "a2")
+        native, store = seeded["native"], seeded["store"]
+        controller = console._ensure_console_chat_controller()
+        # a2 is inside the deleted subtree; a1 is outside it.
+        for reply in ("a1", "a2"):
+            store.set_citation_presentation(
+                native[reply],
+                ConsoleCitationPresentation(
+                    phase=ConsoleCitationPhase.SELECTED,
+                    notice_code=ConsoleCitationNoticeCode.REPAIRED,
+                ),
+            )
+            controller._remember_original_attempt(native[reply], f"{reply} original")
+        await console._sync_native_console_chat_ui()
+
+        await _confirm_delete(console, pilot, host, native["u2"])
+        host.screen.query_one("#console-delete-receipt-undo", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: set(_deleted_flags(db, seeded["conversation_id"]).values()) == {0},
+        )
+        await pilot.pause()
+
+        for reply in ("a1", "a2"):
+            node = store.get_message(native[reply])
+            assert node.citation_presentation.original_attempt_available, reply
+            assert (
+                controller.original_attempt_for_message(native[reply])
+                == f"{reply} original"
+            )
+        # And the restored reply offers it again where the user looks for it.
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(native["a2"])
+        await console._sync_native_console_chat_ui()
+        opener = f"#console-message-action-more-{native['a2']}"
+        await _wait_for_selector(console, pilot, opener)
+        console.query_one(opener, Button).press()
+        await _wait_for_selector(
+            console, pilot, "#console-message-more-view-original-attempt"
+        )
+        await pilot.press("escape")
+        await _wait_until(
+            pilot, lambda: not console.query("#console-message-more-view-original-attempt")
+        )
+
+        # Done makes the delete final: the deleted reply's preview goes with it.
+        await _confirm_delete(console, pilot, host, native["u2"])
+        host.screen.query_one("#console-delete-receipt-done", Button).press()
+        await _wait_until(
+            pilot, lambda: not host.screen.query("#console-delete-receipt")
+        )
+        await _wait_until(pilot, lambda: native["a2"] not in controller._original_attempts)

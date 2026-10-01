@@ -42,7 +42,14 @@ CONSOLE_DELETE_ACTION_IDS = frozenset({"delete", "delete-confirm", "delete-cance
 
 
 def pending_delete_scope(host: Any) -> ConsoleDeleteScope | None:
-    """Return the armed scope while its message is still the pending one."""
+    """Return the armed scope while its message is still the pending one.
+
+    Args:
+        host: The Console message controller.
+
+    Returns:
+        The scope the pending confirmation shows, or ``None``.
+    """
     scope = getattr(host, "_console_delete_scope", None)
     pending = getattr(host, "_pending_console_delete_message_id", None)
     if scope is None or pending is None or scope.message_id != pending:
@@ -51,7 +58,14 @@ def pending_delete_scope(host: Any) -> ConsoleDeleteScope | None:
 
 
 def pending_delete_copy(host: Any) -> str:
-    """Return the Inspector copy for a pending delete."""
+    """Return the Inspector copy for a pending delete.
+
+    Args:
+        host: The Console message controller.
+
+    Returns:
+        The scoped question plus where to answer it.
+    """
     scope = pending_delete_scope(host)
     if scope is None:
         return "Confirm or cancel the delete on the selected message."
@@ -61,7 +75,16 @@ def pending_delete_copy(host: Any) -> str:
 async def handle_console_delete_action(
     host: Any, action_id: str, message_id: str
 ) -> bool:
-    """Arm, confirm or cancel one scoped message delete."""
+    """Arm, confirm or cancel one scoped message delete.
+
+    Args:
+        host: The Console message controller.
+        action_id: ``delete``, ``delete-confirm`` or ``delete-cancel``.
+        message_id: Native id of the selected message.
+
+    Returns:
+        Always True: the delete flow owns these actions.
+    """
     if action_id == "delete-cancel":
         host._pending_console_delete_message_id = None
         host._console_delete_scope = None
@@ -118,13 +141,9 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
     message_id = scope.message_id
     host._pending_console_delete_message_id = None
     host._console_delete_scope = None
-    session_id = store.session_id_for_message(message_id)
-    # Deletion is subtree-wide, so clear the owning session while
-    # descendant-to-session identity is still available.
-    host._ensure_console_chat_controller().clear_original_attempts_for_session(
-        session_id
-    )
-    host._console_original_attempt_previews.clear()
+    # Original-attempt previews are in-memory only, so they are cleared when
+    # the delete becomes final (_finalize), never before: Undo restores the
+    # same node objects and nothing else could rebuild those previews.
     try:
         deleted, held_ids = delete_subtree_for_undo(store, message_id)
     except ValueError as exc:  # a pending dispatch or live reply owns it
@@ -166,7 +185,7 @@ async def _offer_receipt(
 
     async def settle(choice: str | None) -> None:
         if choice != "undo":
-            _finalize(host, store, held_ids)
+            await _finalize(host, store, deleted, held_ids)
             return
         try:
             restore_deleted_subtree(store, deleted)
@@ -175,7 +194,7 @@ async def _offer_receipt(
             if exc.retryable:  # nothing changed; keep Undo on offer
                 await _offer_receipt(host, store, deleted, held_ids)
             else:
-                _finalize(host, store, held_ids)
+                await _finalize(host, store, deleted, held_ids)
             return
         noun = "message" if deleted.count == 1 else "messages"
         host._last_console_action = ConsoleActionResult(
@@ -198,11 +217,30 @@ async def _offer_receipt(
     )
 
 
-def _finalize(host: Any, store: Any, held_ids: tuple[str, ...]) -> None:
-    """Make the delete final: release the media references Undo needed."""
+async def _finalize(
+    host: Any,
+    store: Any,
+    deleted: ConsoleDeletedSubtree,
+    held_ids: tuple[str, ...],
+) -> None:
+    """Make the delete final: drop its previews and release held references.
+
+    Args:
+        host: The Console message controller.
+        store: The Console store the delete ran on.
+        deleted: The delete that can no longer be undone.
+        held_ids: Persisted ids whose recovered-media release Undo held back.
+    """
+    # The session-wide clear the delete always made (the deleted ids are no
+    # longer in the store, so the controller drops them as unknown).
+    host._ensure_console_chat_controller().clear_original_attempts_for_session(
+        deleted.session_id
+    )
+    host._console_original_attempt_previews.clear()
     persistence = store.persistence
     release = getattr(persistence, "release_recovered_media_references", None)
     if held_ids and callable(release) and release(held_ids):
         warning = getattr(persistence, "recovered_media_cleanup_warning", None)
         if warning:
             host.app_instance.notify(warning, severity="warning")
+    await host._sync_native_console_chat_ui()
