@@ -40,12 +40,11 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
-from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Chat.console_chat_models import ConsoleLifecycleImpact
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog

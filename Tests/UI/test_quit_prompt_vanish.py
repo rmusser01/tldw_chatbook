@@ -143,6 +143,12 @@ def _await_quit_prompt(prompt=None):
     ids=["quit", "stay"],
 )
 async def test_an_answered_prompt_resolves_to_the_answer(press, expected):
+    """A prompt that is answered returns that answer, with no cancel notice.
+
+    Args:
+        press: The selector of the prompt button the user clicks.
+        expected: The answer that button must resolve to.
+    """
     app = App()
     async with app.run_test(size=(100, 30)) as pilot:
         base = app.screen
@@ -357,6 +363,7 @@ class _StackFirstApp:
 
 
 async def test_an_answer_that_lands_just_after_the_pop_still_wins(monkeypatch):
+    """An answer landing inside the grace after the pop wins over no-answer."""
     monkeypatch.setattr(confirmation_dialog, "PROMPT_WATCH_INTERVAL_SECONDS", 0.01)
     app = _StackFirstApp()
     prompt = object()
@@ -375,6 +382,7 @@ async def test_an_answer_that_lands_just_after_the_pop_still_wins(monkeypatch):
 async def test_a_prompt_that_never_answers_after_leaving_resolves_to_no_answer(
     monkeypatch,
 ):
+    """A prompt gone from the stack with no answer resolves to ``no_answer``."""
     monkeypatch.setattr(confirmation_dialog, "PROMPT_WATCH_INTERVAL_SECONDS", 0.01)
     app = _StackFirstApp()
     prompt = object()
@@ -434,6 +442,7 @@ def _app_level_quit_prompts_app() -> App:
 
 
 async def test_the_workflow_quit_prompt_survives_the_modal_it_covers():
+    """The workflow quit prompt, popped by a covered modal, means Stay."""
     app = _app_level_quit_prompts_app()
     async with app.run_test(size=(100, 30)) as pilot:
         covered, _results, prompt, worker = await _open_prompt_over_a_covered_modal(
@@ -449,6 +458,7 @@ async def test_the_workflow_quit_prompt_survives_the_modal_it_covers():
 
 
 async def test_the_console_quit_prompt_survives_the_modal_it_covers():
+    """The Console quit prompt, popped by a covered modal, means Stay."""
     app = _app_level_quit_prompts_app()
     async with app.run_test(size=(100, 30)) as pilot:
         (
