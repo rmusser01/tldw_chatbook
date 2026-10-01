@@ -106,10 +106,35 @@ pinned sessions; H4 creates lifecycle producers. Existing ADR163/162/197 apply;
 all four ACs self-reviewed. No full suite, live provider, graphical UI, Windows/
 Linux execution or fresh complete dependency resolution is claimed.
 
+## TASK-32668 — native package inspection prerequisite
+
+Reused reviewed F1 checkpoint `9dbc6ceb50`, including the subsequently reviewed
+portable MCP syntax repair `0a69399424`. Immutable native inventory and bounded
+descriptor-based capture/materialization remain separate from runtime activation.
+The existing path/input validation and installed PyYAML/Pydantic are reused; no
+new dependency, schema owner or execution entry is added.
+
+RED on the intended inspection file stopped at the missing `Plugins` package
+import, before any package execution. The complete targeted qualification:
+
+```sh
+.venv/bin/python -m pytest Tests/Plugins/test_native_inspection.py Tests/Plugins/test_package_files.py -q --tb=short --show-capture=no --basetemp=/private/tmp/expanded-hooks-f1-core --junitxml=/private/tmp/expanded-hooks-f1-core.xml
+```
+
+**92 passed in 1.04s**, no skips or warnings. Fourteen new Python files pass
+full Ruff and formatting. Actual files, FIFO/link boundaries, substitution during
+destination writes, executable bits, byte/depth/count limits, malformed recognized
+constraints, independent successful siblings and immutable record defaults are
+exercised. macOS collision tests report lexical controls when APFS itself prevents
+a two-entry fixture. Windows capture fails closed; Linux/Windows/vendor execution
+is not qualified. Fixtures are original AGPL content with pinned reference
+provenance. Existing ADR162/163 apply; all four ACs self-reviewed.
+
 ## Remaining requested order
 
 - TASK-32679: session/child/compaction events.
-- TASK-32680: Stop continuations and teardown.
+- TASK-32669 through TASK-32675: required plugin registry, authority and drain foundations.
+- TASK-32680: Stop continuations and teardown, including native plugin drain qualification.
 - TASK-32685: MCP hooks, including required MCP/plugin prerequisites.
 - TASK-32686: native capabilities, required by the requested TASK-32687.
 - TASK-32687: Cursor/Codex package and hook adapter qualification.

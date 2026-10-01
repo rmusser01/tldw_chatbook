@@ -88,7 +88,7 @@ the decomposition; no unrelated broad refactoring is part of these plans.
 - Consumes: Utils/path_validation.py and Utils/input_validation.py; the portable/core and extension schemas in plugin spec sections 3 and 10.
 - Produces: inspect_package(root: Path, *, dialect: str | None = None) -> PackageInspection. PackageInspection and ComponentRecord are frozen Pydantic models in Plugins/models.py: candidate dialect/version, source/overlay identities, content/effective digests, inventory keyed by typed component ID, dependency edges, activation blockers and diagnostics. ComponentRecord exposes support, selection, availability and evidence separately. materialize_package(source: Path, destination: Path) -> PackageInspection returns only after bounded validation. Unknown constraints remain blockers, never empty edges.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_missing_required_hook_stays_a_blocker(native_package):
@@ -101,9 +101,9 @@ def test_missing_required_hook_stays_a_blocker(native_package):
     assert not control.inventory["skill:review"].activation_blockers
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_native_inspection.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_native_inspection.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 from pathlib import PurePosixPath
@@ -115,20 +115,20 @@ def validate_relative_member(value: str) -> PurePosixPath:
     return path
 ```
 
-  - [ ] 3.1. Create native_package in Tests/Plugins/conftest.py: each call writes a fresh tmp_path child with the spec section 3.1 manifest, skills/review/SKILL.md and optional requires/extension overrides; it returns Path. Keep expected inventories authored independently of the parser.
-  - [ ] 3.2. Implement closed native extension/frontmatter validation and deterministic candidate selection. Add fields for every declared component now; publish only skills in the initial integration. Enforce variable declarations, unknown dependency/cycle blocking and content versus effective identity.
-  - [ ] 3.3. Implement streamed file-count/byte/depth accounting, executable-mode hashing and secure materialization. The lexical kernel is only an early rejection; resolved containment, link target type, reparse handling, case/Unicode collisions and destination identity remain required before read/write.
-  - [ ] 3.4. Add a packaged test fixture manifest with provenance/license and run mutation cases for missing required hooks, malformed recognized extensions and valid unrelated unknown namespaces.
+  - [x] 3.1. Create native_package in Tests/Plugins/conftest.py: each call writes a fresh tmp_path child with the spec section 3.1 manifest, skills/review/SKILL.md and optional requires/extension overrides; it returns Path. Keep expected inventories authored independently of the parser.
+  - [x] 3.2. Implement closed native extension/frontmatter validation and deterministic candidate selection. Add fields for every declared component now; publish only skills in the initial integration. Enforce variable declarations, unknown dependency/cycle blocking and content versus effective identity.
+  - [x] 3.3. Implement streamed file-count/byte/depth accounting, executable-mode hashing and secure materialization. The lexical kernel is only an early rejection; resolved containment, link target type, reparse handling, case/Unicode collisions and destination identity remain required before read/write.
+  - [x] 3.4. Add a packaged test fixture manifest with provenance/license and run mutation cases for missing required hooks, malformed recognized extensions and valid unrelated unknown namespaces.
 
 **Failure and successful-control matrix:** Malformed extension/version, unknown requires scope, two vendor candidates, unknown top-level portable fields, duplicate IDs, cyclic edges, escaping/internal links, executable bit drift, special files and every inspection limit. A parser-only result never establishes runtime compatibility.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_native_inspection.py Tests/Plugins/test_package_files.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32668 --plain
