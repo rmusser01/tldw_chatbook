@@ -1303,7 +1303,16 @@ class ChatConversationService:
         id_map: dict[str, str] = {}
         copied = 0
         last_new_id: str | None = None
-        with self.db.transaction():
+        # IMMEDIATE (task-22501): this outer unit's first statement is
+        # add_message's conversation-existence SELECT, and the manager only
+        # honours `immediate` at depth 0 -- a DEFERRED begin here silently
+        # neutralizes every inner writer's IMMEDIATE and re-opens the exact
+        # snapshot-upgrade window task-21100 closed: one backfill chunk (or
+        # any concurrent committer) landing between the read and the first
+        # INSERT kills the whole user-facing fork with an instant,
+        # busy-handler-bypassing `database is locked`. See
+        # Tests/DB/test_chachanotes_conversation_writer_collision.py.
+        with self.db.transaction(immediate=True):
             for node in path:
                 content = node.get("content") or ""
                 image = node.get("image_data")

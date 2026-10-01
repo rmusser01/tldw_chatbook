@@ -10977,7 +10977,14 @@ UPDATE db_schema_version
             params += (thinking_history_policy,)
         query = f"INSERT INTO conversations ({insert_columns}) VALUES ({placeholders})"
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): the conversation-create path reserves the
+            # write lock up front, the same standing policy task-21100 put on
+            # the hot `messages` writers. Depth-0 this INSERT is blind (a plain
+            # SQLITE_BUSY would honor the busy timeout), but a DEFERRED begin
+            # cannot be proven safe against future body changes, and every
+            # wrapper that composes this call inherits whatever begin mode it
+            # finds at depth 0 -- reserve here so the default is safe.
+            with self.transaction(immediate=True) as conn:
                 conn.execute(query, params)
             logger.info(f"Added conversation ID: {conv_id}.")
 
@@ -12321,7 +12328,10 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (optimistic version
+            # check then UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     """
                     SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,
@@ -12865,7 +12875,10 @@ UPDATE db_schema_version
         )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (version check then
+            # soft-delete UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "conversations", "id", conversation_id
@@ -12953,7 +12966,10 @@ UPDATE db_schema_version
         )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (deleted/version check
+            # then restore UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     "SELECT deleted, version FROM conversations WHERE id = ?",
                     (conversation_id,),
