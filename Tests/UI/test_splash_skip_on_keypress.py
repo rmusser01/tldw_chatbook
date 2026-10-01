@@ -22,6 +22,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 
 from Tests.app_module_patches import patch_app_global
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 pytestmark = pytest.mark.asyncio
@@ -125,6 +126,34 @@ async def test_a_key_pressed_with_the_skip_disabled_still_reaches_its_binding() 
 
         assert app.closed == []
         assert app.binding_fired == ["z"]
+
+
+class _SplashHostWithAppQuit(_SplashHost):
+    """The splash host carrying the real app's Ctrl+Q binding."""
+
+    BINDINGS = [binding for binding in TldwCli.BINDINGS if binding.key == "ctrl+q"]
+
+    def __init__(self, *, skip: bool, duration: float) -> None:
+        super().__init__(skip=skip, duration=duration)
+        self.quit_requests = 0
+
+    def action_quit(self) -> None:
+        self.quit_requests += 1
+
+
+@pytest.mark.bootstrap_profile
+async def test_ctrl_q_mid_splash_quits_instead_of_dismissing() -> None:
+    """TASK-33622.10: the app's Ctrl+Q is a priority binding, so Textual runs
+    it before the focused splash's ``on_key`` -- one press quits. Before, the
+    splash consumed it as a dismiss and quitting took a second press."""
+
+    app = _SplashHostWithAppQuit(skip=True, duration=30.0)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+q")
+        await pilot.pause()
+
+        assert app.quit_requests == 1
+        assert app.closed == [], "Ctrl+Q was consumed as a splash dismiss"
 
 
 async def test_a_second_keypress_does_not_close_the_splash_twice() -> None:

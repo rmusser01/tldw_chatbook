@@ -114,6 +114,38 @@ def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]
     return frames
 
 
+def _quit_confirmation_screens(app: Any) -> list[Any]:
+    """Return the screens whose ``confirm_quit``/``prepare_for_quit`` run, top first.
+
+    TASK-33622.10. Ctrl+Q is a priority binding, so the quit flow can start
+    while a modal is on top. ``app.screen`` is then the modal, and the screen
+    holding the unsaved work (Settings' theme editor, the Chunking Lab) sits
+    beneath it. Asking only ``app.screen`` would quit straight past that
+    screen's own prompt, so walk down through every modal to the first
+    non-modal screen -- the one the user is actually in. Screens below that
+    one are not consulted, exactly as when no modal is open.
+
+    Args:
+        app: The running app (or a quit-flow harness exposing ``screen``).
+
+    Returns:
+        The active screen first, then -- only when it is modal -- each screen
+        beneath it down to and including the topmost non-modal screen.
+    """
+    current = app.screen
+    screens = [current]
+    if not getattr(current, "is_modal", False):
+        return screens
+    stack = list(app.screen_stack)
+    if current not in stack:
+        return screens
+    for screen in reversed(stack[: stack.index(current)]):
+        screens.append(screen)
+        if not getattr(screen, "is_modal", False):
+            break
+    return screens
+
+
 class LifecycleMixin:
     """``TldwCli``'s lifecycle, shutdown and quit members (moved from ``app.py``)."""
 
@@ -1859,9 +1891,11 @@ class LifecycleMixin:
                 begin_quit = getattr(promotion_owner, "begin_quit", None)
                 if callable(begin_quit):
                     promotion_token = begin_quit()
-                current_screen = self.screen
-                confirm_quit = getattr(current_screen, "confirm_quit", None)
-                if callable(confirm_quit):
+                quit_screens = _quit_confirmation_screens(self)
+                for screen in quit_screens:
+                    confirm_quit = getattr(screen, "confirm_quit", None)
+                    if not callable(confirm_quit):
+                        continue
                     decision = confirm_quit()
                     if inspect.isawaitable(decision):
                         decision = await decision
@@ -1919,8 +1953,10 @@ class LifecycleMixin:
                 workflow_authoring = getattr(self, "_workflow_authoring", None)
                 if workflow_authoring is not None:
                     await workflow_authoring.prepare_quit()
-                prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
-                if callable(prepare_for_quit):
+                for screen in quit_screens:
+                    prepare_for_quit = getattr(screen, "prepare_for_quit", None)
+                    if not callable(prepare_for_quit):
+                        continue
                     preparation = prepare_for_quit()
                     if inspect.isawaitable(preparation):
                         await preparation
