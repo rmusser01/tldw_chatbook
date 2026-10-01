@@ -115,7 +115,7 @@ async def run():
         assert result['result']=={'tools':[]}
         return
     if route=='inspection':
-        assert local.get_external_servers()
+        assert local.get_external_servers() == []
         assert delegate.get_status()
         assert (await delegate.request('tools/list'))=={'tools':[]}
         return

@@ -5,6 +5,7 @@ import inspect
 import pytest
 
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.Backup_Recovery.test_mcp_recovery_review import _APPROVED_SETUP
 
 _SCRIPT = r"""
 import asyncio, os, sys, types
@@ -76,7 +77,7 @@ if state not in ('ordinary','unqualified'):
     (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
     activation = ActivationStore(control/'activation')
     for owner in owners:
-        if state == 'approved' or state == 'config_only' and owner == 'config':
+        if state == 'owner_flag' or state == 'config_only' and owner == 'config':
             activation.approve('generation', owner)
     if state == 'missing':
         (activation._generation('generation')/'required.json').unlink()
@@ -147,18 +148,21 @@ async def run():
         )
     if route == 'inspection':
         assert [item.server_id for item in target_store.list_targets()] == ['server-a']
-        assert (await plane.load_context()).selected_active_server_id == 'server-a'
-        assert plane.runtime_state_override().active_server_id == 'server-a'
+        assert await plane.load_context() == UnifiedMCPContext()
+        assert plane.runtime_state_override().active_server_id is None
         assert isinstance(plane.available_actions(), list)
         return {'inspected': True}
     raise AssertionError(route)
 
-denied = state not in ('ordinary','approved','unqualified')
+denied = state not in ('ordinary','unqualified')
 try:
     result = asyncio.run(run())
 except PermissionError as exc:
     if not denied or route == 'inspection': raise
     assert str(exc) == 'mcp_activation_required'
+except ValueError as exc:
+    assert denied and route == 'run_action'
+    assert str(exc) == 'Unsupported Unified MCP local action: external_server.secret.set'
 else:
     if denied and route != 'inspection':
         raise AssertionError('inactive remote MCP route was admitted')
@@ -194,7 +198,7 @@ def test_inactive_remote_mcp_denies_before_client_or_cache(tmp_path, route):
     "state",
     [
         "ordinary",
-        "approved",
+        "owner_flag",
         "unqualified",
         "config_only",
         "missing",
@@ -209,15 +213,25 @@ def test_remote_mcp_observes_actual_independent_sources(tmp_path, state):
     _run(tmp_path, "load_section", state, script=_SCRIPT)
 
 
-@pytest.mark.parametrize("state", ["ordinary", "approved", "targets"])
+@pytest.mark.parametrize("state", ["ordinary", "owner_flag", "targets"])
 def test_direct_remote_mcp_observes_configured_target_store(tmp_path, state):
     _run(tmp_path, "direct_factory", state, script=_SCRIPT)
 
 
-_RETENTION = _SCRIPT.split("events = []")[0] + r"""
-import threading
+_RETENTION = (
+    _APPROVED_SETUP
+    + r"""
 from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
 from tldw_chatbook.MCP.activation import MCPActivationRequired
+from tldw_chatbook.MCP.unified_control_models import (
+    ConfiguredServerTarget, SectionCapabilityFlags, ServerAccessContext,
+)
+
+target = ConfiguredServerTarget(
+    server_id='server-a', label='Server A', base_url='https://blocked.invalid/api',
+    auth_reference='imported-secret-reference', is_default=True,
+)
+plane.target_store.save_targets([target])
 
 events = []
 entered = asyncio.Event()
@@ -225,12 +239,18 @@ release = asyncio.Event()
 
 def assert_held():
     try:
-        with authority.maintenance(('profile',), .03):
+        with authority.maintenance(tuple(witness['namespaces']), .03):
             raise AssertionError('remote MCP await lost native admission')
     except AdmissionTimeout:
         pass
 
 class WaitingServer:
+    async def resolve_access_context(self, **kwargs):
+        return ServerAccessContext(
+            server_id='server-a', selected_scope='personal', selected_section='overview',
+            section_capabilities=SectionCapabilityFlags(overview=True),
+        )
+
     async def get_overview(self, **kwargs):
         events.append('entered')
         entered.set()
@@ -239,14 +259,10 @@ class WaitingServer:
         events.append('finished')
         return {'server_id':'server-a'}
 
-local = SimpleNamespace(store=SimpleNamespace(path=local_path))
-plane = UnifiedMCPControlPlaneService(
-    target_store=target_store, context_store=context_store,
-    local_service=local, server_service=WaitingServer(),
-)
-plane._permission_store = permission_store
+plane.server_service = WaitingServer()
 
 async def run():
+    await plane.select_server_target('server-a')
     accepted = asyncio.create_task(plane.load_section('overview'))
     await entered.wait()
     assert_held()
@@ -268,14 +284,15 @@ async def run():
 
 asyncio.run(run())
 assert events == ['entered','finished'], events
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 """
+)
 
 
 def test_remote_mcp_accepted_await_retains_lease_and_denies_new_intake(tmp_path):
-    _run(tmp_path, "retained", "approved", script=_RETENTION)
+    _run(tmp_path, "retained", "fresh", script=_RETENTION)
 
 
 def test_remote_mcp_supported_operation_set_has_no_unguarded_async_route():
