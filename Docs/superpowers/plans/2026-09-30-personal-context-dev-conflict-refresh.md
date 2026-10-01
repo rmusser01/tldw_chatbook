@@ -548,3 +548,25 @@ Strict import measurement remains its fresh native registry walk, not snapshot:
 record actual prewarmed baseline module paths/hashes to explain unchanged541/
 406612 despite Console source edits. ADR required:no, existing native owner
 retirement/source admission contracts are unchanged.
+
+
+## Task 2 approved scope amendments (canonical-copy reconciliation)
+
+The Backlog plan and private brief were amended before source edits. This canonical copy was reconciled afterward on 2026-09-30; it does not claim earlier amendment timing.
+
+Follow-up trace: Chunking Lab catalog imports AUTO_SENTINEL from Chunking/auto_selection.py, which still eagerly reaches planner/templates/runtime. Add this exact owner and the whole Chunking Lab screen to the RED entry-point controls, then defer planner/classifier/template aliases at their existing use sites. Native census must prove this is actual whole-pass shedding. Evals convention binding is paused: source proves changed subclass-MRO and same-handler-name collision dispatch; retain original decorators pending controller decision.
+
+
+Controller-approved ordinary-use expansion: defer optional MCP visual imports at UI/MCP_Modules/mcp_workbench.py existing compose/secondary-mode/query/handler use sites; keep permission DTOs and every current Message definition and binding unchanged. Preserve lazy public aliases and runtime get_type_hints using qualified self-owner annotations where necessary. STTS/Personas remain unchanged because STTS has type-bound decorators to profile-library-defined Messages. After a fresh serial census, defer only needed Evals execution/sample-bench/inspector dependencies at existing use sites. No event extraction, new hierarchy, dispatcher, source stripping, cap increases, prewarm or route changes. ADR097 governs same-contract deferral. Enroll only the six demonstrated source-bound Chunking/Library test modules with the existing bootstrap_profile marker after exact BASE reproduction.
+
+
+MCP cap-preserving amendment approved by controller: retain workbench6744 cap; move only existing pure _import_summary/_import_severity bodies verbatim into UI/MCP_Modules/mcp_profile_form.py, retain their lazy original aliases and monkeypatch reads, and add an exact measured recipient row to test_module_size_ratchet.py. Use one private self-module reference with cached PEP562 exports and qualified actual-use/annotation names, preserving all message definitions, handlers and permission DTOs/gates. No generic facade or dispatcher.
+
+
+Measured-needed Evals phase: MCP census is494modules/382478LOC, leaving3738LOC total debt. Defer only evals_screen existing execution aliases (character/word runners), sample_bench, inspector classes and skill_eval_launch helpers; defer library_rail sample_bench until existing compose use; defer skill_eval.runner judge/prompts/scoring/simulation/static dependency aliases until existing run/parser use while keeping estimate_calls/max_estimate_calls eager for panel class constants. Preserve exact real aliases via existing cached PEP562 pattern, annotation owner lookups, all original Message classes/decorators/callables, and caller patch seams. Add fresh-process import controls plus actual synthetic Evals worker/UI, annotation and export controls; serial fresh census determines success. No source/module extraction or behavior changes.
+
+
+Final measured-needed Evals execution seam:484modules/378882LOC remains142LOC over. Existing evals_screen skill_eval.subject imports (SubjectError, subject_from_directory, subject_from_store) are worker-only and the195LOC owner has no other Evals eager importer. Add those exact aliases to the existing lazy map; preserve validation, error class and caller patch identity. No new owner or contract change.
+
+
+Fixture reconciliation extension: exact BASE Evals-owner overlay reproduced raw_source_selection_changed in both test_evals_screen and test_evals_character_run_e2e before relevant behavior (evals-base-red receipt). Controller authorizes existing bootstrap_profile enrollment for only these two demonstrated modules; keep all admission/network/keyring guards and test body assertions unchanged.

@@ -24,6 +24,9 @@ from pathlib import Path
 
 import pytest
 
+# The real engine reads the profile admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.Chunking import template_runtime as tr
 from tldw_chatbook.Chunking.engine.exceptions import TemplateError
 

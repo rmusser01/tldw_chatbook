@@ -6,6 +6,9 @@ import urllib.request
 
 import pytest
 
+# The real engine reads the profile admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.Chunking import template_runtime as runtime
 from tldw_chatbook.Chunking.lab_preflight import current_local_runtime, prepare_recipe
 

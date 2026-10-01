@@ -25,6 +25,9 @@ from __future__ import annotations
 import threading
 
 import pytest
+
+# Config owners bind at import; retain that synthetic profile through real use.
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button, Input
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB

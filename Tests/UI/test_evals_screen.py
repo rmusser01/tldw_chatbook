@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+# Config owners bind at import; retain that synthetic profile through real use.
+pytestmark = pytest.mark.bootstrap_profile
 from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
 from textual.app import App

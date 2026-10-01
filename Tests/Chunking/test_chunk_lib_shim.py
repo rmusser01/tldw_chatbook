@@ -2,6 +2,9 @@
 """Chunk_Lib shim contract (spec §6.2): legacy signatures + flat output shape."""
 import pytest
 
+# The real engine reads the profile admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.Chunking import Chunk_Lib
 
 

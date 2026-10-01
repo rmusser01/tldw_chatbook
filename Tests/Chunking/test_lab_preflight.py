@@ -7,6 +7,9 @@ import socket
 
 import pytest
 
+# The real engine reads the profile admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def preflight():
     name = "tldw_chatbook.Chunking.lab_preflight"

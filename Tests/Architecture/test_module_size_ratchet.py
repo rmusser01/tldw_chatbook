@@ -104,6 +104,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8265,
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7802,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6744,
+    # TASK-25907.23: the two pure import-summary helpers retain a recipient ceiling.
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": 558,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
     # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)

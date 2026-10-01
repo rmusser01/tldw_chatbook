@@ -530,3 +530,29 @@ class MCPImportPanel(Vertical):
         elif button_id == "mcp-import-cancel":
             event.stop()
             self.post_message(self.Cancelled())
+
+
+def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
+    """One notify-ready sentence covering a whole import batch.
+
+    Every candidate is attempted regardless of an earlier failure (T8: "a
+    failing save produces the summary notify without aborting the rest") --
+    this renders whatever mix of successes/failures resulted into a single
+    toast instead of one per candidate.
+    """
+    parts: list[str] = []
+    if succeeded:
+        parts.append(f"Imported {len(succeeded)}: {', '.join(succeeded)}.")
+    if failed:
+        failed_desc = ", ".join(
+            f"{profile_id} ({error})" for profile_id, error in failed
+        )
+        parts.append(f"Failed {len(failed)}: {failed_desc}.")
+    return " ".join(parts) if parts else "Nothing to import."
+
+def _import_severity(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
+    if failed and not succeeded:
+        return "error"
+    if failed:
+        return "warning"
+    return "information"

@@ -116,7 +116,8 @@ MAX_PASS_ADDED_LOC = 378_740
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
-MAX_SINGLE_ROUTE_ADDED_LOC = 123_319
+# TASK-25907.23: native Library105452 + ADR-097 standard10000 slack.
+MAX_SINGLE_ROUTE_ADDED_LOC = 115_452
 
 _CENSUS_SCRIPT = """
 import json
