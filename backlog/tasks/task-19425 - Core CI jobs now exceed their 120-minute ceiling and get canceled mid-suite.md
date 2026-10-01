@@ -1,11 +1,15 @@
 ---
 id: TASK-19425
-title: >-
-  Core CI jobs now exceed their 120-minute ceiling and get canceled mid-suite
-status: To Do
-assignee: []
+title: Core CI jobs now exceed their 120-minute ceiling and get canceled mid-suite
+status: In Progress
+assignee:
+  - '@rmusser01'
 created_date: '2026-08-21'
-labels: [ci, testing, triage]
+updated_date: '2026-10-01 01:03'
+labels:
+  - ci
+  - testing
+  - triage
 dependencies: []
 priority: high
 ---
@@ -46,3 +50,23 @@ does not explain the full jump.
       `timeout_method = "thread"` kills the whole worker process on a
       single hung test, which under `--max-worker-restart=3` can silently
       re-run large scopes and multiply wall-time
+
+## Implementation Plan
+
+1. Measure from real artifacts, not guesses: locate recent completed
+   core-shard runs of `.github/workflows/test.yml` via `gh run list`,
+   download their `core-test-results-<shard>` json-report artifacts, and
+   rank slowest tests/files plus per-stage (setup/call/teardown) totals.
+2. Classify the growth: pathological hangs (tests pinned at the
+   `--timeout=300` cap), a few heavy soak/qualification tests, or broad
+   accretion; verify each named pathology still reproduces at the current
+   base before touching code.
+3. Fix the pathologies the measurement names (test-code changes only;
+   production changes only if a measured test exposes a real product
+   hang), verifying each fix with a targeted local before/after run.
+4. Check the `--timeout=300` / `timeout_method` / `--max-worker-restart=3`
+   interaction analytically against the flags as they exist today.
+5. Record the measurement table, the remedy chosen, and any ceiling or
+   sharding decision that only the owner can make, in Implementation
+   Notes; leave AC #3 (live CI proof within ceiling) explicitly pending
+   unless a real run demonstrates it.
