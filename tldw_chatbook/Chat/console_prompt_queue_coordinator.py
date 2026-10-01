@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -34,6 +34,12 @@ if TYPE_CHECKING:
 
 
 _AUTHORIZATION_KEY = object()
+
+# Shown when a Resume or Retry press stops at a context review instead of
+# running anything (TASK-33621.19).
+CONTEXT_CHANGED_REVIEW_NOTICE = (
+    "The conversation changed while the queue was paused. Review it before resuming."
+)
 
 
 class QueueGenerationAuthorization:
@@ -857,7 +863,20 @@ class ConsolePromptQueueCoordinator:
             callback(session_id, status, logical_outcome_id)
 
     def resume(self, session_id: str) -> PromptQueueMutationResult:
-        """Reacquire a slot and resume a manually/dispatch-paused queue."""
+        """Reacquire a slot and resume a manually/dispatch-paused queue.
+
+        Args:
+            session_id: Session whose paused queue should resume.
+
+        Returns:
+            The resume result, or a refusal. If the conversation context
+            changed since the queue's baseline, the queue is re-paused as
+            CONTEXT_CHANGED instead. That result is APPLIED (or UNCHANGED if
+            it already was), its mode is still PAUSED, no chain is created,
+            and ``detail`` carries ``CONTEXT_CHANGED_REVIEW_NOTICE`` for the
+            Resume or Retry press that asked to run. A caller that drains
+            must stop on a PAUSED result (TASK-33621.19).
+        """
         if self._maintenance_paused:
             return self._maintenance_refusal(session_id)
 
@@ -877,6 +896,11 @@ class ConsolePromptQueueCoordinator:
                 expected_revision=snapshot.revision,
             )
             self._changed(session_id)
+            if result.status in {
+                QueueMutationStatus.APPLIED,
+                QueueMutationStatus.UNCHANGED,
+            }:
+                return replace(result, detail=CONTEXT_CHANGED_REVIEW_NOTICE)
             return result
         if not self._can_reacquire_slot(session_id):
             return PromptQueueMutationResult(
@@ -990,7 +1014,11 @@ class ConsolePromptQueueCoordinator:
         """Run one typed failed/stopped recovery, adopt its epoch, then drain."""
 
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # Same guard as resume_and_drain: a CONTEXT_CHANGED re-pause is
+        # APPLIED with no chain, so a recovery turn run now is refused, its
+        # refusal is lost and the FAILED/STOPPED pause is written back -- a
+        # Retry that silently did nothing. Stop at the review (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         authorization = QueueGenerationAuthorization(
             self, session_id, _key=_AUTHORIZATION_KEY

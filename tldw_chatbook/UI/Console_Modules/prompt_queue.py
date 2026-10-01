@@ -172,9 +172,11 @@ def derive_prompt_queue_presentation(
             or ``None`` when the newest assistant message on the active
             transcript is not failed (no turn failed, or the failed attempt
             is off-path, as after a failed regeneration). ``""`` is a failed
-            turn with no preceding user prompt; the shelf then shows a bare
-            "Turn failed" with Retry. A FAILED pause given ``None`` offers
-            Resume, because a Retry there could only refuse (TASK-33621.19).
+            turn whose preceding user prompt is missing or has no previewable
+            text (only whitespace or control characters, or only
+            attachments); the shelf then shows a bare "Turn failed" with
+            Retry. A FAILED pause given ``None`` offers Resume, because a
+            Retry there could only refuse (TASK-33621.19).
 
     Returns:
         The immutable shelf/composer presentation: Send label and gate, shelf
@@ -682,6 +684,9 @@ class ConsolePromptQueueUIController:
                 result.detail or "That prompt queue action is unavailable.",
                 "warning",
             )
+        elif result.detail:
+            # A Retry/Resume next stopped at a context review says why.
+            self._notify(result.detail, "warning")
         await self._sync_ui()
 
     async def _handle_turn_recovery_intent(self, session_id: str, action: str) -> None:
@@ -721,7 +726,12 @@ class ConsolePromptQueueUIController:
     async def handle_pause_intent(
         self, session_id: str, *, expected_revision: int
     ) -> None:
-        """Apply a shelf pause intent, report refusal, and repaint."""
+        """Apply a shelf pause intent, report refusal, and repaint.
+
+        An accepted result can still carry ``detail``: a Resume that the
+        coordinator stopped at a context review (TASK-33621.19). That notice
+        is shown too, so the press does not look dead.
+        """
 
         result = await self.toggle_pause(
             session_id, expected_revision=expected_revision
@@ -733,6 +743,8 @@ class ConsolePromptQueueUIController:
                 result.detail or "That prompt queue action is unavailable.",
                 "warning",
             )
+        elif result.detail:
+            self._notify(result.detail, "warning")
         await self._sync_ui()
 
     def presentation_for(

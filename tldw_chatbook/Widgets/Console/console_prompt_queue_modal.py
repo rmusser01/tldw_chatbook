@@ -483,7 +483,9 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 QueueMutationStatus.UNCHANGED,
             }
         if result.status in {QueueMutationStatus.APPLIED, QueueMutationStatus.UNCHANGED}:
-            self._show_feedback("")
+            # An accepted Resume/Retry the coordinator stopped at a context
+            # review carries why in ``detail`` (TASK-33621.19).
+            self._show_feedback(result.detail or "", warning=bool(result.detail))
             self._apply_snapshot(result.snapshot, force=True)
             return True
         self._apply_snapshot(result.snapshot, force=True)

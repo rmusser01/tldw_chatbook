@@ -1531,9 +1531,21 @@ async def test_real_paused_queue_without_failed_turn_offers_resume_that_drains(
 # re-pauses the queue as CONTEXT_CHANGED -- a real change, so the registry
 # reports it APPLIED -- and resume_and_drain read that as "resumed" and
 # drained a chain resume() never created: KeyError in _drain_waiting. The
-# shelf runs that press in an app worker, so the error would exit the app.
-# These drive the real controller, coordinator and store: no stubbed resume.
+# shelf runs that press in an app worker, so by code reading (not checked in
+# the live app) the error would exit the app.
+#
+# Round 3 found the Retry twin: recover_and_drain read the same re-pause as
+# "resumed", ran the retry under an authorization the controller refuses (no
+# chain), dropped the refusal and wrote the FAILED/STOPPED pause back. The
+# shelf kept "Turn failed | Retry", nothing was sent, and nothing said why.
+# A Resume or Retry that lands on the review now says so in one notice.
+# These drive the real controller, coordinator and store: no stubbed resume
+# or retry.
 # ---------------------------------------------------------------------------
+
+CONTEXT_CHANGED_NOTICE = (
+    "The conversation changed while the queue was paused. Review it before resuming."
+)
 
 
 class FailBeforeReplyGateway(SequencedGateway):
@@ -1555,40 +1567,43 @@ class FailBeforeReplyGateway(SequencedGateway):
         yield f"reply-{call + 1}"
 
 
-async def _press_resume_then_use_current_context(
-    controller, ui, notices, gateway, session_id: str, *, next_call: int
-) -> None:
-    """Press the shelf's Resume, then its follow-up Review, both for real."""
+def _compact(store, session_id: str) -> None:
+    """Move the context epoch the way a compaction does, adding no message."""
+
+    first_prompt = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.USER
+    )
+    before = store.conversation_context_epoch(session_id)
+    store.set_session_context_summary(
+        session_id, "Earlier turns, summarized.", first_prompt.id
+    )
+    assert store.conversation_context_epoch(session_id) != before
+
+
+async def _press_lands_on_context_review(controller, ui, gateway, session_id, press):
+    """Run one real press; it must send nothing and leave Context changed."""
 
     registry = controller.prompt_queue_registry
-    presentation = ui.presentation_for(session_id)
-    assert (presentation.state_label, presentation.pause_label) == (
-        "Paused",
-        "Resume",
-    )
     paused = registry.snapshot(session_id)
-    assert paused.pause_reason is PromptQueuePauseReason.FAILED
+    assert paused.mode is PromptQueueMode.PAUSED
     assert controller.store.conversation_context_epoch(session_id) != (
         paused.expected_context_epoch
     )
     turns_before = list(gateway.user_turns)
 
-    # The press must not raise (it did: KeyError in _drain_waiting).
-    await asyncio.wait_for(
-        ui.handle_primary_intent(
-            session_id,
-            action=presentation.primary_action,
-            expected_revision=presentation.revision,
-        ),
-        timeout=10,
-    )
+    await asyncio.wait_for(press(), timeout=10)
 
-    # Nothing was dispatched under the changed context; the queue now asks
-    # for an explicit review instead of staying on a dead Resume.
+    # Nothing was dispatched under the changed context, and the queue now
+    # asks for an explicit review instead of keeping a press that does
+    # nothing (Retry) or that raised (Resume).
     assert gateway.user_turns == turns_before
     repaused = registry.snapshot(session_id)
-    assert repaused.mode is PromptQueueMode.PAUSED
-    assert repaused.pause_reason is PromptQueuePauseReason.CONTEXT_CHANGED
+    assert (repaused.mode, repaused.pause_reason) == (
+        PromptQueueMode.PAUSED,
+        PromptQueuePauseReason.CONTEXT_CHANGED,
+    )
     assert [entry.preview for entry in repaused.entries] == ["two"]
     review = ui.presentation_for(session_id)
     assert (review.state_label, review.pause_label, review.primary_action) == (
@@ -1596,9 +1611,15 @@ async def _press_resume_then_use_current_context(
         "Review",
         "review",
     )
+    return review
 
-    # And that state's action works: the Manage modal's "Use current
-    # context" adopts the reviewed epoch and drains the waiting prompt.
+
+async def _use_current_context_drains_two(
+    controller, ui, gateway, session_id: str, review, *, next_call: int
+) -> None:
+    """Drive the review state's real action: Manage's Use current context."""
+
+    turns_before = list(gateway.user_turns)
     _baseline, current_epoch = ui.context_review(session_id)
     drain = asyncio.create_task(
         ui.recover(
@@ -1616,8 +1637,41 @@ async def _press_resume_then_use_current_context(
         await _release_all(gateway, drain)
     assert result.applied
     assert gateway.user_turns == [*turns_before, "two"]
-    assert registry.snapshot(session_id).total_count == 0
-    assert notices == []
+    assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+
+
+async def _press_resume_then_use_current_context(
+    controller, ui, notices, gateway, session_id: str, *, next_call: int
+) -> None:
+    """Press the shelf's Resume, then its follow-up Review, both for real."""
+
+    presentation = ui.presentation_for(session_id)
+    assert (presentation.state_label, presentation.pause_label) == (
+        "Paused",
+        "Resume",
+    )
+    paused = controller.prompt_queue_registry.snapshot(session_id)
+    assert paused.pause_reason is PromptQueuePauseReason.FAILED
+
+    # The press must not raise (it did: KeyError in _drain_waiting).
+    review = await _press_lands_on_context_review(
+        controller,
+        ui,
+        gateway,
+        session_id,
+        lambda: ui.handle_primary_intent(
+            session_id,
+            action=presentation.primary_action,
+            expected_revision=presentation.revision,
+        ),
+    )
+    # The press explains itself instead of just changing the label.
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+
+    await _use_current_context_drains_two(
+        controller, ui, gateway, session_id, review, next_call=next_call
+    )
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
 
 
 @pytest.mark.asyncio
@@ -1703,3 +1757,153 @@ async def test_resume_after_deleting_the_failed_queued_turn_does_not_raise():
     await _press_resume_then_use_current_context(
         controller, ui, notices, gateway, session_id, next_call=1
     )
+
+
+@pytest.mark.asyncio
+async def test_shelf_retry_after_a_compaction_under_a_failed_pause_asks_for_review():
+    """Retry after a context change: it used to do nothing, silently.
+
+    A queued turn fails, then the conversation is compacted while that
+    failed turn is still the newest reply, so the shelf still names it.
+    Before the fix, pressing Retry sent nothing, said nothing and left
+    'Turn failed | Retry' in place. It now lands on Context changed with a
+    notice. Re-running the failed turn after that review is TASK-33621.39:
+    Use current context sends the next prompt and leaves the failed turn.
+    """
+
+    gateway = SequencedGateway(fail_call=0)
+    controller, store, session_id = _arm_controller(gateway)
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        await _queue(controller, session_id, "two")
+        gateway.release[0].set()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        await _release_all(gateway, task)
+    failed = next(
+        m
+        for m in store.iter_messages_newest_first(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert failed.status == "failed"
+
+    _compact(store, session_id)
+
+    presentation = ui.presentation_for(session_id)
+    assert (presentation.state_label, presentation.pause_label) == (
+        'Turn failed: "one"',
+        "Retry",
+    )
+    review = await _press_lands_on_context_review(
+        controller,
+        ui,
+        gateway,
+        session_id,
+        lambda: ui.handle_primary_intent(
+            session_id,
+            action=presentation.primary_action,
+            expected_revision=presentation.revision,
+        ),
+    )
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+    assert store.get_message(failed.id).status == "failed"
+
+    await _use_current_context_drains_two(
+        controller, ui, gateway, session_id, review, next_call=1
+    )
+    assert store.get_message(failed.id).status == "failed"
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+
+
+@pytest.mark.asyncio
+async def test_manager_retry_stopped_after_a_compaction_asks_for_review():
+    """The Manage modal's Retry stopped under a STOPPED pause, end to end.
+
+    The real modal drives the real queue UI controller, chat controller,
+    coordinator and store. Before the fix the press sent nothing, put the
+    STOPPED pause back and cleared the modal's feedback line, so it looked
+    dead. It now lands on Context changed, says why on the feedback line,
+    and the modal's own Review then Use current sends the next prompt.
+    """
+
+    from textual.app import App
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
+        ConsolePromptQueueModal,
+    )
+
+    gateway = SequencedGateway()
+    controller, store, session_id = _arm_controller(gateway)
+    registry = controller.prompt_queue_registry
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        await _queue(controller, session_id, "two")
+        assert controller.stop_active_run()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        # Every later provider call returns at once.
+        await _release_all(gateway, task)
+    stopped = next(
+        m
+        for m in store.iter_messages_newest_first(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert stopped.status == "stopped"
+
+    _compact(store, session_id)
+
+    assert ui.presentation_for(session_id).state_label == "Turn stopped"
+    assert ui.recovery_turn(session_id, action="retry-stopped") is not None
+    turns_before = list(gateway.user_turns)
+
+    def text(modal, selector: str) -> str:
+        return str(modal.query_one(selector, Static).renderable)
+
+    app = App()
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = ConsolePromptQueueModal(
+            session_id=session_id,
+            revision=registry.snapshot(session_id).revision,
+            queue_controller=ui,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        assert text(modal, "#console-prompt-queue-manager-state").endswith(
+            "Paused · Turn stopped"
+        )
+
+        await pilot.click("#console-prompt-queue-retry-stopped")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=10)
+        await pilot.pause()
+
+        assert gateway.user_turns == turns_before
+        repaused = registry.snapshot(session_id)
+        assert repaused.pause_reason is PromptQueuePauseReason.CONTEXT_CHANGED
+        assert text(modal, "#console-prompt-queue-manager-state").endswith(
+            "Paused · Context changed"
+        )
+        feedback = modal.query_one("#console-prompt-queue-manager-feedback", Static)
+        assert str(feedback.renderable) == CONTEXT_CHANGED_NOTICE
+        assert feedback.has_class("-warning")
+
+        await pilot.click("#console-prompt-queue-review-context")
+        await pilot.click("#console-prompt-queue-use-context")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=10)
+        await pilot.pause()
+
+    assert gateway.user_turns == [*turns_before, "two"]
+    assert registry.snapshot(session_id).total_count == 0
+    # Not re-run: regenerating the stopped turn after review is TASK-33621.39.
+    assert store.get_message(stopped.id).status == "stopped"
+    assert notices == []
