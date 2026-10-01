@@ -354,6 +354,9 @@ def real_tree() -> dict[str, tuple]:
 
 
 def test_w003_flags_a_handler_that_awaits_push_screen_wait_directly():
+    """The base case: Textual runs ``push_screen_wait`` only in a worker. From
+    an ``@on`` handler it pushes the screen, then raises ``NoActiveWorker``
+    on the handler's own pump (GAP4-01)."""
     source = """
 class S:
     @on(Button.Pressed, "#go")
@@ -371,6 +374,9 @@ class S:
     ],
 )
 def test_w003_flags_push_screen_with_wait_for_dismiss_from_an_action(push):
+    """``push_screen(..., wait_for_dismiss=True)`` is the same wait, as a
+    keyword or as the third positional argument, and an ``action_*``
+    method is a root like a handler."""
     source = f"""
 class S:
     async def action_pick(self):
@@ -380,6 +386,8 @@ class S:
 
 
 def test_w003_follows_awaited_helpers_to_the_handler():
+    """A push two awaits below the handler is reported at the handler and
+    keyed to the helper that holds it: the handler never names the screen."""
     source = """
 class S:
     async def on_button_pressed(self, event):
@@ -535,6 +543,8 @@ class Inspector(ModalScreen):
     ids=["work-decorator", "callback", "run-worker-argument"],
 )
 def test_w003_does_not_flag_worker_or_callback_shapes(body):
+    """Shapes that never block a pump: a ``@work`` method, a callback push
+    that returns at once, and a coroutine handed to ``run_worker``."""
     source = f"""
 class S:
     {body}
@@ -594,6 +604,9 @@ class S:
     ],
 )
 def test_w003_flags_a_waiting_callable_handed_to_a_pump_scheduler(schedule, flagged):
+    """``call_after_refresh`` and ``set_timer`` run their callable on the pump,
+    so a waiting one is a root; handed on as ``run_worker``'s argument it
+    runs in a worker and is not."""
     source = f"""
 class S:
     def on_mount(self):
@@ -892,6 +905,8 @@ _RETURNS = "return 1"
 @pytest.mark.parametrize("scope", sorted(_TWICE))
 @pytest.mark.parametrize("live_waits", [True, False], ids=["live-waits", "dead-waits"])
 def test_w003_a_name_defined_twice_resolves_to_its_last_definition(scope, live_waits):
+    """Only the live (last) definition decides whether the call waits, in
+    either order and at class, module and nested scope."""
     template, site = _TWICE[scope]
     first, last = (_RETURNS, _WAITS) if live_waits else (_WAITS, _RETURNS)
     source = template.format(first=first, last=last)
@@ -943,6 +958,8 @@ class S:
     ids=["create-task", "worker"],
 )
 def test_w003_a_hand_rolled_wait_off_the_pump_is_not_flagged(body):
+    """In a separate task or a worker the requester pump is free to run the
+    callback that completes the future, so the wait cannot deadlock."""
     source = f"""
 class S:
     {body}
@@ -951,6 +968,8 @@ class S:
 
 
 def test_w003_a_callback_push_that_does_not_await_its_future_is_not_a_wait():
+    """A future handed to a callback push and stored, not awaited, leaves the
+    handler free to return, so its pump can run the callback."""
     source = """
 class S:
     async def on_button_pressed(self, event):
@@ -1077,6 +1096,8 @@ _SECOND_PUSH_IN_THE_SITE = _SEND.replace(
 
 
 def test_w003_a_new_push_in_a_reaching_entry_point_is_a_new_key():
+    """One row per push, keyed by entry point AND push site: a new push in a
+    censused handler, or a second one in its site, adds a row."""
     assert _w003(_SEND) == [_row("S.on_button_pressed", "S._review")]
     assert _w003(_NEW_INLINE_PUSH) == sorted(
         [_row("S.on_button_pressed"), _row("S.on_button_pressed", "S._review")]
@@ -1112,6 +1133,8 @@ _PINNED_SEND = (
 def test_main_flags_a_new_push_reachable_from_an_already_censused_entry_point(
     monkeypatch, tmp_path, capsys, source, new_key
 ):
+    """End to end: with the entry point already pinned, ``main`` still
+    exits 1 on a new push it reaches, and names the new key."""
     assert _run_main_w003(monkeypatch, tmp_path, _SEND, _PINNED_SEND) == 0
     capsys.readouterr()
     (tmp_path / "tldw_chatbook" / "UI" / "sample.py").write_text(source)
@@ -1371,6 +1394,8 @@ def test_main_exits_nonzero_on_an_uncensused_w003_root(monkeypatch, tmp_path, ca
 
 
 def test_main_exits_zero_when_that_w003_root_is_pinned(monkeypatch, tmp_path):
+    """Positive control for the test above: the same root, pinned with its
+    count, passes."""
     census = f"# header\n{_S_PICK}\t1\n"
     assert _run_main_w003(monkeypatch, tmp_path, _W003_HANDLER, census) == 0
 
