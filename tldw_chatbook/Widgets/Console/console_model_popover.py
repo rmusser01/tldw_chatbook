@@ -691,7 +691,7 @@ class ConsoleModelPopover(
                     id="console-popover-full-settings",
                     compact=True,
                 )
-                yield Static("· Esc cancel", markup=False)
+                yield Static("· Esc cancel", id="console-popover-esc-key", markup=False)
             with Horizontal(
                 id="console-popover-defaults-row", classes="console-popover-strip"
             ):
@@ -1129,7 +1129,10 @@ class ConsoleModelPopover(
                 )
             )
         group(
-            "READY PROVIDERS · top 3 each · typing searches every provider's catalog",
+            # Typed rows are the best matches, not three per provider.
+            "READY PROVIDERS · matches from every provider's catalog"
+            if tokens
+            else "READY PROVIDERS · top 3 each · typing searches every provider's catalog",
             ready_rows,
         )
         group(
@@ -1384,9 +1387,15 @@ class ConsoleModelPopover(
         if action not in {"cursor_up", "cursor_down", "page_up", "page_down"}:
             return
         self._user_moved = True
-        getattr(
-            self.query_one("#console-popover-pairs", OptionList), f"action_{action}"
-        )()
+        pairs = self.query_one("#console-popover-pairs", OptionList)
+        getattr(pairs, f"action_{action}")()
+        if pairs.highlighted is None:
+            # Textual's page move onto a trailing or leading disabled row (a
+            # header or an info line) highlights nothing; keep a pair.
+            if action == "page_down":
+                pairs.action_last()
+            else:
+                pairs.action_first()
 
     @on(Input.Changed, "#console-popover-find")
     def _find_changed(self, event: Input.Changed) -> None:
@@ -1853,12 +1862,15 @@ class ConsoleModelPopover(
         self._guard_focus = self.focused
         guard.update(f"\n{unsaved_prompt_copy(labels)}\n")  # blank edge lines (CSS)
         guard.display = True
+        # While it asks, Esc keeps editing; the key row must not say cancel.
+        self.query_one("#console-popover-esc-key", Static).update("· Esc keep editing")
         # Focus leaves Find, so Enter and d reach the guard, not the query.
         guard.focus()
         self.call_after_refresh(self._sync_list_height)
 
     def _hide_guard(self) -> None:
         self.query_one("#console-popover-guard", UnsavedEditsGuard).display = False
+        self.query_one("#console-popover-esc-key", Static).update("· Esc cancel")
         focus, self._guard_focus = self._guard_focus, None
         if focus is None or not focus.is_attached:
             focus = self.query_one("#console-popover-find", Input)

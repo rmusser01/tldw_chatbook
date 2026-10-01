@@ -456,6 +456,39 @@ async def test_find_filters_every_catalog_in_memory_and_highlights_the_best_matc
         assert "catalog-only-sonnet" in "\n".join(lines)
 
 
+async def test_typed_rows_are_headed_as_matches_not_top_3_each() -> None:
+    """cubic #2947: typing lists every match, up to 30, so the READY PROVIDERS
+    header stops promising three models per provider."""
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(Recorder()))
+        assert any("top 3 each" in line for line in list_lines(app, switcher))
+        await pilot.press(*"claude")
+        await _settle(app, pilot)
+
+        lines = list_lines(app, switcher)
+        anthropic = [line for line in lines if "Anthropic" in line and "Ready" in line]
+        assert len(anthropic) > 3, lines
+        assert not any("top 3 each" in line for line in lines), lines
+        assert any("READY PROVIDERS · matches from every" in line for line in lines)
+
+
+async def test_page_keys_from_find_always_leave_a_pair_highlighted() -> None:
+    """cubic #2947: PageDown and PageUp move the list while Find keeps focus.
+    Textual's page move onto a trailing info row or a leading header
+    highlights nothing, which left Enter with no pair to apply."""
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(Recorder()))
+        find = switcher.query_one("#console-popover-find", Input)
+        assert switcher._rows[-1].kind in {"info", "header"}  # the trap's premise
+        for key in ("pagedown", "pagedown", "pageup", "pageup"):
+            await pilot.press(key)
+            await pilot.pause()
+            assert switcher.highlighted_row() is not None, key
+            assert app.focused is find, key
+
+
 async def test_filtering_a_2000_model_catalog_takes_under_50ms_per_keystroke() -> None:
     """AC#7: one keystroke against an OpenRouter-sized catalog, on the UI thread."""
     models = [f"vendor-{index % 40}/model-{index:04d}" for index in range(2_000)]
@@ -1352,6 +1385,13 @@ async def test_opening_and_closing_leaves_no_edit(previous, max_tokens) -> None:
     assert recorder.submissions == []
 
 
+def _key_row(app, switcher: ConsoleModelPopover) -> str:
+    """The painted text of the switcher's key row."""
+    region = switcher.query_one("#console-popover-keys").region
+    lines = painted_lines(app)[region.y : region.bottom]
+    return "\n".join(line[region.x : region.right] for line in lines)
+
+
 async def _edited_switcher(app, pilot, recorder: Recorder) -> ConsoleModelPopover:
     switcher = await open_switcher(app, pilot, _real_switcher(recorder))
     await pilot.press(*"son", "tab", *"0.9")
@@ -1391,12 +1431,16 @@ async def test_esc_with_edits_asks_and_keeps_editing_then_d_discards() -> None:
             for line in painted_lines(app)[region.y : region.bottom]
         ]
         assert edges[0][0] + edges[-1][0] == "┌└", edges
+        # cubic #2947: the key row under the prompt agrees with it on Esc.
+        assert "Esc keep editing" in _key_row(app, switcher)
+        assert "Esc cancel" not in _key_row(app, switcher)
 
         await pilot.press("escape")
         await pilot.pause()
         assert app.screen is switcher and not guard.display
         assert app.focused is find
         assert _controls(switcher)[0] == "0.9"
+        assert "Esc cancel" in _key_row(app, switcher)
 
         await pilot.press("escape")
         await pilot.pause()
