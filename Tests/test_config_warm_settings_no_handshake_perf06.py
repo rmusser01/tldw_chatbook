@@ -25,8 +25,16 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.fixture
-def operation_counter(monkeypatch):
-    """Count entries into the admission handshake without disabling it."""
+def operation_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Count entries into the admission handshake without disabling it.
+
+    Args:
+        monkeypatch: Wraps ``config_participants.operation`` with a counter.
+
+    Returns:
+        A mutable ``{"n": entries}`` mapping; tests reset ``n`` after warming
+        the cache and then assert on it.
+    """
     real_operation = config_participants.operation
     calls = {"n": 0}
 
@@ -40,7 +48,7 @@ def operation_counter(monkeypatch):
     return calls
 
 
-def _warm_settings():
+def _warm_settings() -> None:
     """Warm the settings cache, or skip where admission is unbound."""
     from tldw_chatbook.Backup_Recovery import bootstrap
 
@@ -62,8 +70,14 @@ def _count_os_open(event: str, args: tuple) -> None:
         counter[0] += 1  # type: ignore[index]
 
 
-def test_a_warm_load_settings_does_not_enter_the_handshake(operation_counter):
-    """Repeated warm ``load_settings()`` calls take no admission and open no files."""
+def test_a_warm_load_settings_does_not_enter_the_handshake(
+    operation_counter: dict[str, int],
+) -> None:
+    """Repeated warm ``load_settings()`` calls take no admission and open no files.
+
+    Args:
+        operation_counter: Admission-handshake entry counter (fixture).
+    """
     import sys
 
     _warm_settings()
@@ -86,8 +100,14 @@ def test_a_warm_load_settings_does_not_enter_the_handshake(operation_counter):
     assert all(result is results[0] for result in results)
 
 
-def test_a_warm_runtime_snapshot_does_not_enter_the_handshake(operation_counter):
-    """A warm snapshot is still a defensive copy, without admission."""
+def test_a_warm_runtime_snapshot_does_not_enter_the_handshake(
+    operation_counter: dict[str, int],
+) -> None:
+    """A warm snapshot is still a defensive copy, without admission.
+
+    Args:
+        operation_counter: Admission-handshake entry counter (fixture).
+    """
     _warm_settings()
     operation_counter["n"] = 0
 
@@ -101,7 +121,7 @@ def test_a_warm_runtime_snapshot_does_not_enter_the_handshake(operation_counter)
     assert first.values is not second.values, "the snapshot must stay a copy"
 
 
-def test_a_forced_reload_still_rebuilds():
+def test_a_forced_reload_still_rebuilds() -> None:
     """The handshake is amortised, not removed: a forced reload rebuilds.
 
     Counting ``operation`` entries on a real rebuild is not possible: a
@@ -119,7 +139,7 @@ def test_a_forced_reload_still_rebuilds():
     assert config_module.load_settings() is rebuilt
 
 
-def test_the_miss_paths_stay_guarded():
+def test_the_miss_paths_stay_guarded() -> None:
     """Structural pin: only the warm hit bypasses the guarded bodies."""
     module_src = inspect.getsource(config_module)
     for guarded_body in (
@@ -131,7 +151,7 @@ def test_the_miss_paths_stay_guarded():
 
 
 
-def test_a_warm_load_settings_does_not_stall_behind_an_in_flight_write():
+def test_a_warm_load_settings_does_not_stall_behind_an_in_flight_write() -> None:
     """A warm read stays lock-free while a config write holds its locks.
 
     TASK-21124's contract, extended to ``load_settings``: a write holds the
