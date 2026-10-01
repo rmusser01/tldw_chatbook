@@ -28,7 +28,8 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "commandcode": "Command Code",
     "custom": "Custom OpenAI-compatible",
     "custom_2": "Custom OpenAI-compatible #2",
-    # ADR-179's execution-only engine key; the First-run list still offers it.
+    # ADR-179's execution-only engine key. Setup cannot own it, so neither the
+    # Settings picker nor first-run setup lists it (TASK-33621.14).
     "custom_hosted": "Custom Hosted",
     "databricks": "Databricks",
     "deepinfra": "DeepInfra",

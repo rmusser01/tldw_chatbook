@@ -132,13 +132,12 @@ from ...Chat.console_provider_support import (
     MODEL_FIELD_LABELS,
     ConsoleProviderCatalogEntry,
     reasoning_effort_values_sent,
-    supported_console_provider_catalog,
     supported_generation_fields,
 )
 from ...Chat.console_session_settings import (
-    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     _custom_endpoint_declared_credential,
     normalize_console_model_value,
+    settings_provider_catalog,
 )
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
@@ -14121,9 +14120,7 @@ class SettingsScreen(BaseAppScreen):
         }[status]
 
     def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
-        return supported_console_provider_catalog(
-            handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-        )
+        return settings_provider_catalog()
 
     def _provider_catalog_keys(self) -> frozenset[str]:
         return frozenset(

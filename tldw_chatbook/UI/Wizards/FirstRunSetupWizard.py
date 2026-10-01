@@ -103,6 +103,7 @@ from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
@@ -442,7 +443,7 @@ class SetupStepFailure:
             raise ValueError("unsupported setup step failure reason")
 
 
-class SetupStep(WizardStep):
+class SetupStep(step_guard.WizardErrorGuard, WizardStep):
     """Base step: adds an awaitable commit hook and an inline error line.
 
     TASK-1495: also tags every setup step with its own ``setup-step`` CSS
@@ -1282,11 +1283,7 @@ class ProviderStep(SetupStep):
             setattr(wizard, "_first_run_provider_discovery_owner", self)
 
     def compose_step(self) -> ComposeResult:
-        from tldw_chatbook.Chat.console_provider_support import (
-            supported_console_provider_catalog,
-        )
-
-        entries = supported_console_provider_catalog()
+        entries = step_guard.first_run_provider_catalog()  # TASK-33621.14
         with Vertical(classes="setup-provider"):
             yield Static("Connect a provider", classes="setup-title")
             yield Static(
@@ -2837,14 +2834,27 @@ class ProviderStep(SetupStep):
             pass
 
     def select_provider(self, provider_key: str) -> None:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            read_provider_secret_presence,
-        )
-
         provider_key = self._canonical_provider_key(provider_key)
         previous_provider = self.selected_provider_key
         provider_changed = provider_key != previous_provider
         had_saved_draft = provider_key in self._provider_drafts
+        # TASK-33621.14: the reads that can raise run before any state moves, so a
+        # failed read leaves the old provider whole (never its key under this one).
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        presence = wizard_state.read_provider_secret_presence(
+            app_config, self._environment(), provider_key=provider_key
+        )
+        initial_endpoint = (
+            "" if had_saved_draft else self._initial_endpoint_for(provider_key)
+        )
+        optional_auth = not self._provider_requires_api_key(provider_key)
+        endpoint_visible = self._provider_exposes_endpoint(provider_key)
+        status = self.query_one("#setup-provider-key-status", Static)
+        actions = self.query_one("#setup-provider-key-actions", Horizontal)
+        key_input = self.query_one("#setup-provider-api-key", Input)
+        connection = self.query_one("#setup-provider-connection", Vertical)
+        auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
+        endpoint_input = self.query_one("#setup-provider-endpoint", Input)
         if provider_changed:
             self._capture_provider_ui_draft(previous_provider)
             self._invalidate_provider_test(changed=False)
@@ -2852,34 +2862,23 @@ class ProviderStep(SetupStep):
             self._local_discovery_provider_key = ""
             self._cancel_worker_groups("setup-provider-local-discovery")
             self._clear_detected_provider_state()
-        self.selected_provider_key = provider_key
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        presence = read_provider_secret_presence(
-            app_config, self._environment(), provider_key=provider_key
-        )
         ui_draft = self._provider_ui_draft(provider_key)
         if not had_saved_draft:
-            ui_draft.endpoint = self._initial_endpoint_for(provider_key)
+            ui_draft.endpoint = initial_endpoint
             ui_draft.key_input_visible = not (
                 presence.inline_configured or presence.env_var_set
             )
-            ui_draft.auth_collapsed = not self._provider_requires_api_key(provider_key)
+            ui_draft.auth_collapsed = optional_auth
+        self.selected_provider_key = provider_key
         self._clear_requested = ui_draft.clear_requested
         self._credential_revision = ui_draft.credential_revision
-        status = self.query_one("#setup-provider-key-status", Static)
-        actions = self.query_one("#setup-provider-key-actions", Horizontal)
-        key_input = self.query_one("#setup-provider-api-key", Input)
-        connection = self.query_one("#setup-provider-connection", Vertical)
-        auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
         if provider_changed:
             self._updating_connection_controls = True
             try:
                 key_input.value = ui_draft.api_key
                 key_input.display = ui_draft.key_input_visible
-                endpoint_visible = self._provider_exposes_endpoint(provider_key)
                 connection.display = endpoint_visible
                 connection.set_class(not endpoint_visible, "hidden")
-                endpoint_input = self.query_one("#setup-provider-endpoint", Input)
                 restored_endpoint = ui_draft.endpoint if endpoint_visible else ""
                 if endpoint_input.value != restored_endpoint:
                     self._pending_programmatic_endpoint_changes.append(
@@ -2888,10 +2887,7 @@ class ProviderStep(SetupStep):
                     endpoint_input.value = restored_endpoint
                 auth.display = True
                 auth.remove_class("hidden")
-                optional_auth = not self._provider_requires_api_key(provider_key)
-                auth.title = (
-                    "Authentication (optional)" if optional_auth else "Authentication"
-                )
+                auth.title = "Authentication" + (" (optional)" if optional_auth else "")
                 auth.collapsed = ui_draft.auth_collapsed
             finally:
                 self._updating_connection_controls = False
@@ -2928,12 +2924,12 @@ class ProviderStep(SetupStep):
 
     def _select_provider_option(self, option: Option) -> None:
         provider_key = getattr(option, "provider_key", None)
-        if (
-            provider_key is not None
-            and not option.disabled
-            and provider_key != self.selected_provider_key
-        ):
-            self.select_provider(provider_key)
+        if provider_key is None or option.disabled:
+            return
+        # TASK-33621.14: a failed pick is reported with the provider that stays.
+        with step_guard.provider_switch(self, provider_key):
+            if provider_key != self.selected_provider_key:
+                self.select_provider(provider_key)
 
     @on(OptionList.OptionHighlighted, "#setup-provider-choice")
     def _on_provider_highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -8024,7 +8020,7 @@ class SetupWizardNavigation(WizardNavigation):
         yield Button("Cancel", id="wizard-cancel", variant="error")
 
 
-class SetupWizardContainer(WizardContainer):
+class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     """Navigates over the active-step subset; commits on Next via one worker."""
 
     # TASK-21142 (UAT N-1): Enter advances whenever the focused widget does
@@ -9359,8 +9355,8 @@ class SetupWizardContainer(WizardContainer):
             position = self._active_position(self.current_step or 0)
             nav = self.query_one(".wizard-navigation", WizardNavigation)
             nav.total_steps = len(self.active_ids)
+            nav.can_go_back = position > 0  # before current_step: its watcher reads it
             nav.current_step = position + 1
-            nav.can_go_back = position > 0
             nav.can_go_forward = self.can_proceed
             self._rebuild_progress()
         except Exception:
@@ -9870,6 +9866,7 @@ class SetupWizardContainer(WizardContainer):
         self._sync_action_controls()
 
     async def _advance(self) -> None:
+        started_at = self.current_step  # TASK-33621.14: did a failed Next move?
         try:
             step = self.steps[self.current_step]
             if isinstance(step, SetupStep):
@@ -9904,6 +9901,9 @@ class SetupWizardContainer(WizardContainer):
                 self.complete_wizard()
             else:
                 self.show_step(next_index)
+        except Exception as error:  # TASK-33621.14: Next must not exit the app.
+            if not step_guard.contain_advance_error(self, error, started_at):
+                raise
         finally:
             self._set_advancing(False)
 

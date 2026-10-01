@@ -14,6 +14,7 @@ from urllib.parse import urlparse, urlunparse
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
     MODEL_FIELD_LABELS,
+    ConsoleProviderCatalogEntry,
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
     supported_console_provider_catalog,
@@ -167,6 +168,26 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "zenmux",
     }
 )
+
+
+def settings_provider_catalog() -> tuple[ConsoleProviderCatalogEntry, ...]:
+    """Return the providers the Settings picker and first-run setup offer.
+
+    One set for both surfaces (TASK-33621.14, TASK-33002.13). The first-run
+    wizard used to list the whole ``chat_api_call`` handler catalog, so it
+    offered keys that setup cannot save, execution-only ``custom-hosted``
+    among them, and highlighting one raised and blanked the step. Every key
+    here is one ``provider_setup_persistence`` owns (engine presets through
+    its registry derivation, TASK-33510); the setup-persistence tests sweep
+    this set, so a key added without ownership fails there, not on a user's
+    first run.
+
+    Returns:
+        Catalog entries for ``CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS``.
+    """
+    return supported_console_provider_catalog(CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS)
+
+
 MODEL_OPTION_PLACEHOLDER_VALUES = frozenset({"none", "null"})
 TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
 TokenLimitResolver = Callable[[str, str], int]

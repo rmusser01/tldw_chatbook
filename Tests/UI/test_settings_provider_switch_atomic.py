@@ -11,6 +11,7 @@ import time
 import pytest
 from textual.widgets import Input, Select, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
@@ -401,3 +402,56 @@ async def test_exact_draft_key_probe_evidence_survives_successful_commit(
         assert rebound is not None
         assert rebound.model_ids == ("model-a",)
         assert "draft-secret-value" not in repr(rebound)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key", ["together", "cerebras", "arcee", "byteplus", "deepinfra"]
+)
+@private_profile_test
+async def test_hosted_preset_provider_saves_through_settings(provider_key, request):
+    """TASK-33621.14: Settings saves a hosted preset it offers, end to end.
+
+    Setup persistence once owned no engine preset but Databricks, so Save
+    answered "Provider settings are invalid; review the endpoint and model",
+    and the first-run wizard crashed on the same missing ownership. TASK-33510
+    derived that ownership from the registry and its unit tests cover the
+    mutation; this drives the real Settings screen, writes the private
+    profile's real config file and reads it back. The shipped base URL must
+    survive unchanged: BytePlus ``/api/v3`` once gained a bogus ``/v1`` and
+    DeepInfra ``/v1/openai`` was refused.
+    """
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
+    app.providers_models = {}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = provider_key
+        screen.handle_provider_value_changed(Select.Changed(provider, provider_key))
+        await pilot.pause()
+        screen.query_one("#settings-model-value", Input).value = "preset-model"
+        key_input = screen.query_one("#settings-provider-api-key", Input)
+        key_input.value = "sk-preset-settings-0001"
+        await pilot.pause()
+
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+
+        save_copy = str(
+            screen.query_one("#settings-provider-save-result", Static).renderable
+        )
+        assert save_copy.startswith("Provider settings saved"), save_copy
+
+    saved = load_cli_config_and_ensure_existence(force_reload=True)
+    table = saved["api_settings"][provider_key]
+    assert table["api_key"] == "sk-preset-settings-0001"
+    assert table["model"] == "preset-model"
+    assert table["api_base_url"] == RECORDS_BY_KEY[provider_key].default_base_url
+    assert saved["chat_defaults"]["provider"] == provider_key

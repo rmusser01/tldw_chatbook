@@ -2230,3 +2230,88 @@ def test_engine_preset_bare_hosts_and_pasted_chat_urls_save_the_api_base(
     """A bare host takes the preset's suffix or documented path; a pasted
     chat-completions URL saves as its base."""
     assert _saved_engine_endpoint(provider, key, entered)["api_base_url"] == saved
+
+
+# --- TASK-33621.14: Settings and first-run setup offer only what setup owns ---
+#
+# Both surfaces list ``settings_provider_catalog()`` and save through this
+# module. On 2026-09-29 the first-run wizard listed the whole ``chat_api_call``
+# handler catalog instead: highlighting a row this module did not own raised
+# ``ValueError('Provider is not supported.')`` and blanked the step (G3-01).
+
+
+def _offered_provider_keys() -> tuple[str, ...]:
+    from tldw_chatbook.Chat.console_session_settings import settings_provider_catalog
+
+    return tuple(entry.readiness_key for entry in settings_provider_catalog())
+
+
+def _handler_catalog_keys() -> tuple[str, ...]:
+    """Every Console-sendable handler: the list the wizard used to show."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        supported_console_provider_catalog,
+    )
+
+    return tuple(entry.readiness_key for entry in supported_console_provider_catalog())
+
+
+def _setup_owns(provider: str) -> bool:
+    try:
+        canonical_provider_key(provider)
+    except ValueError:
+        return False
+    return True
+
+
+def _persisted_endpoint(provider: str, endpoint: str) -> str:
+    mutation = build_provider_setup_mutation(
+        _draft(
+            provider=provider,
+            model="setup-model",
+            endpoint=endpoint,
+            credential_source="draft",
+            credential_value="sk-setup-ownership-0001",
+        ),
+        {},
+    )
+    (section,) = [
+        name for name in mutation.section_values if name.startswith("api_settings.")
+    ]
+    values = mutation.section_values[section]
+    assert values["api_key"] == "sk-setup-ownership-0001"
+    assert values[provider_model_key(provider)] == "setup-model"
+    assert mutation.section_values["chat_defaults"]["model"] == "setup-model"
+    return values[provider_endpoint_key(provider)]
+
+
+@pytest.mark.parametrize("provider", _offered_provider_keys())
+def test_every_offered_provider_saves_through_setup(provider):
+    """Enumerates the live offered set, so a later preset is checked on arrival."""
+    endpoint = (
+        "http://127.0.0.1:8080"
+        if provider_endpoint_key(provider) == "api_url"
+        else "https://llm.example.test/v1"
+    )
+    assert _persisted_endpoint(provider, endpoint)
+
+
+def test_no_provider_setup_cannot_own_is_offered():
+    """The handler catalog holds execution-only keys; none may be offered.
+
+    ``custom_hosted`` is the control: it is Console-sendable, setup cannot own
+    it, and the first-run wizard listed it (G3-01) -- so this check is not
+    vacuous while the handler catalog carries it.
+    """
+    offered = set(_offered_provider_keys())
+    unowned = {key for key in _handler_catalog_keys() if not _setup_owns(key)}
+
+    assert "custom_hosted" in unowned
+    assert not offered & unowned, sorted(offered & unowned)
+    assert all(_setup_owns(key) for key in offered)
+
+
+@pytest.mark.parametrize("provider", ["custom-hosted", "custom_hosted"])
+def test_execution_only_custom_hosted_stays_unowned(provider):
+    """ADR-179 Phase 2: custom-hosted has no settings table of its own."""
+    with pytest.raises(ValueError, match="Provider is not supported"):
+        canonical_provider_key(provider)

@@ -11,7 +11,31 @@ asks before closing, and anything you configure (or
 don't) can be changed later in Settings.
 
 If a step can't save what you entered, the reason appears just above the
-navigation buttons — fix it and press Next again, or go Back.
+navigation buttons — fix it and press Next again, or go Back. The same line
+reports an unexpected error on a step: the step stays on screen, the keyboard
+keeps working, and **Esc** (exit setup) and, after the first step, **← Back**
+stay available, from the keys (**Ctrl+B**, **Ctrl+N**, **Enter**, **Esc**)
+as well as the buttons. That includes a run you resumed from "Continue
+setup?", and a step that fails while it opens: setup lands on that step with
+the error line. If picking a provider fails this way, the provider you had
+picked before stays selected, together with any key you typed for it; a key
+is never carried over to a different provider. The highlight stays on the row
+you tried, so the line names the provider that is still selected ("Couldn't
+switch to Anthropic — OpenAI is still selected"), and it goes away once you
+pick a provider that works. If you had not picked one yet, none is selected,
+and Next goes on without a provider, as if you had skipped the step. A
+failure after the new provider is already selected leaves it selected, and
+the line then names no other provider.
+
+The Provider step lists the same providers as Settings ▸ Providers & Models:
+Popular first, then Cloud, Local and Other. Every row can be picked with the
+arrow keys and set up here, hosted presets included (Together, Fireworks,
+NVIDIA NIM, BytePlus, DeepInfra and the rest; see
+[Settings ▸ Inference clouds](settings.md#inference-clouds)). Setup saves each
+preset's key, model and documented base URL in its own
+`[api_settings.<provider>]` table. **Custom Hosted** is not listed: it is the
+internal engine route for custom endpoints, which you set up as **Custom
+OpenAI-compatible**.
 
 ## Keyboard
 
