@@ -490,7 +490,7 @@ conversations using it survive restart. Renaming, editing, and deletion
 (with a guard that detaches conversations first) live in **F9 ▸ Providers &
 Models ▸ Custom endpoints**.
 
-For a faster switch, **Alt+M** opens **Switch model**, a 120-column list of
+For a faster switch, **Alt+M** opens **Switch model**, a 140-column list of
 provider·model pairs; every row is a pair, so you never pick a provider
 without a model. The Provider and Model chips, the rail's **Change  Alt+M**,
 the palette's "Console: Switch model…" and `/model` open it too. `/model

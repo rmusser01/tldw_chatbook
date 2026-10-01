@@ -112,8 +112,10 @@ HIGHLIGHT_GLYPH = "▶"
 #: Legacy aliases are hidden unless configured or current (ADR-066); the
 #: built-in custom and custom_2 slots always stay listable (ADR-146).
 _LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
-#: Column widths of one pair row (mockup (a)).
+#: Column widths of one pair row (mockup (a)). The model column grows to the
+#: longest id shown, up to the cap, so ids render whole (spec: never truncated).
 _MODEL_COLUMNS = 28
+_MODEL_COLUMNS_MAX = 44
 _PROVIDER_COLUMNS = 20
 _CONTEXT_COLUMNS = 5
 _READINESS_COLUMNS = 28
@@ -224,6 +226,19 @@ def provider_key(provider: object) -> str:
     return text if text.startswith("custom-ep:") else provider_config_key(text)
 
 
+def _model_column_width(rows: Sequence[SwitcherRow]) -> int:
+    """Return the model column width that shows every row's id whole.
+
+    Args:
+        rows: The switcher rows about to be rendered.
+
+    Returns:
+        The longest model id's length, clamped to the column's floor and cap.
+    """
+    longest = max((len(row.model) for row in rows if row.model), default=0)
+    return max(_MODEL_COLUMNS, min(_MODEL_COLUMNS_MAX, longest))
+
+
 def _fit(text: str, width: int) -> str:
     """Shorten in the middle: ids and names differ most at their ends."""
     return text if len(text) <= width else f"{text[: width - 4]}…{text[-3:]}"
@@ -300,7 +315,7 @@ class ConsoleModelPopover(
 ):
     """Switch model: choose this chat's provider·model pair and quick values."""
 
-    # The 120-column width and 80% height cap are tokens in the app tier
+    # The 140-column width and 80% height cap are tokens in the app tier
     # (features/_console_panels.tcss); the highlighted-row bar lives there too
     # (components/_lists.tcss), because app CSS outranks DEFAULT_CSS. The
     # 100% clamps here only keep a harness without the app CSS on screen.
@@ -499,6 +514,7 @@ class ConsoleModelPopover(
         )
         self._query = query
         self._rows: list[SwitcherRow] = []
+        self._model_columns = _MODEL_COLUMNS
         self._painted_index: int | None = None
         self._highlight_key: tuple[str, str, str | None] | None = None
         self._user_moved = False
@@ -1250,7 +1266,7 @@ class ConsoleModelPopover(
             muted = self.get_component_rich_style("console-popover--unpickable")
             style = Style(color=muted.color, bold=False)
         return Text(
-            f"{glyph} {_fit(model, _MODEL_COLUMNS):<{_MODEL_COLUMNS}} "
+            f"{glyph} {_fit(model, self._model_columns):<{self._model_columns}} "
             f"{_fit(self._display(row.provider), _PROVIDER_COLUMNS):<{_PROVIDER_COLUMNS}} "
             f"{context:>{_CONTEXT_COLUMNS}}  "
             f"{_fit(switcher_readiness_words(readiness), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
@@ -1264,6 +1280,7 @@ class ConsoleModelPopover(
             return
         pairs = self.query_one("#console-popover-pairs", OptionList)
         self._rows = self._build_rows()
+        self._model_columns = _model_column_width(self._rows)
         self._painted_index = None
         with pairs.prevent(OptionList.OptionHighlighted):
             pairs.clear_options()

@@ -682,7 +682,7 @@ async def test_enter_on_needs_setup_opens_that_providers_settings_fix() -> None:
 
 
 @pytest.mark.parametrize("size", [(211, 44), (235, 52)])
-async def test_switcher_is_120_wide_auto_height_to_80_percent_keys_visible(
+async def test_switcher_is_140_wide_auto_height_to_80_percent_keys_visible(
     size,
 ) -> None:
     """AC#16, AC#17: width token, auto height capped at 80%, key rows on screen."""
@@ -696,7 +696,9 @@ async def test_switcher_is_120_wide_auto_height_to_80_percent_keys_visible(
         await pilot.press(*"m")
         await _settle(app, pilot)
         box = switcher.query_one("#console-model-popover")
-        assert box.region.width == 120
+        # Rewritten on purpose (TASK-33004 final review): 140 columns so the
+        # model column shows ids whole (spec: never truncated).
+        assert box.region.width == 140
         assert box.region.height <= int(size[1] * 0.8)
         for key_id in ("#console-popover-apply", "#console-popover-save-model-default"):
             key = switcher.query_one(key_id, Button)
@@ -710,6 +712,26 @@ async def test_switcher_is_120_wide_auto_height_to_80_percent_keys_visible(
         assert box.region.contains_region(
             switcher.query_one("#console-popover-apply", Button).region
         )
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+async def test_switcher_shows_long_model_ids_whole(size) -> None:
+    """Spec rule: full ids, never truncated. A 36-column id renders whole."""
+    recorder = Recorder()
+    long_id = "anthropic/claude-3.7-sonnet:thinking"
+    models = {**PROVIDERS_MODELS, "Ollama": [long_id]}
+    app = SwitcherHarness()
+    async with app.run_test(size=size) as pilot:
+        switcher = await open_switcher(
+            app, pilot, build_switcher(recorder, providers_models=models)
+        )
+        await pilot.press(*"sonnet:thinking")
+        await _settle(app, pilot)
+        rendered = [
+            str(switcher._prompt(row, False)) for row in switcher._rows
+        ]
+        assert any(long_id in line for line in rendered), rendered
+        assert not any("…" in line and "claude-3.7" in line for line in rendered)
 
 
 def _painted_cell(screen, x: int, y: int):
