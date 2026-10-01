@@ -9,7 +9,7 @@ from typing import Optional, Callable
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Container
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Label, Static
 
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -159,6 +159,36 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         if self.cancel_callback:
             await self.run_cancel_effect_once(self.cancel_callback)
         self.dismiss_safe_once(False)
+
+
+async def confirm_quit_discarding_edits(screen: Screen, message: str) -> bool:
+    """Ask whether quitting may discard a modal's unsaved edits (TASK-33622.10).
+
+    Ctrl+Q is a priority binding, so the app's quit flow can start while a
+    modal is open, and it asks that modal's ``confirm_quit`` first. A modal
+    that guards its own close with a discard prompt answers ``confirm_quit``
+    with this, so quitting asks the same question instead of dropping the
+    edits silently.
+
+    It waits on the pushed dialog, so it must run inside a worker; the app's
+    quit flow is one.
+
+    Args:
+        screen: The modal holding the edits.
+        message: What would be lost, in that modal's own words.
+
+    Returns:
+        True when the user chose Discard and quit; False to keep editing.
+    """
+    choice = await screen.app.push_screen_wait(
+        ConfirmationDialog(
+            title="Discard changes and quit?",
+            message=message,
+            confirm_label="Discard and quit",
+            cancel_label="Keep editing",
+        )
+    )
+    return choice is True
 
 
 class UnsavedChangesDialog(ConfirmationDialog):
