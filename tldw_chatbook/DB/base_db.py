@@ -506,6 +506,26 @@ class _QuiescentSQLiteConnection(sqlite3.Connection):
         super().close()
 
 
+def _is_transaction_statement(sql: object) -> bool:
+    """Whether ``sql`` starts with BEGIN, COMMIT or ROLLBACK.
+
+    The trace callback's own rule: ``ROLLBACK TO <savepoint>`` keeps
+    ``in_transaction`` True yet ends the guarded work, so it is a boundary too
+    (Qodo, #2894). RELEASE never was one.
+
+    Args:
+        sql: The statement text a cursor was asked to run.
+
+    Returns:
+        True when the statement's first keyword is BEGIN, COMMIT or ROLLBACK.
+    """
+
+    if not isinstance(sql, str):
+        return False
+    words = sql.lstrip().split(None, 1)
+    return bool(words) and words[0].upper() in {"BEGIN", "COMMIT", "ROLLBACK"}
+
+
 class _QuiescentSQLiteCursor(sqlite3.Cursor):
     """Cursor that keeps a read reservation until results are consumed."""
 
@@ -528,7 +548,7 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
             self._release_use()
 
     def _tracked(
-        self, run: Callable[..., sqlite3.Cursor], *args: object, script: bool = False
+        self, run: Callable[..., sqlite3.Cursor], *args: object, boundary: bool = False
     ) -> sqlite3.Cursor:
         """Run one statement call holding a use reservation, observing boundaries.
 
@@ -544,7 +564,7 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
             try:
                 result = run(*args)
             finally:
-                connection._observe_transaction_state(boundary=script)
+                connection._observe_transaction_state(boundary=boundary)
         except BaseException:
             self._release_use()
             raise
@@ -554,12 +574,19 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
     def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
         """Hold one use reservation through result consumption."""
 
-        return self._tracked(super().execute, sql, parameters)
+        return self._tracked(
+            super().execute, sql, parameters, boundary=_is_transaction_statement(sql)
+        )
 
     def executemany(self, sql: str, seq_of_parameters: object) -> sqlite3.Cursor:
         """Hold one use reservation through repeated execution."""
 
-        return self._tracked(super().executemany, sql, seq_of_parameters)
+        return self._tracked(
+            super().executemany,
+            sql,
+            seq_of_parameters,
+            boundary=_is_transaction_statement(sql),
+        )
 
     def executescript(self, sql_script: str) -> sqlite3.Cursor:
         """Hold one use reservation through script execution.
@@ -568,7 +595,7 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         without changing ``in_transaction``.
         """
 
-        return self._tracked(super().executescript, sql_script, script=True)
+        return self._tracked(super().executescript, sql_script, boundary=True)
 
     def fetchone(self) -> sqlite3.Row | tuple[object, ...] | None:
         """Release the reservation after the result set is exhausted."""

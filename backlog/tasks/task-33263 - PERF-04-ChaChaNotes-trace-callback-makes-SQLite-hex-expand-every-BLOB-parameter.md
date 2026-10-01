@@ -26,7 +26,7 @@ DB/base_db.py (~738) installs set_trace_callback on every ChaChaNotes connection
 <!-- AC:BEGIN -->
 - [x] #1 Transaction-boundary detection no longer requires a trace callback that expands bound parameters
 - [x] #2 The semantic-mutation guard keeps its fail-closed behaviour (existing guard tests pass)
-- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB takes under 50 ms (measured), and a pinned test fails if the hex-expansion cost returns
+- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB measured under 50 ms (28.8 ms median, isolated profile), and a pinned test fails if the hex-expansion cost returns (median above 250 ms)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,6 +52,7 @@ How:
 - _QuiescentSQLiteConnection now reports transaction boundaries through set_transaction_boundary_listener.
 - Its cursor compares in_transaction before and after every execute/executemany/executescript. The check before a statement also catches a C-level commit from 'with conn:'. executescript always reports a boundary.
 - commit()/rollback() report as well.
+- A statement whose first keyword is BEGIN, COMMIT or ROLLBACK is always a boundary -- the trace callback's own rule. `ROLLBACK TO <savepoint>` keeps `in_transaction` True yet ends the guarded work; review on #2894 caught the listener missing it. RELEASE was never a boundary and still is not.
 - Every cursor the connection creates is tracked (review on #2894): a caller's cursor type is combined with the tracked cursor through a cached subclass that puts the tracked cursor first, so its statement methods bracket the caller's overrides even without super(); plain sqlite3.Cursor maps to the tracked cursor. A factory that cannot be made tracked fails closed with TypeError: a non-Cursor factory, or a tracked subclass that replaces execute/executemany/executescript (the tracked cursor cannot precede its own subclass in the MRO).
 - A stale cursor's failed call (its connection already closed) releases its quiescence use token, so it cannot pin the registry and block maintenance.
 - register_semantic_mutation_guard uses the listener on quiescent connections (all ChaChaNotes connections; the factory is enforced at open) and keeps trace_transaction as a fallback for any other connection type.

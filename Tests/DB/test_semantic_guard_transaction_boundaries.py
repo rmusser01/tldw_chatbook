@@ -364,6 +364,40 @@ def test_the_direct_methods_advance_the_managed_guard_generation(
         db.close_connection()
 
 
+def test_a_savepoint_rollback_advances_the_managed_guard_generation(
+    tmp_path: Path,
+) -> None:
+    """``ROLLBACK TO`` keeps ``in_transaction`` True, yet ends the guarded work.
+
+    The trace callback advanced the generation on any statement starting with
+    BEGIN, COMMIT or ROLLBACK, savepoint rollbacks included; a cached one
+    skips the authorizer's prepare-time denial, so the generation is the only
+    backstop (Qodo, #2894). RELEASE never advanced it and still does not.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+    """
+    db = CharactersRAGDB(tmp_path / "savepoint.sqlite", "savepoint")
+    try:
+        _seed_traced_message(db)
+        conn = db.get_connection()
+        authorization = db._semantic_mutation_authorization_for_coordinator(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("SAVEPOINT guard_probe")
+            generation = authorization._transaction_generation
+            conn.execute("ROLLBACK TO guard_probe")
+            assert conn.in_transaction
+            assert authorization._transaction_generation != generation
+            generation = authorization._transaction_generation
+            conn.execute("RELEASE guard_probe")
+            assert authorization._transaction_generation == generation
+        finally:
+            conn.execute("ROLLBACK")
+    finally:
+        db.close_connection()
+
+
 def test_a_script_that_ends_and_restarts_a_transaction_reports_a_boundary() -> None:
     """``in_transaction`` is True before and after, yet the transaction changed."""
     conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
