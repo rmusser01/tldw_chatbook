@@ -635,3 +635,55 @@ async def test_trace_view_key_and_button_confirm_full_and_keep_the_inspector_liv
         assert modal.viewer_profile is TraceViewerProfile.SAFE
         assert str(button.label) == "View: Safe"
         assert modal.is_running
+
+
+@pytest.mark.asyncio
+async def test_a_failing_trace_view_confirm_logs_where_it_raised(monkeypatch):
+    """PR #2944 review: the confirm worker's guard logged the exception class
+    alone. It names the raising frame and the Chatbook frame above it, as
+    identifiers -- never the message -- and the profile stays Safe."""
+    from loguru import logger
+
+    from tldw_chatbook.Widgets.Console import console_conversation_inspector
+
+    def broken_dialog(**_kwargs):
+        raise RuntimeError("zq-private-trace-failure")
+
+    raise_line = broken_dialog.__code__.co_firstlineno + 1
+    monkeypatch.setattr(
+        console_conversation_inspector, "ConfirmationDialog", broken_dialog
+    )
+    lines: list[str] = []
+    sink_id = logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="WARNING",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        app = InspectorHarness(
+            **_default_kwargs(
+                capture_policy_bindings=_capture_policy_bindings_for_inspector()
+            )
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            assert modal.viewer_profile is TraceViewerProfile.SAFE
+            modal.action_viewer_profile()
+            await _wait_until(
+                pilot,
+                lambda: lines and not modal._viewer_profile_confirm_running,
+            )
+            assert app.screen is modal and modal.is_running
+            assert modal.viewer_profile is TraceViewerProfile.SAFE
+    finally:
+        logger.remove(sink_id)
+    failures = [line for line in lines if "Trace view change failed" in line]
+    assert len(failures) == 1, lines
+    assert "RuntimeError" in failures[0]
+    assert f"broken_dialog:{raise_line}" in failures[0], failures[0]
+    assert (
+        "ConsoleConversationInspector._confirm_full_viewer_profile:" in failures[0]
+    ), failures[0]
+    assert all("zq-private-trace-failure" not in line for line in lines)

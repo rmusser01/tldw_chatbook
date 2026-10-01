@@ -407,6 +407,60 @@ async def test_a_failing_project_recovery_is_reported_and_leaves_the_inspector_l
 
 
 @pytest.mark.asyncio
+async def test_a_failing_project_recovery_logs_where_it_raised_but_not_its_message():
+    """PR #2944 review: the worker's guard logged the exception class alone,
+    so the toast's "Details are in the log file" led to a line naming no
+    location. It names the raising frame and the Chatbook frame above it, as
+    identifiers -- never the message, never a file path."""
+
+    async def recover(session_id, action):
+        raise RuntimeError("zq-private-recovery-failure")
+
+    raise_line = recover.__code__.co_firstlineno + 1
+    from loguru import logger
+
+    lines: list[str] = []
+    sink_id = logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="WARNING",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        app = RecoveryHarness()
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.push_screen(
+                _inspector(
+                    _empty_factory,
+                    project_instruction_state=build_console_project_instruction_state(
+                        ProjectInstructionControlState.new_session()
+                    ),
+                    project_instruction_session_id="captured-session",
+                    project_instruction_recovery=recover,
+                )
+            )
+            await pilot.pause()
+            modal = app.screen
+            await pilot.click("#console-project-instruction-disable")
+            for _ in range(40):
+                if lines and not modal._project_instruction_recovery_running:
+                    break
+                await pilot.pause(0.05)
+    finally:
+        logger.remove(sink_id)
+    failures = [line for line in lines if "Project instruction recovery failed" in line]
+    assert len(failures) == 1, lines
+    assert "RuntimeError" in failures[0]
+    assert f"recover:{raise_line}" in failures[0], failures[0]
+    assert (
+        "ConsoleConversationInspector._apply_project_instruction_recovery:"
+        in failures[0]
+    ), failures[0]
+    assert "/" not in failures[0] and "\\" not in failures[0], failures[0]
+    assert all("zq-private-recovery-failure" not in line for line in lines)
+
+
+@pytest.mark.asyncio
 async def test_a_second_project_recovery_request_while_one_runs_is_ignored():
     """One decision at a time: a request that arrives while the picker flow is
     still running is dropped, never queued behind it and never bubbled."""

@@ -114,6 +114,36 @@ _PROJECT_INSTRUCTION_RECOVERY_WORKER_GROUP = "console-inspector-project-instruct
 # Same reason for the Safe -> Full trace-view confirmation.
 _VIEWER_PROFILE_WORKER_GROUP = "console-inspector-viewer-profile"
 
+
+def _failure_site(error: BaseException) -> str:
+    """Where ``error`` was raised, for a log line: identifiers only.
+
+    ``module.qualname:line`` of the raising frame and, when that frame is
+    outside the package, of the innermost Chatbook frame too -- the pair the
+    app exception handler records (TASK-32533). Never the message or a file
+    path: either can carry a folder path or prompt text.
+
+    Args:
+        error: A caught exception.
+
+    Returns:
+        The site, or ``"unknown"`` for an exception with no traceback.
+    """
+    raised = chatbook = None
+    tb = error.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        raised = (
+            f"{frame.f_globals.get('__name__', '?')}."
+            f"{frame.f_code.co_qualname}:{tb.tb_lineno}"
+        )
+        if raised.startswith("tldw_chatbook."):
+            chatbook = raised
+        tb = tb.tb_next
+    if raised is None:
+        return "unknown"
+    return raised if chatbook in (None, raised) else f"{raised} via {chatbook}"
+
 _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
     "Captured where Console hands the request to the provider adapter, not "
     "at the raw HTTP layer -- provider-internal framing and injected "
@@ -1049,7 +1079,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 self._viewer_profile = TraceViewerProfile.FULL
                 self._reset_view_projection()
         except Exception as exc:  # noqa: BLE001 -- one panel action, not the app
-            logger.warning("Trace view change failed: {}", type(exc).__name__)
+            logger.warning(
+                "Trace view change failed: {} at {}",
+                type(exc).__name__,
+                _failure_site(exc),
+            )
         finally:
             self._viewer_profile_confirm_running = False
 
@@ -1178,7 +1212,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self.call_after_refresh(self._focus_initial_control)
         except Exception as exc:  # noqa: BLE001 -- one panel action, not the app
             logger.warning(
-                "Project instruction recovery failed: {}", type(exc).__name__
+                "Project instruction recovery failed: {} at {}",
+                type(exc).__name__,
+                _failure_site(exc),
             )
             self.notify(
                 "Couldn't update project instructions. Details are in the log file.",
