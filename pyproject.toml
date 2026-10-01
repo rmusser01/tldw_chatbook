@@ -510,6 +510,7 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
+"tldw_chatbook.Plugins" = ["migrations/*.sql"]
 # Bundle only the reviewed character, Buddy and tiktoken runtime inventories.
 "tldw_chatbook" = [
     "assets/characters/samira/*.json",

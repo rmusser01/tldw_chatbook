@@ -157,7 +157,7 @@ git diff --check
 - Consumes: F1 immutable identities; connect_private_sqlite(owner_id, database, **kwargs); portalocker 3.2.0.
 - Produces: PluginRegistry(path: Path) with schema_version: int, transaction(), list_installations(*, limit: int, offset: int) -> tuple[dict, ...], close(). PluginRuntimeOwner(root: Path).try_acquire() -> bool and close(). reserve_launch(operation_id: str, installation_id: str, workspace_id: str | None, revision_digest: str) -> str durably creates a launch token before execution; publish_process(token: str, provenance: dict) and settle_process(token: str, confirmed: bool) retain unresolved ownership. No execute path is exposed by this task.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_secondary_owner_cannot_execute(tmp_path):
@@ -171,9 +171,9 @@ def test_secondary_owner_cannot_execute(tmp_path):
         second.close()
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_registry.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_registry.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 SCHEMA_VERSION = 1
@@ -185,20 +185,20 @@ FROM installations ORDER BY installation_id LIMIT ? OFFSET ?
 """
 ```
 
-  - [ ] 3.1. Register the private-SQLite owner plugins.registry and package the migration through pyproject.toml package data. Tables cover immutable revisions/components, activation, mappings, authority generations, operations, root ownership, process provenance and receipts; registry rows alone never confer trust.
-  - [ ] 3.2. Implement schema creation/user_version and reopen validation in one transaction; test real in-memory SQLite for data behavior and isolated disk files for private path/WAL ownership.
-  - [ ] 3.3. Acquire the profile-derived OS lock before mutation or execution; secondary owners receive read-only registry views. Release locks on close without clearing surviving-process evidence.
-  - [ ] 3.4. Record pending launch identity before subprocess creation, publish exact process provenance afterward and leave unclean records across owner death. Add separate process tests for competing owners and PID reuse; do not infer cleanup from an acquired lock.
+  - [x] 3.1. Register the private-SQLite owner plugins.registry and package the migration through pyproject.toml package data. Tables cover immutable revisions/components, activation, mappings, authority generations, operations, root ownership, process provenance and receipts; registry rows alone never confer trust.
+  - [x] 3.2. Implement schema creation/user_version and reopen validation in one transaction; test real in-memory SQLite for data behavior and isolated disk files for private path/WAL ownership.
+  - [x] 3.3. Acquire the profile-derived OS lock before mutation or execution; secondary owners receive read-only registry views. Release locks on close without clearing surviving-process evidence.
+  - [x] 3.4. Record pending launch identity before subprocess creation, publish exact process provenance afterward and leave unclean records across owner death. Add separate process tests for competing owners and PID reuse; do not infer cleanup from an acquired lock.
 
 **Failure and successful-control matrix:** Independent subprocess contention, read-only secondary browse, owner death between reserve/spawn/publish, schema reopening/corruption, invalid network/synchronized roots and private DB owner inventory. Assert unrelated standalone functionality remains available.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_registry.py Tests/Plugins/test_runtime_owner.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32669 --plain

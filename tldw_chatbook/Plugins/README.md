@@ -90,3 +90,69 @@ Portable remote MCP definitions reject userinfo or fragment delimiters in URLs,
 case-insensitive duplicate headers, invalid HTTP field characters, and leading or
 trailing field whitespace. Loopback HTTP and ordinary HTTPS definitions retain
 the same inspection boundary; syntax validation never grants network access.
+
+## Private registry and runtime owner (foundation)
+
+`PluginRuntimeOwner(root)` takes the **plugins directory derived from the actual
+resolved user-data profile**. `try_acquire()` returns false for a competing owner;
+unsupported storage or lock failures raise and leave plugin execution unavailable.
+Other application features do not depend on acquiring this lock. The stable
+`runtime.lock` file is retained on close, never unlinked to release ownership.
+Parent aliases such as `/tmp` resolve consistently; a symlink replacing the owned
+root or lock is refused. Instances belong to one serialized worker and one process.
+
+`PluginRegistry(root / "registry.sqlite3")` opens an existing validated read-only
+view, including committed WAL frames. It cannot create or migrate the store.
+Supply `owner=acquired_owner` for mutations. Each `transaction()` checks current
+ownership before starting and before commit, rolls back on failures, and returns
+only after SQLite commit succeeds. Disk settings explicitly require WAL,
+`synchronous=FULL`, and macOS `fullfsync=ON`. A later authority coordinator may
+publish its protected commit certificate only **after** this return. These rows
+are unauthenticated metadata and do not grant trust or execution permission.
+`:memory:` is available for nonpersistent data tests; it grants no runtime owner.
+
+Schema v1 is packaged in `migrations/001_initial.sql`; creation/versioning share
+one transaction, and reopening verifies exact schema and database integrity.
+Tables hold installations, immutable revision/component records, selections,
+activation, sources, mappings, authority generations, operation intents,
+data-root generations/deletion fences, process evidence, and receipts. Persist
+F1 inspection records via `model_dump(mode="json")`, retaining the distinct
+support, selection, availability and provenance fields. Installation activation
+defaults to disabled. `activation.intent` distinguishes explicit `inherit`,
+`enabled` and `disabled`; absence is a separate state. Authority scopes use
+`scope_kind` (`installation`, `global_default`, `workspace`) plus `workspace_id`;
+non-workspace scopes require an empty workspace ID and workspace scopes require
+a nonempty stable ID. A workspace named `installation` cannot collide with the
+installation-wide scope. Public list methods require a page of 1–50 rows.
+
+Before spawning, the host calls `reserve_launch(operation_id, installation_id,
+workspace_id, revision_digest)` and durably obtains a token. After spawning,
+`publish_process(token, provenance)` retains exact non-secret host-captured
+process identity. `settle_process(token, confirmed=False)` retains unresolved
+ownership; true is a trusted host assertion that all owned writers stopped,
+never a conclusion from lock acquisition or a stale PID. These APIs do not spawn,
+signal, kill or reconcile any process automatically. Pending/unresolved records
+survive close and owner death, and a new owner cannot reserve work for an affected
+installation until host reconciliation settles them. Other installations remain
+available. `list_processes` exposes bounded evidence for reconciliation.
+
+`active_revision_leases` counts pending launches and active runs, including
+unresolved active work. `set_process_kind` distinguishes a published active run,
+idle connection and archived history; idle/history are not active run leases.
+Their unresolved process evidence still blocks reuse after owner death: no run
+lease does **not** mean that a data root has no surviving writers. Process evidence
+intentionally survives installation/revision removal without cascading deletion.
+Fencing, authenticated authority, coordinator recovery and consumer admission
+arrive in subsequent foundation tasks; the registry alone authorizes none of them.
+
+### Runtime storage qualification
+
+The owner is currently qualified on **64-bit macOS local APFS**. The small native
+Darwin `statfs64` probe uses the SDK structure and requires `MNT_LOCAL` plus APFS. HFS has no separate test-volume evidence
+here and remains unqualified. Unknown platforms, filesystem types and probe failures refuse
+ownership. Known synchronized ancestors (CloudStorage, Mobile Documents, Dropbox,
+OneDrive, Google Drive) are refused before creating directories. Arbitrary
+third-party syncing cannot be detected generically and is **unsupported** even
+when a local lock succeeds. Network/sync semantics, Windows and Linux are not
+qualified. This is host process ownership, not sandbox containment or proof that
+escaped descendants and external side effects have stopped.

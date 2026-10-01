@@ -193,9 +193,34 @@ a two-entry fixture. Windows capture fails closed; Linux/Windows/vendor executio
 is not qualified. Fixtures are original AGPL content with pinned reference
 provenance. Existing ADR162/163 apply; all four ACs self-reviewed.
 
+## TASK-32669 — private plugin registry and runtime owner
+
+Reused reviewed F2 checkpoint `17f2325a77`. The private schema v1, exact reopening,
+transaction authorizer and stable OS lock retain uncertain process evidence; no
+PID-based termination or grant inference is added. Current-dev inventory entries
+remain intact, with C93/C94 and one registered `plugins.registry` policy. SQL is
+selected by existing package data, with no dependency additions.
+
+RED: **33 failed** at the missing registry/runtime-owner modules. Final registry,
+real process and repaired inventory disposition control: **34 passed in 9.28s**,
+no skips or warnings (`/private/tmp/expanded-hooks-f2-qualified.xml`). F1 and full
+private-inventory neighbors: **145 passed, 1 failed in 82.63s**; the single failure
+was new documentation disposition wording, corrected and included in the final
+pass. No production inventory assertion was relaxed. Child controls use the
+repository checkout/profile/network-refusal bootstrap; the fork control runs in
+a fresh single-threaded child with deprecation warnings treated as errors.
+
+A wheel built without isolation or installation contains the exact packaged v1
+SQL bytes (`/private/tmp/expanded-hooks-f2-wheel`). Four task-owned Python files
+pass full Ruff/formatting; shared SQLite/inventory lint codes and messages match
+HEAD. Changed Python syntax and whitespace pass. Existing ADR162/163 apply;
+all four ACs self-reviewed. Ownership remains qualified only on 64-bit macOS local
+APFS; unknown/network/synchronized storage fails closed. No full sweep or
+Linux/Windows execution qualification is claimed.
+
 ## Remaining requested order
 
-- TASK-32669 through TASK-32675: required plugin registry, authority and drain foundations.
+- TASK-32670 through TASK-32675: required plugin registry, authority and drain foundations.
 - TASK-32680: Stop continuations and teardown, including native plugin drain qualification.
 - TASK-32685: MCP hooks, including required MCP/plugin prerequisites.
 - TASK-32686: native capabilities, required by the requested TASK-32687.
