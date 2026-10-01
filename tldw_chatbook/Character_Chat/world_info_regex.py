@@ -23,6 +23,7 @@ time-bounded, so the send-path never-raise guard does not help against a hang
 and closing these needs a time-bounded matcher, not a bigger heuristic. The
 residual risk is documented, not eliminated.
 """
+
 from __future__ import annotations
 
 import re
@@ -114,7 +115,7 @@ def _split_top_level_alternation(body: str) -> list[str]:
     while i < n:
         c = body[i]
         if c == "\\":
-            cur.append(body[i:i + 2])
+            cur.append(body[i : i + 2])
             i += 2
             continue
         if c == "[":
@@ -172,7 +173,9 @@ def _has_overlapping_alternation(pattern: str) -> bool:
 
 
 def _looks_catastrophic(pattern: str) -> bool:
-    return _has_nested_unbounded_quantifier(pattern) or _has_overlapping_alternation(pattern)
+    return _has_nested_unbounded_quantifier(pattern) or _has_overlapping_alternation(
+        pattern
+    )
 
 
 def validate_regex_pattern(pattern: str) -> None:

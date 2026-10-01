@@ -163,7 +163,9 @@ async def test_gateway_runner_reports_an_unready_provider():
         async def resolve_for_send(self, selection):
             return _Resolution()
 
-        async def stream_chat(self, resolution, messages, **_kwargs):  # pragma: no cover
+        async def stream_chat(
+            self, resolution, messages, **_kwargs
+        ):  # pragma: no cover
             raise AssertionError("must not send when the provider is not ready")
             yield ""
 
@@ -204,7 +206,11 @@ async def test_generate_field_streams_partial_text_as_it_arrives():
         on_chunk=seen.append,
     )
 
-    assert seen == ["A guarded ", "A guarded archivist ", "A guarded archivist of drowned books."]
+    assert seen == [
+        "A guarded ",
+        "A guarded archivist ",
+        "A guarded archivist of drowned books.",
+    ]
     assert text == "A guarded archivist of drowned books."
 
 
@@ -230,5 +236,8 @@ async def test_gateway_runner_reports_chunks_as_they_stream():
         gateway_factory=lambda: _Gateway(), selection_factory=lambda: object()
     )
 
-    assert await runner([{"role": "user", "content": "x"}], on_chunk=seen.append) == "one two"
+    assert (
+        await runner([{"role": "user", "content": "x"}], on_chunk=seen.append)
+        == "one two"
+    )
     assert seen == ["one ", "two"]
