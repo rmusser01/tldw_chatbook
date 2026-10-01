@@ -282,15 +282,18 @@ async def test_dismissal_during_row_refresh_does_not_query_removed_modal(hook_fi
         assert synced == []
 
 
+@pytest.mark.parametrize("waiting", [False, True], ids=["idle", "send-waiting"])
 @pytest.mark.parametrize("caller", ["worker", "plain-task"])
-async def test_a_review_awaited_off_a_worker_task_is_logged(caller, hook_file):
+async def test_a_review_awaited_off_a_worker_task_is_logged(caller, waiting, hook_file):
     """TASK-33621.28 review: W003 cannot see ``request_hook_review``'s await
     (the modal settles its own answer), and the freeze it caused on the app
     pump logged nothing. A caller off a worker task is now an ERROR in the
     app log; a worker caller -- every caller today -- is not. Run under
     ``asyncio.eager_task_factory``, as Textual's ``run_async`` runs the real
     app (``run_test`` does not): there a worker's first step runs before
-    ``Worker._task`` is set, and the live hfrf1 run logged a false ERROR."""
+    ``Worker._task`` is set, and the live hfrf1 run logged a false ERROR.
+    Both ``waiting`` values run, so the logged ``waiting_for_send`` must
+    follow the caller's flag rather than a constant (PR #2945 review)."""
     from loguru import logger
 
     errors: list[str] = []
@@ -312,7 +315,7 @@ async def test_a_review_awaited_off_a_worker_task_is_logged(caller, hook_file):
                 owner = console._console_runtime().ensure_hook_permissions()
                 snapshot = await asyncio.to_thread(owner.snapshot)
                 review = console._request_console_hooks_review(
-                    snapshot, False, lambda: None
+                    snapshot, waiting, lambda: None
                 )
                 if caller == "worker":
                     worker = console.run_worker(review, group="test-hook-review")
@@ -335,4 +338,4 @@ async def test_a_review_awaited_off_a_worker_task_is_logged(caller, hook_file):
         # Attributable without a traceback: which screen's caller blocked,
         # and whether a Send was waiting on the review.
         assert "screen=ChatScreen" in errors[0], errors
-        assert "waiting_for_send=False" in errors[0], errors
+        assert f"waiting_for_send={waiting}" in errors[0], errors
