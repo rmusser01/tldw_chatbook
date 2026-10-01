@@ -11805,6 +11805,9 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
         assert store.session_settings(session.id).provider == "llama_cpp"
 
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_modal_save_disabled_during_active_run() -> None:
     app = _build_test_app()
