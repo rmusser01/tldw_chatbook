@@ -711,6 +711,8 @@ def test_overlay_no_fields_is_a_faithful_copy():
 def _bare_settings_screen(app_config):
     screen = SettingsScreen.__new__(SettingsScreen)
     screen.app_instance = SimpleNamespace(app_config=app_config)
+    # No widgets or drafts: the probe worker's credential has nothing to read.
+    screen._provider_current_draft_credential = lambda: None
     return screen
 
 
@@ -1344,10 +1346,14 @@ async def test_probe_worker_cancellation_clears_exact_testing_state(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("draft_key", [None, "sk-draft-vllm-key"])
 async def test_chat_settings_probe_worker_passes_explicit_chat_catalog_purpose(
-    monkeypatch,
+    monkeypatch, draft_key
 ):
+    """The probe carries the draft's key when it has one (TASK-33005.2 review
+    I-1: a keyless probe of a keyed server read as "key rejected")."""
     screen = _bare_settings_screen({})
+    screen._provider_current_draft_credential = lambda: draft_key
     screen._update_provider_test_result = lambda: None
     screen._apply_provider_endpoint_probe_outcome = lambda *_args, **_kwargs: None
     captured: dict[str, object] = {}
@@ -1376,6 +1382,7 @@ async def test_chat_settings_probe_worker_passes_explicit_chat_catalog_purpose(
         "base_url": "https://example.test/v1/chat/completions",
         "provider": "openai",
         "purpose": "chat_catalog",
+        **({"api_key": draft_key} if draft_key else {}),
     }
 
 
@@ -2034,10 +2041,10 @@ async def test_wrapped_endpoint_row_stays_in_the_value_column_at_211x44(request)
         assert _result_rows(_provider_test_result_text(screen))[0][0] == "Endpoint"
 
 
-async def _test_reachable_llama_cpp(screen, pilot) -> str:
+async def _test_reachable_llama_cpp(screen, pilot, probe=_reachable_endpoint_probe) -> str:
     with patch(
         "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
-        _reachable_endpoint_probe,
+        probe,
     ):
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "model listing reached")
@@ -2270,11 +2277,18 @@ async def test_settings_test_result_reaches_chat_settings_for_the_same_connectio
 ):
     """TASK-33005.1 (AC#1): a Settings 't' on the saved llama.cpp connection
     is what Chat settings shows for that connection -- the two surfaces keep
-    their own draft stores but share settled evidence."""
+    their own draft stores but share settled evidence.
+
+    TASK-33005.2 review: the Console keys it identically (finding 4), and the
+    probe carries the saved key a send uses (I-1)."""
     from Tests.UI.test_console_session_settings import _readiness_text
     from tldw_chatbook.Chat.console_session_settings import (
         ConsoleSessionSettings,
         ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        provider_connection_evidence,
     )
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         ConsoleSettingsModal,
@@ -2288,8 +2302,27 @@ async def test_settings_test_result_reaches_chat_settings_for_the_same_connectio
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        await _test_reachable_llama_cpp(screen, pilot)
+        sent = []
+
+        async def probe(base_url, **kwargs):
+            sent.append(kwargs.get("api_key"))
+            return await _reachable_endpoint_probe(base_url)
+
+        await _test_reachable_llama_cpp(screen, pilot, probe)
         tested = screen._provider_current_draft_identity()
+        assert sent == [llama_settings.get("api_key")]
+        console = build_console_settings_readiness(
+            ConsoleSessionSettings(provider="llama_cpp", model="llama-3"),
+            app_config=app.app_config,
+            connection_evidence=provider_connection_evidence(host),
+        )
+        assert console.endpoint == "reachable"
+        # Same endpoint and key; a revision-0 source is one keyless
+        # connection whichever surface spelled it (Task 1 review F5).
+        assert (
+            console.connection.connection_identity,
+            console.connection.credential_revision,
+        ) == (tested.connection_identity, tested.credential_revision)
 
         await host.push_screen(
             ConsoleSettingsModal(

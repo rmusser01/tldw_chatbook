@@ -242,7 +242,9 @@ invalid values explain how to recover without replacing the saved interval.
 Changing these controls does not record startup consent.
 
 **Test Provider** checks your current draft before saving. URL-based local
-providers also get a short endpoint or model-listing probe. The result is five
+providers also get a short endpoint or model-listing probe, sent with the
+draft's API key when it has one (a server started with a key is tested with
+it, never without). The result is five
 labelled rows, one fact each: **Config** (configured, or not ready),
 **Key** (saved in config, from env var *NAME*, or missing; never the key
 itself), **Endpoint** (the address without any user name, query or fragment,

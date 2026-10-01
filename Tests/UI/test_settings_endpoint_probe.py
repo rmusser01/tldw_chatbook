@@ -736,7 +736,7 @@ async def test_console_connection_seam_reaches_real_models_endpoint() -> None:
                 endpoint,
             ),
             credential_source="none",
-            credential_revision=3,
+            credential_revision=0,  # Keyless: what every surface stamps (TASK-33005.2 review I-1).
             draft_generation=7,
         )
 

@@ -48,6 +48,10 @@ KEYSTROKES = 24
 SEEDED_MESSAGES = 200
 
 
+#: The census profile's saved key (also the known-evidence connection's).
+CENSUS_API_KEY = "sk-census-000000000000000000000000000000000000"
+
+
 def _scratch_env(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, quiet_scheduler: bool = False
 ) -> None:
@@ -74,7 +78,7 @@ def _scratch_env(
         "[_first_run]\nsetup_completed = true\n\n"
         "[splash_screen]\nenabled = false\n\n"
         "[api_settings.openai]\n"
-        'api_key = "sk-census-000000000000000000000000000000000000"\n'
+        f'api_key = "{CENSUS_API_KEY}"\n'
         + (
             "\n[scheduling]\nscheduler_poll_interval_seconds = 3600.0\n"
             if quiet_scheduler
@@ -205,6 +209,7 @@ async def _census(
     seeded_messages: int,
     *,
     storage_units: bool = False,
+    known_evidence: bool = False,
 ) -> dict[str, int]:
     """Boot Console, seed a transcript, type, and return a call census.
 
@@ -217,6 +222,9 @@ async def _census(
             warm Console visit (``<phase>:<unit>`` keys; see
             ``_census_idle_and_visit``). Holds the wall-clock loops still for
             the burst; off, the derivation census runs exactly as before.
+        known_evidence: First settle a test result for the active connection
+            into the app's shared evidence owner, so every readiness build
+            looks it up and finds it (TASK-33005.2 AC#6).
 
     Returns:
         Mapping of counter name to calls observed during the typing burst
@@ -408,6 +416,9 @@ async def _census(
         screen = pilot.app.screen
         screen._active_console_settings_context_estimate()
         screen._build_console_cost_state()
+        if known_evidence:
+            _settle_known_connection_evidence(pilot.app, screen)
+            await _settle(pilot, passes=10)  # Its one refresh is not typing.
 
         # The composer is the DEFAULT focus at rest; never call focus() here.
         # The first Input in walk order is a settings field, and a probe that
@@ -436,6 +447,43 @@ async def _census(
             await _census_idle_and_visit(pilot, counts, counting, trace_maintenance)
 
     return counts
+
+
+def _settle_known_connection_evidence(app: Any, screen: Any) -> None:
+    """Settle a reachable result for the census's openai connection.
+
+    The poll absorbs the owner's new version once here, so the measured idle
+    ticks bill only the steady-state lookup, not the one refresh it causes.
+    """
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        effective_provider_endpoint,
+    )
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderDraftIdentity,
+        ProviderProbeResult,
+        ProviderTestEvidenceStore,
+        connection_credential_revision,
+    )
+
+    store = ProviderTestEvidenceStore(lambda: app)
+    identity = ProviderDraftIdentity(
+        provider_key="openai",
+        connection_identity=canonical_connection_identity(
+            "openai", effective_provider_endpoint("openai", None, {})
+        ),
+        credential_source="stored",
+        credential_revision=connection_credential_revision(CENSUS_API_KEY),
+        draft_generation=0,
+    )
+    store.settle(store.begin(identity), ProviderProbeResult("reachable", ("gpt-4o",)))
+    screen._poll_console_credential_readiness()
+    assert screen._active_console_settings_readiness()[1].connection == identity, (
+        "census evidence missed the active connection: every build would look "
+        "it up and miss, so the evidence-hit cost would go unmeasured"
+    )
 
 
 #: Ticks each idle phase drives.
@@ -813,11 +861,22 @@ OS_OPENS_JITTER_SLACK = 1.05
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@pytest.mark.parametrize("known_evidence", [False, True], ids=["untested", "tested"])
 @private_profile_test
 async def test_console_storage_units_stay_within_their_ratchets(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    known_evidence: bool,
 ) -> None:
     """Typing, an idle tick and a warm visit pay no more storage units than pinned.
+
+    ``tested`` runs the same census with a settled test result for the active
+    connection in the shared evidence owner (TASK-33005.2 AC#6): reading it
+    must not raise a ceiling pinned without it, nor the readiness builds per
+    keystroke. Each build's own provider-config reads with and without
+    evidence are pinned equal by
+    ``test_shared_evidence_adds_no_provider_config_reads``.
 
     The derivation counters above read 0 per key while each key ran 27-69
     guarded ``load_settings`` calls (the 2026-09-27 structural audit): this
@@ -830,7 +889,17 @@ async def test_console_storage_units_stay_within_their_ratchets(
         tmp_path: pytest fixture; the scratch tree's root.
         request: pytest fixture; carries the census as user properties.
     """
-    counts = await _census(monkeypatch, tmp_path, seeded_messages=0, storage_units=True)
+    counts = await _census(
+        monkeypatch,
+        tmp_path,
+        seeded_messages=0,
+        storage_units=True,
+        known_evidence=known_evidence,
+    )
+    assert (
+        counts["settings_readiness_builds"] / KEYSTROKES
+        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
+    )
     measured = {
         "typing (whole burst)": (
             {unit: counts[unit] for unit in IO_UNITS},

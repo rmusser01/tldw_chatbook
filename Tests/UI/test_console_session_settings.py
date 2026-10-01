@@ -14282,7 +14282,7 @@ async def test_console_connection_tester_uses_chat_catalog_and_returns_typed_res
         provider_key="llama_cpp",
         connection_identity=("llama_cpp", "http://127.0.0.1:9099"),
         credential_source="none",
-        credential_revision=3,
+        credential_revision=0,  # Keyless: what every surface stamps (TASK-33005.2 review I-1).
         draft_generation=7,
     )
 

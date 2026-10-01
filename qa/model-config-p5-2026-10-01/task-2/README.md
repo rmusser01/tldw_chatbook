@@ -42,5 +42,42 @@ section expanded, Inspector open (Alt+I):
    at 235x52 after the server was stopped and `t` run again; the Inspector
    shows "Next action: Retry connection".
 
+Fix round 1 (review I-1), a keyed local server. Same isolation, a new
+scratch profile (`users_name = "verify_t33005_2r1"`, `first_send_completed`),
+vLLM at `http://127.0.0.1:9198` with a saved `api_key`, and a throwaway local
+server that answered `GET /v1/models` only for `Authorization: Bearer <its
+key>`. Its request log recorded whether each request carried the saved key
+(`match`), another key (`other`) or none; it never recorded `none`. Before
+this round, the probe sent no key, so this server answered 401 and the
+Console read "key rejected" for the right key.
+
+8. `8-console-keyed-vllm-ready-before-test-211x44.txt`: the Console before
+   any test, Model section expanded: Ready.
+9. `9-chat-settings-keyed-vllm-test-reachable-211x44.txt`: Chat settings
+   (Ctrl+O), **Test connection & list models**: "Connection test succeeded;
+   1 model listed." (server log: `/v1/models auth=match`).
+10. `10-console-keyed-vllm-ready-after-test-211x44.txt`: Esc: the Console
+    still reads Ready, with no recovery line.
+11. `11-console-keyed-vllm-key-refused-211x44.txt`: the server restarted to
+    require a different key, the same test again ("Connection test failed:
+    unauthorized.", server log `auth=other`), then Esc: header Blocked, Model
+    section "Not ready — vLLM credential was rejected". This verdict is about
+    the key that was actually sent.
+12. `12-console-keyed-vllm-ready-after-retest-211x44.txt`: the server back on
+    the saved key, the same test ("Connection test succeeded", `auth=match`),
+    then Esc: Ready again, no restart.
+
+Reading notes for reviewers:
+
+- The status strip's "Agent blocked" (in "Library · Auto off · Agent
+  blocked") is the agent's Library access policy chip. It has nothing to do
+  with provider readiness, so it reads the same in the Ready and Not ready
+  captures.
+- Every on-screen string these captures rely on is asserted against the real
+  widgets in `Tests/UI/test_console_endpoint_discovery.py`
+  (`test_refused_chat_settings_test_blocks_console_until_one_retry`: header
+  status Ready/Blocked/Ready, Model section, readiness row, Retry button,
+  composer reason) and `test_a_keyed_local_server_is_tested_with_the_key_a_send_uses`.
+
 The readiness words themselves ("Not ready · refused :9099" and the rest of
 the spec §5 vocabulary) are TASK-33005.3's; these captures show today's words.

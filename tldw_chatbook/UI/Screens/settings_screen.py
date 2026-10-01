@@ -13939,6 +13939,38 @@ class SettingsScreen(BaseAppScreen):
         Returns:
             The :func:`connection_credential_revision` of that key.
         """
+        return connection_credential_revision(
+            self._provider_draft_credential(provider, credential_source, values)
+        )
+
+    def _provider_current_draft_values(self) -> Mapping[str, object]:
+        try:
+            return self._provider_form_values_from_widgets()
+        except (QueryError, ValueError, AttributeError):
+            return self._provider_setting_values_mapping()
+
+    def _provider_current_draft_credential(self) -> str | None:
+        """Return the key the current draft sends: what 't' probes with.
+
+        TASK-33005.2 review I-1: the probe must carry the key the evidence
+        identity digests (ADR-012), or a keyed local server answers 401 and
+        the Console reads "key rejected" for a key that was never sent.
+        """
+        values = self._provider_current_draft_values()
+        provider = str(values.get("provider") or "").strip()
+        if not provider:
+            return None
+        return self._provider_draft_credential(
+            provider, self._provider_current_credential_source(provider), values
+        )
+
+    def _provider_draft_credential(
+        self,
+        provider: str,
+        credential_source: str,
+        values: Mapping[str, object],
+    ) -> str | None:
+        """Return the key a send would use once this draft is saved."""
         draft = self._provider_draft()
         dirty = draft.dirty_keys if draft is not None else set()
         if credential_source == "none":
@@ -13954,13 +13986,10 @@ class SettingsScreen(BaseAppScreen):
             key = os.environ.get(env_var) if env_var else None
         else:
             key = self._provider_api_key_value(provider)
-        return connection_credential_revision(resolve_provider_api_key(key))
+        return resolve_provider_api_key(key)
 
     def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
-        try:
-            values = self._provider_form_values_from_widgets()
-        except (QueryError, ValueError, AttributeError):
-            values = self._provider_setting_values_mapping()
+        values = self._provider_current_draft_values()
         provider = str(values.get("provider") or "").strip()
         endpoint = str(values.get("endpoint") or "").strip()
         if provider and not endpoint and not self._provider_endpoint_value(provider):
@@ -16182,10 +16211,14 @@ class SettingsScreen(BaseAppScreen):
         )
 
         try:
+            # Resolved here, not passed in: a worker argument lands in the
+            # worker's description, and this is the identity's key.
+            api_key = self._provider_current_draft_credential()
             outcome = await probe_settings_endpoint(
                 base_url,
                 provider=provider,
                 purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+                **({"api_key": api_key} if api_key else {}),
             )
         except asyncio.CancelledError:
             cancelled_current = bool(

@@ -277,9 +277,11 @@ settings rows, the Inspector and this card's "Reconnect the provider server"
 step), and the composer reads "Send blocked — retry the connection to
 continue". **Retry connection** tests that same server again in place; it
 opens no settings. If the server now answers, the chat is Ready and Send
-unlocks; if not, a "still unreachable" notice says so. Test results last for
-this session only, and a test of a different endpoint or key never changes
-this chat's readiness.
+unlocks; if not, a "still unreachable" notice says so. Every test sends the
+API key a message would use, so a local server started with a key (vLLM's
+`--api-key`, for example) is tested with it, and "key rejected" means that
+key was refused. Test results last for this session only, and a test of a
+different endpoint or key never changes this chat's readiness.
 
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
@@ -534,9 +536,9 @@ an estimate), readiness and last use. Readiness comes from your
 configuration plus any connection test of that provider's connection this
 session, so it reads "Ready · not tested" or "Not ready · no key" (or
 another reason, such as "unreachable" after a refused test); the list never
-claims a provider was verified or reachable. Typing filters every provider's saved and cached models in
-memory and highlights the best match; it never starts a model listing or a
-network call. A model id that no list has appears under **TYPED MODEL ID**
+claims a provider was verified or reachable. Typing filters every provider's
+saved and cached models in memory and highlights the best match; it never
+starts a model listing or a network call. A model id that no list has appears under **TYPED MODEL ID**
 for this chat's provider; type a provider's name first ("Ollama qwen3:32b")
 to pair the id with that provider. A provider whose list is still loading,
 empty or unavailable says so in its own row. Legacy alias providers (such

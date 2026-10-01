@@ -15,16 +15,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from tldw_chatbook.Chat.console_session_settings import _endpoint_failure_blocker
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     canonical_connection_identity,
     connection_probe_availability,
 )
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
+    connection_credential_revision,
 )
 
 
@@ -35,10 +38,14 @@ async def probe_console_connection(
 ) -> ProviderProbeResult:
     """Run the bounded, non-generating model-catalog probe for one connection.
 
+    The probe carries the credential a send would use, the one whose digest
+    ``identity.credential_revision`` is (ADR-012: same destination, same
+    credential). A keyless probe of a keyed server reads 401, which the
+    Console would show as "key rejected" for a key that was never sent.
+
     Args:
         identity: The exact connection to probe.
-        app_config: Config holding custom endpoint entries (their credential
-            is the one a send would use).
+        app_config: Config holding the connection's saved credential.
 
     Returns:
         The bounded probe result.
@@ -50,7 +57,16 @@ async def probe_console_connection(
     )
 
     probe_kwargs = {}
-    if identity.custom_endpoint_id is not None:
+    if identity.custom_endpoint_id is None:
+        api_key = get_provider_readiness(
+            identity.provider_key, app_config or {}, background_credentials=True
+        ).api_key
+        if connection_credential_revision(api_key) != identity.credential_revision:
+            # The saved credential changed since this identity was keyed.
+            return ProviderProbeResult("unreachable", (), "connection_error")
+        if api_key:
+            probe_kwargs["api_key"] = api_key
+    else:
         from tldw_chatbook.Chat.custom_endpoint_registry import (
             entry_for,
             family_execution_key,
@@ -143,7 +159,13 @@ async def _retry(
     app_config: Mapping[str, object],
 ) -> None:
     evidence = await settle_connection_probe(app, identity, app_config=app_config)
-    if evidence is not None and evidence.endpoint == "unreachable":
+    # Only a still-down server: a rejected key or a bad route moves the
+    # Console to its own recovery ("Configure API key", "Review settings").
+    if (
+        evidence is not None
+        and evidence.endpoint == "unreachable"
+        and _endpoint_failure_blocker(evidence.category)[1] == "retry_connection"
+    ):
         app.notify(
             f"{provider} is still unreachable. Start it, then retry.",
             severity="warning",

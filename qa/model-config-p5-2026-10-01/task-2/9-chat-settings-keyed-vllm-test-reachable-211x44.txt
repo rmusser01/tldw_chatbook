@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Connection                                                                                                                                                                     │     │
+ ───────────────│  Provider               │ vLLM                                                                                                                                                  │     │
+ Workspaces     │                         Selected: vLLM                                                                                                                                          │     │
+ ───────────────│  Endpoint               │ http://127.0.0.1:9198                                           New endpoint…                                                                         │     │
+ Conversations  │  Model                  │ model-a                                                                                                                                               │     │
+        Archive │                         5 models available. Type to filter.                                                                                                                     │     │
+          Archiv│  Served by this endpoint now                                                                                                                                                    │     │
+        Search a│                            Custom model    Test connection & list models                                                                                                        │     │
+   Chat 1       │  Tests this endpoint by listing models; this does not test generation.                                                                                                          │     │
+                │  1 model listed                                                                                                                                                                 │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│  Ready to send                                                                                                                                                                  │     │
+  ▊  Filter visi│  A send attempt is permitted with these settings.                                                                                                                               │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│  Credential · Not required                                                                                                                                                      │     │
+                │  Endpoint · Reachable                                                                                                                                                           │     │◂ Inspect
+   New conversat│  Model · Confirmed                                                                                                                                                              │     │
+  Chats         │  Generation · Not tested                                                                                                                                                        │     │
+   Chat 1       │  Generation test unavailable for this provider.                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+ ───────────────│   ▶ Advanced generation                                                                                                                                                         │     │
+ Character · No │                                                                                                                                                                                 │     │
+ ───────────────│   ▶ Conversation identity                                                                                                                                                       │     │
+ Model          │                                                                                                                                                                                 │     │
+  Temperature 0.│   ▶ Request estimate                                                                                                                                                            │     │
+  Max tokens  40│                                                                                                                                                                                 │     │
+  Streaming   On│                                                                                                                                                                                 │     │
+  System: none ▸│                                                                                                                                                                                 │     │
+   Change  Alt+M│                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ ▼ Details      │                                                                                                                                                                                 │     │
+                │                                                                                                                                         Used by future conversations for vLLM.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                      Esc close   Cancel    Save as generation defaults  Make default for new chats  Use for this conversation   │ $0.00 · On nex
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Esc composer · F6 panes | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Ctrl+P · Ctrl+Q

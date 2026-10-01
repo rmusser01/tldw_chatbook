@@ -711,6 +711,7 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         assert console._active_console_settings_readiness()[1].blocker is None
+        assert _rail_text(console, "#workbench-header-status").strip() == "Ready"
 
         await console._open_console_settings(focus_model=False)
         await pilot.pause()
@@ -740,6 +741,13 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         )
         retry = console.query_one("#console-setup-modal-action", Button)
         assert str(retry.label) == "Retry connection"
+        # Review finding 6: the "status row" also covers the header word and
+        # the composer's reason strip; Send itself is disabled.
+        assert _rail_text(console, "#workbench-header-status").strip() == "Blocked"
+        assert console.query_one("#console-send-message", Button).disabled
+        assert _rail_text(console, "#console-send-disabled-reason") == (
+            "Send blocked — retry the connection to continue ›"
+        )
         assert "endpoint unreachable" in console._console_provider_blocker_copy()
         assert "Retry connection" in console._console_setup_blocked_reason()
         default = console._console_default_readiness("llama_cpp", "model-a")
@@ -770,6 +778,7 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         assert console._console_setup_blocked_reason() == ""
         assert console._active_console_settings_readiness()[1].endpoint == "reachable"
         assert not console.query_one("#console-model-section-recovery").display
+        assert _rail_text(console, "#workbench-header-status").strip() == "Ready"
 
 
 @pytest.mark.asyncio
@@ -825,3 +834,201 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         assert _rail_text(console, "#console-settings-readiness-row") == (
             "Not ready — endpoint unreachable"
         )
+
+
+_KEYED_VLLM_CONFIG = {
+    "api_settings": {"vllm": {"api_url": "http://127.0.0.1:8000", "api_key": "sk-good"}}
+}
+
+
+def _stub_keyed_server(monkeypatch, server_key: str) -> list[str | None]:
+    """A vLLM started with ``--api-key server_key``, under the real probe.
+
+    Returns the Authorization header of every request it answered.
+    """
+    import httpx
+
+    import tldw_chatbook.UI.Screens.settings_endpoint_probe as probe_module
+
+    sent: list[str | None] = []
+
+    async def server(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers.get("Authorization"))
+        if sent[-1] != f"Bearer {server_key}":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+
+    real_probe = probe_module.probe_settings_endpoint
+
+    async def probe(base_url, **kwargs):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(server)) as client:
+            return await real_probe(base_url, http_client=client, **kwargs)
+
+    monkeypatch.setattr(probe_module, "probe_settings_endpoint", probe)
+    return sent
+
+
+def _vllm_identity(key: str) -> ProviderDraftIdentity:
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        connection_credential_revision,
+    )
+
+    return ProviderDraftIdentity(
+        provider_key="vllm",
+        connection_identity=canonical_connection_identity(
+            "vllm", "http://127.0.0.1:8000"
+        ),
+        credential_source="stored",
+        credential_revision=connection_credential_revision(key),
+        draft_generation=0,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server_key", "blocker"),
+    [("sk-good", None), ("sk-other", "credential_rejected")],
+    ids=["right-key", "wrong-key"],
+)
+@private_profile_test
+async def test_a_keyed_local_server_is_tested_with_the_key_a_send_uses(
+    request, monkeypatch, server_key, blocker
+):
+    """TASK-33005.2 review I-1: the probe sent no key, so a vLLM started with
+    ``--api-key`` answered 401 and the Console blocked on "key rejected" for
+    a key it never sent, which no re-test could clear. The probe now carries
+    the saved key, so the verdict is about the key that was sent."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
+    from tldw_chatbook.UI.Console_Modules.connection_probe import (
+        settle_connection_probe,
+    )
+
+    sent = _stub_keyed_server(monkeypatch, server_key)
+    app = SimpleNamespace()
+    identity = _vllm_identity("sk-good")
+
+    await settle_connection_probe(app, identity, app_config=_KEYED_VLLM_CONFIG)
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="vllm", model="model-a"),
+        app_config=_KEYED_VLLM_CONFIG,
+        connection_evidence=shared_connection_evidence(lambda: app),
+    )
+
+    assert sent == ["Bearer sk-good"]
+    assert readiness.connection == identity  # The Console's own key for it.
+    assert readiness.blocker == blocker
+    assert (readiness.operability == "ready_to_send") is (blocker is None)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_probe_for_a_replaced_key_never_sends_the_current_one(
+    request, monkeypatch
+):
+    """The saved key changed after the identity was keyed: sending the new
+    key would record its verdict under the old key's connection."""
+    from tldw_chatbook.UI.Console_Modules.connection_probe import (
+        probe_console_connection,
+    )
+
+    sent = _stub_keyed_server(monkeypatch, "sk-good")
+
+    result = await probe_console_connection(
+        _vllm_identity("sk-replaced"), app_config=_KEYED_VLLM_CONFIG
+    )
+
+    assert sent == []
+    assert result == ProviderProbeResult("unreachable", (), "connection_error")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_unconfigured_llama_cpp_is_one_connection_in_chat_settings_and_console(
+    request,
+):
+    """TASK-33005.2 review finding 5: with nothing saved, Chat settings
+    prefills the default llama.cpp origin and tests it, and the Console keys
+    a new chat's llama.cpp on that same origin -- so the refused test blocks
+    the chat that would send there."""
+    from tldw_chatbook.Chat import console_session_settings as session_settings
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        DEFAULT_LLAMACPP_BASE_URL,
+    )
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
+
+    tested: list[ProviderDraftIdentity] = []
+
+    async def refused(identity):
+        tested.append(identity)
+        return ProviderProbeResult("unreachable", (), "connection_refused")
+
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"llama_cpp": {}}}
+    settings = session_settings.build_target_default_console_session_settings(
+        app.app_config, "llama_cpp", "model-a"
+    )
+    assert settings.base_url is None  # Nothing saved anywhere.
+    modal = ConsoleSettingsModal(
+        settings=settings,
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        connection_tester=refused,
+    )
+    async with app.run_test(size=(160, 48)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        prefill = modal.query_one("#console-settings-base-url", Input).value
+        modal.query_one("#console-settings-model-discover", Button).press()
+        await _settled(modal, pilot)
+
+    readiness = session_settings.build_console_settings_readiness(
+        settings,
+        app_config=app.app_config,
+        connection_evidence=shared_connection_evidence(lambda: app),
+    )
+    default = canonical_connection_identity("llama_cpp", DEFAULT_LLAMACPP_BASE_URL)
+    assert prefill == DEFAULT_LLAMACPP_BASE_URL
+    assert [identity.connection_identity for identity in tested] == [default]
+    assert readiness.blocker == "endpoint_unreachable"
+    assert readiness.connection.connection_identity == default
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "notified"),
+    [("connection_refused", True), ("timeout", True), ("unauthorized", False)],
+)
+async def test_retry_says_still_unreachable_only_for_a_server_still_down(
+    monkeypatch, category, notified
+):
+    """Review M-1: "Start it, then retry" after a rejected key contradicted
+    the Console's own "Configure API key" recovery."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import connection_probe
+
+    async def probe(_identity, *, app_config=None):
+        return ProviderProbeResult("unreachable", (), category)
+
+    monkeypatch.setattr(connection_probe, "probe_console_connection", probe)
+    notes: list[str] = []
+    app = SimpleNamespace(notify=lambda message, **_kwargs: notes.append(message))
+
+    await connection_probe._retry(app, _vllm_identity("sk-good"), "vLLM", {})
+
+    assert notes == (
+        ["vLLM is still unreachable. Start it, then retry."] if notified else []
+    )
