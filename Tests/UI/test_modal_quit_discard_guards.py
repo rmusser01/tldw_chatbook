@@ -2,12 +2,14 @@
 
 Ctrl+Q became a priority binding, so the quit flow now starts while a modal
 is open and asks every screen from that modal down to the destination for
-``confirm_quit``. Five modals guard their OWN close with a discard prompt
+``confirm_quit``. Six modals guard their OWN close with a discard prompt
 when they hold unsaved edits -- before the fix, Ctrl+Q was swallowed under
 them, which protected that work by accident; after it, quitting went
 straight past the guard. Each of them now answers ``confirm_quit`` with the
 shared "Discard changes and quit?" prompt, and only when its close guard
-would fire.
+would fire. Console Settings (the sixth, a review follow-up) also asks for
+its two side-effect close guards: an undoable memory reset and a running
+compaction.
 
 The real-app proof (a dirty ReminderForm over a live Console, real Ctrl+Q)
 lives in ``test_app_quit_under_modal.py``; these pin the shared prompt and
@@ -35,6 +37,7 @@ from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
+from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 
 _TITLE = "Discard changes and quit?"
 
@@ -108,9 +111,10 @@ def _library_access_modal(dirty: bool):
     return modal
 
 
-def _prompts_modal(dirty: bool, mode: str = "edit"):
+def _prompts_modal(dirty: bool, mode: str = "edit", *, applying: bool = False):
     modal = ConsolePromptsModal.__new__(ConsolePromptsModal)
     modal.state = SimpleNamespace(mode=mode, dirty=dirty)
+    modal._apply_in_progress = applying
     return modal
 
 
@@ -120,12 +124,24 @@ def _prompt_queue_modal(dirty: bool):
     return modal
 
 
+def _console_settings_modal(
+    dirty: bool, *, reset: bool = False, compacting: bool = False
+):
+    """A Console Settings modal holding exactly the given close-guard states."""
+    modal = ConsoleSettingsModal.__new__(ConsoleSettingsModal)
+    modal._memory_reset_token = ("memory-revision", 1) if reset else None
+    modal._compaction_is_active = lambda: compacting
+    modal._unsaved_field_labels = lambda: ("Temperature",) if dirty else ()
+    return modal
+
+
 _GUARDED_MODALS = [
     pytest.param(_reminder_form, id="reminder-form"),
     pytest.param(_automation_form, id="automation-definition-form"),
     pytest.param(_library_access_modal, id="console-library-access"),
     pytest.param(_prompts_modal, id="console-prompts"),
     pytest.param(_prompt_queue_modal, id="console-prompt-queue"),
+    pytest.param(_console_settings_modal, id="console-settings"),
 ]
 
 
@@ -177,3 +193,50 @@ async def test_console_prompts_modal_asks_only_where_its_close_guard_fires(mode,
 
     assert await modal.confirm_quit() is True
     assert asked == []
+
+
+@pytest.mark.asyncio
+async def test_console_prompts_modal_refuses_quit_while_an_apply_is_in_flight(
+    asked,
+):
+    """Close is refused while an apply is mid-flight, so quitting is too.
+
+    The apply writes the reviewed prompt into the live Console; quitting
+    under it would drop that write with no prompt. Nothing is dirty here, so
+    only the apply guard can stop the quit -- and it says why.
+    """
+    modal = _prompts_modal(False, mode="improve", applying=True)
+    notices: list[str] = []
+    modal.notify = lambda message, **_kwargs: notices.append(str(message))
+
+    assert await modal.confirm_quit() is False
+    assert asked == [], "an apply in flight is not a discard prompt"
+    assert len(notices) == 1 and "applying" in notices[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_console_settings_unsaved_quit_prompt_names_the_edited_fields(asked):
+    modal = _console_settings_modal(True)
+
+    assert await modal.confirm_quit() is False
+    [(_screen, message)] = asked
+    assert "Temperature" in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("guard", "named"),
+    [
+        (dict(reset=True), "memory was reset"),
+        (dict(compacting=True), "compaction"),
+    ],
+    ids=["memory-reset", "compaction"],
+)
+async def test_console_settings_side_effect_guards_ask_before_quit(guard, named, asked):
+    """Close stops at an undoable memory reset or a running compaction; so
+    does quitting, even with no field edited."""
+    modal = _console_settings_modal(False, **guard)
+
+    assert await modal.confirm_quit() is False
+    [(_screen, message)] = asked
+    assert named in message.lower()

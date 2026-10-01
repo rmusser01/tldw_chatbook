@@ -16,6 +16,10 @@ reading as edits. A suspended draft (credential round-trip) carries the first
 modal's baseline, because the reopened modal composes its Provider, Model,
 Endpoint and Streaming controls from the draft's edits.
 
+Ctrl+Q asks too (TASK-33622.10): it is a priority binding, so the app's quit
+flow can start while this modal is open, and ``confirm_quit`` asks before
+quitting past anything the close guard would have stopped at.
+
 The logic lives here, not in ``console_settings_modal.py``, because that
 module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
 """
@@ -188,14 +192,37 @@ def unsaved_prompt_copy(labels: Iterable[str], *, can_apply: bool = True) -> str
     Returns:
         The prompt's message: the edited fields, then the keys.
     """
-    names = tuple(labels)
-    noun = "edit" if len(names) == 1 else "edits"
     keys = (
         "Enter apply · d discard · Esc keep editing"
         if can_apply
         else "Apply is unavailable for this draft · d discard · Esc keep editing"
     )
-    return f"{len(names)} unsaved {noun} to this chat: {', '.join(names)}.\n{keys}"
+    return f"{unsaved_summary_copy(labels)}\n{keys}"
+
+
+def unsaved_summary_copy(labels: Iterable[str]) -> str:
+    """Return the line naming the unsaved edits ``labels``, without keys.
+
+    Args:
+        labels: The edited fields' labels.
+
+    Returns:
+        For example ``"1 unsaved edit to this chat: Temperature."``.
+    """
+    names = tuple(labels)
+    noun = "edit" if len(names) == 1 else "edits"
+    return f"{len(names)} unsaved {noun} to this chat: {', '.join(names)}."
+
+
+#: Ctrl+Q's copy for the two side-effect close guards (TASK-33622.10).
+QUIT_RESET_COPY = (
+    "Current branch memory was reset. Quitting keeps the reset, and Undo "
+    "will no longer be available."
+)
+QUIT_COMPACTION_COPY = (
+    "Compaction is still running. Quitting abandons it; provider work may "
+    "still be billed."
+)
 
 
 class ConsoleSettingsUnsavedGuardMixin:
@@ -269,6 +296,43 @@ class ConsoleSettingsUnsavedGuardMixin:
             )
         except (NoMatches, QueryError):
             return ()
+
+    def _quit_loss_copy(self) -> str | None:
+        """Name what Ctrl+Q would lose that the close guard stops at, if any.
+
+        The same three guards as ``_request_settings_close``, in its order
+        (memory reset, compaction, unsaved edits), but every one that applies:
+        quitting meets them all at once.
+        """
+        losses = []
+        if self._memory_reset_token is not None:
+            losses.append(QUIT_RESET_COPY)
+        if self._compaction_is_active():
+            losses.append(QUIT_COMPACTION_COPY)
+        labels = self._unsaved_field_labels()
+        if labels:
+            losses.append(unsaved_summary_copy(labels))
+        return "\n".join(losses) or None
+
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q quits past this modal's close guard (TASK-33622.10).
+
+        The quit flow consults the open modal first, and quitting must not
+        skip what Esc honours: an undoable memory reset, a running compaction
+        or unapplied edits each ask here, through the quit flow's shared
+        prompt.
+
+        Returns:
+            True to let the quit proceed; False to stay in Settings.
+        """
+        message = self._quit_loss_copy()
+        if message is None:
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+
+        return await confirm_quit_discarding_edits(self, message)
 
     def _ask_before_discarding(self, retry: Callable[[], object]) -> bool:
         """Show the unsaved prompt instead of closing, if anything is edited.
