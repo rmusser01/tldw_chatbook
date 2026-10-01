@@ -39,9 +39,10 @@ source or copied token definitions are needed (TASK-32816).
 
 - **Surfaces:** `$ds-surface-panel`, `$ds-surface-raised`,
   `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`
-  (`$ds-grid-line` and `$ds-control-edge` resolve to `$tldw-boundary`, a
-  theme variable `ensure_readable_text_hues` pins to 3:1 on surface and
-  panel for every theme, TASK-33003.6),
+  (`$ds-grid-line` and `$ds-control-edge` resolve to the theme variable
+  `$tldw-boundary`; the themes.py guard function `ensure_readable_text_hues`
+  pins that variable to 3:1 on surface and panel for every theme,
+  TASK-33003.6),
   `$ds-surface-sunken` (recessed resting surface for **enabled** chrome —
   inactive toggles, sunken strips; never a disabled state)
 - **Text:** `$ds-text-primary`, `$ds-text-muted`, `$ds-text-disabled`

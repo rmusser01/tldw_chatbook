@@ -22,7 +22,7 @@ This phase absorbs task-25890 (the boundary note escapes the impact pane). The s
 Constraints:
 - Geometry comes only from tokens defined in css/core/_variables.tcss (ADR-150/161). The floor for raw literals is a hard zero (Tests/UI/test_component_pattern_governance.py:266-289).
 - ADR-097 ratchets never rise.
-- console_settings_modal.py has zero headroom: its row in Tests/Architecture/test_module_size_ratchet.py:68 is 7,807, which is its current length. Modal edits are paid for by moving its DEFAULT_CSS control rules to the app tier.
+- console_settings_modal.py has zero headroom: its row in Tests/Architecture/test_module_size_ratchet.py (line 99 at phase start) is 7,802, which is its current length. Measured at the PR head: 7,764 lines, and the row (line 101) is lowered to 7,764. Modal edits are paid for by moving its DEFAULT_CSS control rules to the app tier.
 - No binding from ADR-031 rule 2 (Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+S, Ctrl+D, Ctrl+Z, Ctrl+A, Ctrl+R, Ctrl+W).
 
 Not in this phase: the inverted select-row height in Settings (css/features/_settings.tcss:465-470), field order, and the quick model popover. Design for 211x44 first and 235x52 second.
@@ -39,7 +39,7 @@ Not in this phase: the inverted select-row height in Settings (css/features/_set
 - [ ] #8 task-25890 is closed: the boundary note stays inside the impact pane, and its strict xfail is removed.
 - [ ] #9 All new geometry uses tokens defined only in css/core/_variables.tcss. test_dimension_literal_ratchet and test_python_style_ratchet (Tests/UI/test_component_pattern_governance.py:266, :291) stay at zero, and the hex ratchet (Tests/UI/test_design_token_governance.py:170) does not rise.
 - [ ] #10 No ADR-097 ratchet rises: the boot CSS byte budget (608,090, Tests/Performance/test_boot_css_byte_budget.py:117) and the _ui_ready census (1,031, Tests/Performance/test_ui_ready_module_census.py:150). If dev is already red, the branch's number equals dev's.
-- [ ] #11 console_settings_modal.py ends the phase at no more than 7,807 lines. If it shrank, its row in Tests/Architecture/test_module_size_ratchet.py is lowered to the measured size in the same PR.
+- [ ] #11 console_settings_modal.py ends the phase at no more than 7,802 lines. If it shrank, its row in Tests/Architecture/test_module_size_ratchet.py is lowered to the measured size in the same PR.
 - [ ] #12 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
 - [ ] #13 Live captures at 211x44 and 235x52, taken with a scratch TLDW_CONFIG_PATH profile, are attached to the PR. They cover the Chat settings Model view (collapsed and expanded), the unsaved-edits prompt and Settings rail focus.
 - [ ] #14 The Docs/User_Guide pages are updated: console.md (Chat settings density and the Esc prompt) and settings.md (rail focus), each with a Verified-against stamp.
@@ -115,7 +115,7 @@ The fix needs nothing new:
 - DESIGN.md:248 already defines a dense one-row form convention for Settings.
 - The three-row height was never an ADR decision.
 
-The modal has zero line headroom (Tests/Architecture/test_module_size_ratchet.py:68). Moving these DEFAULT_CSS rules to the app tier pays for the change and removes widget-tier rules that lose to app-tier CSS anyway (backlog/docs/lessons-textual.md:978).
+The modal has zero line headroom (its row in Tests/Architecture/test_module_size_ratchet.py: 7,802 at phase start, 7,764 at the PR head). Moving these DEFAULT_CSS rules to the app tier pays for the change and removes widget-tier rules that lose to app-tier CSS anyway (backlog/docs/lessons-textual.md:978).
 
 Known traps:
 - Removing a border turns on the global focus outline over one-row content (backlog/docs/lessons-testing-evidence.md:7220).

@@ -470,13 +470,13 @@ With edits, **Esc**, a click outside the modal, and
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**
 (Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
 back in the field you were editing. Apply goes through the same path as the
-footer's Apply button, so it writes nothing to `config.toml`; if a value is
-invalid, the modal stays open with the error summary. When Apply is
-unavailable (a run is active, say), the prompt says so, shows **Apply to
-this chat** dimmed, and starts on **Keep editing**. A pending memory reset
-or a running compaction still asks first, and the footer says so ("Esc
-close (asks: memory reset)", "Esc close (asks: compaction running)"); once
-you answer that, the unsaved prompt follows.
+footer's **Use for this conversation** button, so it writes nothing to
+`config.toml`; if a value is invalid, the modal stays open with the error
+summary. When Apply is unavailable (a run is active, say), the prompt says
+so, shows **Apply to this chat** dimmed, and starts on **Keep editing**. A
+pending memory reset or a running compaction still asks first, and the
+footer says so ("Esc close (asks: memory reset)", "Esc close (asks:
+compaction running)"); once you answer that, the unsaved prompt follows.
 
 Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:

@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-26 11:47'
-updated_date: '2026-09-30 16:30'
+updated_date: '2026-09-30 21:33'
 labels:
   - model-config-redesign
   - phase-3
@@ -194,8 +194,8 @@ Phase 3 ships as one PR. Chat settings becomes a dense form: one-row controls, f
 **Delegations and open owner calls.**
 - AC#9, "stay at zero": the inherited offenders go to TASK-33003.22. Phase 3 adds none.
 - AC#13, "attached to the PR": the PR description links qa/model-config-p3-2026-09-28/final/.
+- Ruled by the controller (2026-09-30): .2 AC#8 is met (expanded Model view 3 → 8; the collapsed view shows all 3 of its editable controls without scrolling).
 - Owner calls still open:
-  - the reading of .2 AC#8 (expanded Model view 3 → 8; the collapsed view holds only 3 editable controls);
   - ruling 16 (the ▶ glyph moves to the Phase 4 switcher; TASK-33004.4 AC#19 owns it);
   - Task 7's inspector floor (a 133/134-column edge) was accepted by the controller on 2026-09-30;
   - TASK-33003.13.
