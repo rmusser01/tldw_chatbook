@@ -11,6 +11,7 @@ which the preservation tests below pin.
 
 from __future__ import annotations
 
+import gc
 import os
 import sqlite3
 import statistics
@@ -295,7 +296,9 @@ def test_tracked_cursor_type_puts_the_tracked_cursor_first() -> None:
 
 @pytest.mark.parametrize("method", ["execute", "executemany", "executescript"])
 def test_a_tracked_subclass_replacing_a_statement_method_is_refused(method: str) -> None:
-    """The tracked cursor cannot be put ahead of its own subclass, so an override
+    """A tracked subclass that replaces a statement method is refused.
+
+    The tracked cursor cannot be put ahead of its own subclass, so an override
     that could skip boundary observation fails closed (Qodo, #2894).
 
     Args:
@@ -307,6 +310,27 @@ def test_a_tracked_subclass_replacing_a_statement_method_is_refused(method: str)
     )
     with pytest.raises(TypeError):
         base_db._tracked_cursor_type(bypassing)
+
+
+def test_a_composed_cursor_still_runs_the_callers_finalizer() -> None:
+    """The tracked cursor's destructor chains to the caller's (Qodo, #2894)."""
+    finalized: list[bool] = []
+
+    class FinalizingCursor(sqlite3.Cursor):
+        """A caller cursor with its own cleanup."""
+
+        def __del__(self) -> None:
+            finalized.append(True)
+
+    conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
+    try:
+        cursor = conn.cursor(FinalizingCursor)
+        cursor.execute("SELECT 1").fetchall()
+        del cursor
+        gc.collect()
+        assert finalized == [True]
+    finally:
+        conn.close()
 
 
 def test_a_non_class_cursor_factory_is_refused() -> None:

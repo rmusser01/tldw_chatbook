@@ -668,9 +668,16 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
     def __del__(self) -> None:
         connection = getattr(self, "_quiescent_connection", None)
         token = getattr(self, "_quiescence_token", None)
-        if connection is not None:
-            self._quiescence_token = None
-            connection._end_cursor_use(token)
+        try:
+            if connection is not None:
+                self._quiescence_token = None
+                connection._end_cursor_use(token)
+        finally:
+            # A caller's composed cursor type comes after this one in the MRO
+            # and may have its own cleanup (Qodo, #2894).
+            finalize = getattr(super(), "__del__", None)
+            if finalize is not None:
+                finalize()
 
 
 @functools.lru_cache(maxsize=64)
