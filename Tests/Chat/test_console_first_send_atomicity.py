@@ -916,8 +916,9 @@ async def test_project_folder_survives_a_first_send_cancelled_during_its_commit(
         with pytest.raises(asyncio.CancelledError):
             await task
     # The lock is released; the orphaned commit thread finishes on its own.
+    # Nothing to wait for after this: the cancel never discards the
+    # reservation here, so the flag clears only once the commit has landed.
     assert await _until(lambda: not store._durable_commit_in_flight)
-    await asyncio.sleep(0.2)
 
     assert gateway.calls == 0
     _conversation_id, restored = _restored_project_state(tmp_path)
