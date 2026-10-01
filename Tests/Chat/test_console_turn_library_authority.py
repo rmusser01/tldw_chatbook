@@ -1165,7 +1165,9 @@ async def test_queued_submit_observes_destination_only_after_dequeue_dispatch() 
 
 
 @pytest.mark.asyncio
-async def test_queued_configuration_and_policy_capture_only_after_dequeue(monkeypatch):
+async def test_queued_configuration_captures_at_enqueue_and_policy_after_dequeue(
+    monkeypatch,
+):
     events: list[str] = []
     store = ConsoleChatStore()
     session = store.create_session()
