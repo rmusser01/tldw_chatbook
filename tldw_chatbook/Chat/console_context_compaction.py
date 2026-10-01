@@ -456,7 +456,16 @@ class _FailedCompaction:
 def effective_memory_identity(
     effective: EffectiveMemoryResult,
 ) -> tuple[EffectiveMemoryKind, str | None, str | None]:
-    """Return the kind, generated memory id and legacy boundary in effect."""
+    """Return the kind, generated memory id and legacy boundary in effect.
+
+    Args:
+        effective: The effective memory selected for a conversation.
+
+    Returns:
+        ``(kind, memory_id, legacy_boundary_message_id)``; the id is None
+        without a generated memory and the boundary None without a legacy
+        prefix. Equal tuples mean the same memory is in effect.
+    """
 
     return (
         effective.kind,
@@ -472,6 +481,8 @@ def compaction_retry_fence(
     resolved: ResolvedConsoleContextPolicy,
     effective: EffectiveMemoryResult,
     snapshots: Sequence[DurableMessageSnapshot],
+    *,
+    active_request: bool = True,
 ) -> CompactionRetryFence:
     """Capture the retry fence for one automatic compaction decision.
 
@@ -482,6 +493,12 @@ def compaction_retry_fence(
         resolved: The resolved context policy for this request.
         effective: The effective memory selected for this request.
         snapshots: The durable active lineage, active request included.
+        active_request: True for a send or Retry, whose last user turn is
+            the request being prepared. False for Compact now and a
+            micro-compaction tick: only an incomplete last user turn (an
+            unsent message waiting in response recovery) is then a request;
+            a complete latest exchange is history, so editing it lifts the
+            pause like an edit to any earlier turn.
 
     Returns:
         A fence whose history excludes the active request, so a Retry or a
@@ -489,7 +506,11 @@ def compaction_retry_fence(
     """
 
     user_positions = [i for i, row in enumerate(snapshots) if row.role == "user"]
-    history = tuple(snapshots[: user_positions[-1]] if user_positions else snapshots)
+    pending = bool(user_positions) and (
+        active_request
+        or not _is_complete_durable_unit(snapshots[user_positions[-1] :])
+    )
+    history = tuple(snapshots[: user_positions[-1]] if pending else snapshots)
     kind, memory_id, legacy_boundary = effective_memory_identity(effective)
     settings = {
         "provider": resolution.provider,

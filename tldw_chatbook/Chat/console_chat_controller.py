@@ -25873,7 +25873,8 @@ class ConsoleChatController:
             prepare_main=prepare_main,
             prefix_messages=snapshots[: boundary_index + 1],
             retry_fence=compaction_retry_fence(
-                conversation_id, resolution, prompt, resolved, effective, snapshots
+                conversation_id, resolution, prompt, resolved, effective, snapshots,
+                active_request=not manual_action,
             ),
             honor_failure_latch=micro_compaction or not manual_action,
         )

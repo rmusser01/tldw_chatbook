@@ -1280,6 +1280,9 @@ def validate_branch_memory_commit(commit: BranchMemoryCommit) -> None:
     compaction runs them BEFORE its billed call. A commit that can never land
     (the live-session parent-chain fault) then fails at no cost.
 
+    Args:
+        commit: The branch memory commit the summary would be saved with.
+
     Raises:
         ValueError: If the memory, scope, selection or lineage disagree.
     """

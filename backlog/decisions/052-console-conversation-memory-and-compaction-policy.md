@@ -314,7 +314,10 @@ tick or Compact now. Later automatic attempts (sends, Retry, micro-compaction)
 on that route make no provider call while two things hold: the settings digest
 is unchanged (provider, model, prompt, policy other than failure behavior,
 model window, effective memory), and the durable history before the failed
-request is an unchanged prefix. Keeping one pause per route means a failed
+request is an unchanged prefix. Compact now and a micro-compaction tick carry
+no request, so their history is the whole lineage less only an unsent last
+turn; an edit to the latest complete exchange lifts their pause too. Keeping
+one pause per route means a failed
 Compact now on the `[chat_defaults] auxiliary_model` cannot replace the pause
 the sends' model set. Compact now is explicit and bypasses the latch; a
 success clears every route's pause. A stale result (the conversation moved

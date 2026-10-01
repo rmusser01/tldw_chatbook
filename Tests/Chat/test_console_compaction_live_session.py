@@ -20,6 +20,7 @@ provider calls are doubled.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -141,6 +142,19 @@ class _LiveProviderGateway:
         )
 
 
+#: Every database ``_live_controller`` opened in the current test.
+_OPEN_DATABASES: list[CharactersRAGDB] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_live_databases() -> Iterator[None]:
+    """Close each test's databases at teardown, whether the test passed or not."""
+
+    yield
+    while _OPEN_DATABASES:
+        _OPEN_DATABASES.pop().close_connection()
+
+
 def _live_controller(
     tmp_path: Path,
     *,
@@ -148,6 +162,7 @@ def _live_controller(
     overrides: ConsoleContextPolicyOverrides = _OVERRIDES,
 ) -> tuple[CharactersRAGDB, ConsoleChatStore, ConsoleChatController, Any]:
     db = CharactersRAGDB(tmp_path / "live-compaction.sqlite", client_id="task33621")
+    _OPEN_DATABASES.append(db)
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.create_session(session_id="session-1", title="Chat 1")
     store.set_session_context_policy_overrides(session.id, overrides)
@@ -613,3 +628,70 @@ async def test_live_failed_micro_compaction_is_not_rebilled_by_the_next_tick(
     assert [row["failure_reason"] for row in _attempt_rows(db)] == [
         "invalid_summary_output"
     ]
+
+
+def _latest_reply(store: ConsoleChatStore) -> Any:
+    return [
+        message
+        for message in store.messages_for_session("session-1")
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ][-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("micro", [False, True], ids=["compact-now", "micro-tick"])
+@pytest.mark.parametrize("edit", [True, False], ids=["edited", "unchanged"])
+async def test_live_edit_to_the_latest_exchange_lifts_the_pause(
+    tmp_path: Path, micro: bool, edit: bool
+) -> None:
+    """AC#5: Compact now and a micro tick fence the WHOLE completed lineage.
+
+    Neither carries an active request, so the latest exchange is history: an
+    edit to it lifts their pause like an edit to any earlier turn. Without
+    the edit (the negative control) the next automatic attempt stays paused.
+    """
+
+    db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    for index in range(2):
+        await controller.submit_draft(f"question-{index}.", session_id="session-1")
+    await controller.compact_context_now("session-1", micro=micro)
+    assert gateway.auxiliary_calls == 1
+
+    if edit:
+        store.update_message_content(
+            _latest_reply(store).id, "An edited, much shorter answer."
+        )
+    await controller.compact_context_now("session-1", micro=True)
+
+    assert gateway.auxiliary_calls == (2 if edit else 1)
+    assert [row["failure_reason"] for row in _attempt_rows(db)] == [
+        "invalid_summary_output"
+    ] * gateway.auxiliary_calls
+
+
+@pytest.mark.asyncio
+async def test_live_compact_now_beside_an_unsent_turn_keeps_its_retry_paused(
+    tmp_path: Path,
+) -> None:
+    """AC#5: the unsent turn in response recovery is a request, not history.
+
+    A failed send leaves its user turn unanswered; a Compact now made then
+    must fence the same history the Retry of that turn does, or the Retry
+    would make one more billed summary call.
+    """
+
+    _db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    await _send_until_compaction(controller, gateway)
+    assert store.dispatch_recovery_for_session("session-1") is not None
+
+    succeeded, _copy = await controller.compact_context_now("session-1")
+    assert succeeded is False
+    assert gateway.auxiliary_calls == 2  # Compact now always tries
+
+    retried = await controller.retry_dispatch_recovery("session-1")
+    assert gateway.auxiliary_calls == 2
+    assert "automatic compaction is paused" in retried.visible_copy
