@@ -411,8 +411,11 @@ class HomeScreen(BaseAppScreen):
         self.app.call_from_thread(self._refresh_after_chatbook_artifact_snapshot)
 
     def _refresh_after_chatbook_artifact_snapshot(self) -> None:
+        # TASK-33264: sync in place. A whole-screen recompose here ran once
+        # per visit of this reused screen (~68 ms vs ~3 ms) and left each
+        # discarded tree pinned in the screen's query_one cache.
         if self.is_mounted:
-            self.refresh(recompose=True)
+            self._sync_home_triage()
 
     @work(exclusive=True, group="home-content-snapshot")
     async def _refresh_home_content_snapshot(self) -> None:

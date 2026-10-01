@@ -193,7 +193,7 @@ from tldw_chatbook.Utils.instance_lock import (
     acquire_profile_instance_lock,
 )
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
-from tldw_chatbook.Utils.text_selection_crash_guard import TextSelectionCrashGuard
+from tldw_chatbook.Utils.text_selection_crash_guard import TextualAppGuards
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 #
@@ -769,11 +769,13 @@ class WideViewportTierMixin:
 
 
 class TldwCli(
-    # TextSelectionCrashGuard sits before App: its on_event wrapper is the last
-    # defense against Textual 8.x's text-selection MouseDown crash on a
-    # mid-recompose widget (task-14903; its docstring names the ONE signature).
+    # TextualAppGuards sits before App: its TextSelectionCrashGuard on_event
+    # wrapper is the last defense against Textual 8.x's text-selection
+    # MouseDown crash on a mid-recompose widget (task-14903; its docstring
+    # names the ONE signature). It also owns the loop's default executor
+    # (ThreadWorkerContextGuard, TASK-33264).
     WideViewportTierMixin,
-    TextSelectionCrashGuard,
+    TextualAppGuards,
     LibraryIngestQueueMixin,
     ServiceWiringMixin,
     LifecycleMixin,

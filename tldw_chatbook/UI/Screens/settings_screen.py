@@ -696,7 +696,8 @@ class _ConsoleToggleWrite:
 
     confirmed: bool | str
     desired: bool | str
-    screen: "SettingsScreen"
+    #: The latest mounted Settings screen; None once it unmounts (TASK-33264).
+    screen: "SettingsScreen | None"
     running: bool = False
     revision: int = 0
     result: str = ""
@@ -707,7 +708,8 @@ class _ConsoleToggleWrite:
 class _PermissionSummaryWrite:
     """Keep immediate form edits and their writer across Settings recreation."""
 
-    screen: "SettingsScreen"
+    #: The latest mounted Settings screen; None once it unmounts (TASK-33264).
+    screen: "SettingsScreen | None"
     form: dict[str, str] | None = None
     pending: tuple[int, dict[str, str]] | None = None
     running: bool = False
@@ -4310,6 +4312,15 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence late credential and Model Library results before replacement."""
 
+        # TASK-33264: an app-level Signal pins its subscriber until that
+        # signal next publishes; without this every visit leaked the screen.
+        self.app.theme_changed_signal.unsubscribe(self)
+        # The app-lifetime writers below outlive this screen; a late result
+        # falls back to the screen that started it (see _finish_*).
+        for state in (*self._console_toggle_writes.values(), self._permission_summary_write):
+            with state.lock:
+                if state.screen is self:
+                    state.screen = None
         self._tool_profile_review_intent = None
         self._settings_workspace_first_bind_intent = None
         if self._subscription_readiness_timer is not None:
@@ -7440,7 +7451,7 @@ class SettingsScreen(BaseAppScreen):
         with state.lock:
             if revision != state.revision:
                 return
-            screen, value = state.screen, state.desired
+            screen, value = state.screen or self, state.desired
         label = {
             "remote-images": "Linked images",
             "status-row-position": "Status row placement",
@@ -7611,7 +7622,7 @@ class SettingsScreen(BaseAppScreen):
             else:
                 state.form = None
                 state.result = "Saved. Applies immediately."
-            screen = state.screen
+            screen = state.screen or self
         if screen.is_attached:
             screen._refresh_permission_summary_save_widgets()
 
