@@ -60,6 +60,13 @@ def in_worker_task() -> bool:
     one. (A pump started in that very step also inherits it, but only its
     own first step could see it so: the worker is assigned its task before
     that pump's task runs again.)
+
+    Returns:
+        True when the calling task is the current worker's own task (or that
+        worker's first step under the eager factory), so awaiting a review
+        here blocks no message pump. False on any pump -- including one that
+        merely inherited a worker's contextvar -- and when there is no worker
+        or Textual no longer exposes ``Worker._task``.
     """
     try:
         worker = get_current_worker()

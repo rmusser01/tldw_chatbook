@@ -81,6 +81,12 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         ran and the Console's Send never settled. ``dismiss`` settles this
         future synchronously instead, and leaving the DOM without a dismissal
         settles it as a cancel, so a waiting caller always resumes.
+
+        Returns:
+            The same future on every call, created on first use. It resolves
+            to the ``HookReviewResult`` the modal was dismissed with --
+            ``HookReviewResult("cancel")`` for a bare dismissal or an unmount
+            without one -- and is never cancelled or failed by the modal.
         """
         if self._answer is None:
             self._answer = asyncio.get_running_loop().create_future()
@@ -92,6 +98,19 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
             answer.set_result(result)
 
     def dismiss(self, result: HookReviewResult | None = None) -> AwaitComplete:
+        """Settle ``answer()`` first, then dismiss as Textual does.
+
+        Settling here, synchronously, is the TASK-33621.28 fix: a waiting
+        caller resumes without any pump flushing a result callback.
+
+        Args:
+            result: The review outcome; ``None`` settles the answer as
+                ``HookReviewResult("cancel")``. Passed on to Textual unchanged.
+
+        Returns:
+            Textual's ``Screen.dismiss`` awaitable, which completes once the
+            modal has been popped.
+        """
         self._settle(result or HookReviewResult("cancel"))
         return super().dismiss(result)
 
