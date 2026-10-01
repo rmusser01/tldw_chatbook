@@ -320,8 +320,10 @@ class SafeModalDismissMixin:
         already spent, so its next close raised ``InvalidStateError`` and
         exited the app. Covered, or already popped, it is now refused before
         anything is delivered: the screen above stays, and a periodic caller
-        (the video player's time box) simply closes on its next tick on top.
-        With no running app, Textual's own path decides, as before.
+        (the video player's time box) simply closes on its next tick on top;
+        a one-shot caller must keep its close for ``ScreenResume`` itself (the
+        video player's failure close does). With no running app, Textual's
+        own path decides, as before.
 
         Args:
             result: The result for the opener's callback.

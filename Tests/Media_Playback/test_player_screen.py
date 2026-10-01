@@ -1129,8 +1129,20 @@ async def _stay(pilot: Any, prompt, worker) -> None:
     assert worker.result is False, "the prompt vanished instead of being answered"
 
 
+def _failure_notices(app: _CoveredPlayerApp) -> list[str]:
+    return [n for n in app.notifications if "system player" in n.lower()]
+
+
 @pytest.mark.asyncio
-async def test_a_player_failing_under_a_quit_prompt_waits_for_the_answer(monkeypatch):
+async def test_a_player_failing_under_a_quit_prompt_closes_once_uncovered(
+    monkeypatch,
+):
+    """A failure is one-shot: the close it wants waits for the answer, then runs.
+
+    The covered dismiss is refused (it would pop the quit prompt), so the
+    failure defers its close -- and the notice that explains it -- until the
+    player is back on top. Stay must not leave a dead player behind.
+    """
     release = Event()
 
     def _probe_then_fail(path: str):
@@ -1152,22 +1164,32 @@ async def test_a_player_failing_under_a_quit_prompt_waits_for_the_answer(monkeyp
             release.set()
             await _until_true(
                 pilot,
-                lambda: any("system player" in n.lower() for n in app.notifications),
-                "the failure notice",
+                lambda: (
+                    not [
+                        w
+                        for w in app.workers
+                        if w.group == "video-player-activation" and not w.is_finished
+                    ]
+                ),
+                "the activation worker to fail",
             )
             await pilot.pause(0.4)  # past the helper's watch interval + grace
 
             assert app.screen is prompt, "the player's close popped the quit prompt"
             assert not worker.is_finished
             assert results == []
+            assert _failure_notices(app) == [], (
+                "the failure announced a close it could not make yet"
+            )
 
             await _stay(pilot, prompt, worker)
-            assert app.screen is player
-            await pilot.press("q")
             await _until_true(
-                pilot, lambda: player not in app.screen_stack, "Close to close it"
+                pilot,
+                lambda: player not in app.screen_stack,
+                "the failed player to close once it is on top again",
             )
             assert results == [None]
+            assert len(_failure_notices(app)) == 1
             assert app._exception is None
             assert app.is_running
     finally:
