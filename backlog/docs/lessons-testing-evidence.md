@@ -17053,3 +17053,44 @@ stripes, a 1.03:1 focus change and 1,958 unpainted cells.
 as clean. Use a static token/CSS grep over the Python `DEFAULT_CSS` tier plus
 measured SGR contrast and focus deltas from a real capture as the deterministic
 evidence.
+
+## A scratch plugin that marks every test `bootstrap_profile` hides missing markers (Console P0 batches, 2026-09-30)
+
+**Incident.** On this machine, many Console tests fail at setup with
+`RecoveryRequired('raw_source_selection_changed')`. The per-test sandbox refuses
+config-participant admission, on dev and on every branch. To get signal, the fix
+agents ran with a scratch pytest plugin that added `bootstrap_profile` to every
+collected test, and each reported its new tests green. The lead re-ran the new tests
+under the repo's own pytest config before merge:
+- TASK-33621.10: 13 of 17 new tests failed.
+- TASK-33620.4: 3 of 3 failed.
+- TASK-33628.2: 9 of 18 failed.
+- TASK-33621.19: three durable-queue tests **hung for 300 s** each (pytest-timeout)
+  instead of failing.
+
+Each branch was fixed by adding `pytestmark = pytest.mark.bootstrap_profile`, the
+marker 36 test files already carried at the batch base `75c06af39a` (10 of them
+`test_console_*` files). The units that had added it themselves (TASK-33621.3, .13,
+.14) passed.
+
+**What to do.** Any new test that drives the real ChatScreen, controller or store must
+carry `bootstrap_profile`, either as a module `pytestmark` or per test. A
+helper plugin may be used to *compare* branch and base failure sets, but the last
+gate is always the plain command: `.venv/bin/python -m pytest <new test files>` with
+no extra `-p` plugins. A test that passes only under the plugin is not a passing test.
+
+## `xfail(strict=True, raises=AssertionError)` accepts a broken precondition as the expected failure (TASK-33621.13, 2026-09-30)
+
+**Incident.** The W003 investigation pinned three real hook-review Send freezes
+(TASK-33621.28) with `pytest.mark.xfail(strict=True, raises=AssertionError)`.
+`strict=True` would catch an unexpected pass, so the pins looked safe. The checkpoint
+review showed otherwise with a probe. When the test's *setup* failed (the hook review
+never opened, or the requester was not the expected pump), that plain `assert` raised
+AssertionError too, and pytest reported the expected **XFAIL**, which counts as green.
+A fixture regression or a partial fix that changed the requester would have been
+indistinguishable from "still frozen".
+
+**What to do.** Raise a dedicated exception type only at the assertion that *is* the
+known bug (the tests now use `FreezeObserved(Exception)`), mark with
+`raises=FreezeObserved`, and keep preconditions as plain asserts, so they FAIL.
+Prove it once with a deliberately broken precondition: it must go red, not xfail.
