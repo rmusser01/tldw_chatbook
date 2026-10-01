@@ -586,6 +586,9 @@ Focusing the **Provider** or **Model** field, by Tab or by a click, keeps
 its current value on screen, selected, and opens the full list below it;
 the first key you type replaces the value and filters the list, and
 **Escape** puts the value back.
+In the model list, the model the field holds says **● CURRENT** after its
+name, and **Down** from the field highlights it first; when your filter
+hides it, **Down** highlights the first match.
 The line under the model field counts the list — "1 model available. Type
 to filter." or "12 models available. Type to filter." — and when more models
 match than the 20 rows the list shows, it says so: "Showing 20 of 57

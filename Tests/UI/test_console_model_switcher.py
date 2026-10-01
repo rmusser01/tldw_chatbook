@@ -220,6 +220,7 @@ def build_switcher(
     remembered_previous: _Use | None = None,
     catalog_loader=None,
     draft_rebaser=_rebase,
+    pick_only: bool = False,
 ) -> ConsoleModelPopover:
     """One switcher with recording seams. RECENT loads after open."""
 
@@ -247,6 +248,7 @@ def build_switcher(
         previous_pair=previous,
         catalog_loader=catalog_loader,
         setup_opener=lambda provider, model: recorder.setup.append((provider, model)),
+        pick_only=pick_only,
     )
 
 
@@ -1613,3 +1615,144 @@ async def test_clearing_a_value_the_chat_opened_blank_is_an_edit() -> None:
     (submission,) = recorder.submissions
     settings = submission.draft.settings
     assert (settings.model, settings.max_tokens) == ("claude-sonnet-4-5", None)
+
+
+def _row_keys(switcher: ConsoleModelPopover) -> list[tuple[str, str, str | None]]:
+    """Every listed row but the headers, whose copy differs by mode."""
+    return [row.key for row in switcher._rows if row.kind != "header"]
+
+
+async def test_pick_only_lists_the_same_pairs_and_returns_the_pick_unapplied() -> None:
+    """TASK-33004.6 AC#1, AC#4: the pick-only result contract.
+
+    Pick-only Switch model lists the pairs the switcher lists, has no value
+    row and no default action, prints only the keys it binds, and Enter hands
+    the highlighted pair back to the opener as ``(provider, model)``, with the
+    provider's canonical key (a stored chat may hold "Anthropic"): nothing is
+    rebased, applied, saved or routed to Settings. Ctrl+N and Ctrl+O, the
+    switcher's default-action keys, do nothing here.
+    """
+    previous = _Use("Anthropic", "claude-sonnet-4-5", timedelta(hours=2), True)
+    recent = (_Use("openai", "gpt-5.1", timedelta(hours=3)),)
+    listed = {}
+    rebased: list[object] = []
+
+    def recording_rebaser(state, **kwargs):
+        rebased.append(kwargs["model"])
+        return _rebase(state, **kwargs)
+
+    for pick_only in (False, True):
+        recorder = Recorder()
+        app = SwitcherHarness()
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = await open_switcher(
+                app,
+                pilot,
+                build_switcher(
+                    recorder,
+                    recent=recent,
+                    remembered_previous=previous,
+                    draft_rebaser=recording_rebaser if pick_only else _rebase,
+                    pick_only=pick_only,
+                ),
+            )
+            listed[pick_only] = _row_keys(switcher)
+            if not pick_only:
+                continue
+            assert app.focused is switcher.query_one("#console-popover-find", Input)
+            assert [widget.id for widget in switcher.query(Input)] == [
+                "console-popover-find"
+            ]
+            assert not switcher.query(Select) and not switcher.query(Button)
+            text = "\n".join(painted_lines(app))
+            assert "Enter picks · Esc cancel" in text
+            for gone in (
+                "Values for",
+                "Temperature",
+                "Max tokens",
+                "Save as model default",
+                "Ctrl+N",
+                "Ctrl+O",
+                "Applies to",
+                "Enter apply",
+                "Enter applies",
+                "swaps back",
+            ):
+                assert gone not in text, gone
+
+            await pilot.press("ctrl+n", "ctrl+o")
+            await pilot.pause()
+            assert app.screen is switcher and app.result == "unset"
+            row = switcher.highlighted_row()
+            assert row is not None and row.model == "claude-sonnet-4-5"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen is not switcher
+
+    assert listed[True] == listed[False]
+    assert app.result == ("anthropic", "claude-sonnet-4-5")
+    assert recorder.submissions == [] and recorder.setup == [] and rebased == []
+
+
+async def test_pick_only_never_picks_needs_setup_and_esc_returns_nothing() -> None:
+    """TASK-33004.6 AC#2: NEEDS SETUP rows are listed but cannot be
+    highlighted or picked, their copy promises no Enter, and Esc returns
+    None at once, even when the opener's draft carries unsaved edits."""
+    recorder = Recorder(ready=frozenset({"llama_cpp"}))
+    edited = _draft()
+    edited = replace(
+        edited,
+        field_drafts=tuple(
+            replace(field, dirty=field.name == "temperature")
+            for field in edited.field_drafts
+        ),
+    )
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                draft=edited,
+                providers_models={
+                    "Llama_cpp": ["model-a", "model-b"],
+                    "OpenAI": ["gpt-5.1"],
+                },
+                pick_only=True,
+            ),
+        )
+        pairs = switcher.query_one("#console-popover-pairs", OptionList)
+        setup = [i for i, row in enumerate(switcher._rows) if row.kind == "setup"]
+        assert setup and all(pairs.get_option_at_index(i).disabled for i in setup)
+        # Disabled, but not painted like a header: muted and still readable.
+        header = next(i for i, row in enumerate(switcher._rows) if row.kind == "header")
+        x, top = pairs.region.x + 2, pairs.region.y
+        _, header_ink, _ = _painted_cell(app.screen, x, top + header)
+        _, setup_ink, setup_bg = _painted_cell(app.screen, x, top + setup[0])
+        assert setup_ink != header_ink and _ratio(setup_ink, setup_bg) >= 4.5
+        lines = list_lines(app, switcher)
+        assert line_with(lines, "NEEDS SETUP")
+        for line in lines[min(setup) - 1 : max(setup) + 1]:
+            assert "Enter" not in line, line
+
+        seen = set()
+        for _ in switcher._rows:
+            await pilot.press("down")
+            seen.add(switcher.highlighted_row().kind)
+        assert "setup" not in seen
+
+        await pilot.press(*"openai")
+        await pilot.pause()
+        assert {row.kind for row in switcher._rows} >= {"setup"}
+        assert switcher.highlighted_row() is None
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen is switcher and app.result == "unset"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is not switcher
+
+    assert app.result is None
+    assert recorder.submissions == [] and recorder.setup == []

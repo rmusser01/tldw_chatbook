@@ -135,7 +135,7 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from tldw_chatbook.Widgets.model_search_picker import CURRENT_MARK, ModelSearchPicker
 
 
 def _assert_private_values_absent(
@@ -14693,9 +14693,10 @@ async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
         await pilot.press("o", "n", "l", "y")
         await pilot.pause()
         results = modal.query_one("#model-search-picker-results", OptionList)
+        # TASK-33004.6: the selected model is the committed one, so it says so.
         assert [str(option.prompt) for option in results.options] == [
             "Custom / unverified",
-            "only-real-model",
+            f"only-real-model  {CURRENT_MARK}",
         ]
 
 
@@ -15746,7 +15747,7 @@ async def test_console_settings_modal_shows_current_catalog_model_provenance() -
             for option in modal.query_one(
                 "#model-search-picker-results", OptionList
             ).options
-        ] == ["Current catalog", "gpt-5.6-terra"]
+        ] == ["Current catalog", f"gpt-5.6-terra  {CURRENT_MARK}"]  # TASK-33004.6
 
 
 @pytest.mark.asyncio

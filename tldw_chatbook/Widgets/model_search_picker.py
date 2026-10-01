@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 
-from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -33,6 +32,9 @@ _CLOUD_CATALOG_PROVIDER_KEYS = {
     provider_config_key(provider) for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
 }
 MODEL_ID_MAX_LENGTH = 256
+#: The committed model's row says so in words, not colour alone (shared with
+#: Switch model).
+CURRENT_MARK = "● CURRENT"
 _BLUR_RESTORE_DELAY_SECONDS = 0.05
 _PROVENANCE_GROUP_LABELS = {
     ConsoleModelProvenance.SERVED_NOW: "Served now",
@@ -214,6 +216,7 @@ class ModelSearchPicker(Widget):
         self._options_by_provider: dict[str, tuple[object, ...]] = {}
         self._provenance_provider_keys: set[str] = set()
         self._result_model_ids_by_option_id: dict[str, str] = {}
+        self._committed_index: int | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         self._load_errors: dict[str, bool] = {}
         self._load_counts: dict[str, int] = {}
@@ -665,6 +668,7 @@ class ModelSearchPicker(Widget):
         results = self.query_one("#model-search-picker-results", OptionList)
         self._matches = []
         self._result_model_ids_by_option_id = {}
+        self._committed_index = None
         results.clear_options()
         results.display = False
 
@@ -691,9 +695,10 @@ class ModelSearchPicker(Widget):
             return
         self._matches = model_ids[: self.MAX_RESULTS]
         self._result_model_ids_by_option_id = {}
+        self._committed_index = None
         results.clear_options()
         for model_id in self._matches:
-            results.add_option(Option(escape_markup(model_id)))
+            self._add_result(results, model_id)
         results.display = bool(self._matches)
         self._render_match_status(normalized_query, len(model_ids))
 
@@ -738,6 +743,7 @@ class ModelSearchPicker(Widget):
         ]
         self._matches = ordered_options[: self.MAX_RESULTS]
         self._result_model_ids_by_option_id = {}
+        self._committed_index = None
         results.clear_options()
         for provenance, group_label in _PROVENANCE_GROUP_LABELS.items():
             group = [
@@ -757,14 +763,19 @@ class ModelSearchPicker(Widget):
             for option in group:
                 option_id = f"model-provenance-option-{len(self._result_model_ids_by_option_id)}"
                 self._result_model_ids_by_option_id[option_id] = option.model_id
-                results.add_option(
-                    Option(
-                        Text(option.model_id),
-                        id=option_id,
-                    )
-                )
+                self._add_result(results, option.model_id, option_id)
         results.display = bool(self._matches)
         self._render_match_status(normalized_query, len(ordered_options))
+
+    def _add_result(
+        self, results: OptionList, model_id: str, option_id: str | None = None
+    ) -> None:
+        """Add one literal model row; the committed model says so in words."""
+        prompt = Text(model_id)
+        if model_id == self._selected_model:
+            self._committed_index = results.option_count
+            prompt.append(f"  {CURRENT_MARK}")
+        results.add_option(Option(prompt, id=option_id))
 
     def _commit_catalog_model(self, model_id: str) -> None:
         normalized = self._normalize_model(model_id)
@@ -914,11 +925,13 @@ class ModelSearchPicker(Widget):
         if event.key == "down" and self._matches:
             results = self.query_one("#model-search-picker-results", OptionList)
             results.focus()
+            # The committed model first (C7(b)), else the first enabled row.
             results.highlighted = next(
                 (
                     index
                     for index, option in enumerate(results.options)
-                    if not option.disabled
+                    if index == self._committed_index
+                    or (self._committed_index is None and not option.disabled)
                 ),
                 None,
             )

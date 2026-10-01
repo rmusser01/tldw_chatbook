@@ -13,6 +13,10 @@ recents come from injected loaders, so this widget calls no provider service
 TASK-33004.5 added the value row: exactly the quick mask (Temperature, Max
 tokens, Streaming), each one row with its spec §6 Source word, and the keys
 Enter / Tab / Ctrl+N / Ctrl+O / Esc, with Esc asking before it drops edits.
+
+TASK-33004.6 added pick-only mode (spec §4 rule 1, for Chat settings'
+Change): the same pairs, no value row and no default action; Enter returns
+the highlighted ``(provider, model)`` and NEEDS SETUP rows cannot be picked.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from math import isfinite
 from typing import Any, ClassVar, Literal, Protocol
 from uuid import uuid4
 
+from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -68,7 +73,7 @@ from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-from tldw_chatbook.Widgets.model_search_picker import normalize_model_id
+from tldw_chatbook.Widgets.model_search_picker import CURRENT_MARK, normalize_model_id
 
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
 
@@ -103,7 +108,6 @@ TOP_MODELS_PER_PROVIDER = 3
 _RECENT_ROWS = 6
 _SETUP_ROWS = 8
 _MATCH_ROWS = 30
-CURRENT_MARK = "● CURRENT"
 HIGHLIGHT_GLYPH = "▶"
 #: Legacy aliases are hidden unless configured or current (ADR-066); the
 #: built-in custom and custom_2 slots always stay listable (ADR-146).
@@ -289,7 +293,10 @@ class UnsavedEditsGuard(Static, can_focus=True):
 
 class ConsoleModelPopover(
     SafeModalDismissMixin,
-    ModalScreen["ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None"],
+    ModalScreen[
+        "ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer"
+        " | tuple[str, str] | None"
+    ],
 ):
     """Switch model: choose this chat's provider·model pair and quick values."""
 
@@ -409,6 +416,7 @@ class ConsoleModelPopover(
         previous_pair: PreviousPairResolver | None = None,
         catalog_loader: CatalogLoader | None = None,
         setup_opener: SetupOpener | None = None,
+        pick_only: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -432,6 +440,11 @@ class ConsoleModelPopover(
             catalog_loader: Resolves one provider's cached catalog.
             setup_opener: Opens Settings for a NEEDS SETUP provider and one
                 of its own models (so Settings never keeps another provider's).
+            pick_only: Return the chosen ``(provider, model)`` instead of
+                applying it. Lists the same pairs, but shows no values or
+                default actions, never calls ``draft_rebaser``,
+                ``live_committer`` or ``setup_opener``, and NEEDS SETUP rows
+                cannot be picked.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -452,6 +465,7 @@ class ConsoleModelPopover(
         self._previous_pair = previous_pair
         self._catalog_loader = catalog_loader
         self._setup_opener = setup_opener
+        self._pick_only = pick_only
         settings = initial_draft.settings
         self._chat_settings = settings
         self._streaming = bool(settings.streaming)
@@ -571,12 +585,11 @@ class ConsoleModelPopover(
         ready = [
             key for key in self._provider_order if _is_ready(self._readiness.get(key))
         ]
+        enter = "Enter picks" if self._pick_only else "Enter applies"
         if not ready:
-            return "type to search models · Enter applies"
+            return f"type to search models · {enter}"
         count = sum(len(self._models_for(key)) for key in ready)
-        return (
-            f"type to search {count} models in {len(ready)} providers · Enter applies"
-        )
+        return f"type to search {count} models in {len(ready)} providers · {enter}"
 
     # -- compose --------------------------------------------------------
 
@@ -599,6 +612,12 @@ class ConsoleModelPopover(
             pairs = OptionList(id="console-popover-pairs", compact=True)
             pairs.can_focus = False
             yield pairs
+            if self._pick_only:
+                with Horizontal(
+                    id="console-popover-keys", classes="console-popover-strip"
+                ):
+                    yield Static("Enter picks · Esc cancel", markup=False)
+                return
             yield Static(
                 self._values_label(), id="console-popover-values-label", markup=False
             )
@@ -691,8 +710,9 @@ class ConsoleModelPopover(
             self._previous = self._previous_pair(())
         self._rebuild_rows()
         self.query_one("#console-popover-find", Input).focus()
-        # The rows' first highlight may not rebase (the chat's own pair).
-        self.call_after_refresh(self._sync_source_words)
+        if not self._pick_only:
+            # The rows' first highlight may not rebase (the chat's own pair).
+            self.call_after_refresh(self._sync_source_words)
         self._request_readiness(self._readiness_targets())
         if self._recent_pairs_loader is not None:
             self.run_worker(
@@ -979,7 +999,10 @@ class ConsoleModelPopover(
                     )
                 )
                 claim(previous.provider, previous.model)
-        group("PREVIOUS · Alt+M, Enter swaps back", members)
+        group(
+            "PREVIOUS" if self._pick_only else "PREVIOUS · Alt+M, Enter swaps back",
+            members,
+        )
 
         members = []
         for use in self._recent:
@@ -1078,7 +1101,12 @@ class ConsoleModelPopover(
             "READY PROVIDERS · top 3 each · typing searches every provider's catalog",
             ready_rows,
         )
-        group("NEEDS SETUP · Enter opens the fix", setup_rows)
+        group(
+            "NEEDS SETUP · set up in Settings first"
+            if self._pick_only
+            else "NEEDS SETUP · Enter opens the fix",
+            setup_rows,
+        )
         rows.extend(self._typed_rows(tokens))
         return rows
 
@@ -1107,8 +1135,13 @@ class ConsoleModelPopover(
         tokens: Sequence[str],
         current_shown: bool,
     ) -> list[SwitcherRow]:
-        hint = _SETUP_HINTS.get(
-            str(readiness.recovery_action or ""), "Enter: open Settings"
+        # Pick-only Enter cannot open the fix, so no row promises it.
+        hint = (
+            ""
+            if self._pick_only
+            else _SETUP_HINTS.get(
+                str(readiness.recovery_action or ""), "Enter: open Settings"
+            )
         )
         current_provider, current_model = self._current
         is_current_provider = key == provider_key(current_provider)
@@ -1199,12 +1232,19 @@ class ConsoleModelPopover(
         model = row.model or "(any model)"
         context = self._context_label(row.provider, row.model) if row.model else ""
         readiness = self._readiness.get(provider_key(row.provider))
+        style = Style()
+        if not self._selectable(row):
+            # Disabled options paint like headers; an unpickable pair is muted.
+            pairs = self.query_one("#console-popover-pairs", OptionList)
+            color = pairs.get_component_rich_style("option-list--option").color
+            style = Style(color=color, bold=False, dim=True)
         return Text(
             f"{glyph} {_fit(model, _MODEL_COLUMNS):<{_MODEL_COLUMNS}} "
             f"{_fit(self._display(row.provider), _PROVIDER_COLUMNS):<{_PROVIDER_COLUMNS}} "
             f"{context:>{_CONTEXT_COLUMNS}}  "
             f"{_fit(switcher_readiness_words(readiness), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
-            f"{row.note}"
+            f"{row.note}",
+            style=style,
         )
 
     def _rebuild_rows(self) -> None:
@@ -1217,20 +1257,22 @@ class ConsoleModelPopover(
         with pairs.prevent(OptionList.OptionHighlighted):
             pairs.clear_options()
             pairs.add_options(
-                Option(
-                    self._prompt(row, False), disabled=row.kind in {"header", "info"}
-                )
+                Option(self._prompt(row, False), disabled=not self._selectable(row))
                 for row in self._rows
             )
         self._set_highlight(self._highlight_target())
         self._sync_list_height()
         self.call_after_refresh(self._sync_list_height)
 
+    def _selectable(self, row: SwitcherRow) -> bool:
+        """Headers and info rows never; NEEDS SETUP rows not while picking."""
+        return row.kind not in {"header", "info"} and not (
+            self._pick_only and row.kind == "setup"
+        )
+
     def _highlight_target(self) -> int | None:
         selectable = [
-            index
-            for index, row in enumerate(self._rows)
-            if row.kind not in {"header", "info"}
+            index for index, row in enumerate(self._rows) if self._selectable(row)
         ]
         if not selectable:
             return None
@@ -1291,7 +1333,7 @@ class ConsoleModelPopover(
             if row is not None and row.kind in {"pair", "typed", "setup"} and row.model
             else self._current
         )
-        if model:
+        if model and not self._pick_only:
             self._rebase_to(provider, model)
 
     def highlighted_row(self) -> SwitcherRow | None:
@@ -1370,6 +1412,13 @@ class ConsoleModelPopover(
             find.value = f"{self._display(row.provider)} "
             find.cursor_position = len(find.value)
             find.focus()
+            return
+        if self._pick_only:
+            # Hand the pair back, provider canonical; the opener decides.
+            picked = self._selectable(row) and row.model
+            if picked and action is ConsoleSettingsAction.APPLY_TO_CHAT:
+                self._release_mouse_capture()
+                self.dismiss_safe_once((provider_key(row.provider), row.model))
             return
         if row.kind == "setup" and action is ConsoleSettingsAction.APPLY_TO_CHAT:
             key = provider_key(row.provider)
@@ -1689,7 +1738,7 @@ class ConsoleModelPopover(
                 return
 
     def _submit(self, action: PopoverSubmitAction) -> None:
-        if self._submit_pending or self._safe_dismiss_committed:
+        if self._pick_only or self._submit_pending or self._safe_dismiss_committed:
             return
         draft = self._validated_draft()
         if draft is None:
@@ -1759,6 +1808,9 @@ class ConsoleModelPopover(
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Esc/backdrop: close if nothing is edited, else ask; in the ask, keep editing."""
         del source
+        if self._pick_only:
+            self.dismiss_safe_once(None)  # nothing was edited here to ask about
+            return
         guard = self.query_one("#console-popover-guard", UnsavedEditsGuard)
         if guard.display:
             self._hide_guard()
