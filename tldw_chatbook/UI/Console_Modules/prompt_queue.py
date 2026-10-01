@@ -169,9 +169,12 @@ def derive_prompt_queue_presentation(
             other state and keeps the shelf visible with no queued entries.
         failed_turn_preview: Bounded one-line preview of the prompt whose turn
             failed and paused the queue (the caller's ``make_prompt_preview``),
-            or ``None`` when no failed turn exists. A FAILED pause without one
-            (every turn succeeded) offers Resume: a Retry there could only
-            refuse (TASK-33621.19).
+            or ``None`` when the newest assistant message on the active
+            transcript is not failed (no turn failed, or the failed attempt
+            is off-path, as after a failed regeneration). ``""`` is a failed
+            turn with no preceding user prompt; the shelf then shows a bare
+            "Turn failed" with Retry. A FAILED pause given ``None`` offers
+            Resume, because a Retry there could only refuse (TASK-33621.19).
 
     Returns:
         The immutable shelf/composer presentation: Send label and gate, shelf

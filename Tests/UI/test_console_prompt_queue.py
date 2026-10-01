@@ -1482,9 +1482,15 @@ async def test_retry_reruns_exactly_the_named_failed_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_pause_without_a_failed_turn_offers_a_working_resume() -> None:
+async def test_failed_pause_without_a_failed_turn_routes_the_press_to_resume() -> None:
     # The false pause from the report: every turn succeeded, and an OLDER
     # failure elsewhere in the conversation is not what paused this queue.
+    # This proves only the label and the routing: resume_prompt_queue is a
+    # stub here. That the real Resume drains, or lands on Context changed
+    # without raising, is proven against the real controller in
+    # Tests/Chat/test_console_prompt_queue_coordinator.py
+    # (test_real_paused_queue_without_failed_turn_offers_resume_that_drains,
+    # test_resume_after_*_does_not_raise).
     store, _assistant_ids = _store_with_turns(
         ("An older question.", "failed"),
         ("Answer with the word ALPHA.", "complete"),
