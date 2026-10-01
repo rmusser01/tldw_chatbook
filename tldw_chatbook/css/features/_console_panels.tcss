@@ -2530,3 +2530,6 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     width: $ds-model-switcher-width;
     max-height: $ds-model-switcher-max-height;
 }
+/* TASK-33004.5: the value row's one-row controls and Source-word column. */
+.console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
+.console-popover-source { width: $ds-size-18; }

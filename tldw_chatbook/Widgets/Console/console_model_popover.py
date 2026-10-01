@@ -9,6 +9,10 @@ rule 1). Readiness comes only from the screen-injected configuration
 resolver, once per provider per open and off the UI thread; catalogs and
 recents come from injected loaders, so this widget calls no provider service
 (ADR-011).
+
+TASK-33004.5 added the value row: exactly the quick mask (Temperature, Max
+tokens, Streaming), each one row with its spec §6 Source word, and the keys
+Enter / Tab / Ctrl+N / Ctrl+O / Esc, with Esc asking before it drops edits.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from math import isfinite
-from typing import Any, Literal, Protocol
+from typing import Any, ClassVar, Literal, Protocol
 from uuid import uuid4
 
 from rich.text import Text
@@ -29,15 +33,17 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
 from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
+    resolve_console_value_layers,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -58,7 +64,9 @@ from tldw_chatbook.Chat.provider_catalog import (
     provider_display_name,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.model_search_picker import normalize_model_id
 
@@ -80,6 +88,14 @@ class ConsoleModelPopoverResult:
 _CONSOLE_POPOVER_TEMPERATURE_MIN = 0.0
 _CONSOLE_POPOVER_TEMPERATURE_MAX = 2.0
 _FULL_SETTINGS_ACTION = "full_settings"
+#: The value row, in order: exactly the quick default mask (ADR-095 D3), so
+#: Save as model default and Ctrl+N save every value this surface shows.
+VALUE_FIELDS = ("temperature", "max_tokens", "streaming")
+_INVALID = object()
+_VALUE_ERRORS = {
+    "temperature": "Temperature must be a finite number from 0 to 2.",
+    "max_tokens": "Max tokens must be a whole number of at least 1 (blank: no cap).",
+}
 
 #: Spec §2 / mockup (a): READY PROVIDERS shows this many models per provider.
 TOP_MODELS_PER_PROVIDER = 3
@@ -258,6 +274,19 @@ class ConsolePopoverInput(Input):
         self.release_mouse()
 
 
+class UnsavedEditsGuard(Static, can_focus=True):
+    """Esc with edits: 'Enter apply · d discard · Esc keep editing' (spec §4).
+
+    It takes focus while shown, so Enter and ``d`` reach it instead of Find;
+    Esc stays the switcher's own binding and keeps editing.
+    """
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("enter", "screen.guard_apply", "Apply", show=False),
+        Binding("d", "screen.guard_discard", "Discard", show=False),
+    ]
+
+
 class ConsoleModelPopover(
     SafeModalDismissMixin,
     ModalScreen["ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None"],
@@ -324,9 +353,17 @@ class ConsoleModelPopover(
         width: 1fr;
     }
 
-    #console-popover-temperature {
-        width: 8;
+    .console-popover-value {
         margin: 0 1 0 0;
+    }
+
+    /* Focused while shown: the app's focus outline paints the padding rows. */
+    #console-popover-guard {
+        height: auto;
+        background: $warning 25%;
+        color: $text;
+        text-style: bold;
+        padding: 1 1;
     }
 
     #console-popover-scope {
@@ -350,6 +387,7 @@ class ConsoleModelPopover(
         Binding("pageup", "pairs('page_up')", show=False),
         Binding("pagedown", "pairs('page_down')", show=False),
         Binding("ctrl+n", "make_new_chat_default", "Default for new chats", show=False),
+        Binding("ctrl+o", "chat_settings", "Chat settings", show=False),
     ]
     SAFE_MODAL_CONTENT = "#console-model-popover"
 
@@ -412,17 +450,19 @@ class ConsoleModelPopover(
         self._previous_pair = previous_pair
         self._catalog_loader = catalog_loader
         self._setup_opener = setup_opener
-        self._streaming = bool(initial_draft.settings.streaming)
-        self._temperature_mount_value = (
-            ""
-            if initial_draft.settings.temperature is None
-            else str(initial_draft.settings.temperature)
-        )
-        self._temperature_mount_echo_pending = True
+        settings = initial_draft.settings
+        self._chat_settings = settings
+        self._streaming = bool(settings.streaming)
+        # Input and Select post Changed once at mount, after on_mount, with
+        # the value they were composed with; that echo is not an edit.
+        self._mount_echo: dict[str, object] = {
+            "temperature": self._input_text(settings.temperature),
+            "max_tokens": self._input_text(settings.max_tokens),
+            "streaming": self._streaming,
+        }
+        self._guard_focus: Widget | None = None
         self._updating_controls = False
         self._submit_pending = False
-        self._carried_from: dict[str, tuple[str, str | None]] = {}
-        settings = initial_draft.settings
         self._current: tuple[str, str | None] = (
             str(settings.provider or "").strip(),
             settings.model or None,
@@ -464,65 +504,57 @@ class ConsoleModelPopover(
             self._display_names[key] = name
         return name
 
-    def _field_draft(self, name: str) -> ConsoleSettingsFieldDraft | None:
-        return next(
-            (field for field in self._draft.field_drafts if field.name == name),
-            None,
-        )
-
-    def _field_provenance_copy(self, name: str) -> str:
-        field = self._field_draft(name)
-        if field is None or not field.dirty:
-            return "Inherited"
-        if field.provenance is ConsoleSettingsFieldProvenance.CARRIED:
-            source = self._carried_from.get(name) or self._keyed_carried_source(name)
-            if source is not None:
-                provider, model = source
-                return f"Edited — carried from {provider}/{model or 'No model'}"
-        return "Edited"
-
-    def _keyed_carried_source(self, name: str) -> tuple[str, str | None] | None:
-        """Return one unambiguous explicit source from remembered keyed drafts."""
-
-        target = (self._draft.settings.provider, self._draft.settings.model)
-        sources: list[tuple[str, str | None]] = []
-        for remembered in self._draft.model_drafts:
-            if (remembered.provider, remembered.model) == target:
-                continue
-            remembered_field = next(
-                (
-                    candidate
-                    for candidate in remembered.field_drafts
-                    if candidate.name == name
-                    and candidate.dirty
-                    and candidate.provenance is ConsoleSettingsFieldProvenance.EXPLICIT
-                ),
-                None,
-            )
-            if remembered_field is not None:
-                sources.append((remembered.provider, remembered.model))
-        return sources[0] if len(sources) == 1 else None
-
-    def _streaming_label(self) -> str:
-        return (
-            f"{MODEL_FIELD_LABELS['streaming']}: {'on' if self._streaming else 'off'}"
-        )
+    @staticmethod
+    def _input_text(value: object) -> str:
+        return "" if value is None else str(value)
 
     def _values_label(self) -> str:
-        return f"Values for {self._draft.settings.model or 'no model'} ·"
-
-    @staticmethod
-    def _max_tokens_copy(settings: ConsoleSessionSettings) -> str:
-        value = settings.max_tokens
-        return f"{MODEL_FIELD_LABELS['max_tokens']} {'—' if value is None else f'{value:,}'}"
+        settings = self._draft.settings
+        return (
+            f"Values for {settings.model or 'no model'} · "
+            f"{self._display(settings.provider)}"
+        )
 
     @staticmethod
     def _saved_fields_copy() -> str:
-        order = ("temperature", "max_tokens", "streaming")
-        fields = [name for name in order if name in QUICK_MODEL_DEFAULT_FIELDS]
-        fields += sorted(QUICK_MODEL_DEFAULT_FIELDS - set(order))
-        return "saves " + ", ".join(
-            MODEL_FIELD_LABELS.get(name, name) for name in fields
+        return "saves " + ", ".join(MODEL_FIELD_LABELS[name] for name in VALUE_FIELDS)
+
+    def _source_words(self) -> dict[str, str]:
+        """Spec §6 Source word per value, from the one shared resolver."""
+        settings = self._draft.settings
+        chat_pair = (provider_key(settings.provider), settings.model) == (
+            provider_key(self._current[0]),
+            self._current[1],
+        )
+        layers = resolve_console_value_layers(
+            self._app_config,
+            settings.provider,
+            settings.model,
+            VALUE_FIELDS,
+            edited=frozenset(
+                field.name for field in self._draft.field_drafts if field.dirty
+            ),
+            chat_settings=self._chat_settings if chat_pair else None,
+        )
+        return {
+            name: CONSOLE_VALUE_SOURCE_WORDS[layer] for name, layer in layers.items()
+        }
+
+    def _edited_labels(self) -> tuple[str, ...]:
+        """Labels of every value edited in this open, for any pair."""
+        edited = {
+            field.name
+            for fields in (
+                self._draft.field_drafts,
+                *(remembered.field_drafts for remembered in self._draft.model_drafts),
+            )
+            for field in fields
+            if field.dirty
+        }
+        return tuple(
+            MODEL_FIELD_LABELS.get(name, name)
+            for name in VALUE_FIELDS
+            if name in edited
         )
 
     def _title(self) -> str:
@@ -562,49 +594,29 @@ class ConsoleModelPopover(
             pairs = OptionList(id="console-popover-pairs", compact=True)
             pairs.can_focus = False
             yield pairs
+            yield Static(
+                self._values_label(), id="console-popover-values-label", markup=False
+            )
+            # One row: label, a one-row control, its Source word (spec §6).
             with Horizontal(
                 id="console-popover-values", classes="console-popover-strip"
             ):
-                yield Static(
-                    self._values_label(),
-                    id="console-popover-values-label",
-                    markup=False,
-                )
-                yield Static(
-                    MODEL_FIELD_LABELS["temperature"],
-                    classes="console-popover-field-label",
-                    markup=False,
-                )
-                yield ConsolePopoverInput(
-                    value=(
-                        ""
-                        if settings.temperature is None
-                        else str(settings.temperature)
-                    ),
-                    placeholder="Temperature",
-                    id="console-popover-temperature",
-                    compact=True,
-                )
-                yield Static(
-                    self._field_provenance_copy("temperature"),
-                    id="console-popover-temperature-provenance",
-                    markup=False,
-                )
-                yield Button(
-                    self._streaming_label(),
-                    id="console-popover-streaming",
-                    compact=True,
-                )
-                yield Static(
-                    self._field_provenance_copy("streaming"),
-                    id="console-popover-streaming-provenance",
-                    markup=False,
-                )
-                yield Static(
-                    self._max_tokens_copy(settings),
-                    id="console-popover-response-max",
-                    markup=False,
-                )
+                for name in VALUE_FIELDS:
+                    yield Static(
+                        MODEL_FIELD_LABELS[name],
+                        classes="console-popover-field-label",
+                        markup=False,
+                    )
+                    yield self._value_control(name, settings)
+                    yield Static(
+                        "",
+                        id=f"console-popover-{name.replace('_', '-')}-source",
+                        classes="console-popover-source",
+                        markup=False,
+                    )
+            guard = UnsavedEditsGuard("", id="console-popover-guard", markup=False)
+            guard.display = False
+            yield guard
             with Horizontal(id="console-popover-keys", classes="console-popover-strip"):
                 yield Button(
                     "Enter apply to this chat",
@@ -612,12 +624,19 @@ class ConsoleModelPopover(
                     variant="primary",
                     compact=True,
                 )
+                yield Static("· Tab edit values ·", markup=False)
                 yield Button(
                     "Ctrl+N default for new chats",
                     id="console-popover-make-new-chat-default",
                     compact=True,
                 )
-                yield Static("Esc cancel", markup=False)
+                yield Static("·", markup=False)
+                yield Button(
+                    "Ctrl+O chat settings",
+                    id="console-popover-full-settings",
+                    compact=True,
+                )
+                yield Static("· Esc cancel", markup=False)
             with Horizontal(
                 id="console-popover-defaults-row", classes="console-popover-strip"
             ):
@@ -631,16 +650,32 @@ class ConsoleModelPopover(
                     id="console-popover-save-model-default-copy",
                     markup=False,
                 )
-                yield Button(
-                    "Chat settings…",
-                    id="console-popover-full-settings",
-                    compact=True,
-                )
                 scope = Static(
                     self._scope_copy, id="console-popover-scope", markup=False
                 )
                 scope.tooltip = self._durability_copy
                 yield scope
+
+    def _value_control(self, name: str, settings: ConsoleSessionSettings) -> Widget:
+        """The one-row control for one value: two Inputs and an On/Off Select."""
+        if name == "streaming":
+            # ADR-095:79: Streaming is On or Off at chat scope, never Inherit.
+            return Select(
+                (("On", True), ("Off", False)),
+                value=self._streaming,
+                allow_blank=False,
+                compact=True,
+                id="console-popover-streaming",
+                classes="console-popover-value",
+            )
+        return ConsolePopoverInput(
+            value=self._input_text(getattr(settings, name)),
+            placeholder="no cap" if name == "max_tokens" else "",
+            restrict=r"[0-9]*" if name == "max_tokens" else None,
+            id=f"console-popover-{name.replace('_', '-')}",
+            classes="console-popover-value",
+            compact=True,
+        )
 
     def on_mount(self) -> None:
         """Highlight PREVIOUS, focus Find, then resolve readiness and recents."""
@@ -651,6 +686,8 @@ class ConsoleModelPopover(
             self._previous = self._previous_pair(())
         self._rebuild_rows()
         self.query_one("#console-popover-find", Input).focus()
+        # The rows' first highlight may not rebase (the chat's own pair).
+        self.call_after_refresh(self._sync_source_words)
         self._request_readiness(self._readiness_targets())
         if self._recent_pairs_loader is not None:
             self.run_worker(
@@ -1192,14 +1229,16 @@ class ConsoleModelPopover(
         ]
         if not selectable:
             return None
-        if self._query.strip():
-            ranked = [index for index in selectable if self._rows[index].kind != "more"]
-            if ranked:
-                return min(ranked, key=lambda index: (self._rows[index].score, index))
+        # A row the user chose (Up/Down, a click, Tab into its values, an
+        # edit) stays highlighted through late fills; typing re-ranks.
         if self._user_moved and self._highlight_key is not None:
             for index in selectable:
                 if self._rows[index].key == self._highlight_key:
                     return index
+        if self._query.strip():
+            ranked = [index for index in selectable if self._rows[index].kind != "more"]
+            if ranked:
+                return min(ranked, key=lambda index: (self._rows[index].score, index))
         previous = self._previous
         if previous is not None and not self._query.strip():
             for index in selectable:
@@ -1225,7 +1264,7 @@ class ConsoleModelPopover(
 
         Every highlight change also rebases the draft to the row's pair, so
         the value strip always names and shows the pair that Enter, Ctrl+N,
-        Save and Chat settings… act on.
+        Save and Ctrl+O act on.
         """
         pairs = self.query_one("#console-popover-pairs", OptionList)
         old = self._painted_index
@@ -1275,13 +1314,20 @@ class ConsoleModelPopover(
     def _find_changed(self, event: Input.Changed) -> None:
         event.stop()
         self._query = event.value
+        self._user_moved = False  # a new query picks its own best match
         self._rebuild_rows()
 
     @on(Input.Submitted, "#console-popover-find")
     @on(Input.Submitted, "#console-popover-temperature")
+    @on(Input.Submitted, "#console-popover-max-tokens")
     def _enter_pressed(self, event: Input.Submitted) -> None:
         event.stop()
         self._activate(self.highlighted_row())
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Tab into the values pins the highlighted pair they belong to."""
+        if "console-popover-value" in event.widget.classes:
+            self._user_moved = True
 
     @on(OptionList.OptionSelected, "#console-popover-pairs")
     def _pair_selected(self, event: OptionList.OptionSelected) -> None:
@@ -1344,15 +1390,23 @@ class ConsoleModelPopover(
             focus.focus()
 
     @staticmethod
-    def _parse_temperature(raw: str) -> float | None:
+    def _parse_value(name: str, raw: str) -> object:
+        """One value control's text as its value; blank is None (no value)."""
         text = raw.strip()
-        if not text or not validate_text_input(text, max_length=32):
+        if not text:
             return None
+        if not validate_text_input(text, max_length=32):
+            return _INVALID
         try:
-            value = float(text)
+            value = float(text) if name == "temperature" else int(text)
         except ValueError:
-            return None
-        return value if _temperature_in_range(value) else None
+            return _INVALID
+        if name == "temperature":
+            return value if _temperature_in_range(value) else _INVALID
+        return value if value >= MIN_MAX_TOKENS else _INVALID
+
+    def _value_input(self, name: str) -> Input:
+        return self.query_one(f"#console-popover-{name.replace('_', '-')}", Input)
 
     def _replace_quick_field(
         self,
@@ -1393,8 +1447,6 @@ class ConsoleModelPopover(
                 dirty=direct_edit or existing.dirty,
             )
             fields[existing_index] = field
-        if direct_edit:
-            self._carried_from.pop(name, None)
         self._draft = replace(
             self._draft,
             settings=replace(self._draft.settings, **{name: value}),
@@ -1402,36 +1454,49 @@ class ConsoleModelPopover(
         )
 
     @on(Input.Changed, "#console-popover-temperature")
-    def _temperature_changed(self, event: Input.Changed) -> None:
+    @on(Input.Changed, "#console-popover-max-tokens")
+    def _value_input_changed(self, event: Input.Changed) -> None:
         event.stop()
+        name = (
+            "temperature"
+            if event.input.id == "console-popover-temperature"
+            else "max_tokens"
+        )
+        self._value_edited(name, event.value, self._parse_value(name, event.value))
+
+    @on(Select.Changed, "#console-popover-streaming")
+    def _streaming_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if isinstance(event.value, bool):
+            self._value_edited("streaming", event.value, event.value)
+
+    def _value_edited(self, name: str, raw: object, value: object) -> None:
+        """Record one user edit of a value; syncs and the mount echo are not edits."""
         if self._updating_controls:
             return
-        if self._temperature_mount_echo_pending:
-            self._temperature_mount_echo_pending = False
-            if event.value == self._temperature_mount_value:
-                return
+        if name in self._mount_echo and self._mount_echo.pop(name) == raw:
+            return
         self._user_moved = True  # a late fill must not retarget an edit
-        value = self._parse_temperature(event.value)
-        if value is not None:
-            self._replace_quick_field("temperature", value, direct_edit=True)
+        if name == "streaming":
+            self._streaming = bool(value)
+        if value is _INVALID:
+            # Still an edit: Esc asks, and Apply names the bad value.
+            self._draft = replace(
+                self._draft,
+                field_drafts=tuple(
+                    replace(field, dirty=True) if field.name == name else field
+                    for field in self._draft.field_drafts
+                ),
+            )
         else:
-            field = self._field_draft("temperature")
-            if field is not None and not field.dirty:
-                fields = tuple(
-                    replace(candidate, dirty=True)
-                    if candidate.name == "temperature"
-                    else candidate
-                    for candidate in self._draft.field_drafts
-                )
-                self._draft = replace(self._draft, field_drafts=fields)
-        self._sync_provenance_labels()
+            self._replace_quick_field(name, value, direct_edit=True)
+        self._sync_source_words()
 
     def _remember_current_draft(self) -> ConsoleSettingsDraftState:
-        temperature = self._parse_temperature(
-            self.query_one("#console-popover-temperature", Input).value
-        )
-        if temperature is not None:
-            self._replace_quick_field("temperature", temperature, direct_edit=False)
+        for name in ("temperature", "max_tokens"):
+            value = self._parse_value(name, self._value_input(name).value)
+            if value is not _INVALID and value != getattr(self._draft.settings, name):
+                self._replace_quick_field(name, value, direct_edit=False)
         self._draft = replace(
             self._draft,
             settings=replace(self._draft.settings, streaming=self._streaming),
@@ -1442,27 +1507,22 @@ class ConsoleModelPopover(
     def _rebase_to(self, provider: str, model: str | None) -> None:
         """Rebase the draft to one pair through the controller seam.
 
-        The typed compaction override rides along unchanged (ADR-095).
+        The typed compaction override rides along unchanged (ADR-095), and
+        remembered drafts bring back a pair's edits (A→B→A).
         """
-        source = (self._draft.settings.provider, self._draft.settings.model)
-        if source == (provider, model):
+        if (self._draft.settings.provider, self._draft.settings.model) == (
+            provider,
+            model,
+        ):
             return
-        remembered = self._remember_current_draft()
-        previous_carried = dict(self._carried_from)
-        rebased = self._draft_rebaser(
-            remembered,
+        self._draft = self._draft_rebaser(
+            self._remember_current_draft(),
             provider=provider,
             model=model,
             app_config=self._app_config,
             exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
         )
-        self._draft = rebased
-        self._streaming = bool(rebased.settings.streaming)
-        self._carried_from = {
-            field.name: previous_carried.get(field.name, source)
-            for field in rebased.field_drafts
-            if field.provenance is ConsoleSettingsFieldProvenance.CARRIED
-        }
+        self._streaming = bool(self._draft.settings.streaming)
         self._sync_controls_from_draft()
 
     def _sync_controls_from_draft(self) -> None:
@@ -1471,61 +1531,38 @@ class ConsoleModelPopover(
         settings = self._draft.settings
         self._updating_controls = True
         try:
-            temperature = self.query_one("#console-popover-temperature", Input)
-            with temperature.prevent(Input.Changed):
-                temperature.value = (
-                    "" if settings.temperature is None else str(settings.temperature)
-                )
-            self._show_streaming()
-            self.query_one("#console-popover-response-max", Static).update(
-                self._max_tokens_copy(settings)
-            )
+            for name in ("temperature", "max_tokens"):
+                control = self._value_input(name)
+                with control.prevent(Input.Changed):
+                    control.value = self._input_text(getattr(settings, name))
+            streaming = self.query_one("#console-popover-streaming", Select)
+            with streaming.prevent(Select.Changed):
+                streaming.value = self._streaming
             self.query_one("#console-popover-values-label", Static).update(
                 self._values_label()
             )
         finally:
             self._updating_controls = False
-        self._sync_provenance_labels()
+        self._sync_source_words()
 
-    def _show_streaming(self) -> None:
-        button = self.query_one("#console-popover-streaming", Button)
-        button.label = self._streaming_label()
-        # Button.label is not a layout reactive: without a re-measure,
-        # "Streaming: off" wraps inside the "on" width and paints "Streaming:".
-        button.refresh(layout=True)
-
-    def _sync_provenance_labels(self) -> None:
+    def _sync_source_words(self) -> None:
         if not self.is_mounted:
             return
-        for name in ("temperature", "streaming"):
-            try:
-                marker = self.query_one(f"#console-popover-{name}-provenance", Static)
-            except NoMatches:
-                continue
-            marker.update(self._field_provenance_copy(name))
-
-    @on(Button.Pressed, "#console-popover-streaming")
-    def _toggle_streaming(self, event: Button.Pressed) -> None:
-        """Flip the local streaming toggle and relabel the button.
-
-        Args:
-            event: The streaming toggle button's press event.
-        """
-        event.stop()
-        self._user_moved = True  # a late fill must not retarget an edit
-        self._streaming = not self._streaming
-        self._show_streaming()
-        self._replace_quick_field(
-            "streaming",
-            self._streaming,
-            direct_edit=True,
-        )
-        self._sync_provenance_labels()
+        for name, word in self._source_words().items():
+            selector = f"#console-popover-{name.replace('_', '-')}-source"
+            for source in self.query(selector).results(Static):
+                source.update(word)
 
     @on(Button.Pressed, "#console-popover-full-settings")
     def _full_settings(self, event: Button.Pressed) -> None:
-        """Transfer the exact draft without applying it."""
         event.stop()
+        self.action_chat_settings()
+
+    def action_chat_settings(self) -> None:
+        """Ctrl+O: carry the highlighted pair and its edits to Chat settings.
+
+        Nothing is applied or discarded; the full modal opens on the draft.
+        """
         self._submit(_FULL_SETTINGS_ACTION)
 
     @on(Button.Pressed, "#console-popover-apply")
@@ -1559,29 +1596,22 @@ class ConsoleModelPopover(
                 focus=self.query_one("#console-popover-find", Input),
             )
             return None
-
-        temperature_input = self.query_one("#console-popover-temperature", Input)
-        temperature_text = temperature_input.value.strip()
-        temperature = self._parse_temperature(temperature_text)
-        if temperature is None and temperature_text:
-            self._set_error(
-                "Temperature must be a finite number from 0 to 2.",
-                focus=temperature_input,
-            )
-            return None
-
-        self._replace_quick_field(
-            "temperature",
-            temperature,
-            direct_edit=False,
-        )
+        values: dict[str, object] = {}
+        for name in ("temperature", "max_tokens"):
+            control = self._value_input(name)
+            value = self._parse_value(name, control.value)
+            if value is _INVALID:
+                self._set_error(_VALUE_ERRORS[name], focus=control)
+                return None
+            values[name] = value
+        for name, value in values.items():
+            # The Changed handlers keep the draft in step; this catches only
+            # text the handlers never saw. An unsupported field gains no draft.
+            if value != getattr(self._draft.settings, name):
+                self._replace_quick_field(name, value, direct_edit=False)
         self._draft = replace(
             self._draft,
-            settings=replace(
-                self._draft.settings,
-                temperature=temperature,
-                streaming=self._streaming,
-            ),
+            settings=replace(self._draft.settings, streaming=self._streaming),
         )
         self._draft = remember_model_draft(self._draft)
         self._set_error("")
@@ -1704,3 +1734,41 @@ class ConsoleModelPopover(
     async def action_dismiss_popover(self) -> None:
         """Dismiss the popover with no result (Escape)."""
         await self.action_request_safe_cancel()
+
+    # -- Esc with edits (spec §4 rule 4) ---------------------------------
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Esc/backdrop: close if nothing is edited, else ask; in the ask, keep editing."""
+        del source
+        guard = self.query_one("#console-popover-guard", UnsavedEditsGuard)
+        if guard.display:
+            self._hide_guard()
+            return
+        labels = self._edited_labels()
+        if not labels:
+            self.dismiss_safe_once(None)
+            return
+        self._guard_focus = self.focused
+        guard.update(unsaved_prompt_copy(labels))
+        guard.display = True
+        # Focus leaves Find, so Enter and d reach the guard, not the query.
+        guard.focus()
+        self.call_after_refresh(self._sync_list_height)
+
+    def _hide_guard(self) -> None:
+        self.query_one("#console-popover-guard", UnsavedEditsGuard).display = False
+        focus, self._guard_focus = self._guard_focus, None
+        if focus is None or not focus.is_attached:
+            focus = self.query_one("#console-popover-find", Input)
+        focus.focus()
+        self.call_after_refresh(self._sync_list_height)
+
+    def action_guard_apply(self) -> None:
+        """Guard Enter: apply the highlighted pair with its edits to this chat."""
+        self._hide_guard()
+        self._activate(self.highlighted_row())
+
+    def action_guard_discard(self) -> None:
+        """Guard d: close and drop every edit; nothing is applied or saved."""
+        self._release_mouse_capture()
+        self.dismiss_safe_once(None)

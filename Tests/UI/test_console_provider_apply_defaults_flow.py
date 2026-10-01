@@ -283,6 +283,16 @@ async def _edit_highlighted(modal: ConsoleModelPopover, pilot, temperature: str)
     await pilot.pause()
 
 
+async def _choose_streaming(modal: ConsoleModelPopover, pilot, value: bool) -> None:
+    """Pick Streaming On or Off with the keyboard (TASK-33004.5: an On/Off
+    Select replaced the toggle Button)."""
+    streaming = modal.query_one("#console-popover-streaming", Select)
+    streaming.focus()
+    await pilot.press("enter", "up" if value else "down", "enter")
+    await pilot.pause()
+    assert streaming.value is value
+
+
 async def _select_vllm_model(
     modal: ConsoleModelPopover,
     pilot,
@@ -883,11 +893,8 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
             model=literal_model,
             temperature="0.42",
         )
-        streaming = modal.query_one("#console-popover-streaming", Button)
-        assert str(streaming.label) == "Streaming: on"
-        assert await pilot.click(streaming) is True
-        await pilot.pause()
-        assert str(streaming.label) == "Streaming: off"
+        assert modal.query_one("#console-popover-streaming", Select).value is True
+        await _choose_streaming(modal, pilot, False)
         await pilot.click("#console-popover-save-model-default")
         await pilot.pause()
         assert harness.screen is console
@@ -914,11 +921,8 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         row = await _highlight(modal, pilot, literal_model)
         assert (row.provider, row.model, row.note) == ("vllm", literal_model, "● CURRENT")
         await _edit_highlighted(modal, pilot, "0.23")
-        streaming = modal.query_one("#console-popover-streaming", Button)
-        assert str(streaming.label) == "Streaming: off"
-        assert await pilot.click(streaming) is True
-        await pilot.pause()
-        assert str(streaming.label) == "Streaming: on"
+        assert modal.query_one("#console-popover-streaming", Select).value is False
+        await _choose_streaming(modal, pilot, True)
         await pilot.press("ctrl+n")
         await pilot.pause()
         assert harness.screen is console
@@ -1095,9 +1099,7 @@ async def test_quick_default_actions_write_the_quick_mask_to_the_exact_profile(
 
         modal = await _open_provider_popover(console, harness, pilot)
         await _highlight(modal, pilot, literal_model)
-        streaming = modal.query_one("#console-popover-streaming", Button)
-        assert await pilot.click(streaming) is True
-        await pilot.pause()
+        await _choose_streaming(modal, pilot, False)
         save_copy = modal.query_one("#console-popover-save-model-default-copy", Static)
         assert str(save_copy.render()) == "saves Temperature, Max tokens, Streaming"
         await pilot.click("#console-popover-save-model-default")

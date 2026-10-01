@@ -293,21 +293,24 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
         assert panel.region.contains_region(apply.region)
         _assert_real_mouse_target(modal, apply)
 
+        # TASK-33004.5: Max tokens and the Streaming Select are values; the
+        # key row ends with Ctrl+O chat settings, and Save comes last.
         focus_order: list[str] = []
-        for _ in range(8):
+        for _ in range(9):
             focused = app.focused
             assert focused is not None and focused.can_focus and not focused.disabled
             focus_order.append(getattr(focused, "id", "") or "")
             await pilot.press("tab")
             await pilot.pause()
-        assert focus_order[:7] == [
+        assert focus_order[:8] == [
             "console-popover-find",
             "console-popover-temperature",
+            "console-popover-max-tokens",
             "console-popover-streaming",
             "console-popover-apply",
             "console-popover-make-new-chat-default",
-            "console-popover-save-model-default",
             "console-popover-full-settings",
+            "console-popover-save-model-default",
         ]
 
 

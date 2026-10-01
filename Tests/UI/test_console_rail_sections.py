@@ -1028,8 +1028,11 @@ async def test_popover_apply_returns_replaced_settings():
         await _ready(app, pilot)
         await pilot.press(*"model-b")
         await pilot.pause()
-        # Editing a value edits the highlighted pair (model-b).
-        assert await pilot.click("#console-popover-streaming") is True
+        # Editing a value edits the highlighted pair (model-b). TASK-33004.5:
+        # Streaming is an On/Off Select, the third value after Find.
+        await pilot.press("tab", "tab", "tab")
+        assert app.focused is app.screen.query_one("#console-popover-streaming")
+        await pilot.press("enter", "down", "enter")
         await pilot.pause()
         await pilot.click("#console-popover-apply")
         await pilot.pause()
@@ -1037,7 +1040,7 @@ async def test_popover_apply_returns_replaced_settings():
         committed = app.result.live_commit.settings
         assert committed.model == "model-b"
         assert committed.provider == "llama_cpp"
-        # ConsoleSessionSettings defaults streaming True; one toggle flips it.
+        # ConsoleSessionSettings defaults streaming True; choosing Off flips it.
         assert committed.streaming is False
 
 
@@ -1064,7 +1067,10 @@ async def test_popover_off_then_automatic_compaction_is_explicit():
     )
     async with app.run_test(size=(90, 30)) as pilot:
         await _ready(app, pilot)
-        assert not app.screen.query(Select)
+        # No compaction control: the one Select is Streaming's On/Off (TASK-33004.5).
+        assert [select.id for select in app.screen.query(Select)] == [
+            "console-popover-streaming"
+        ]
         await pilot.click("#console-popover-apply")
         await pilot.pause()
 

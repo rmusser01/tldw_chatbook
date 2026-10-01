@@ -6,7 +6,7 @@ import threading
 from dataclasses import replace
 
 import pytest
-from textual.widgets import Button, OptionList, Select, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_rail_sections import _test_popover
@@ -363,7 +363,7 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
     """Rewritten for TASK-33004.4: Switch model no longer carries the context
     and compaction block (Chat settings owns it). It shows Max tokens in its
     value strip, and Apply submits the chat's compaction override unchanged
-    (ADR-095)."""
+    (ADR-095). TASK-33004.5: Max tokens is an editable Input now."""
     app = _ContextHarness()
     async with app.run_test(size=(90, 34)) as pilot:
         await app.push_screen(
@@ -386,8 +386,8 @@ async def test_quick_popover_separates_request_conversation_and_policy() -> None
             "model-window",
         ):
             assert not app.screen.query(f"#console-popover-{removed}")
-        assert "Max tokens 4,000" in str(
-            app.screen.query_one("#console-popover-response-max", Static).render()
+        assert (
+            app.screen.query_one("#console-popover-max-tokens", Input).value == "4000"
         )
         await pilot.click("#console-popover-apply")
         await pilot.pause()
@@ -985,7 +985,10 @@ async def test_context_view_fits_narrow_terminal_and_keeps_focusable_controls() 
 async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -> None:
     """Rewritten for TASK-33004.4: at 72x24 Switch model's key rows stay on
     screen below its list, it carries no fold hint (the list scrolls on its
-    own), and Tab walks Find, the values, then the actions in order."""
+    own), and Tab walks Find, the values, then the actions in order.
+    TASK-33004.5: the values are Temperature, Max tokens and the Streaming
+    Select; the key row ends with Ctrl+O chat settings; Save comes last, so
+    Shift+Tab from Find reaches it in one key."""
     app = _ContextHarness()
     async with app.run_test(size=(72, 24)) as pilot:
         await app.push_screen(
@@ -1005,18 +1008,19 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
         focus_order: list[str] = []
         for _ in range(10):
             focus_order.append(getattr(app.focused, "id", "") or "")
-            if focus_order[-1] == "console-popover-full-settings":
+            if focus_order[-1] == "console-popover-save-model-default":
                 break
             await pilot.press("tab")
             await pilot.pause()
         assert focus_order == [
             "console-popover-find",
             "console-popover-temperature",
+            "console-popover-max-tokens",
             "console-popover-streaming",
             "console-popover-apply",
             "console-popover-make-new-chat-default",
-            "console-popover-save-model-default",
             "console-popover-full-settings",
+            "console-popover-save-model-default",
         ]
 
 

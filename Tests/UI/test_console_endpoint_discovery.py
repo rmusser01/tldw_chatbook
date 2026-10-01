@@ -463,7 +463,8 @@ async def test_switch_model_applies_a_saved_entry_through_the_live_rebase(
         row = quick.highlighted_row()
         assert (row.kind, row.provider, row.model) == ("pair", provider_id, model_id)
         values = str(quick.query_one("#console-popover-values-label", Static).render())
-        assert values == f"Values for {model_id} ·"
+        # TASK-33004.5: the label names the pair, display name included.
+        assert values == f"Values for {model_id} · {display_name}"
         quick.query_one("#console-popover-apply", Button).press()
         await pilot.pause()
         assert harness.screen is console

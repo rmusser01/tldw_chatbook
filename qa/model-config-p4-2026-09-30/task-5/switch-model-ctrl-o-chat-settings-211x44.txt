@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Connection                                                                                                                                                                     │     │
+ ───────────────│  Provider               │ Anthropic                                                                                                                                             │     │
+ Workspaces     │                         Selected: Anthropic                                                                                                                                     │     │
+ ───────────────│  Endpoint                                                                                                                                                                       │     │
+ Conversations  │  Model                  █ claude-sonnet-5                                                                                                                                       │     │
+        Archive │                         Live catalog unavailable. Showing 15 configured                                                                                                         │     │
+          Archiv│                         models.                                                                                                                                                 │     │
+        Search a│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
+   Chat 1       │                         ▊ Saved fallback                               ▎                                                                                                        │     │
+                │                         ▊ claude-sonnet-5                              ▎                                                                                                        │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│                         ▊ claude-opus-5                                ▎                                                                                                        │     │
+  ▊  Filter visi│                         ▊ claude-fable-5                               ▎                                                                                                        │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                         ▊ claude-haiku-4-5                             ▎                                                                                                        │     │
+                │                         ▊ claude-opus-4-20250514                       ▎                                                                                                        │     │◂ Inspect
+  Chats         │                         ▊ claude-sonnet-4-20250514                     ▎                                                                                                        │     │
+   Chat 1       │                         ▊ claude-3-7-sonnet-20250219                   ▎                                                                                                        │     │
+                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+ ───────────────│  Saved fallback                                                                                                                                                                 │     │
+ Character · No │                            Custom model                                                                                                                                         │     │
+ ───────────────│  No non-billable live connection check is available for this provider.                                                                                                          │     │
+ Model          │  Ready to send — credential not verified                                                                                                                                        │     │
+ ───────────────│  A send attempt is permitted with these settings.                                                                                                                               │     │
+ Agent          │  Credential · Present — not verified (local config)                                                                                                                             │     │
+ ───────────────│  Endpoint · Not tested                                                                                                                                                       ▂  │     │
+ Details        │  Model · Selected — not verified at this endpoint                                                                                                                               │     │
+                │  Generation · Not tested                                                                                                                                                        │     │
+                │  Generation test unavailable for this provider.                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │     │
+                │                                                                                                                                    Used by future conversations for Anthropic.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                      Esc close (asks: 5 unsaved)   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation   │Current $0.00 ·
+                │                                                                                                                                                                                 │
+█  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

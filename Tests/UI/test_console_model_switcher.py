@@ -21,11 +21,13 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextCompactionMode,
 )
+from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
+    QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
     ConsoleSettingsDraftState,
@@ -40,7 +42,9 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     CURRENT_MARK,
     HIGHLIGHT_GLYPH,
+    VALUE_FIELDS,
     ConsoleModelPopover,
+    UnsavedEditsGuard,
     switcher_readiness_words,
 )
 
@@ -648,9 +652,15 @@ async def test_enter_on_needs_setup_opens_that_providers_settings_fix() -> None:
     app = SwitcherHarness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(app, pilot, build_switcher(recorder))
+        # TASK-33004.5: Max tokens joined the value row; still no key input.
         assert all(
             not widget.password
-            and widget.id in {"console-popover-find", "console-popover-temperature"}
+            and widget.id
+            in {
+                "console-popover-find",
+                "console-popover-temperature",
+                "console-popover-max-tokens",
+            }
             for widget in switcher.query(Input)
         )
         await pilot.press(*"gpt-5")
@@ -759,7 +769,10 @@ async def test_the_old_form_is_gone_and_the_kept_ids_remain() -> None:
     app = SwitcherHarness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(app, pilot, build_switcher(recorder))
-        assert not switcher.query(Select)
+        # TASK-33004.5: the one Select left is the value row's Streaming On/Off.
+        assert [select.id for select in switcher.query(Select)] == [
+            "console-popover-streaming"
+        ]
         assert not switcher.query(Grid)
         assert not switcher.query("ModelSearchPicker")
         text = "\n".join(painted_lines(app))
@@ -851,10 +864,22 @@ def _strip(app) -> str:
     return line_with(painted_lines(app), "Values for")
 
 
+def _controls(switcher: ConsoleModelPopover) -> tuple[str, str, object]:
+    """Temperature text, Max tokens text and the Streaming Select's value."""
+    return (
+        switcher.query_one("#console-popover-temperature", Input).value,
+        switcher.query_one("#console-popover-max-tokens", Input).value,
+        switcher.query_one("#console-popover-streaming", Select).value,
+    )
+
+
 async def test_value_strip_follows_every_highlight_move_and_invents_no_edit() -> None:
     """The strip names and shows the pair that Enter, Ctrl+N and Save act on:
     PREVIOUS on open, then every Up/Down, from Find and from Temperature. Moving
-    edits nothing, and Save right after open saves exactly what the strip shows."""
+    edits nothing, and Save right after open saves exactly what the strip shows.
+
+    Rewritten for TASK-33004.5: the values are the row's controls (Max tokens
+    an Input, Streaming an On/Off Select), not copy in the label line."""
     recorder = Recorder()
     app = SwitcherHarness()
     async with app.run_test(size=(211, 44)) as pilot:
@@ -871,32 +896,31 @@ async def test_value_strip_follows_every_highlight_move_and_invents_no_edit() ->
         )
         temperature = switcher.query_one("#console-popover-temperature", Input)
 
-        def shown() -> tuple[str | None, str, str]:
+        def shown() -> tuple[str | None, str, tuple[str, str, object]]:
             row = switcher.highlighted_row()
-            return (row.model if row else None, _strip(app), temperature.value)
+            return (row.model if row else None, _strip(app), _controls(switcher))
 
-        model, strip, value = shown()
+        model, strip, values = shown()
         assert model == "claude-sonnet-4-5"
-        assert "Values for claude-sonnet-4-5" in strip and "1,024" in strip
-        assert value == "0.2" and "Streaming: on" in strip
+        assert "Values for claude-sonnet-4-5" in strip
+        assert values == ("0.2", "1024", True)
 
         await pilot.press("down")  # from Find
         await pilot.pause()
-        model, strip, value = shown()
+        model, strip, values = shown()
         assert model == "model-a"
-        assert "Values for model-a" in strip and "Max tokens —" in strip
-        # The longer label is painted whole, not wrapped inside the "on" width.
-        assert value == "0.7" and "Streaming: off" in strip
+        assert "Values for model-a" in strip
+        assert values == ("0.7", "", False)
 
         temperature.focus()
         await pilot.press("up")  # from Temperature
         await pilot.pause()
-        model, strip, value = shown()
+        model, strip, values = shown()
         assert model == "claude-sonnet-4-5"
-        assert "Values for claude-sonnet-4-5" in strip and value == "0.2"
-        for name in ("temperature", "streaming"):
-            marker = switcher.query_one(f"#console-popover-{name}-provenance", Static)
-            assert str(marker.render()) == "Inherited", name
+        assert "Values for claude-sonnet-4-5" in strip and values[0] == "0.2"
+        for name in ("temperature", "max-tokens", "streaming"):
+            word = switcher.query_one(f"#console-popover-{name}-source", Static)
+            assert str(word.render()) != "edited *", name
 
         switcher.query_one("#console-popover-save-model-default", Button).press()
         await pilot.pause()
@@ -1051,3 +1075,455 @@ async def test_a_value_edit_pins_its_pair_against_a_late_recent_fill() -> None:
         "model-a",
         0.3,
     )
+
+
+# -- TASK-33004.5: the value row, Source words and commit keys ---------------
+
+#: A real config for the controller's own rebase and the Source-word resolver:
+#: sonnet's Temperature and Max tokens are a model default, Streaming is
+#: chat_defaults (Console Behavior), and the chat's model-a values are built-in.
+REAL_CONFIG = {
+    "chat_defaults": {"provider": "llama_cpp", "model": "model-a", "streaming": True},
+    "api_settings": {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+        "anthropic": {
+            "model": "claude-sonnet-4-5",
+            "model_defaults": {
+                "claude-sonnet-4-5": {"temperature": 0.2, "max_tokens": 1024},
+                "claude-haiku-4-5": {"temperature": 0.5},
+            },
+        },
+    },
+}
+SPEC_SOURCE_WORDS = {
+    "edited *",
+    "this chat",
+    "model default",
+    "Console Behavior",
+    "provider",
+    "built-in",
+}
+
+
+def _real_rebase(
+    state: ConsoleSettingsDraftState, **kwargs: object
+) -> ConsoleSettingsDraftState:
+    """The controller's rebase: remembered drafts, carried edits, defaults."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    return ConsoleChatController.rebase_console_settings_draft(
+        object(), state, **kwargs
+    )
+
+
+def _real_switcher(recorder: Recorder, **kwargs) -> ConsoleModelPopover:
+    return build_switcher(
+        recorder, app_config=REAL_CONFIG, draft_rebaser=_real_rebase, **kwargs
+    )
+
+
+def _words(switcher: ConsoleModelPopover) -> dict[str, str]:
+    return {
+        name: str(
+            switcher.query_one(
+                f"#console-popover-{name.replace('_', '-')}-source", Static
+            ).render()
+        )
+        for name in VALUE_FIELDS
+    }
+
+
+async def _find(pilot, text: str) -> None:
+    """From Temperature, Shift+Tab back to Find (its text selected) and type."""
+    await pilot.press("shift+tab", *text)
+    await pilot.pause()
+
+
+def test_the_value_row_is_exactly_the_quick_default_mask() -> None:
+    """AC#1, AC#10 (R3): one field list, so Save keeps every value it shows."""
+    assert set(VALUE_FIELDS) == QUICK_MODEL_DEFAULT_FIELDS
+    assert "thinking_effort" not in VALUE_FIELDS
+
+
+async def test_value_row_shows_the_highlighted_pairs_values_one_row_each() -> None:
+    """AC#1, AC#2, AC#6: Temperature, Max tokens and Streaming for the
+    highlighted pair, each one row tall, each with its spec §6 Source word;
+    Streaming is one Select offering On and Off; Thinking is not here."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            _real_switcher(
+                recorder,
+                remembered_previous=_Use(
+                    "anthropic", "claude-sonnet-4-5", timedelta(hours=2), True
+                ),
+            ),
+        )
+        assert _controls(switcher) == ("0.2", "1024", True)
+        assert _words(switcher) == {
+            "temperature": "model default",
+            "max_tokens": "model default",
+            "streaming": "Console Behavior",
+        }
+        row = switcher.query_one("#console-popover-values")
+        labels = [
+            str(child.render())
+            for child in row.children
+            if isinstance(child, Static)
+            and "console-popover-source" not in child.classes
+        ]
+        assert labels == [MODEL_FIELD_LABELS[name] for name in VALUE_FIELDS]
+        box = switcher.query_one("#console-model-popover")
+        for child in row.children:
+            assert child.region.height == 1, child
+            assert box.region.contains_region(child.region), child
+        painted = line_with(
+            painted_lines(app), "Temperature", "Max tokens", "Streaming"
+        )
+        assert "Thinking" not in painted
+        assert "model default" in painted and "Console Behavior" in painted
+
+        streaming = switcher.query_one("#console-popover-streaming", Select)
+        assert [(str(prompt), value) for prompt, value in streaming._options] == [
+            ("On", True),
+            ("Off", False),
+        ]
+
+        await pilot.press("down")  # the chat's own pair: built-in values
+        await pilot.pause()
+        assert switcher.highlighted_row().model == "model-a"
+        assert _words(switcher) == {
+            "temperature": "built-in",
+            "max_tokens": "built-in",
+            "streaming": "Console Behavior",
+        }
+        assert set(_words(switcher).values()) <= SPEC_SOURCE_WORDS
+
+
+async def test_a_chat_value_that_differs_from_its_defaults_says_this_chat() -> None:
+    """AC#2: the chat's own pair shows what the chat holds, sourced 'this chat'."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    draft = _draft()
+    draft = replace(draft, settings=replace(draft.settings, temperature=1.3))
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app, pilot, _real_switcher(recorder, draft=draft)
+        )
+        assert switcher.highlighted_row().model == "model-a"
+        assert _controls(switcher)[0] == "1.3"
+        assert _words(switcher)["temperature"] == "this chat"
+
+
+async def test_alex_path_tab_from_find_edits_the_highlighted_pairs_values() -> None:
+    """AC#4 (R13): Tab from Find rebases to the highlighted pair and focuses
+    Temperature with its value selected, so typing replaces it; Tab again
+    selects Max tokens; Enter applies both as 'edited *' values."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, _real_switcher(recorder))
+        await pilot.press(*"son")
+        await pilot.pause()
+        assert switcher.highlighted_row().model == "claude-sonnet-4-5"
+
+        await pilot.press("tab")
+        await pilot.pause()
+        temperature = switcher.query_one("#console-popover-temperature", Input)
+        assert app.focused is temperature
+        assert "Values for claude-sonnet-4-5" in _strip(app)
+        assert temperature.selected_text == temperature.value == "0.2"
+        await pilot.press(*"0.9", "tab")
+        await pilot.pause()
+        max_tokens = switcher.query_one("#console-popover-max-tokens", Input)
+        assert app.focused is max_tokens
+        assert max_tokens.selected_text == max_tokens.value == "1024"
+        await pilot.press(*"8192")
+        await pilot.pause()
+        assert _controls(switcher)[:2] == ("0.9", "8192")
+        assert _words(switcher)["temperature"] == "edited *"
+        assert _words(switcher)["max_tokens"] == "edited *"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    (submission,) = recorder.submissions
+    settings = submission.draft.settings
+    assert submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert (settings.provider, settings.model) == ("anthropic", "claude-sonnet-4-5")
+    assert (settings.temperature, settings.max_tokens) == (0.9, 8192)
+
+
+async def test_edits_for_a_pair_come_back_after_switching_away_and_back() -> None:
+    """AC#5: A→B→A in one open restores A's edits, not B's."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, _real_switcher(recorder))
+        await pilot.press(*"claude-sonnet-4-5", "tab", *"0.9")
+        await pilot.pause()
+        await _find(pilot, "claude-haiku-4-5")
+        assert switcher.highlighted_row().model == "claude-haiku-4-5"
+        await pilot.press("tab", *"0.4")
+        await pilot.pause()
+
+        await _find(pilot, "claude-sonnet-4-5")
+        assert switcher.highlighted_row().model == "claude-sonnet-4-5"
+        assert _controls(switcher)[0] == "0.9"
+        assert _words(switcher)["temperature"] == "edited *"
+        await pilot.press("tab")  # into Temperature, so Shift+Tab lands in Find
+        await _find(pilot, "claude-haiku-4-5")
+        assert _controls(switcher)[0] == "0.4"
+
+
+@pytest.mark.parametrize("previous", [None, "claude-sonnet-4-5"])
+async def test_opening_and_closing_leaves_no_edit(previous) -> None:
+    """AC#7, AC#13: the Inputs' and the Select's mount-time Changed echoes are
+    not edits, even after the highlight has rebased the row to PREVIOUS's
+    different values; Esc then closes at once with no change."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            _real_switcher(
+                recorder,
+                remembered_previous=(
+                    _Use("anthropic", previous, timedelta(hours=1))
+                    if previous
+                    else None
+                ),
+            ),
+        )
+        drafts = (
+            switcher._draft.field_drafts,
+            *(remembered.field_drafts for remembered in switcher._draft.model_drafts),
+        )
+        assert not any(field.dirty for fields in drafts for field in fields)
+        assert "edited *" not in _words(switcher).values()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is not switcher
+    assert app.result is None
+    assert recorder.submissions == []
+
+
+async def _edited_switcher(app, pilot, recorder: Recorder) -> ConsoleModelPopover:
+    switcher = await open_switcher(app, pilot, _real_switcher(recorder))
+    await pilot.press(*"son", "tab", *"0.9")
+    await pilot.pause()
+    await pilot.press(
+        "shift+tab"
+    )  # back to Find: Enter and d must still reach the guard
+    await pilot.pause()
+    return switcher
+
+
+async def test_esc_with_edits_asks_and_keeps_editing_then_d_discards() -> None:
+    """AC#14 (R14): Esc shows the prompt and discards nothing; Esc again keeps
+    editing; in the prompt ``d`` discards (focus left Find, so it is not typed)."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await _edited_switcher(app, pilot, recorder)
+        find = switcher.query_one("#console-popover-find", Input)
+        guard = switcher.query_one("#console-popover-guard", UnsavedEditsGuard)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is switcher and guard.display
+        assert app.focused is guard
+        prompt = str(guard.render())
+        assert "Temperature" in prompt
+        assert "Enter apply · d discard · Esc keep editing" in prompt
+        assert "Enter apply · d discard · Esc keep editing" in "\n".join(
+            painted_lines(app)
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is switcher and not guard.display
+        assert app.focused is find
+        assert _controls(switcher)[0] == "0.9"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        assert app.screen is not switcher
+        assert find.value == "son"
+    assert app.result is None
+    assert recorder.submissions == []
+
+
+async def test_esc_with_edits_then_enter_applies_them() -> None:
+    """AC#14: the prompt's Enter applies the edited pair to this chat."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await _edited_switcher(app, pilot, recorder)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert switcher.query_one("#console-popover-guard").display
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen is not switcher
+    (submission,) = recorder.submissions
+    assert submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert submission.draft.settings.temperature == 0.9
+
+
+async def test_the_key_rows_print_every_key_the_switcher_binds() -> None:
+    """AC#15: Enter, Tab, Ctrl+N, Ctrl+O, Esc and the scope line are printed,
+    and Save names the three fields it saves (AC#10)."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(recorder))
+        text = "\n".join(painted_lines(app))
+        for copy in (
+            "Enter apply to this chat",
+            "Tab edit values",
+            "Ctrl+N default for new chats",
+            "Ctrl+O chat settings",
+            "Esc cancel",
+            "Applies to: this chat only",
+            "Save as model default",
+            "saves Temperature, Max tokens, Streaming",
+        ):
+            assert copy in text, copy
+        box = switcher.query_one("#console-model-popover")
+        for key_id in ("apply", "make-new-chat-default", "full-settings"):
+            key = switcher.query_one(f"#console-popover-{key_id}", Button)
+            assert key.region.height == 1 and box.region.contains_region(key.region)
+
+
+@pytest.mark.parametrize("key", ["enter", "tab", "ctrl+n", "ctrl+o", "escape"])
+async def test_every_printed_key_works_while_find_has_focus(key) -> None:
+    """AC#16: each printed accelerator acts from Find, on the highlighted pair."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, _real_switcher(recorder))
+        await pilot.press(*"son")
+        await pilot.pause()
+        assert app.focused is switcher.query_one("#console-popover-find", Input)
+        await pilot.press(key)
+        await pilot.pause()
+        if key == "tab":
+            assert app.focused is switcher.query_one(
+                "#console-popover-temperature", Input
+            )
+            return
+        assert app.screen is not switcher
+    if key == "escape":
+        assert app.result is None and recorder.submissions == []
+        return
+    if key == "ctrl+o":
+        assert recorder.submissions == []
+        assert isinstance(app.result, ConsoleSettingsTransfer)
+        assert app.result.draft.settings.model == "claude-sonnet-4-5"
+        return
+    (submission,) = recorder.submissions
+    assert submission.draft.settings.model == "claude-sonnet-4-5"
+    assert submission.action is (
+        ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+        if key == "ctrl+n"
+        else ConsoleSettingsAction.APPLY_TO_CHAT
+    )
+
+
+@pytest.mark.parametrize(
+    ("press", "action"),
+    [
+        ("ctrl+n", ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT),
+        ("save", ConsoleSettingsAction.SAVE_MODEL_DEFAULT),
+    ],
+)
+async def test_default_actions_save_exactly_the_three_values(press, action) -> None:
+    """AC#10: Ctrl+N and Save carry the quick mask with the edited Max tokens."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, _real_switcher(recorder))
+        await pilot.press(*"son", "tab", "tab", *"8192")
+        await pilot.pause()
+        if press == "save":
+            switcher.query_one("#console-popover-save-model-default", Button).press()
+        else:
+            await pilot.press(press)
+        await pilot.pause()
+    (submission,) = recorder.submissions
+    assert submission.action is action
+    assert submission.default_field_mask == QUICK_MODEL_DEFAULT_FIELDS
+    assert submission.draft.settings.max_tokens == 8192
+
+
+async def test_ctrl_o_carries_the_highlighted_pair_and_its_edits_unapplied() -> None:
+    """AC#12: Chat settings gets the draft; nothing is applied or discarded."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await open_switcher(app, pilot, _real_switcher(recorder))
+        await pilot.press(*"son", "tab", *"0.9", "ctrl+o")
+        await pilot.pause()
+    assert recorder.submissions == []
+    assert isinstance(app.result, ConsoleSettingsTransfer)
+    draft = app.result.draft
+    assert (draft.settings.provider, draft.settings.model) == (
+        "anthropic",
+        "claude-sonnet-4-5",
+    )
+    assert draft.settings.temperature == 0.9
+    temperature = next(f for f in draft.field_drafts if f.name == "temperature")
+    assert temperature.dirty
+
+
+def test_the_switcher_binds_no_terminal_convention_key() -> None:
+    """AC#17 (ADR-031 rule 2): no Ctrl+C/V/X/S/D/Z/A/R/W on the switcher."""
+    banned = {f"ctrl+{letter}" for letter in "cvxsdzarw"}
+    bound = {
+        key.strip()
+        for owner in (ConsoleModelPopover, UnsavedEditsGuard)
+        for binding in owner.BINDINGS
+        for key in binding.key.split(",")
+    }
+    assert {"ctrl+n", "ctrl+o", "escape"} <= bound
+    assert not bound & banned
+
+
+async def test_tab_into_the_values_pins_the_pair_and_typing_re_ranks() -> None:
+    """R13: once Tab moves into a pair's values, a late fill that brings a
+    better match for the query cannot retarget the strip under the cursor;
+    typing in Find again picks the best match."""
+    release = asyncio.Event()
+
+    async def late_recent():
+        await release.wait()
+        return (_Use("anthropic", "sonic-1", timedelta(hours=1)),)
+
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = _real_switcher(recorder)
+        switcher._recent_pairs_loader = late_recent
+        app.push_screen(switcher)
+        for _ in range(3):
+            await pilot.pause()
+        await pilot.press(*"son", "tab")
+        await pilot.pause()
+        assert switcher.highlighted_row().model == "claude-sonnet-4-5"
+        release.set()
+        await _settle(app, pilot)
+        assert any(row.model == "sonic-1" for row in switcher._rows)
+        assert switcher.highlighted_row().model == "claude-sonnet-4-5"
+        assert "Values for claude-sonnet-4-5" in _strip(app)
+
+        # The same query typed again: both rows still match, and the new
+        # query ranks (prefix beats substring) instead of keeping the pin.
+        await pilot.press("shift+tab", *"son")
+        await pilot.pause()
+        assert switcher.highlighted_row().model == "sonic-1"

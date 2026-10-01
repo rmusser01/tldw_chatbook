@@ -517,17 +517,47 @@ to pair the id with that provider. A provider whose list is still loading,
 empty or unavailable says so in its own row. Legacy alias providers (such
 as "llama.cpp (legacy alias)") only appear when a chat uses them.
 
-Up and Down move the highlight while you type, and from Temperature too.
-The value row below the list follows the highlight: "Values for <model>"
-always names the highlighted pair and shows its Temperature, Streaming and
-Max tokens, so what you see is what the keys act on. **Enter** applies the
-highlighted pair to this chat only. **Ctrl+N** makes the highlighted pair
-the default for new chats, and **Save as model default** saves its
-Temperature, Max tokens and Streaming. Once you edit a value, the highlight
-stays on that pair while the list finishes filling in. **Chat settings…**
-opens the full modal on the highlighted pair, with your unapplied edits.
-**Esc** closes without changing anything.
-Context and compaction settings live in the full modal only; Apply here
+Up and Down move the highlight while you type, and from the values too.
+Under the list, "Values for <model> · <provider>" names the highlighted pair,
+and the row below it shows that pair's **Temperature**, **Max tokens** and
+**Streaming** (On or Off), each one row tall. These three are exactly what
+the default actions save; Thinking and every other setting stay in Chat
+settings. Next to each value is a word saying where it comes from:
+
+| Word | The value comes from |
+|---|---|
+| `edited *` | an edit you made here, not yet applied |
+| `this chat` | this chat's own setting, different from its defaults |
+| `model default` | the model's saved defaults (`[api_settings.<provider>.model_defaults.<model>]`) |
+| `Console Behavior` | the global fallbacks in **Settings ▸ Console Behavior** (`[chat_defaults]`) |
+| `provider` | a setting for the whole provider: Console's saved provider defaults, a custom endpoint's own parameters, or the provider's `[api_settings]` table |
+| `built-in` | nothing is set; tldw_chatbook's own default applies (a blank Max tokens means no cap) |
+
+**Tab** from Find moves to Temperature with its value selected, so you can
+type over it; Tab again does the same for Max tokens. So switching to a
+Sonnet model with Temperature 0.9 and Max tokens 8192 is **Alt+M**, `son`,
+**Tab**, `0.9`, **Tab**, `8192`, **Enter**. Once you edit a value or Tab
+into the values, the highlight stays on that pair while the list finishes
+filling in; typing in Find again picks the best match for the new text. If
+you edit a pair, move to another and come back, your edits for the first
+pair are still there.
+
+The keys, printed under the values, work while you type in Find:
+
+- **Enter** applies the highlighted pair and its values to this chat only
+  ("Applies to: this chat only"), then closes and returns you to the
+  composer; nothing is written to `config.toml`.
+- **Ctrl+N** makes the highlighted pair the default for new chats, with its
+  Temperature, Max tokens and Streaming. **Save as model default** (no key;
+  Shift+Tab from Find reaches it) saves those three as the model's defaults.
+  Both also apply the pair to this chat. A blank Max tokens removes the
+  model's saved cap.
+- **Ctrl+O** opens Chat settings on the highlighted pair with your
+  unapplied edits, without applying or discarding them.
+- **Esc** closes without changing anything. If you edited a value, it asks
+  first: "Enter apply · d discard · Esc keep editing".
+
+Context and compaction settings live in Chat settings only; Apply here
 keeps the chat's compaction setting as it is.
 
 Switch model keeps no history of its own. Its **RECENT** group is built
@@ -769,7 +799,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Ctrl+T | New Console tab |
 | Ctrl+G | Stop this tab's run (only while one is running; shown in the footer then) |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
-| Alt+M | Switch model (provider·model pairs; Enter applies to this chat) |
+| Alt+M | Switch model (provider·model pairs; Enter applies to this chat, Tab edits Temperature and Max tokens, Ctrl+N default for new chats, Ctrl+O Chat settings) |
 | Alt+C | Open or close the Context (left) rail |
 | Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |

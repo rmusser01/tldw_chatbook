@@ -10841,6 +10841,9 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     max-height: $ds-model-switcher-max-height;
 }
 
+.console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
+.console-popover-source { width: $ds-size-18; }
+
 /* ===== MODULE: features/_library.tcss ===== */
 
 

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 from textual.widget import Widget
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import Checkbox, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_model_popover_geometry import PopoverGeometryHarness
@@ -253,7 +253,12 @@ def test_hosted_reasoning_select_keeps_minimal():
 
 @pytest.mark.asyncio
 async def test_popover_labels_come_from_the_field_table():
-    """AC#2/#3: the Alt+M popover's Temperature and Streaming labels."""
+    """AC#2/#3: the Alt+M popover's value labels.
+
+    Rewritten for TASK-33004.5: the value row labels Temperature, Max tokens
+    and Streaming before their controls (an Input, an Input, an On/Off
+    Select), all from the one field table. Captures flag 5 ("Response max"
+    where the modal and Settings say Max tokens) stays fixed by this."""
     app = PopoverGeometryHarness()
     async with app.run_test(size=(211, 44)) as pilot:
         await app.push_screen(build_switcher(Recorder()))
@@ -262,18 +267,14 @@ async def test_popover_labels_come_from_the_field_table():
         assert (
             _label_drift(
                 screen,
-                {"console-popover-temperature": "temperature"},
+                {
+                    "console-popover-temperature": "temperature",
+                    "console-popover-max-tokens": "max_tokens",
+                    "console-popover-streaming": "streaming",
+                },
                 "console-popover-field-label",
             )
             == []
-        )
-        streaming = screen.query_one("#console-popover-streaming", Button)
-        assert str(streaming.label).startswith(f"{MODEL_FIELD_LABELS['streaming']}: ")
-        # Captures flag 5: the row read "Response max" where the modal and
-        # Settings say Max tokens (Switch model's value strip, TASK-33004.4).
-        response_max = screen.query_one("#console-popover-response-max", Static)
-        assert str(response_max.content).startswith(
-            f"{MODEL_FIELD_LABELS['max_tokens']} "
         )
 
 

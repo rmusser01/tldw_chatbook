@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Select
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -38,6 +38,16 @@ async def _highlight_current(modal, pilot) -> None:
     index = next(i for i, row in enumerate(rows) if row.note == "● CURRENT")
     modal._set_highlight(index)
     await pilot.pause()
+
+
+def _flip_streaming(modal, surface) -> None:
+    """Edit Streaming: Switch model's On/Off Select (TASK-33004.5), else the
+    full modal's toggle Button."""
+    if surface == "quick":
+        streaming = modal.query_one("#console-popover-streaming", Select)
+        streaming.value = not streaming.value
+    else:
+        modal.query_one("#console-settings-streaming", Button).press()
 
 
 async def _submit_settings(modal, console, harness, pilot, surface, action):
@@ -93,7 +103,7 @@ async def test_reopen_keeps_previously_applied_temperature(
         assert float(modal.query_one(f"#{prefix}-temperature", Input).value) == (
             pytest.approx(0.23)
         )
-        modal.query_one(f"#{prefix}-streaming", Button).press()
+        _flip_streaming(modal, surface)
         await pilot.pause()
         await _submit_settings(modal, console, harness, pilot, surface, second_action)
 
@@ -148,7 +158,7 @@ async def test_quick_apply_retains_hidden_generation_values_and_live_endpoint(
         )
 
         modal = await _open_settings(console, harness, pilot, "quick")
-        modal.query_one("#console-popover-streaming", Button).press()
+        _flip_streaming(modal, "quick")
         await pilot.pause()
         await _submit_settings(modal, console, harness, pilot, "quick", "apply")
 
