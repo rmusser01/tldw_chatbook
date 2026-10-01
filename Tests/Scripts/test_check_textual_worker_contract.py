@@ -609,6 +609,124 @@ class S:
     ]
 
 
+#: Ways a class body binds one of its own methods under a second name.
+_CLASS_BODY_BINDINGS = {
+    "alias": "choose = _pick",
+    "partial": "choose = partial(_pick, which=1)",
+    "alias-of-an-alias": "first = _pick\n    choose = first",
+}
+
+
+@pytest.mark.parametrize("binding", sorted(_CLASS_BODY_BINDINGS))
+def test_w003_a_class_body_alias_of_a_method_still_waits(binding):
+    """A bare name in a CLASS BODY reads that class's own namespace, so
+    `choose = _pick` there names `S._pick`. Resolving it like a bare name in
+    a function body -- module-level functions only -- lost this push (PR
+    #2944 review of the bare-name fix)."""
+    source = f"""
+class S:
+    async def _pick(self, which=0):
+        await self.app.push_screen_wait(Picker())
+
+    {_CLASS_BODY_BINDINGS[binding]}
+
+    async def on_button_pressed(self, event):
+        await self.choose()
+"""
+    assert _w003(source) == [_row("S.on_button_pressed", "S._pick")]
+
+
+def test_w003_a_class_body_name_reads_its_own_class_before_the_module():
+    """Python looks a class-body name up in the class first, then in the
+    module: the class's own `_pick` shadows the module-level one, so the
+    module's waiting `_pick` is not what `choose` holds."""
+    source = """
+async def _pick():
+    await app.push_screen_wait(Picker())
+
+
+class S:
+    async def _pick(self):
+        return None
+
+    choose = _pick
+
+    async def on_button_pressed(self, event):
+        await self.choose()
+"""
+    assert _w003(source) == []
+
+
+def test_w003_a_class_body_name_the_class_lacks_reads_the_module():
+    """...and a name the class does not define is the module's."""
+    source = """
+async def _pick():
+    await app.push_screen_wait(Picker())
+
+
+class S:
+    choose = _pick
+
+    async def on_button_pressed(self, event):
+        await self.choose()
+"""
+    assert _w003(source) == [_row("S.on_button_pressed", "_pick")]
+
+
+#: A bare `_pick` read anywhere but the class body itself: each is the
+#: imported (non-waiting) `_pick`, never the class's waiting method.
+_OUTSIDE_THE_CLASS_BODY = {
+    # A function body skips the class scope.
+    "method-body": """
+from helpers import _pick
+
+
+class S:
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+
+    async def on_button_pressed(self, event):
+        await _pick(self)
+""",
+    # So does a lambda's body, even a lambda written in the class body: it
+    # runs later, in its own scope, and reads globals.
+    "lambda-in-class-body": """
+from helpers import _pick
+
+
+class S:
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+
+    choose = lambda self: _pick(self)
+
+    async def on_button_pressed(self, event):
+        await self.choose()
+""",
+    "module-level": """
+from helpers import _pick
+
+
+class S:
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+
+    async def on_button_pressed(self, event):
+        await choose()
+
+
+choose = _pick
+""",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_OUTSIDE_THE_CLASS_BODY))
+def test_w003_a_bare_name_outside_a_class_body_never_reads_the_class(shape):
+    """Only a class body reads the class namespace: a method body, a lambda
+    body and module level all skip it, as Python's scoping does."""
+    assert _w003(_OUTSIDE_THE_CLASS_BODY[shape]) == []
+
+
 def test_w003_accepts_the_fixed_shape_a_handler_that_starts_a_worker():
     """The fix TASK-33621.13 shipped: the handler returns, a worker awaits."""
     source = """

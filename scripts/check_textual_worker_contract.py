@@ -111,9 +111,12 @@ W003 (census ratchet, TASK-33621.13)
     that class's other mixins -- but never an unrelated class's ``x``. A name
     defined twice in one scope is its LAST definition, as Python binds it; a
     bare ``x()`` resolves to a nested or module-level ``x`` in scope
-    first. ``obj.x()`` is resolved by NAME against every definition, methods
-    included, and an imported ``x()`` against every module-level function
-    (a bare name never reaches a method): two unrelated functions sharing a
+    first. A bare name written in a CLASS BODY (``choose = _pick``, not a
+    lambda's body) reads that class's own namespace before the module's, as
+    Python does, so it can name one of that class's methods; anywhere else a
+    bare name never reaches a method. ``obj.x()`` is resolved by NAME against
+    every definition, methods included, and an imported ``x()`` against every
+    module-level function: two unrelated functions sharing a
     name are one to it. That over-approximation
     is why W003 is a census like W002 rather than a zero-tolerance gate: the
     pre-existing rows are pinned in ``scripts/textual_wait_push_census.tsv``
@@ -453,7 +456,10 @@ _FUTURE_FACTORIES = {"create_future", "Future", "Event"}
 _FUTURE_WAITERS = {"wait_for", "shield"}
 
 #: A callable reference: ``("self", name)`` for ``self.name``, ``("name",
-#: name)`` for a bare name, ``("attr", name)`` for ``anything.name``.
+#: name)`` for a bare name, ``("attr", name)`` for ``anything.name``, and
+#: ``("lambda", name)`` for a bare name called in a lambda's body -- read when
+#: the lambda runs, from its own scope, so a class body's namespace (which
+#: ``("name", name)`` written there reads first) is not on its path.
 _Ref = tuple[str, str]
 
 
@@ -498,7 +504,12 @@ def _ref(node: ast.AST) -> _Ref | None:
     ``_after``'s coroutine, which Textual's ``invoke`` -- and any ``await`` of
     the lambda's result -- then awaits)."""
     if isinstance(node, ast.Lambda):
-        return _ref(node.body.func) if isinstance(node.body, ast.Call) else None
+        if not isinstance(node.body, ast.Call):
+            return None
+        ref = _ref(node.body.func)
+        if ref is not None and ref[0] == "name":
+            return ("lambda", ref[1])
+        return ref
     if isinstance(node, ast.Call):
         func_name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
         if func_name == "partial" and node.args:
@@ -865,10 +876,14 @@ class _WaitGraph:
       collision (TASK-33621.13 review).
     * a bare ``x()`` -- a nested def, a local alias, a module-level def in
       scope, else every module-level function and alias named ``x`` (an
-      import, a module global or a parameter). Never a method: only an
-      attribute reaches one, and falling back to methods too made an
-      imported helper wait through an unrelated class's same-named method
-      (PR #2944 review);
+      import, a module global or a parameter). Never a method from a
+      function body, a lambda body or module level: there only an attribute
+      reaches one, and falling back to methods too made an imported helper
+      wait through an unrelated class's same-named method (PR #2944 review).
+      The exception is a bare name written in a CLASS BODY, which Python
+      looks up in that class's own namespace first -- its method, else its
+      class-body assignment, never a base class's -- and only then the
+      module: ``choose = _pick`` there names the class's ``_pick``;
     * ``obj.x()`` -- every top-level def (methods included) and alias named
       ``x``: the real defect's chain ran through ``controller._select_
       project_instruction_binding``, a name shared with a non-waiting method
@@ -1000,7 +1015,7 @@ class _WaitGraph:
         kind, name = ref
         if kind == "self" and cls is not None:
             return self._self_targets(module, cls, name)
-        if kind == "name":
+        if kind == "name" or kind == "lambda":
             scope = fn
             while scope is not None:
                 if name in scope.nested:
@@ -1021,11 +1036,43 @@ class _WaitGraph:
                         for target in self._targets(local, module, cls, scope, seen)
                     ]
                 scope = scope.parent
+            # A bare name in a CLASS BODY reads that class's namespace first,
+            # as Python does: `choose = _pick` there names the class's own
+            # `_pick`. Resolving it like a function body's bare name missed
+            # that method's push (PR #2944 review).
+            if kind == "name" and fn is None and cls is not None:
+                own = self._class_namespace(module, cls, name)
+                if own:
+                    return own
             if name in module.functions:
                 return [module.functions[name]]
             # An import, a module global or a parameter: never a method.
             return [("funcs", name)]
         return [("defs", name)]
+
+    @staticmethod
+    def _class_namespace(module: _Module, cls: str, name: str) -> list[_Target]:
+        """What a bare ``name`` read in ``cls``'s own BODY is, if the class
+        binds it: its method of that name, else its class-body assignment.
+
+        Only the class's own namespace, never its bases: a class body does
+        not see its base classes' attributes. Empty when the class binds no
+        callable ``name``, and Python then reads the module.
+
+        Two simplifications: the ``("bound", ...)`` node also carries what
+        the class's methods assign to ``self.name`` (an over-approximation),
+        and definition order is not checked -- a ``choose = _pick`` written
+        ABOVE ``def _pick`` reads the module in Python, and the class's
+        ``_pick`` here. None of the package's class-body aliases does that.
+        """
+        method = module.classes.get(cls, {}).get(name)
+        if method is not None:
+            return [method]
+        if any(
+            binder is None for _, binder in module.class_aliases.get((cls, name), ())
+        ):
+            return [("bound", f"{module.rel}::{cls}.{name}")]
+        return []
 
     def _resolve_on(self, module: _Module, cls: str, name: str) -> list[_Target]:
         """``self.name`` on an instance whose class is exactly ``cls``: the
