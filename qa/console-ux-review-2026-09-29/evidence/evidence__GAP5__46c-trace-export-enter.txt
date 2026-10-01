@@ -1,0 +1,45 @@
+ Trace · Using my Library sources: h... · 44 events
+ Future exchange capture: Safe · c Change…
+ LIVE · PAUSED · f resume · 44 events
+ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ▊  Search trace events…                                                                                                                                      ▎
+ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ Shown 44            Kind                            ▼ State                            ▼ Agent                           ▼ Provider                         ▼
+ Matches 44
+ Total 44
+ Input        ◆                                                                                                           ◆
+ Model        ━━━━  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎          ━ ━
+ Tools        │     ▊                                                                                                                      ▎
+ Agents       │ ⊙⊙  ▊  Export shared Trace                                                                                                 ▎          ⊙⊙⊙
+        15:02:00    ▊  44 events · 506 sensitive fields · 269 redacted · 33 omitted · 0 truncated · 0 unavailable                          ▎           15:09:33
+                    ▊  Credentials are always blocked in every profile.                                                                    ▎result ◉ run ⊙ step
+ #     Event        ▊  Profile: Redacted diagnostic (recommended)                                                                          ▎
+       Turn         ▊  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────     ▎
+ 1     Context attac▊  Review exactly what will leave this machine before writing a portable JSON bundle.                                  ▎
+ 2     Context injec▊  │                                                                                                                   ▎
+ 3     User message ▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎     ▎
+ 4     Model request▊  ▊ ▐●▌ Safe summary                                                                                            ▎     ▎
+ 5     Agent run    ▊  ▊ ▐●▌ Redacted diagnostic (recommended)                                                                       ▎     ▎
+ 6     Agent run cre▊  ▊ ▐●▌ Full trace                                                                                              ▎     ▎
+ 7     Agent run sta▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▅    ▎
+ 8     Context attac▊  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────     ▎
+ 9     Context injec▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎    ▎
+ 10    Model request▊  ▊  /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73  ▎    ▎
+ 11    Model first t▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎    ▎
+ 12    Model respons▊  Export failed: Invalid Trace events[0]: dangling parent_event_id 'event-000002'                                     ▎
+ 13    Model respons▊                                                                                   Browse…     Cancel     Export      ▎
+ 14    Agent run com▊                                                                                                                      ▎
+ 15    Model respons▊                                                                                                                      ▎                 ▂▂
+ 16    Assistant mes▊                                                                                                                      ▎
+       Turn         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ 17    Context attach    ↳ Retrieved context atDone      —     —      —     —         15:07:43 —
+ 18    Context inject    ↳ Retrieved context inDone      —     —      —     —         15:07:43 —
+ 19    User message  What energy density and opComplete  —     —      —     —         15:07:43 —
+ 20    Model request     ↳ model request starteStarted   —     —      —     —         15:07:43 —
+ 21    Agent run     primary run               Done      —     —      —     5.30s     15:07:44 15:07:49
+ 22    Agent run crea    ↳ Agent run created   Created   —     —      —     0.00s     15:07:44 15:07:44
+ 23    Agent run star    ↳ Agent run started   Started   —     —      —     0.00s     15:07:46 15:07:46
+ 24    Context attach    ↳ system context attacDone      —     —      —     0.00s     15:07:46 15:07:46
+ 25    Context inject    ↳ system context injecDone      —     —      —     0.00s     15:07:46 15:07:46
+ n/p match · j/k err · u/y tool · v/b feedback · a/s child
+ enter inspect · i detail · g filters · w export trace · f follow · c capture

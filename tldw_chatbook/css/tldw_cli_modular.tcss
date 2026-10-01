@@ -3692,51 +3692,16 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     max-height: $ds-size-15;
     overflow-y: auto;
 }
-.approval-row {
-    height: auto;
-    min-height: $ds-size-1;
-    width: $ds-width-fill;
-}
 
-.approval-row-controls {
-    height: auto;
-    min-height: $ds-size-1;
-    width: $ds-width-fill;
-}
-.approval-row-header {
-    width: $ds-width-fill;
-}
-.approval-row-args {
-    width: $ds-width-fill;
-}
-.approval-row-full-command {
-    width: $ds-width-fill;
-    height: $ds-size-6;
-    min-height: $ds-size-3;
-}
-.approval-row-raw-label,
-.approval-row-raw-metadata,
-.approval-row-raw-warning,
-.approval-row-raw-scope {
-    width: $ds-width-fill;
-    height: auto;
-}
+.approval-row, .approval-row-controls {height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
+.approval-row-header,.approval-row-args{width:$ds-width-fill;}
+.approval-row-full-command{width:$ds-width-fill;height:$ds-size-6;min-height:$ds-size-3;}
 
-.approval-row-decision {
-    width: $ds-agentic-prompt-vars-pane;
-}
+.approval-row-reason,.approval-row-scope,.approval-row-raw-label,.approval-row-raw-metadata,.approval-row-raw-warning,.approval-row-raw-scope{width:$ds-width-fill;height:auto;}
 
-.approval-row-reason,
-.approval-row-scope {
-    width: $ds-width-fill;
-    height: auto;
-}
+.approval-row-decision{width:$ds-agentic-prompt-vars-pane;}
 
-.approval-row-fast-approve,
-.approval-row-fast-deny {
-    width: $ds-size-14;
-    min-width: $ds-size-14;
-}
+.approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
 
 .approval-row.needs-decision {
     border: solid $ds-status-approval-required;
@@ -4551,6 +4516,11 @@ App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
     width: $ds-percent-85;
     max-width: $ds-size-120;
 }
+
+
+ChatApprovalCard Collapsible.deny-reason{min-height:$ds-size-1;margin:$ds-space-0;padding:$ds-space-0;border:none;}
+.deny-reason>Contents{padding:$ds-space-0;}
+ChatApprovalCard Collapsible.deny-reason>CollapsibleTitle,ChatApprovalCard Collapsible.deny-reason.-collapsed>CollapsibleTitle{height:$ds-size-1;border:none;}
 
 /* ===== MODULE: components/_workbench.tcss ===== */
 

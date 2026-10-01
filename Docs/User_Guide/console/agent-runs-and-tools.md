@@ -319,6 +319,17 @@ Each pending tool call gets its own row, one full-width line at a time: the
 controls, and — under the controls — a line spelling out what the decision
 you have highlighted actually commits you to.
 
+While a call runs, supported skill scripts show stdout/stderr and native MCP stdio tools show their progress messages. The existing three-line preview and expandable **Live output** details refresh without replacing the row. MCP progress is status information, not a partial result. Other tools continue to show their result when they finish.
+
+Live text is bounded and kept only in the current session. The final result replaces it; Stop or timeout keeps captured partial text in the expanded details with the interruption outcome. A stopped Console wait does not claim that an abandoned worker was killed.
+
+Expand **Reason if denied (optional)** on a row to add a reason. Enter up to 1,000 characters
+before using the row's fast **Deny** button, or select **Deny** and **Submit**.
+**Deny all** keeps each row's own reason; review the rows and then **Submit**.
+The model receives the reason as quoted, explicitly user-authored text in that
+call's refusal. Leaving it empty keeps the existing refusal. A reason does not
+change permissions, apply to an approved sibling, or create a new audit log.
+
 The five decisions, with the scope line each one shows:
 
 | Decision | Scope line |
@@ -2066,6 +2077,15 @@ shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
 "Approval required" card as everything else.
 
+Some servers describe a tool's arguments with a rule at the top of the schema,
+such as "give either `id` or `name`" (`anyOf`, `oneOf`, `allOf`, `enum`,
+`const` or `not`). OpenAI and Anthropic reject any request containing such a
+schema, so Console removes those top-level rules before it sends the tool to
+the model. When the rule only says which arguments to give, Console adds it
+to the tool's description instead (for example "Argument rule: provide at
+least one of id or name."), so the model still sees it. The tool is still
+offered; checking each call it receives remains the server's job.
+
 ### Web research tools
 
 Console's standard web tools are `web_search` (find links), `web_fetch`
@@ -2566,6 +2586,20 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   session); it then reads "Tools: N ready".
 - Tab status markers clear as soon as you visit the tab — a missing `✓` just
   means you already looked.
+- **"The provider rejected the tool definition for <tool>…"** The provider
+  checked the tools sent with your message and refused one of them before the
+  model ran, so the reply fails the same way on every model. Choosing another
+  model will not help. What the message suggests depends on the tool:
+  - A name starting `mcp__` is a tool from an MCP server: turn that server
+    off on the [MCP screen](../mcp.md), then send again.
+  - Any other name is one of Chatbook's own tools, so the rejection is a
+    Chatbook bug; please report it. If the tool's group has a switch on the
+    MCP screen (for built-in local tools, **Local workspace, web, and
+    Watchlists tools**), turning it off lets you send meanwhile.
+  - If the provider blames a tool without naming it, the message says "one
+    of the tool definitions sent with this request" and that choosing
+    another model is unlikely to help. A tool from an MCP server is the
+    likeliest cause.
 
 —
 *Verified against dev @ ff435772c — 2026-07-31. Named agents section added

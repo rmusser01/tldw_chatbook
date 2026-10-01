@@ -27,7 +27,10 @@ from Tests.Chat.test_console_runtime_lifetime import _pending_call, _View
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_mcp_approval import _pending
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _ReadyResolutionGateway,
+)
 from Tests.UI.test_console_store_continuity import (
     _drain_from_child_thread,
     _navigate,
@@ -285,6 +288,9 @@ def _build_console_app(tmp_path):
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
+    gateway.cached_context_window = (
+        _ReadyResolutionGateway.cached_context_window.__get__(gateway)
+    )
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     return app, gateway
@@ -295,6 +301,7 @@ def _build_console_app(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
     tmp_path,
@@ -418,6 +425,7 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_widget_promotion_and_navigation_gate_exact_answerable_head(
     tmp_path, monkeypatch
@@ -533,6 +541,7 @@ def _rendered(widget) -> str:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_headless_round_announces_through_the_app_not_the_screen():
     """The announcement must not depend on a screen hook that is None.
@@ -700,6 +709,7 @@ async def test_pausing_at_exhaustion_settles_exact_round_fail_closed(
     assert controller.pending_decision_projection(session.id) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "decision_type", ["approval", "skill_install", "skill_script"]
 )
@@ -737,7 +747,13 @@ async def test_reprojection_never_renders_an_exhausted_head(
     pending_ids = functools.partial(
         _pending_ids_for_type, controller, session.id, decision_type
     )
-    assert await _settle(lambda: bool(pending_ids()))
+    assert await _settle(
+        lambda: (
+            bool(pending_ids())
+            and controller._answerable_decision_by_session
+            == {session.id: pending_ids()[0]}
+        )
+    )
     decision_id = pending_ids()[0]
     assert controller._answerable_decision_by_session == {
         session.id: decision_id
@@ -969,6 +985,7 @@ async def test_render_failure_keeps_exact_round_paused_and_retryable():
     assert controller._announced_pending_decision_ids == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("decision_type", "arm", "pending_ids", "resolve"),
     [
@@ -1036,7 +1053,12 @@ async def test_late_projection_failure_cannot_resurrect_terminal_announcement(
     generation = runtime.attach_view(view)
     assert runtime.finish_view_reconciliation(view, generation)
     worker, _box = arm(controller, session.id)
-    assert await _settle(lambda: bool(pending_ids(controller, session.id)))
+    assert await _settle(
+        lambda: (
+            bool(pending_ids(controller, session.id))
+            and controller.pending_decision_projection(session.id) is not None
+        )
+    )
     decision_id = pending_ids(controller, session.id)[0]
     projection = controller.pending_decision_projection(session.id)
     assert projection is not None
@@ -1072,6 +1094,7 @@ async def test_late_projection_failure_cannot_resurrect_terminal_announcement(
     assert decision_id not in controller._announced_pending_decision_ids
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hidden_announcer_rejects_session_type_and_id_mismatch():
     """Only the exact live registry record can admit an app-wide notice."""
@@ -1085,9 +1108,7 @@ async def test_hidden_announcer_rejects_session_type_and_id_mismatch():
     generation = runtime.attach_view(view)
     assert runtime.finish_view_reconciliation(view, generation)
     worker, _box = _arm(controller, session.id, call=_risk_row())
-    assert await _settle(
-        lambda: bool(_armed_round_ids(controller, session.id))
-    )
+    assert await _settle(lambda: _round_is_claimable(controller, session.id))
     decision_id = _armed_round_ids(controller, session.id)[0]
 
     controller._announce_hidden_decision(
@@ -1192,6 +1213,7 @@ async def test_hidden_notice_marker_records_only_successful_delivery(
     assert controller._announced_pending_decision_ids == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_decision_updates_runtime_attention_until_resolution():
     """A background round updates mounted shell state without a view remount."""
@@ -1209,7 +1231,11 @@ async def test_background_decision_updates_runtime_attention_until_resolution():
         controller, background_session.id, call=_risk_row()
     )
     assert await _settle(
-        lambda: bool(_armed_round_ids(controller, background_session.id))
+        lambda: (
+            bool(_armed_round_ids(controller, background_session.id))
+            and runtime.console_needs_attention
+            and bool(app.console_attention_updates)
+        )
     )
     decision_id = _armed_round_ids(controller, background_session.id)[0]
 
@@ -1311,6 +1337,7 @@ async def _background_decision_rig():
     return controller, background, app, legacy_park_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_rapid_background_rounds_announce_exact_ids_without_legacy_park():
     """Same-type background rounds neither coalesce nor expose session labels."""
@@ -1330,7 +1357,10 @@ async def test_two_rapid_background_rounds_announce_exact_ids_without_legacy_par
         ),
     )
     assert await _settle(
-        lambda: len(_armed_round_ids(controller, background.id)) == 2,
+        lambda: (
+            len(_armed_round_ids(controller, background.id)) == 2
+            and len(app.notifications) == 2
+        ),
         seconds=3.0,
     )
     round_a, round_b = _armed_round_ids(controller, background.id)
@@ -1374,7 +1404,11 @@ async def test_two_rapid_background_rounds_announce_exact_ids_without_legacy_par
     # Stable IDs are never recycled; a genuinely new round can announce.
     thread_c, _box_c = _arm(controller, background.id, call=_risk_row())
     assert await _settle(
-        lambda: bool(_armed_round_ids(controller, background.id)), seconds=3.0
+        lambda: (
+            bool(_armed_round_ids(controller, background.id))
+            and len(app.notifications) == 3
+        ),
+        seconds=3.0,
     )
     round_c = _armed_round_ids(controller, background.id)[0]
     assert round_c not in {round_a, round_b}
@@ -1387,6 +1421,7 @@ async def test_two_rapid_background_rounds_announce_exact_ids_without_legacy_par
     assert controller._announced_pending_decision_ids == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mixed_background_rounds_announce_individually_and_cleanup_exactly():
     """Mixed rounds share no screen notice registry and clean only their ID."""
@@ -1402,6 +1437,7 @@ async def test_mixed_background_rounds_announce_individually_and_cleanup_exactly
             len(_armed_round_ids(controller, background.id)) == 1
             and len(controller.pending_skill_install_ids()) == 1
             and len(controller.pending_skill_script_ids()) == 1
+            and len(app.notifications) == 3
         ),
         seconds=3.0,
     )
@@ -1471,6 +1507,7 @@ async def test_terminal_scope_releases_all_three_announcement_ids(terminal):
     assert controller._announced_pending_decision_ids == set()
 
 
+@pytest.mark.bootstrap_profile
 def test_unified_router_never_invokes_legacy_type_setters():
     """Runtime-owned mixed projection is exclusive across all three types."""
     store = ConsoleChatStore()
@@ -1519,6 +1556,7 @@ def test_unified_router_never_invokes_legacy_type_setters():
     assert not script_thread.is_alive()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_round_armed_with_a_view_attached_does_not_double_announce():
     """The app-wide notice is the DETACHED path only.
@@ -1621,6 +1659,7 @@ async def test_visible_typed_round_gets_first_hidden_scan_notice_and_retry(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_attaching_a_view_mounts_a_round_armed_while_detached():
     """A round still armed at attach must MOUNT, not sit invisible.
@@ -1675,6 +1714,7 @@ async def test_attaching_a_view_with_no_armed_round_mounts_nothing():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_headless_rounds_each_mount_in_turn():
     """`_parked_approval_payloads` is keyed by ROUND: no round is stranded.
@@ -2017,6 +2057,7 @@ async def test_no_headless_path_returns_an_approval_without_a_human():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_wake_delivery_cannot_resolve_a_pending_headless_round(tmp_path):
     """A wake notice is never user input and never an approval.
@@ -2028,6 +2069,7 @@ async def test_a_wake_delivery_cannot_resolve_a_pending_headless_round(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
     try:
         thread_app = _ThreadApp()
+        thread_app.local_chat_conversation_service = app.local_chat_conversation_service
         controller.app = thread_app
         controller.mcp_approval_timeout_seconds = lambda: 60.0
         # Runtime ownership makes its app authoritative for every worker-

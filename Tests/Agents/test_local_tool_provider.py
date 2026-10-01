@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    TODO_UPDATE_DELETE_RULE,
     LocalApprovalEffect,
     LocalToolExposure,
     LocalToolProvider,
@@ -166,6 +167,7 @@ def admitted_root(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_empty_admitted_roots_remove_only_path_tools(tmp_path):
     provider = make_provider(
         root=tmp_path,
@@ -178,6 +180,7 @@ def test_empty_admitted_roots_remove_only_path_tools(tmp_path):
     assert {"web_fetch", "web_search", "todo_create", "todo_list"} <= names
 
 
+@pytest.mark.bootstrap_profile
 def test_one_admitted_root_adds_optional_stable_alias_and_routes_without_it(
     tmp_path,
 ):
@@ -200,6 +203,7 @@ def test_one_admitted_root_adds_optional_stable_alias_and_routes_without_it(
     assert executor.calls == [("fs_read", {"path": "a.txt"}, "read")]
 
 
+@pytest.mark.bootstrap_profile
 def test_root_alias_schema_changes_permission_definition_hash(tmp_path):
     legacy = make_provider(root=tmp_path)
     admitted = make_provider(
@@ -221,6 +225,7 @@ def test_root_alias_schema_changes_permission_definition_hash(tmp_path):
     ) != definition_hash(admitted_tool.description, admitted_tool.input_schema)
 
 
+@pytest.mark.bootstrap_profile
 def test_multiple_admitted_roots_require_alias_and_route_exactly_once(tmp_path):
     first_executor = RecordingWorkspaceExecutor(result="first")
     second_executor = RecordingWorkspaceExecutor(result="second")
@@ -258,6 +263,7 @@ def test_multiple_admitted_roots_require_alias_and_route_exactly_once(tmp_path):
     assert second_executor.calls == [("fs_read", {"path": "a.txt"}, "read")]
 
 
+@pytest.mark.bootstrap_profile
 def test_mixed_access_roots_refuse_mutation_on_read_only_alias(tmp_path):
     read_executor = RecordingWorkspaceExecutor()
     write_executor = RecordingWorkspaceExecutor()
@@ -296,6 +302,7 @@ def test_mixed_access_roots_refuse_mutation_on_read_only_alias(tmp_path):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_admitted_root_guard_revokes_before_executor(tmp_path):
     executor = RecordingWorkspaceExecutor()
     provider = make_provider(
@@ -318,6 +325,7 @@ def test_admitted_root_guard_revokes_before_executor(tmp_path):
     assert executor.calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_unusable_admitted_root_is_omitted_without_losing_other_tools(
     tmp_path, monkeypatch
 ):
@@ -402,6 +410,7 @@ def test_custom_non_path_specs_remain_usable_with_admitted_roots(tmp_path):
     assert result.ok and result.content == "custom"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "outcome",
     [
@@ -482,6 +491,7 @@ _LOCAL_WORKSPACE_EXECUTOR_CASES = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("tool_name", "arguments", "intent"),
     _LOCAL_WORKSPACE_EXECUTOR_CASES,
@@ -524,6 +534,7 @@ def test_each_local_workspace_tool_routes_once_through_injected_executor(
     assert executor.calls == [(tool_name, arguments, intent)]
 
 
+@pytest.mark.bootstrap_profile
 def test_local_provider_constructs_and_uses_real_executor_when_omitted(
     tmp_path, monkeypatch
 ):
@@ -549,6 +560,7 @@ def test_local_provider_constructs_and_uses_real_executor_when_omitted(
     assert constructed == [tmp_path.resolve()]
 
 
+@pytest.mark.bootstrap_profile
 def test_web_todo_and_watchlists_handlers_never_launch_workspace_executor(
     tmp_path, monkeypatch
 ):
@@ -590,6 +602,7 @@ def test_web_todo_and_watchlists_handlers_never_launch_workspace_executor(
     assert executor.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("code", "expected"),
     (
@@ -614,6 +627,7 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("code", "expected_reason", "expected_error", "expected_outcome"),
     (
@@ -715,6 +729,7 @@ def test_workspace_executor_detailed_reason_matches_ordinary_result(
     assert ordinary_executor.calls == [("fs_list", {"path": "."}, "read")]
 
 
+@pytest.mark.bootstrap_profile
 def test_local_executor_domain_failure_text_is_redacted_and_bounded(tmp_path):
     private_root = tmp_path / "private-root"
     private_root.mkdir()
@@ -735,6 +750,7 @@ def test_local_executor_domain_failure_text_is_redacted_and_bounded(tmp_path):
     assert len(result.error) == 300
 
 
+@pytest.mark.bootstrap_profile
 def test_local_provider_refuses_root_replaced_after_second_guard(tmp_path):
     locator = tmp_path / "workspace"
     locator.mkdir()
@@ -766,6 +782,7 @@ def test_local_provider_refuses_root_replaced_after_second_guard(tmp_path):
     assert (locator / "sentinel.txt").read_bytes() == b"B_BYTE_EXACT\x00\xff"
 
 
+@pytest.mark.bootstrap_profile
 def test_catalog_lists_default_specs_with_local_ids(tmp_path):
     p = make_provider(root=tmp_path)
     entries = p.list_catalog()
@@ -837,6 +854,7 @@ def test_local_tool_spec_rejects_missing_or_unknown_exposure_and_effect():
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
     provider = make_provider(root=tmp_path)
 
@@ -867,6 +885,7 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_operational_watchlists_commands_are_console_only_and_definitive_on_accept(
     tmp_path,
 ):
@@ -898,10 +917,12 @@ def test_operational_watchlists_commands_are_console_only_and_definitive_on_acce
     assert check.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
     assert briefing.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
     assert schedule.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
-    assert check.parameters["oneOf"] == [
-        {"required": ["source_ids"]},
-        {"required": ["collection_id"]},
-    ]
+    # TASK-33621.1: the exactly-one rule is NOT a top-level oneOf (OpenAI and
+    # Anthropic refuse one, failing every Console send); it is stated in the
+    # description and enforced by the handler.
+    assert "oneOf" not in check.parameters
+    assert set(check.parameters["properties"]) == {"source_ids", "collection_id"}
+    assert "exactly one of source_ids or collection_id" in check.description
     assert briefing.parameters["required"] == ["collection_id"]
     assert schedule.parameters["required"] == ["collection_id", "cadence"]
     assert schedule.parameters["properties"]["cadence"]["oneOf"] == [
@@ -941,6 +962,7 @@ def test_read_only_provider_omits_future_watchlists_mutations_by_effect(tmp_path
     assert {entry.name for entry in provider.list_catalog()} == {"fs_read"}
 
 
+@pytest.mark.bootstrap_profile
 def test_catalog_lists_fs_read_with_paging_params(tmp_path):
     p = make_provider(root=tmp_path)
     entry = next(e for e in p.list_catalog() if e.id == "local:fs_read")
@@ -954,6 +976,7 @@ def test_catalog_lists_fs_read_with_paging_params(tmp_path):
     assert p.hub_tool_for("fs_read").tags == ()  # read-only: no risk tags
 
 
+@pytest.mark.bootstrap_profile
 def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
     p = make_provider(root=tmp_path)
     hubs = p.hub_tools()
@@ -1079,6 +1102,7 @@ class RecordingWatchlistsCommandService:
         }
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approval(
     tmp_path,
 ):
@@ -1141,6 +1165,7 @@ def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approva
     assert authoring.isdisjoint({entry.name for entry in read_only.list_catalog()})
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_path):
     provider = make_provider(root=tmp_path)
     watchlists_entries = {
@@ -1260,6 +1285,7 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
     assert "following next_cursor until has_more is false" in search.description
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_catalog_construction_does_not_resolve_storage(tmp_path):
     resolver_calls: list[str] = []
     service = WatchlistsToolService(
@@ -1278,6 +1304,7 @@ def test_watchlists_catalog_construction_does_not_resolve_storage(tmp_path):
     assert resolver_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_missing_dependency_is_successful_structured_outcome(tmp_path):
     provider = make_provider(root=tmp_path)
 
@@ -1292,6 +1319,7 @@ def test_watchlists_missing_dependency_is_successful_structured_outcome(tmp_path
     assert json.loads(detail.content)["status"] == "feature_unavailable"
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_expected_json_and_packed_result_cross_provider_unchanged(tmp_path):
     packed = json.dumps(
         {"status": "ok", "evidence": "x" * 29_000},
@@ -1309,6 +1337,7 @@ def test_watchlists_expected_json_and_packed_result_cross_provider_unchanged(tmp
     assert service.calls == [("search_items", {"limit": 1})]
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_unexpected_failure_is_fixed_and_private_in_result_and_logs(
     tmp_path, caplog
 ):
@@ -1341,6 +1370,7 @@ def test_watchlists_unexpected_failure_is_fixed_and_private_in_result_and_logs(
     assert "category=RuntimeError" in caplog.text
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_permission_allow_executes_and_ask_deny_never_invokes(tmp_path):
     service = RecordingWatchlistsService()
     allowed = make_provider(
@@ -1373,6 +1403,7 @@ def test_watchlists_permission_allow_executes_and_ask_deny_never_invokes(tmp_pat
     assert approvals[0][0].server_label == "Local workspace, web, and Watchlists"
 
 
+@pytest.mark.bootstrap_profile
 def test_hub_tools_omits_all_task_tools_without_a_todo_store(tmp_path):
     p = make_provider(root=tmp_path)  # no todo_store injected
     assert not {
@@ -1384,6 +1415,7 @@ def test_hub_tools_omits_all_task_tools_without_a_todo_store(tmp_path):
     } & {h.name for h in p.hub_tools()}
 
 
+@pytest.mark.bootstrap_profile
 def test_hub_tools_include_exact_stable_task_operations_in_order(tmp_path):
     p = make_provider(root=tmp_path, todo_store=SessionTodoStore())
     assert [h.name for h in p.hub_tools() if h.name.startswith("todo_")] == [
@@ -1395,6 +1427,7 @@ def test_hub_tools_include_exact_stable_task_operations_in_order(tmp_path):
     assert "todo_write" not in [h.name for h in p.hub_tools()]
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_write_spec_carries_mutates_tag(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:fs_write")
@@ -1406,6 +1439,7 @@ def test_fs_write_spec_carries_mutates_tag(tmp_path):
     assert p.hub_tool_for("fs_write").tags == ("mutates",)
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_edit_spec_carries_mutates_tag(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:fs_edit")
@@ -1427,6 +1461,7 @@ _CREATE_DIFF = """\
 """
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_patch_spec_carries_mutates_tag(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:fs_patch")
@@ -1439,6 +1474,7 @@ def test_fs_patch_spec_carries_mutates_tag(tmp_path):
     assert p.hub_tool_for("fs_patch").tags == ("mutates",)
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_patch_description_teaches_the_diff_format(tmp_path):
     # Models hallucinate diff formats; the description must pin the contract.
     desc = make_provider(root=tmp_path).load_schema("local:fs_patch").description
@@ -1446,6 +1482,7 @@ def test_fs_patch_description_teaches_the_diff_format(tmp_path):
     assert "dry_run" in desc
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_patch_handler_create_diff_lands_the_file(tmp_path):
     (tmp_path / "notes").mkdir()  # fs_write parity: parent must already exist
     p = make_provider(root=tmp_path)
@@ -1455,6 +1492,7 @@ def test_fs_patch_handler_create_diff_lands_the_file(tmp_path):
     assert (tmp_path / "notes" / "new.txt").read_text() == "hello\nworld\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_patch_handler_dry_run_writes_nothing(tmp_path):
     (tmp_path / "notes").mkdir()
     p = make_provider(root=tmp_path)
@@ -1464,6 +1502,7 @@ def test_fs_patch_handler_dry_run_writes_nothing(tmp_path):
     assert not (tmp_path / "notes" / "new.txt").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_glob_spec_read_only(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:fs_glob")
@@ -1472,6 +1511,7 @@ def test_fs_glob_spec_read_only(tmp_path):
     assert p.hub_tool_for("fs_glob").tags == ()  # read-only: no risk tags
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_grep_spec_read_only_with_mode_enum(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:fs_grep")
@@ -1493,6 +1533,7 @@ def test_fs_grep_spec_read_only_with_mode_enum(tmp_path):
 # with a mechanism instead of being re-asked every review.
 
 
+@pytest.mark.bootstrap_profile
 def test_the_reads_tag_would_floor_nothing_on_the_local_resolver(tmp_path):
     """`("reads",)` is inert for a local tool: the resolver never reads it.
 
@@ -1540,6 +1581,7 @@ def test_the_reads_tag_would_floor_nothing_on_the_local_resolver(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_mutating_local_tools_are_floored_because_that_tag_is_consulted(tmp_path):
     """The contrast: `("mutates",)` is applied where it is load-bearing."""
     from tldw_chatbook.MCP.permission_store import resolve_effective_state
@@ -1561,6 +1603,7 @@ def test_mutating_local_tools_are_floored_because_that_tag_is_consulted(tmp_path
         assert resolved.state == "ask" and resolved.risk_floored, name
 
 
+@pytest.mark.bootstrap_profile
 def test_local_tools_default_to_ask_without_an_explicit_server_allow(tmp_path):
     """The floor debate only matters after a user has opted out of asking.
 
@@ -1589,6 +1632,7 @@ requires_git = pytest.mark.skipif(
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_git_specs_carry_no_risk_tags(tmp_path):
     p = make_provider(root=tmp_path)
     for name in GIT_TOOL_NAMES:
@@ -1597,6 +1641,7 @@ def test_git_specs_carry_no_risk_tags(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_git_descriptions_emphasize_read_only(tmp_path):
     p = make_provider(root=tmp_path)
     for name in GIT_TOOL_NAMES:
@@ -1604,6 +1649,7 @@ def test_git_descriptions_emphasize_read_only(tmp_path):
         assert "read-only; cannot modify the repository" in desc, name
 
 
+@pytest.mark.bootstrap_profile
 def test_git_status_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:git_status")
@@ -1612,6 +1658,7 @@ def test_git_status_spec_schema(tmp_path):
     assert schema.parameters.get("required", []) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_git_branches_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:git_branches")
@@ -1619,6 +1666,7 @@ def test_git_branches_spec_schema(tmp_path):
     assert schema.parameters.get("properties", {}) == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_git_log_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:git_log")
@@ -1628,6 +1676,7 @@ def test_git_log_spec_schema(tmp_path):
     assert schema.parameters.get("required", []) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_git_diff_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:git_diff")
@@ -1644,6 +1693,7 @@ def test_git_diff_spec_schema(tmp_path):
     assert "staged" in desc and "commit_range" in desc and "stat" in desc
 
 
+@pytest.mark.bootstrap_profile
 def test_git_blame_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:git_blame")
@@ -1678,6 +1728,7 @@ def git_workspace(tmp_path):
     return ws
 
 
+@pytest.mark.bootstrap_profile
 @requires_git
 def test_git_handlers_smoke_against_tmp_repo(git_workspace):
     p = make_provider(root=git_workspace)
@@ -1699,6 +1750,7 @@ def test_git_handlers_smoke_against_tmp_repo(git_workspace):
     assert r.ok and "line one" in r.content
 
 
+@pytest.mark.bootstrap_profile
 @requires_git
 def test_git_diff_handler_refuses_commit_range_injection(git_workspace):
     p = make_provider(root=git_workspace)
@@ -1710,6 +1762,7 @@ def test_git_diff_handler_refuses_commit_range_injection(git_workspace):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_invoke_happy_path(tmp_path):
     (tmp_path / "hello.txt").write_text("hi")
     p = make_provider(root=tmp_path)
@@ -1717,6 +1770,7 @@ def test_invoke_happy_path(tmp_path):
     assert r.ok and "hello.txt" in r.content
 
 
+@pytest.mark.bootstrap_profile
 def test_invoke_unknown_tool(tmp_path):
     r = make_provider(root=tmp_path).invoke("local:nope", {})
     assert not r.ok and "Unknown local tool" in r.error
@@ -1739,6 +1793,7 @@ def _probe_provider(tmp_path, handler, **kwargs):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_invoke_detailed_distinguishes_pre_dispatch_reasons(tmp_path):
     def unresolved(_hub):
         raise RuntimeError("permission store unavailable")
@@ -1823,6 +1878,7 @@ def test_invoke_detailed_distinguishes_pre_dispatch_reasons(tmp_path):
     assert {outcome.provider_terminal.value for outcome in outcomes} == {"not_started"}
 
 
+@pytest.mark.bootstrap_profile
 def test_invoke_detailed_distinguishes_root_and_authority_refusals(tmp_path):
     class UnavailableAuthority:
         def __enter__(self):
@@ -1850,6 +1906,7 @@ def test_invoke_detailed_distinguishes_root_and_authority_refusals(tmp_path):
     assert unavailable.provider_terminal.value == "not_started"
 
 
+@pytest.mark.bootstrap_profile
 def test_invoke_detailed_keeps_consumed_approval_on_post_gate_root_change(tmp_path):
     root_checks = iter((True, False))
     provider = make_provider(
@@ -1933,6 +1990,7 @@ def _compatibility_provider(case, tmp_path):
     return _probe_provider(tmp_path, lambda _args: "ok"), "local:probe", {}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "case",
     [
@@ -1960,12 +2018,14 @@ def test_ordinary_invoke_matches_detailed_result_on_fresh_provider(
     assert ordinary == detailed.result
 
 
+@pytest.mark.bootstrap_profile
 def test_kill_switch_refuses(tmp_path):
     r = make_provider(root=tmp_path, kill=True).invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_KILL_SWITCH_REFUSAL
     assert r.outcome == "blocked"
 
 
+@pytest.mark.bootstrap_profile
 def test_deny_state_refuses(tmp_path):
     """The Off half of the Qodo #7 split: this is the ONLY shape that may
     claim "set to Off", because it is the only one where the resolver said
@@ -1975,6 +2035,7 @@ def test_deny_state_refuses(tmp_path):
     assert r.error != LOCAL_USER_DENY_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_ask_without_stamp_or_callback_fails_closed(tmp_path):
     r = make_provider(state=ASK, root=tmp_path).invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
@@ -1983,6 +2044,7 @@ def test_ask_without_stamp_or_callback_fails_closed(tmp_path):
 # -- no_callback_refusal override (phase 4: external MCP serving) ------------
 
 
+@pytest.mark.bootstrap_profile
 def test_no_callback_refusal_override_replaces_timeout_copy(tmp_path):
     # External MCP clients can never approve, so the composition injects an
     # external-appropriate refusal instead of the Console's timeout copy.
@@ -1991,11 +2053,13 @@ def test_no_callback_refusal_override_replaces_timeout_copy(tmp_path):
     assert not r.ok and r.error == "custom"
 
 
+@pytest.mark.bootstrap_profile
 def test_no_callback_refusal_default_remains_pinned(tmp_path):
     r = make_provider(state=ASK, root=tmp_path).invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_timeout_verdict_keeps_pinned_copy_even_with_override(tmp_path):
     # Only the "no_callback" verdict maps to the override; a real "timeout"
     # verdict ALWAYS keeps the pinned LOCAL_TIMEOUT_REFUSAL.
@@ -2005,6 +2069,7 @@ def test_timeout_verdict_keeps_pinned_copy_even_with_override(tmp_path):
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_ask_with_approve_once_stamp_executes(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     p = make_provider(state=ASK, root=tmp_path)
@@ -2012,6 +2077,7 @@ def test_ask_with_approve_once_stamp_executes(tmp_path):
     assert p.invoke("local:fs_list", {"path": "."}).ok
 
 
+@pytest.mark.bootstrap_profile
 def test_stamps_replace_not_merge(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
     p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
@@ -2020,6 +2086,7 @@ def test_stamps_replace_not_merge(tmp_path):
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_gate_for_ask_returns_pending_call(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
     gate = p.pending_gate_for("fs_list", {"path": "."})
@@ -2029,6 +2096,7 @@ def test_pending_gate_for_ask_returns_pending_call(tmp_path):
     assert p.pending_gate_for("unknown", {}) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_gate_for_carries_rationale(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
     row = p.pending_gate_for("fs_list", {"path": "."}, rationale="checking config")
@@ -2036,6 +2104,7 @@ def test_pending_gate_for_carries_rationale(tmp_path):
     assert row.rationale == "checking config"
 
 
+@pytest.mark.bootstrap_profile
 def test_stamp_scope_isolates_nested_run(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
     p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
@@ -2044,11 +2113,13 @@ def test_stamp_scope_isolates_nested_run(tmp_path):
     assert p.invoke("local:fs_list", {"path": "."}).ok  # parent stamps restored
 
 
+@pytest.mark.bootstrap_profile
 def test_execution_error_becomes_result_string(tmp_path):
     r = make_provider(root=tmp_path).invoke("local:fs_list", {"path": "../escape"})
     assert not r.ok and r.error == "workspace operation failed (invalid_request)"
 
 
+@pytest.mark.bootstrap_profile
 def test_authority_scope_failure_uses_authority_refusal_not_root_drift(tmp_path):
     class UnavailableAuthority:
         def __enter__(self):
@@ -2068,6 +2139,7 @@ def test_authority_scope_failure_uses_authority_refusal_not_root_drift(tmp_path)
     assert result.error == LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_private_root_locator_is_redacted_from_local_tool_errors(tmp_path):
     scratch = tmp_path / "private-scratch"
     scratch.mkdir()
@@ -2116,6 +2188,7 @@ def test_private_root_locator_is_redacted_before_error_length_cap(tmp_path):
 # -- session approvals + persistence seams (Task 5) ---------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_session_approval_skips_gate_and_executes(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     p = make_provider(state=ASK, root=tmp_path, is_session_approved=lambda hub: True)
@@ -2123,6 +2196,7 @@ def test_session_approval_skips_gate_and_executes(tmp_path):
     assert p.invoke("local:fs_list", {"path": "."}).ok  # no stamp, no callback
 
 
+@pytest.mark.bootstrap_profile
 def test_approve_session_stamp_persists(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     persisted = []
@@ -2136,6 +2210,7 @@ def test_approve_session_stamp_persists(tmp_path):
     assert persisted == [("fs_list", "approve_session")]
 
 
+@pytest.mark.bootstrap_profile
 def test_always_allow_stamp_persists(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     persisted = []
@@ -2149,6 +2224,7 @@ def test_always_allow_stamp_persists(tmp_path):
     assert persisted == [("fs_list", "always_allow")]
 
 
+@pytest.mark.bootstrap_profile
 def test_approve_once_stamp_does_not_persist(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     persisted = []
@@ -2162,6 +2238,7 @@ def test_approve_once_stamp_does_not_persist(tmp_path):
     assert persisted == []
 
 
+@pytest.mark.bootstrap_profile
 def test_callback_approve_session_persists(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     persisted = []
@@ -2175,6 +2252,7 @@ def test_callback_approve_session_persists(tmp_path):
     assert persisted == [("fs_list", "approve_session")]
 
 
+@pytest.mark.bootstrap_profile
 def test_console_local_callbacks_capture_the_exact_named_profile(tmp_path):
     from types import SimpleNamespace
 
@@ -2244,6 +2322,7 @@ def test_console_local_callbacks_capture_the_exact_named_profile(tmp_path):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_persist_failure_does_not_block_execution(tmp_path):
     (tmp_path / "a.txt").write_text("a")
 
@@ -2255,6 +2334,7 @@ def test_persist_failure_does_not_block_execution(tmp_path):
     assert p.invoke("local:fs_list", {"path": "."}).ok
 
 
+@pytest.mark.bootstrap_profile
 def test_session_approval_read_failure_is_not_approved(tmp_path):
     def boom(hub):
         raise RuntimeError("store read failed")
@@ -2269,6 +2349,7 @@ def test_session_approval_read_failure_is_not_approved(tmp_path):
 # -- fail-closed hardening: verdicts, guarded callables, real args ------------
 
 
+@pytest.mark.bootstrap_profile
 def test_unrecognized_callback_decision_fails_closed(tmp_path):
     """A garbage decision string must refuse, never fall through to execution."""
     p = make_provider(
@@ -2282,12 +2363,14 @@ def test_unrecognized_callback_decision_fails_closed(tmp_path):
     assert not r.ok and r.error == LOCAL_USER_DENY_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_callback_returning_none_fails_closed(tmp_path):
     p = make_provider(state=ASK, root=tmp_path, approval_callback=lambda pending: None)
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_callback_raise_fails_closed(tmp_path):
     def boom(pending):
         raise RuntimeError("ui gone")
@@ -2297,6 +2380,7 @@ def test_callback_raise_fails_closed(tmp_path):
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_state_raise_fails_closed_everywhere(tmp_path):
     """Fix Round H, Item 1 (PRE-AUTHORIZED CONTRACT CHANGE -- this IS the
     round's own centre, not an incidental drift): this used to assert
@@ -2321,6 +2405,7 @@ def test_resolve_state_raise_fails_closed_everywhere(tmp_path):
     assert r.error != LOCAL_DENY_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_second_resolve_state_raise_in_ask_branch_reports_gate_error_not_timeout(
     tmp_path,
 ):
@@ -2361,6 +2446,7 @@ def test_second_resolve_state_raise_in_ask_branch_reports_gate_error_not_timeout
     assert calls["n"] == 2  # top-of-function resolve, then this branch's own
 
 
+@pytest.mark.bootstrap_profile
 def test_kill_switch_read_failure_fails_closed(tmp_path):
     def boom():
         raise RuntimeError("store gone")
@@ -2370,6 +2456,7 @@ def test_kill_switch_read_failure_fails_closed(tmp_path):
     assert not r.ok and r.error == LOCAL_KILL_SWITCH_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_callback_receives_real_arguments(tmp_path):
     seen = []
 
@@ -2425,6 +2512,7 @@ def test_fit_result_multibyte_boundary(tmp_path):
     assert r.content == "a" * 32767 + "\n… [truncated]"
 
 
+@pytest.mark.bootstrap_profile
 def test_load_schema_without_colon_raises_key_error_not_index_error(tmp_path):
     p = make_provider(root=tmp_path)
     with pytest.raises(KeyError):
@@ -2455,6 +2543,7 @@ def test_empty_exception_message_becomes_nonempty_error(tmp_path):
     assert not r.ok and r.error and "ValueError" in r.error
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_gate_for_accepts_prefixed_and_bare_names(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
     bare = p.pending_gate_for("fs_list", {"path": "."})
@@ -2497,6 +2586,7 @@ def _raising_state(_hub):
     raise RuntimeError("store gone")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("kwargs", "stamp", "decision", "refusal"),
     [
@@ -2542,6 +2632,7 @@ def test_each_refuser_records_its_own_decision(
     assert [(h.name, d) for h, d in recorded] == [("fs_list", decision)]
 
 
+@pytest.mark.bootstrap_profile
 def test_deny_state_records_denied(tmp_path):
     p, recorded = _recording_provider(tmp_path, state=DENY)
     r = p.invoke("local:fs_list", {"path": "."})
@@ -2551,6 +2642,7 @@ def test_deny_state_records_denied(tmp_path):
     assert recorded[0][0].server_key == "local:__local__"
 
 
+@pytest.mark.bootstrap_profile
 def test_kill_switch_records_denied(tmp_path):
     p, recorded = _recording_provider(tmp_path, kill=True)
     r = p.invoke("local:fs_list", {"path": "."})
@@ -2560,6 +2652,7 @@ def test_kill_switch_records_denied(tmp_path):
     assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-killswitch")]
 
 
+@pytest.mark.bootstrap_profile
 def test_timeout_stamp_records_denied_timeout(tmp_path):
     p, recorded = _recording_provider(tmp_path, state=ASK)
     p.apply_batch_decisions(RUN, {"fs_list": "timeout"})
@@ -2568,6 +2661,7 @@ def test_timeout_stamp_records_denied_timeout(tmp_path):
     assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-timeout")]
 
 
+@pytest.mark.bootstrap_profile
 def test_ask_without_callback_records_denied_timeout(tmp_path):
     # no_callback fails closed to the timeout refusal (pinned copy, spec §3.3),
     # so the recorded decision matches the refusal the model actually saw.
@@ -2577,6 +2671,7 @@ def test_ask_without_callback_records_denied_timeout(tmp_path):
     assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-timeout")]
 
 
+@pytest.mark.bootstrap_profile
 def test_deny_stamp_records_denied(tmp_path):
     p, recorded = _recording_provider(tmp_path, state=ASK)
     p.apply_batch_decisions(RUN, {"fs_list": "deny"})
@@ -2588,6 +2683,7 @@ def test_deny_stamp_records_denied(tmp_path):
     assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]
 
 
+@pytest.mark.bootstrap_profile
 def test_allow_execution_records_nothing(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     p, recorded = _recording_provider(tmp_path)
@@ -2595,6 +2691,7 @@ def test_allow_execution_records_nothing(tmp_path):
     assert recorded == []
 
 
+@pytest.mark.bootstrap_profile
 def test_unknown_tool_records_nothing(tmp_path):
     p, recorded = _recording_provider(tmp_path)
     r = p.invoke("local:nope", {})
@@ -2602,6 +2699,7 @@ def test_unknown_tool_records_nothing(tmp_path):
     assert recorded == []
 
 
+@pytest.mark.bootstrap_profile
 def test_record_decision_none_means_no_recording(tmp_path):
     # Seam is optional; refusal paths must work unchanged without it.
     p = make_provider(state=DENY, root=tmp_path)
@@ -2609,6 +2707,7 @@ def test_record_decision_none_means_no_recording(tmp_path):
     assert not r.ok and r.error == LOCAL_DENY_REFUSAL
 
 
+@pytest.mark.bootstrap_profile
 def test_record_decision_raise_does_not_break_invoke(tmp_path):
     def boom(hub, decision):
         raise RuntimeError("audit store down")
@@ -2621,6 +2720,7 @@ def test_record_decision_raise_does_not_break_invoke(tmp_path):
 # -- web_fetch / web_search specs (phase 3a) ------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_web_fetch_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:web_fetch")
@@ -2634,6 +2734,7 @@ def test_web_fetch_spec_schema(tmp_path):
     assert p.hub_tool_for("web_fetch").tags == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:web_search")
@@ -2647,6 +2748,7 @@ def test_web_search_spec_schema(tmp_path):
     assert p.hub_tool_for("web_search").tags == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_web_crawl_spec_schema(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:web_crawl")
@@ -2662,6 +2764,7 @@ def test_web_crawl_spec_schema(tmp_path):
     assert p.hub_tool_for("web_crawl").tags == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_web_crawl_description_states_contract(tmp_path):
     p = make_provider(root=tmp_path)
     desc = p.hub_tool_for("web_crawl").description
@@ -2670,6 +2773,7 @@ def test_web_crawl_description_states_contract(tmp_path):
     assert "max_depth" in desc  # documents the sitemap-mode exception
 
 
+@pytest.mark.bootstrap_profile
 def test_web_fetch_description_mentions_pdf(tmp_path):
     p = make_provider(root=tmp_path)
     assert "PDF" in p.hub_tool_for("web_fetch").description
@@ -2692,6 +2796,7 @@ def _fake_search_payload(count, snippet_len=50, snippet_char="x"):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_handler_renders_real_result_shape(tmp_path, monkeypatch):
     """Real perform_websearch items carry body text under 'content' (snippet
     lives in metadata); the rendered text must contain it, not the fallback."""
@@ -2706,6 +2811,7 @@ def test_web_search_handler_renders_real_result_shape(tmp_path, monkeypatch):
     assert "No description available" not in r.content
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_handler_wires_legacy_defaults_and_bounds_results(
     tmp_path, monkeypatch
 ):
@@ -2742,6 +2848,7 @@ def test_web_search_handler_wires_legacy_defaults_and_bounds_results(
     assert "… [truncated]" in r.content
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_handler_bounds_multibyte_results_by_bytes(tmp_path, monkeypatch):
     """CJK snippets are 3 bytes/char: a char-based cap would blow past the
     byte budget; the per-result bound must hold on encoded bytes."""
@@ -2764,6 +2871,7 @@ def test_web_search_handler_bounds_multibyte_results_by_bytes(tmp_path, monkeypa
     assert "… [truncated]" in r.content
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_handler_enforces_total_cap(tmp_path, monkeypatch):
     # 10 results x ~4 KiB each would exceed the total cap without bounding.
     monkeypatch.setattr(
@@ -2778,6 +2886,7 @@ def test_web_search_handler_enforces_total_cap(tmp_path, monkeypatch):
     assert len(r.content.encode("utf-8")) <= 24 * 1024 + 128  # cap + omitted marker
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_handler_enforces_total_cap_with_multibyte(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
@@ -2791,6 +2900,7 @@ def test_web_search_handler_enforces_total_cap_with_multibyte(tmp_path, monkeypa
     assert len(r.content.encode("utf-8")) <= 24 * 1024 + 128
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_backend_error_is_a_failed_tool_outcome(tmp_path, monkeypatch):
     def boom(**kwargs):
         raise RuntimeError("backend exploded")
@@ -2807,6 +2917,7 @@ def test_web_search_backend_error_is_a_failed_tool_outcome(tmp_path, monkeypatch
     assert "configure" in r.error
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch):
     """A well-formed envelope carrying error/processing_error reports THAT
     reason, not the generic 'unexpected response format'."""
@@ -2836,6 +2947,7 @@ def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch
     assert "Error processing search results: boom" in r.error
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "payload", ["not a dict", {}, {"results": None}, {"results": [None]}]
 )
@@ -2851,6 +2963,7 @@ def test_web_search_malformed_response_is_a_failed_tool_outcome(
     assert "unexpected response format" in r.error
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_confirmed_empty_is_successful(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
@@ -2861,6 +2974,7 @@ def test_web_search_confirmed_empty_is_successful(tmp_path, monkeypatch):
     assert r.content.startswith("No results found for")
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_duckduckgo_challenge_reaches_provider_as_failure(
     tmp_path, monkeypatch
 ):
@@ -2880,6 +2994,7 @@ def test_web_search_duckduckgo_challenge_reaches_provider_as_failure(
     assert "Stop repeating" in r.error
 
 
+@pytest.mark.bootstrap_profile
 def test_web_search_non_string_engine_fails_before_dispatch(tmp_path, monkeypatch):
     seen = {}
 
@@ -2930,6 +3045,7 @@ def _assert_compact_json(result, expected):
     assert len(result.content.encode("utf-8")) <= _TASK_RESULT_LIMIT
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_tools_are_conditional_ordered_and_todo_write_is_removed(tmp_path):
     without = make_provider(root=tmp_path)
     without_names = [entry.name for entry in without.list_catalog()]
@@ -2951,6 +3067,7 @@ def test_todo_tools_are_conditional_ordered_and_todo_write_is_removed(tmp_path):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
     for schema in schemas.values():
@@ -2990,11 +3107,10 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     assert update_props["activeForm"]["type"] == ["string", "null"]
     assert update_props["activeForm"]["maxLength"] == MAX_TODO_CONTENT_CHARS
     assert update_props["status"]["enum"] == [*TODO_STATUSES, "deleted"]
-    assert update["anyOf"] == [
-        {"required": ["content"]},
-        {"required": ["status"]},
-        {"required": ["activeForm"]},
-    ]
+    # TASK-33621.1: the change/delete rules are not top-level combinators
+    # (OpenAI and Anthropic refuse those, failing every Console send); the
+    # handler enforces them -- see test_todo_raw_boundary_failures_*.
+    assert not {"anyOf", "oneOf", "allOf", "not", "if"} & set(update)
 
     version_schema = update_props["expected_version"]
     assert version_schema == {
@@ -3034,11 +3150,9 @@ def test_todo_tool_schemas_pin_exact_keys_bounds_and_mutation_shape(tmp_path):
     assert not Draft202012Validator(schemas["todo_update"]).is_valid(
         {"id": "1", "expected_version": MAX_TODO_NUMBER + 1, "content": "x"}
     )
-    assert not Draft202012Validator(schemas["todo_update"]).is_valid(
-        {"id": "1", "expected_version": 1}
-    )
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_status_schema_uses_the_store_status_source_of_truth(
     monkeypatch, tmp_path
 ):
@@ -3055,6 +3169,7 @@ def test_todo_status_schema_uses_the_store_status_source_of_truth(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_id_and_cursor_schemas_enforce_the_complete_canonical_domain(tmp_path):
     schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
     id_schemas = {
@@ -3086,6 +3201,7 @@ def test_todo_id_and_cursor_schemas_enforce_the_complete_canonical_domain(tmp_pa
             assert not validator.is_valid(value), f"{label} accepted {value!r}"
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_content_schemas_are_nonblank_without_restricting_active_form(tmp_path):
     schemas = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))
     create_content = schemas["todo_create"]["properties"]["content"]
@@ -3109,19 +3225,34 @@ def test_todo_content_schemas_are_nonblank_without_restricting_active_form(tmp_p
     assert Draft202012Validator(update_active_form).is_valid(None)
 
 
-def test_todo_update_schema_requires_deleted_to_be_the_only_mutation(tmp_path):
-    schema = _task_schemas(make_provider(root=tmp_path, todo_store=SessionTodoStore()))[
-        "todo_update"
-    ]
-    validator = Draft202012Validator(schema)
+@pytest.mark.bootstrap_profile
+def test_todo_update_delete_rule_is_enforced_by_the_handler_not_the_schema(tmp_path):
+    # TASK-33621.1: 'status "deleted" must be the only change' used to be a
+    # top-level allOf in this schema. OpenAI and Anthropic refuse top-level
+    # combinators (every default Console send failed with HTTP 400), so the
+    # schema is flat now and the handler refuses the call, naming the rule.
+    store = SessionTodoStore()
+    store.create(content="keep")
+    provider = make_provider(root=tmp_path, todo_store=store)
+    validator = Draft202012Validator(_task_schemas(provider)["todo_update"])
     base = {"id": "1", "expected_version": 1}
 
     assert validator.is_valid({**base, "status": "deleted"})
-    assert not validator.is_valid({**base, "status": "deleted", "content": "private"})
-    assert not validator.is_valid({**base, "status": "deleted", "activeForm": None})
     assert validator.is_valid({**base, "content": "task"})
     assert validator.is_valid({**base, "activeForm": None})
     assert validator.is_valid({**base, "status": "completed", "content": "task"})
+
+    before = store.export_snapshot()
+    for extra in ({"content": "private"}, {"activeForm": None}):
+        args = {**base, "status": "deleted", **extra}
+        assert validator.is_valid(args), args  # the schema no longer says no...
+
+        result = provider.invoke("local:todo_update", args)
+
+        assert not result.ok, args  # ...the handler does, and names the rule
+        assert result.error == f"rule: {TODO_UPDATE_DELETE_RULE}"
+        assert "private" not in result.error
+        assert store.export_snapshot() == before
 
 
 @pytest.mark.parametrize(
@@ -3253,13 +3384,13 @@ def test_todo_update_schema_requires_deleted_to_be_the_only_mutation(tmp_path):
         pytest.param(
             "todo_update",
             {"id": "1", "expected_version": 1},
-            "at least one mutation field is required",
+            "rule: provide at least one of content, status, or activeForm",
             id="update-empty",
         ),
         pytest.param(
             "todo_update",
             {"id": "1", "expected_version": 1, "status": "deleted", "content": "x"},
-            "delete must be the only mutation field",
+            'rule: status "deleted" must be the only change, so omit content and activeForm',
             id="update-delete-plus-content",
         ),
         pytest.param(
@@ -3309,6 +3440,7 @@ def test_todo_update_schema_requires_deleted_to_be_the_only_mutation(tmp_path):
         ],
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_todo_raw_boundary_failures_are_fixed_private_and_atomic(
     tmp_path, tool_name, args, expected_error
 ):
@@ -3334,6 +3466,7 @@ def test_todo_raw_boundary_failures_are_fixed_private_and_atomic(
     assert callbacks == []
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_create_get_list_update_and_delete_return_exact_compact_json(tmp_path):
     callbacks = []
     store = SessionTodoStore()
@@ -3410,6 +3543,7 @@ def test_todo_create_get_list_update_and_delete_return_exact_compact_json(tmp_pa
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_conflicts_invariants_capacity_and_exhaustion_propagate(tmp_path):
     store = SessionTodoStore()
     callbacks = []
@@ -3496,6 +3630,7 @@ def test_todo_conflicts_invariants_capacity_and_exhaustion_propagate(tmp_path):
     assert version_callbacks == []
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_callback_failure_is_committed_success_with_fixed_private_log(
     tmp_path, caplog
 ):
@@ -3548,6 +3683,7 @@ def test_todo_callback_failure_is_committed_success_with_fixed_private_log(
     assert all(fragment not in observed_log for fragment in sentinel.split())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("character", ["x", "é"], ids=["ascii", "multibyte"])
 def test_todo_list_pages_are_complete_byte_bounded_and_cursor_stable(
     tmp_path, character
@@ -3600,6 +3736,7 @@ def test_todo_list_pages_are_complete_byte_bounded_and_cursor_stable(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_oversized_todo_result_fails_before_generic_result_fitting(
     tmp_path, monkeypatch
 ):
@@ -3634,6 +3771,7 @@ def test_oversized_todo_result_fails_before_generic_result_fitting(
     assert fit_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_todo_boundary_record_tombstone_and_list_are_complete_portable_json(tmp_path):
     max_id = str(MAX_TODO_NUMBER)
     record_store = SessionTodoStore.from_snapshot(
@@ -3712,11 +3850,13 @@ def _enable_deep_search(monkeypatch):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_absent_by_default(tmp_path):
     p = make_provider(root=tmp_path)
     assert "local:web_deep_search" not in [e.id for e in p.list_catalog()]
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_present_when_enabled(tmp_path, monkeypatch):
     _enable_deep_search(monkeypatch)
     p = make_provider(root=tmp_path)
@@ -3729,6 +3869,7 @@ def test_web_deep_search_present_when_enabled(tmp_path, monkeypatch):
     assert "LLM calls" in desc  # cost shape is model-facing
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_spec_schema(tmp_path, monkeypatch):
     _enable_deep_search(monkeypatch)
     p = make_provider(root=tmp_path)
@@ -3771,6 +3912,7 @@ def test_web_deep_search_gate_unrecognized_string_fails_closed(tmp_path, monkeyp
     assert "local:web_deep_search" not in [e.id for e in p.list_catalog()]
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_gate_string_true_enables(tmp_path, monkeypatch):
     # Same coercion contract as load_settings: a string "true" is an
     # unambiguous operator intent to enable.
@@ -3779,6 +3921,7 @@ def test_web_deep_search_gate_string_true_enables(tmp_path, monkeypatch):
     assert "local:web_deep_search" in [e.id for e in p.list_catalog()]
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_description_states_restart_requirement(tmp_path, monkeypatch):
     _enable_deep_search(monkeypatch)
     p = make_provider(root=tmp_path)
@@ -3787,6 +3930,7 @@ def test_web_deep_search_description_states_restart_requirement(tmp_path, monkey
     assert "web_deep_search_enabled" in desc
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_handler_threads_three_params(tmp_path, monkeypatch):
     _enable_deep_search(monkeypatch)
     seen = {}
@@ -3812,6 +3956,7 @@ def test_web_deep_search_handler_threads_three_params(tmp_path, monkeypatch):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_handler_omits_optional_params_as_none(tmp_path, monkeypatch):
     _enable_deep_search(monkeypatch)
     seen = {}
@@ -3833,6 +3978,7 @@ def test_web_deep_search_handler_omits_optional_params_as_none(tmp_path, monkeyp
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
     # Absence-by-default means the pinned default catalog (asserted verbatim
     # in test_catalog_lists_default_specs_with_local_ids) does not grow when
@@ -3872,6 +4018,7 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_timeout_for_overrides_only_web_deep_search(tmp_path, monkeypatch):
     # Fix round 1: at the shipped 240 default this still yields 290.0 --
     # exactly the constant this derived override replaced -- so default
@@ -3888,6 +4035,7 @@ def test_timeout_for_overrides_only_web_deep_search(tmp_path, monkeypatch):
     assert p.timeout_for("local:nonexistent") is None
 
 
+@pytest.mark.bootstrap_profile
 def test_timeout_for_tracks_configured_deep_search_timeout_s(tmp_path, monkeypatch):
     # The override used to be a hardcoded 290.0 regardless of
     # [SearchSettings] deep_search_timeout_s -- for any configured value in
@@ -3906,6 +4054,7 @@ def test_timeout_for_tracks_configured_deep_search_timeout_s(tmp_path, monkeypat
     assert p.timeout_for("local:web_deep_search") == 320.0
 
 
+@pytest.mark.bootstrap_profile
 def test_timeout_for_falls_back_on_malformed_deep_search_timeout_s(
     tmp_path, monkeypatch
 ):
@@ -3937,6 +4086,7 @@ def _guard_provider(tmp_path):
     return make_provider(root=tmp_path, use_default_executor=True, allow_write=True)
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_read_records_whole_file_hash(tmp_path):
     import hashlib
     from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
@@ -3954,6 +4104,7 @@ def test_fs_read_records_whole_file_hash(tmp_path):
     assert stamp.sha256 == hashlib.sha256(target.read_bytes()).hexdigest()
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_read_of_missing_path_records_absent(tmp_path):
     from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
 
@@ -3966,6 +4117,7 @@ def test_fs_read_of_missing_path_records_absent(tmp_path):
     assert stamp is not None and stamp.is_absent
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_read_of_refused_path_records_nothing(tmp_path):
     provider = _guard_provider(tmp_path)
     with use_run_id("run-a"):
@@ -3978,6 +4130,7 @@ def test_fs_read_of_refused_path_records_nothing(tmp_path):
 # --- TASK-28238 phase 1: fs_write staleness (CAS injection) ---
 
 
+@pytest.mark.bootstrap_profile
 def test_two_writer_race_refuses_second_writer(tmp_path):
     """AC#4: A reads, B writes, A's write refuses naming the conflict."""
     target = tmp_path / "shared.txt"
@@ -4002,6 +4155,7 @@ def test_two_writer_race_refuses_second_writer(tmp_path):
     assert target.read_text() == "B's version\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_own_read_write_write_chain_never_false_positives(tmp_path):
     target = tmp_path / "mine.txt"
     target.write_text("v1\n")
@@ -4017,6 +4171,7 @@ def test_own_read_write_write_chain_never_false_positives(tmp_path):
     assert target.read_text() == "v3\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_blind_write_proceeds_unchanged(tmp_path):
     provider = _guard_provider(tmp_path)
     with use_run_id("run-a"):
@@ -4027,6 +4182,7 @@ def test_blind_write_proceeds_unchanged(tmp_path):
     assert (tmp_path / "new.txt").read_text() == "hello\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_absent_then_created_by_peer_refuses(tmp_path):
     provider = _guard_provider(tmp_path)
     with use_run_id("run-a"):
@@ -4044,6 +4200,7 @@ def test_absent_then_created_by_peer_refuses(tmp_path):
     assert (tmp_path / "soon.txt").read_text() == "B first\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_model_supplied_precondition_wins_over_ledger(tmp_path):
     import hashlib
 
@@ -4068,6 +4225,7 @@ def test_model_supplied_precondition_wins_over_ledger(tmp_path):
 # --- TASK-28238 phase 1: fs_edit / fs_patch staleness (pre-hash) ---
 
 
+@pytest.mark.bootstrap_profile
 def test_edit_race_refuses_second_writer(tmp_path):
     target = tmp_path / "shared.py"
     target.write_text("x = 1\n")
@@ -4091,6 +4249,7 @@ def test_edit_race_refuses_second_writer(tmp_path):
     assert target.read_text() == "x = 2\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_edit_without_prior_read_proceeds(tmp_path):
     target = tmp_path / "blind.py"
     target.write_text("y = 1\n")
@@ -4103,6 +4262,7 @@ def test_edit_without_prior_read_proceeds(tmp_path):
     assert target.read_text() == "y = 2\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_patch_with_one_stale_target_refuses_whole_patch(tmp_path):
     a = tmp_path / "a.txt"
     b = tmp_path / "b.txt"
@@ -4132,6 +4292,7 @@ def test_patch_with_one_stale_target_refuses_whole_patch(tmp_path):
 # --- TASK-28238 phase 1: update-after-write ---
 
 
+@pytest.mark.bootstrap_profile
 def test_read_edit_edit_chain_never_false_positives(tmp_path):
     target = tmp_path / "chain.py"
     target.write_text("n = 1\n")
@@ -4148,6 +4309,7 @@ def test_read_edit_edit_chain_never_false_positives(tmp_path):
     assert target.read_text() == "n = 3\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_write_updates_ledger_so_peer_race_still_detected_after(tmp_path):
     """After my own write, a PEER's change is still caught on my next write."""
     target = tmp_path / "then.txt"
@@ -4170,6 +4332,7 @@ def test_write_updates_ledger_so_peer_race_still_detected_after(tmp_path):
     assert "Stale write refused" in str(result.error)
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_write_stamps_ledger_from_content_argument(tmp_path):
     """M2: the post-write stamp is the CONTENT ARG hash, not a disk re-read.
 
@@ -4197,6 +4360,7 @@ def test_fs_write_stamps_ledger_from_content_argument(tmp_path):
 # --- TASK-28238 final-review fix wave (I1/M1/M4) ---
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_read_of_file_in_unreadable_dir_returns_error_not_raise(tmp_path):
     """I1: ``Path.is_file()`` re-raises OSError (e.g. EACCES) instead of
     swallowing it -- confirmed empirically: a chmod-0 parent dir makes
@@ -4235,6 +4399,7 @@ def test_cas_precondition_predicate_excludes_lock_contention():
     assert not is_cas("write precondition failed: target is being modified")
 
 
+@pytest.mark.bootstrap_profile
 def test_lock_contention_is_not_relabeled_stale_write(tmp_path):
     """M1: a WorkspaceToolExecutionError for lock contention must surface
     as the generic worker error, not get relabeled "Stale write refused"
@@ -4277,6 +4442,7 @@ def test_lock_contention_is_not_relabeled_stale_write(tmp_path):
     assert "target is being modified" in str(result.error)
 
 
+@pytest.mark.bootstrap_profile
 def test_cleanup_unproven_notifies_exact_admitted_root_before_refusal(tmp_path):
     """A cleanup failure poisons ownership before its refusal is returned."""
     observed = []
@@ -4301,6 +4467,7 @@ def test_cleanup_unproven_notifies_exact_admitted_root_before_refusal(tmp_path):
     assert "private/path leaked" not in str(result.error)
 
 
+@pytest.mark.bootstrap_profile
 def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, capsys):
     """Observer failure stays bounded and cannot replace the cleanup refusal."""
     authority = _agent_authority(tmp_path)
@@ -4327,6 +4494,7 @@ def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, 
     assert "private/path leaked" not in captured.err
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_write_dry_run_previews_even_with_stale_stamp(tmp_path):
     """M4: dry_run must preview, not stale-refuse -- nothing is written so
     there is no clobber risk.
@@ -4354,6 +4522,7 @@ def test_fs_write_dry_run_previews_even_with_stale_stamp(tmp_path):
 # --- Qodo round (PR #2341): empty run_id disables the ledger ---
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_read_without_run_binding_records_nothing(tmp_path):
     """An empty run_id (current_run_id() == "") means no run identity --
     the process-lived MCP server provider serves MANY independent clients
@@ -4373,6 +4542,7 @@ def test_fs_read_without_run_binding_records_nothing(tmp_path):
     assert provider._read_ledger._by_run == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_write_without_run_binding_is_not_guarded(tmp_path):
     """With no run identity bound, a read-then-peer-write-then-write
     sequence is NOT guarded -- pre-feature behavior for callers with no
@@ -4397,6 +4567,7 @@ def test_write_without_run_binding_is_not_guarded(tmp_path):
 # --- Qodo round (PR #2341): dry-run previews bypass the pre-check ---
 
 
+@pytest.mark.bootstrap_profile
 def test_fs_patch_dry_run_previews_even_with_stale_stamp(tmp_path):
     """fs_patch's dry_run must preview, not stale-refuse -- a preview never
     writes, so there is no clobber risk for the pre-check to guard against
@@ -4447,6 +4618,7 @@ def _agent_authority(root, alias="agent-x"):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_admitted_run_routes_fs_tools_to_worktree(tmp_path):
     shared = tmp_path / "shared"
     worktree = tmp_path / "wt"
@@ -4463,6 +4635,7 @@ def test_admitted_run_routes_fs_tools_to_worktree(tmp_path):
     assert not (shared / "out.txt").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_unmapped_run_unchanged_and_retire_restores(tmp_path):
     shared = tmp_path / "shared"
     worktree = tmp_path / "wt"
@@ -4486,6 +4659,7 @@ def test_unmapped_run_unchanged_and_retire_restores(tmp_path):
     assert not (worktree / "back.txt").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_root_write_permission_enforced(tmp_path):
     shared = tmp_path / "shared"
     worktree = tmp_path / "wt"
@@ -4504,6 +4678,7 @@ def test_agent_root_write_permission_enforced(tmp_path):
 
 # --- TASK-28238 phase 2 T3 review fixes: alias-collision guard + TOCTOU ---
 
+@pytest.mark.bootstrap_profile
 def test_admit_rejects_alias_colliding_with_static_admitted_root(tmp_path):
     shared = tmp_path / "shared"
     worktree = tmp_path / "wt"
@@ -4522,6 +4697,7 @@ def test_admit_rejects_alias_colliding_with_static_admitted_root(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_admit_rejects_alias_colliding_with_another_live_agent_run(tmp_path):
     shared = tmp_path / "shared"
     wt_a = tmp_path / "wt-a"
@@ -4537,6 +4713,7 @@ def test_admit_rejects_alias_colliding_with_another_live_agent_run(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_retire_never_drops_a_static_alias_spec_cache(tmp_path):
     shared = tmp_path / "shared"
     worktree = tmp_path / "wt"
@@ -4559,6 +4736,7 @@ def test_retire_never_drops_a_static_alias_spec_cache(tmp_path):
     assert "folder-stable-a" in provider._path_specs_by_alias
 
 
+@pytest.mark.bootstrap_profile
 def test_vanished_agent_alias_cache_returns_honest_refusal_not_crash(tmp_path):
     shared = tmp_path / "shared"
     worktree = tmp_path / "wt"
@@ -4580,6 +4758,7 @@ def test_vanished_agent_alias_cache_returns_honest_refusal_not_crash(tmp_path):
     assert not (worktree / "out.txt").exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "raw,unanswered,expected",
     [
@@ -4605,6 +4784,7 @@ def test_local_direct_callback_answer_authority(tmp_path, raw, unanswered, expec
     assert result.ok == (raw == "approve_once")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "state,callback,expected", [(DENY, None, "denied"), (ASK, None, None)]
 )
@@ -4616,6 +4796,7 @@ def test_local_actual_off_vs_missing_callback(tmp_path, state, callback, expecte
     assert result.dispatch_started is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("unanswered,expected", [(False, "denied"), (True, None)])
 def test_local_stamped_answer_scope_and_clear(tmp_path, unanswered, expected):
     from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
@@ -4634,6 +4815,7 @@ def test_local_stamped_answer_scope_and_clear(tmp_path, unanswered, expected):
     assert provider.invoke("local:fs_list", {"path": "."}).approval_decision is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "failure,expected",
     [
@@ -4657,6 +4839,7 @@ def test_local_approved_execution_failure_preserves_only_valid_fact(
     assert result.dispatch_started is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("unanswered,expected", [(False, "denied"), (True, None)])
 def test_local_builder_preserves_selected_name_fallback_fact(
     tmp_path, unanswered, expected
@@ -4864,6 +5047,7 @@ def test_remote_root_write_dispatch_routes_through_the_executor(
     assert executor.calls[0][1]["path"] == "notes.txt"
 
 
+@pytest.mark.bootstrap_profile
 def test_localroot_wrapped_authority_behaves_exactly_like_plain_path(
     tmp_path, _default_specs_without_config_reads
 ):

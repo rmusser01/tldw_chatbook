@@ -129,6 +129,7 @@ async def _scroll_back_until(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sustained_scrollback_reaches_the_oldest_message_and_stays_bounded():
     """Scroll-back must reach m0 of 400 while the mounted DOM stays bounded.
@@ -162,6 +163,7 @@ async def test_sustained_scrollback_reaches_the_oldest_message_and_stays_bounded
         assert len(transcript._messages) == 400, "the store keeps the full history"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deep_scrollback_trims_the_tail_and_scrolling_down_recovers_it():
     """The tail leaves the DOM during deep scroll-back and rehydrates downward.
@@ -207,6 +209,7 @@ async def test_deep_scrollback_trims_the_tail_and_scrolling_down_recovers_it():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_far_jump_mounts_a_bounded_recentered_window():
     """Selecting a message near the start mounts a window, not 490 rows.
@@ -244,6 +247,7 @@ async def test_far_jump_mounts_a_bounded_recentered_window():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_far_jump_then_scrolling_down_walks_back_to_the_tail():
     """After a far jump the tail stays reachable by scrolling down.
@@ -293,6 +297,7 @@ async def test_far_jump_then_scrolling_down_walks_back_to_the_tail():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_jump_to_latest_from_deep_scrollback_restores_a_bounded_tail():
     """The jump pill lands on a fresh, bounded, tail-following window."""
@@ -330,6 +335,7 @@ async def test_jump_to_latest_from_deep_scrollback_restores_a_bounded_tail():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_streaming_tick_keeps_the_hidden_tail_sticky():
     """A 0.2s-style ingest must not remount the trimmed tail under the reader."""
@@ -373,6 +379,7 @@ async def test_streaming_tick_keeps_the_hidden_tail_sticky():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_user_send_from_deep_scrollback_rewindows_the_tail():
     """A send yanks to a fresh tail window: suffix cleared, bounded, following."""
@@ -418,6 +425,7 @@ async def test_new_user_send_from_deep_scrollback_rewindows_the_tail():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kill_switch_keeps_the_one_sided_ceiling_and_full_reveals():
     """`transcript_window_lines = 0` keeps the exact pre-task behavior."""
@@ -452,6 +460,7 @@ async def test_kill_switch_keeps_the_one_sided_ceiling_and_full_reveals():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_end_key_from_deep_scrollback_shows_pill_and_mounts_the_reply():
     """`End` must never produce follow-state over a hidden tail (review A).
@@ -536,6 +545,7 @@ async def test_end_key_from_deep_scrollback_shows_pill_and_mounts_the_reply():
         assert transcript._is_following_tail()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_short_message_scrollback_reaches_m0_without_prune_chasing():
     """The trim must bound MEASURED height, not estimated (review B).
@@ -599,6 +609,7 @@ async def test_short_message_scrollback_reaches_m0_without_prune_chasing():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kill_switch_flip_with_a_hidden_tail_mounts_everything():
     """Flipping the kill switch mid-session must clear the hidden tail (review C).
@@ -655,6 +666,7 @@ async def test_kill_switch_flip_with_a_hidden_tail_mounts_everything():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tail_trim_never_hides_the_selected_message():
     """The trim protects the selection exactly like the prune does (review D).
@@ -691,6 +703,7 @@ async def test_tail_trim_never_hides_the_selected_message():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tail_trim_never_hides_the_owner_of_selected_thinking():
     """A selected projected disclosure protects its causal Assistant row."""
@@ -731,6 +744,7 @@ async def test_tail_trim_never_hides_the_owner_of_selected_thinking():
         assert transcript.selected_message_id == thinking_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_far_jump_lands_with_the_target_as_the_first_mounted_row():
     """A re-centered jump mounts the load-shaped window, nothing above (review E).

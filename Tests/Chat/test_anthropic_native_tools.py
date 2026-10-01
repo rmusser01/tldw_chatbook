@@ -21,6 +21,8 @@ inspect the JSON payload actually sent (or the normalized response returned).
 import json
 from unittest.mock import Mock, patch
 
+import pytest
+
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
@@ -77,6 +79,7 @@ def _call_anthropic(mock_post, messages, **extra):
     return mock_post.call_args[1]["json"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_openai_tools_convert_to_anthropic_input_schema(mock_post):
     sent = _call_anthropic(
@@ -96,6 +99,7 @@ def test_openai_tools_convert_to_anthropic_input_schema(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_caching_model_native_tools_are_copied_and_get_cache_control(mock_post):
     native = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
@@ -148,6 +152,7 @@ def test_anthropic_converter_drops_invalid_shapes_with_bounded_diagnostics():
     assert max(len(message) for message in messages) <= 240
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_openai_tool_history_converts_to_anthropic_blocks(mock_post):
     messages = [
@@ -203,6 +208,7 @@ def test_openai_tool_history_converts_to_anthropic_blocks(mock_post):
     assert len(sent) == 3
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_project_context_coalesces_after_all_anthropic_tool_results(mock_post):
     messages = [
@@ -234,6 +240,7 @@ def test_project_context_coalesces_after_all_anthropic_tool_results(mock_post):
     assert EPHEMERAL_ORIGIN_KEY not in sent[-1]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_nested_context_is_distinct_final_block_after_parallel_anthropic_results(
     mock_post,
@@ -265,6 +272,7 @@ def test_nested_context_is_distinct_final_block_after_parallel_anthropic_results
     assert all("NESTED_CONTEXT" not in str(block) for block in blocks[:2])
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_assistant_text_plus_tool_calls_keeps_text_block_first(mock_post):
     messages = [
@@ -298,6 +306,7 @@ def test_assistant_text_plus_tool_calls_keeps_text_block_first(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_malformed_tool_call_arguments_become_empty_input(mock_post):
     messages = [
@@ -321,6 +330,7 @@ def test_malformed_tool_call_arguments_become_empty_input(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_plain_chat_payload_unchanged(mock_post):
     messages = [
@@ -336,6 +346,7 @@ def test_plain_chat_payload_unchanged(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     # The live Anthropic API rejects both an empty "content": [] array and a
@@ -357,6 +368,7 @@ def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     assert sent[1]["content"] == [{"type": "text", "text": "hello"}]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_junk_tool_call_skipped_among_valid_entries(mock_post):
     messages = [
@@ -429,6 +441,7 @@ def _call_anthropic_get_result(mock_post, response_json, messages, **extra):
     )
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_use_response_normalizes_to_openai_tool_calls(mock_post):
     result = _call_anthropic_get_result(
@@ -452,6 +465,7 @@ def test_tool_use_response_normalizes_to_openai_tool_calls(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_text_only_response_has_no_tool_calls_key(mock_post):
     result = _call_anthropic_get_result(
@@ -464,6 +478,7 @@ def test_text_only_response_has_no_tool_calls_key(mock_post):
     assert "tool_calls" not in message
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_use_only_response_has_empty_content_and_tool_calls(mock_post):
     """T2 review Minor: a response carrying ONLY tool_use blocks (no text
@@ -494,6 +509,7 @@ def test_tool_use_only_response_has_empty_content_and_tool_calls(mock_post):
     assert choice["message"]["tool_calls"][0]["id"] == "toolu_O"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_junk_tool_use_blocks_normalize_parseably(mock_post):
     """T2 review Minor: response-side junk — a tool_use block with input
@@ -591,6 +607,7 @@ def _call_anthropic_stream(mock_post, sse_lines, messages, **extra):
     return list(result)
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_tool_use_emits_openai_delta_fragments(mock_post):
     sse_lines = _call_anthropic_stream(
@@ -630,6 +647,7 @@ def test_streaming_tool_use_emits_openai_delta_fragments(mock_post):
     assert "tool_calls" in finishes
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
     """Cross-layer contract pin: feed this handler's yielded SSE strings
@@ -663,6 +681,7 @@ def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
     )
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_openai_tool_with_blank_name_is_not_forwarded(mock_post):
     """PR #659 review: an OpenAI tool entry with a blank name must be
@@ -678,6 +697,7 @@ def test_openai_tool_with_blank_name_is_not_forwarded(mock_post):
     assert sent["tools"][0]["input_schema"] == OPENAI_TOOLS[0]["function"]["parameters"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_list_content_with_tool_calls_keeps_text_parts(mock_post):
     """PR #659 review: list-form (multimodal) assistant content alongside
@@ -706,6 +726,7 @@ def test_list_content_with_tool_calls_keeps_text_parts(mock_post):
     assert assistant["content"][-1]["type"] == "tool_use"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_use_stop_reason_without_blocks_downgrades_finish_reason(mock_post):
     """PR #659 review: stop_reason tool_use with NO tool_use blocks must not
@@ -728,6 +749,7 @@ def test_tool_use_stop_reason_without_blocks_downgrades_finish_reason(mock_post)
     assert "tool_calls" not in choice["message"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_junk_index_event_is_skipped_not_fatal(mock_post):
     """PR #659 review: a malformed tool_use content_block_start (index None)
@@ -775,6 +797,7 @@ def test_streaming_junk_index_event_is_skipped_not_fatal(mock_post):
     assert not any("error" in c for c in chunks)
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_two_interleaved_tool_blocks_reassemble_distinctly(mock_post):
     """task-263 T3 review advisory (live-covered at the gate, now unit-
@@ -885,6 +908,7 @@ def test_anthropic_supports_caching_gate():
     assert _anthropic_supports_caching("") is False
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_caching_model_system_gets_cache_control(mock_post):
     sent = _sent_anthropic(
@@ -896,6 +920,7 @@ def test_caching_model_system_gets_cache_control(mock_post):
     assert sent["system"][0]["cache_control"] == {"type": "ephemeral"}
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_caching_model_last_tool_gets_cache_control(mock_post):
     sent = _sent_anthropic(mock_post, "claude-3-opus-20240229", tools=OPENAI_TOOLS)
@@ -908,6 +933,7 @@ def test_caching_model_last_tool_gets_cache_control(mock_post):
     assert n <= 4
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_non_caching_model_unchanged(mock_post):
     sent = _sent_anthropic(
@@ -917,6 +943,7 @@ def test_non_caching_model_unchanged(mock_post):
     assert all("cache_control" not in t for t in sent["tools"])
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_non_caching_model_preserves_copied_native_tools(mock_post):
     native = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
@@ -927,6 +954,7 @@ def test_non_caching_model_preserves_copied_native_tools(mock_post):
     assert "cache_control" not in sent["tools"][0]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_caching_model_no_tools_system_only(mock_post):
     sent = _sent_anthropic(mock_post, "claude-3-opus-20240229", system_message="Hi.")
@@ -934,6 +962,7 @@ def test_caching_model_no_tools_system_only(mock_post):
     assert "tools" not in sent  # no tools passed -> no tools key
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_caching_disabled_via_config_strips_all_breakpoints(mock_post):
     """[caching] anthropic_enabled = false removes system AND tool AND
@@ -956,6 +985,7 @@ def test_caching_disabled_via_config_strips_all_breakpoints(mock_post):
     assert "cache_control" not in json.dumps(sent)
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_caching_default_on_when_section_absent(mock_post):
     """No [caching] section -> enabled (the existing task-323 behavior)."""
@@ -975,6 +1005,7 @@ def _count_cache_controls(obj):
     return 0
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_caching_model_marks_last_message_block(mock_post):
     """The final message's LAST content block carries the per-turn breakpoint;
@@ -995,6 +1026,7 @@ def test_caching_model_marks_last_message_block(mock_post):
     assert _count_cache_controls(messages[-1]["content"][:-1]) == 0
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_breakpoint_budget_never_exceeds_four(mock_post):
     """system + last-tool + per-turn = 3 total, within Anthropic's 4-cap."""
@@ -1009,6 +1041,7 @@ def test_breakpoint_budget_never_exceeds_four(mock_post):
     assert _count_cache_controls(sent) == 3
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_non_caching_model_gets_no_message_breakpoint(mock_post):
     sent = _sent_anthropic(
@@ -1020,6 +1053,7 @@ def test_non_caching_model_gets_no_message_breakpoint(mock_post):
     assert _count_cache_controls(sent) == 0
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_message_breakpoint_never_emits_ttl_key(mock_post):
     """5-minute default only — a ttl key would double the write premium."""
@@ -1043,6 +1077,7 @@ def test_message_breakpoint_never_emits_ttl_key(mock_post):
 # `prompt_caching=True` (stamped by the Console gateway) turns it on.
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_message_breakpoint_absent_without_opt_in(mock_post):
     """Default (no `prompt_caching` kwarg): NO per-turn message breakpoint,
@@ -1063,6 +1098,7 @@ def test_message_breakpoint_absent_without_opt_in(mock_post):
     assert _count_cache_controls(sent) == 2
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_message_breakpoint_absent_when_opt_in_is_none(mock_post):
     sent = _sent_anthropic(
@@ -1074,6 +1110,7 @@ def test_message_breakpoint_absent_when_opt_in_is_none(mock_post):
     assert _count_cache_controls(sent["messages"]) == 0
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_message_breakpoint_absent_when_opt_in_is_false(mock_post):
     sent = _sent_anthropic(

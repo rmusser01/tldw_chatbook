@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Reply with the single word...                                                                                                            │
+                       Context ◂  │  ✓ Call the todo_crea… ✕ Q2 Reply with the sin ✕ ✓ Answer with the wo… ✕ ✓ Answer with the wo… ✕    New tab     Temporary                               │  ▸ Inspect
+   Terminal                       │                                                                                                                                                         │           Choose folder · Project
+ ───────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                           ✕  │  What happens if I send now?
+ Workspaces                  ▸    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  Where: Default › Reply with the single wo…
+ ───────────────────────────────  │  ▊ Assistant                                                                                                                                            │  Scope: Everything available
+ Conversations               ▾    │  ▊                                                                                                                                                      │  Run: Ready
+       Archive this chat          │  ▊  Unus, Duo, Tres, Quattuor, Quinque, Sex, Septem, Octo, Novem, Decem, Undecim, Duodecim, Tredecim, Quattuordecim, Quindecim, Sedecim,                │  Sources: None staged
+         Archived chats           │  ▊  Septendecim, Duodeviginti, Undeviginti, Viginti, Unus et viginti, Duo et viginti, Tres et viginti, Quattuor et viginti, Quinque et viginti          │  Approvals: None pending
+       Search all chats…          │  ▊                                                                                                                                                      │ Environment                              ▾
+   Reply with the single          │  ▊                                                                                                                                                      │   Changes aren't tracked for this workspa…
+   word...                        │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │   Bind a folder and enable Change Review …
+                                  │   User                                                                                                                                                  │                   Refresh
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │   Answer with the word B4.                                                                                                                              │
+  ▊  Filter visible   ▎           │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │ Agents                       Run history ▸
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊ Assistant                                                                                                                                            │                View all runs
+                                  │  ▊                                                                                                                                                      │
+  Chats                      ▾    │  ▊  B4                                                                                                                                                  │  Sources — next send                  none
+   Reply with the single …  ⏸     │  ▊                                                                                                                                                      │  No sources attached. Stage sources from   ▆
+   Prompt queue paused · …        │  ▊                                                                                                                                                      │  Library.
+   Answer with the word D…  ✓     │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+   Answer with the word C…  ✓     │   User                                                                                                                                                  │  Sources: Notes, Media, Conversations
+   Call the todo_create t…  ✓     │   ¡Answer with the word P1.                                                                                                                             │  (Prompts off)
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ───────────────────────────────  │  ▊ Assistant                                                                                                                                            │  ▊  Ask Library sources before sending   ▎
+ Character · No chats        ▸    │  ▊                                                                                                                                                      │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ ───────────────────────────────  │  ▊  P1                                                                                                                                                  │    Search Library
+ Model                       ▸    │  ▊                                                                                                                                                      │
+ ───────────────────────────────  │  ▊                                                                                                                                                      │  Scope: everything                Narrow…
+ Agent                       ▾    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  Agent: done                     │   User                                                                                                                                                  │ Run
+  · P2                            │   ™Answer with the word P2.                                                                                                                             │ Run recipe: Anthropic / claude-haiku-4-5 /
+   View full log                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │ sources not staged / tools 6 / approvals 0
+                                  │  ▊ Assistant                                                                                                                                            │ Live work: No active work
+       Progress: 0 queued         │  ▊                                                                                                                                                      │ Provider: ready
+                                  │  ▊  P2                                                                                                                                                  │
+ ───────────────────────────────  │  ▊                                                                                                                                                      │
+ Details                     ▸    │  ▊                                                                                                                                                      │ ▼ more sections — scroll
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Queue 2/10 · Turn failed · Next: "£Answer with the word P3."                                                                                                                                                          Mana       Retry
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 1% · Current ~$0.0
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                                                      Send disabled: type a message      Queue         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

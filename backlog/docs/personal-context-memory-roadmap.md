@@ -594,3 +594,28 @@ limitations and narrow import/size margins remain explicit in the task report.
 The local PR draft and frozen evidence await independent task and whole-branch
 review. No publication, criteria closure, status advancement, dev merge or
 production activation is claimed at this checkpoint.
+
+
+### Local fixed-dev integration checkpoint — Phase B
+
+The independent Task3, whole-branch and final finding-wave gates approved the
+reviewed memory work. The local candidate now normally merges dev
+`ef831d9f383f58a806fe54d61a6fd75678ec73c0` with reviewed feature `52ab8c5990c0fe4edeffbaa91241c25e114081eb`.
+Targeted native Console/schema/output/approval/tab-close and memory/Canvas/endpoint
+controls, generated assets and strict source/import guards have exact receipts.
+The final Console selection passes1576 with a natural process exit; other
+populations have explicitly bounded predecessor reuse, not fresh final-byte claims.
+
+The complete joined86 resource run retains48 unchanged private count teardown
+errors despite86 passing bodies; historical43 remains separate. Exact native
+owner/inode evidence and offline invariant evaluation do not turn this runtime
+RED green. Earlier unattributed timeouts, descriptor growth and the interrupted
+Console worker remain open; all tight margins and existing skips/noise are
+disclosed. TASK-25907.23 and AC6 remain open/In Progress.
+
+Later dev `2ee6ea78345eedd9ee2bc6509bb66bbff24dff58` is a separate observed pin.
+This checkpoint is not latest-dev qualification, merge readiness or completion.
+The normal merge candidate, local PR draft and frozen integration report await
+one scoped integration gate before any publication. No PR edit, criteria/status
+closure, source opening, production V2/Forget/schema-AAD/future disclosure or
+companion-server activation is authorized by this checkpoint.

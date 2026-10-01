@@ -94,6 +94,7 @@ def _assistant_activity_turn(*, streaming: bool = False) -> list[ConsoleChatMess
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_assistant_turn_pruning_commits_all_owned_activity_ids_atomically():
     """A composite top-level row is either wholly pruned or wholly retained."""
@@ -124,6 +125,7 @@ async def test_assistant_turn_pruning_commits_all_owned_activity_ids_atomically(
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "protection", ["nested-selection", "thinking-selection", "streaming-owner"]
@@ -207,6 +209,7 @@ def test_get_console_prune_watermarks_defaults_and_clamps():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pruning_drops_oldest_rows_over_high_watermark():
     """Virtual height over the high mark drops oldest rows down to the low mark."""
@@ -249,6 +252,7 @@ async def test_pruning_drops_oldest_rows_over_high_watermark():
         assert len(transcript._messages) == 24
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pruning_is_view_only_store_keeps_full_history():
     """messages_for_session still returns everything after pruning (AC4)."""
@@ -279,6 +283,7 @@ async def test_pruning_is_view_only_store_keeps_full_history():
         assert "line 23.3" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pruning_preserves_scroll_position_when_scrolled_up():
     """A scrolled-up reader keeps the same content in view across a prune."""
@@ -333,6 +338,7 @@ async def test_pruning_preserves_scroll_position_when_scrolled_up():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pruning_reanchors_when_following_tail():
     """Following the tail: the view stays pinned to the bottom after a prune."""
@@ -352,6 +358,7 @@ async def test_pruning_reanchors_when_following_tail():
         ), "tail-follow was not restored after pruning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_streaming_row_is_never_pruned():
     """The in-progress streaming row survives even an aggressive prune."""
@@ -372,6 +379,7 @@ async def test_streaming_row_is_never_pruned():
         assert "mstream" in _mounted_message_ids(transcript)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pruning_disabled_when_high_watermark_nonpositive():
     """prune_high_watermark <= 0 disables pruning entirely."""
@@ -388,6 +396,7 @@ async def test_pruning_disabled_when_high_watermark_nonpositive():
         assert len(_mounted_message_ids(transcript)) == 12
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_and_recompose_do_not_resurrect_pruned_rows():
     """Pruning is a persistent view window, not a one-shot row removal."""

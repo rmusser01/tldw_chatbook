@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                          Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Reply with exactly: hello t...                                                                                                           │
+                       Context ◂  │  ● Reply with exactly… ✕    New tab     Temporary                                                                                                       │  ▸ Inspect
+   Terminal                       │                                                                                                                                                         │           Choose folder · Project
+ ───────────────────────────────  │  ▊   2. Nile                                                                                                                                            │  What happens if I send now?
+ Workspaces                  ▸    │  ▊   3. Mississippi                                                                                                                                     │  Where: Default › Reply with exactly: hell…
+ ───────────────────────────────  │  ▊   4. Yangtze                                                                                                                                         │  Scope: Everything available
+ Conversations               ▾    │  ▊   5. Thames                                                                                                                                          │  Run: Blocked
+       Archive this chat          │  ▊                                                                                                                                                      │  Sources: None staged
+         Archived chats           │  ▊                                                                                                                                                      │  Approvals: None pending
+       Search all chats…          │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │ Environment                              ▾
+   Reply with exactly: hello      │   User                                                                                                                                                  │   Changes aren't tracked for this workspa…
+   t...                           │   Say hi.                                                                                                                                               │   Bind a folder and enable Change Review …
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │                   Refresh
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊ Assistant                                                                                                                                            │
+  ▊  Filter visible   ▎           │  ▊                                                                                                                                                      │ Agents                       Run history ▸
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊  hi                                                                                                                                                  │                View all runs
+                                  │  ▊                                                                                                                                                      │
+  Chats                      ▾    │  ▊                                                                                                                                                      │  Sources — next send                  none
+   Reply with exactly: he…  ⟳     │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  No sources attached. Stage sources from
+                                  │   User                                                                                                                                                  │  Library.
+ ───────────────────────────────  │   List 5 mountains, one per line.                                                                                                                       │
+ Character · No chats        ▸    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  Sources: Notes, Media, Conversations
+ ───────────────────────────────  │  ▊ Assistant                                                                                                                                            │  (Prompts off)
+ Model                       ▸    │  ▊                                                                                                                                                      │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ───────────────────────────────  │  ▊   1. Everest                                                                                                                                         │  ▊  Ask Library sources before sending   ▎
+ Agent                       ▸    │  ▊   2. K2                                                                                                                                              │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ ───────────────────────────────  │  ▊   3. Kilimanjaro                                                                                                                                     │    Search Library
+ Details                     ▸    │  ▊   4. Denali                                                                                                                                          │
+                                  │  ▊   5. Matterhorn                                                                                                                                      │  Scope: everything                Narrow…
+                                  │  ▊                                                                                                                                                      │
+                                  │  ▊                                                                                                                                                      │ Run
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │ Run recipe: Anthropic / claude-haiku-4-5 /
+                                  │   User                                                                                                                                                  │ sources not staged / tools 6 / approvals 0
+                                  │   ist 5 lakes, one per line.                                                                                                                            │ Live work: Generating…
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────▆  │ Provider: blocked - Provider setup needed:
+                                  │  ▊ Assistant  Generating…                                                                                                                               │ current run is active
+                                  │  ▊                                                                                                                                                      │
+                                  │  ▊                                                                                                                                                      │ Source Readiness
+                                  │  ▊                                                                                                                                                      │ ▼ more sections — scroll
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Co
+
+│  Expand ▴  Composer hidden · Generating                                                                                                                                                                                            Stop
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Esc show composer | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

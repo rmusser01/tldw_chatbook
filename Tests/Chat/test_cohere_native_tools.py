@@ -21,6 +21,8 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
@@ -175,12 +177,14 @@ def _decode_sse_chunks(sse_lines):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_request_hits_v2_chat_endpoint(mock_post):
     _call_cohere(mock_post, [{"role": "user", "content": "hi"}])
     assert mock_post.call_args[0][0] == COHERE_V2_URL
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_leading_system_message_becomes_system_role_entry(mock_post):
     messages = [
@@ -198,6 +202,7 @@ def test_leading_system_message_becomes_system_role_entry(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_system_prompt_param_becomes_system_role_entry(mock_post):
     sent = _call_cohere(
@@ -208,6 +213,7 @@ def test_system_prompt_param_becomes_system_role_entry(mock_post):
     assert sent["messages"][0] == {"role": "system", "content": "Be terse."}
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_no_v1_only_keys_in_payload(mock_post):
     messages = [
@@ -220,6 +226,7 @@ def test_no_v1_only_keys_in_payload(mock_post):
     assert "message" not in sent
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_non_streaming_text_response_normalizes_to_openai_shape(mock_post):
     result = _call_cohere_get_result(
@@ -234,6 +241,7 @@ def test_non_streaming_text_response_normalizes_to_openai_shape(mock_post):
     assert "tool_calls" not in choice["message"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_max_tokens_finish_reason_maps_to_length(mock_post):
     result = _call_cohere_get_result(
@@ -249,6 +257,7 @@ def test_max_tokens_finish_reason_maps_to_length(mock_post):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_content_delta_emits_openai_delta_content(mock_post):
     events = [
@@ -286,6 +295,7 @@ def test_streaming_content_delta_emits_openai_delta_content(mock_post):
     assert raw[-1] == "data: [DONE]\n\n"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_max_tokens_finish_reason_maps_to_length(mock_post):
     events = [
@@ -313,6 +323,7 @@ def test_streaming_max_tokens_finish_reason_maps_to_length(mock_post):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_params_map_to_v2_names(mock_post):
     sent = _call_cohere(
@@ -337,6 +348,7 @@ def test_params_map_to_v2_names(mock_post):
     assert sent["presence_penalty"] == 0.2
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_num_generations_is_dropped_with_debug_log(mock_post):
     from loguru import logger as loguru_logger
@@ -356,6 +368,7 @@ def test_num_generations_is_dropped_with_debug_log(mock_post):
     assert any("num_generations" in m for m in messages)
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_plain_chat_payload_unchanged(mock_post):
     messages = [
@@ -391,6 +404,7 @@ OPENAI_TOOLS = [
 ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_openai_tools_passthrough_into_v2_payload(mock_post):
     """v2 keeps the OpenAI envelope while projecting a fresh schema copy."""
@@ -411,6 +425,7 @@ def test_openai_tools_passthrough_into_v2_payload(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_strict_todo_schemas_project_supported_subset_without_aliasing():
     tools = [_todo_tool("todo_create"), _todo_tool("todo_update")]
     original = deepcopy(tools)
@@ -450,11 +465,9 @@ def test_strict_todo_schemas_project_supported_subset_without_aliasing():
     assert update["properties"]["activeForm"] == {
         "anyOf": [{"type": "string"}, {"type": "null"}]
     }
-    assert update["anyOf"] == [
-        {"required": ["content"]},
-        {"required": ["status"]},
-        {"required": ["activeForm"]},
-    ]
+    # TASK-33621.1: todo_update no longer carries a top-level anyOf (OpenAI
+    # and Anthropic refuse one); its change rule is enforced by the handler.
+    assert "anyOf" not in update
 
     update["properties"]["status"]["enum"].append("changed")
     assert tools == original
@@ -663,6 +676,7 @@ def test_schema_projection_omits_arbitrary_unknown_keywords_recursively():
     assert tool == original
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_blank_name_tool_is_dropped_locally(mock_post):
     """Mirrors `_google_tools_payload`'s blank-name guard: an entry missing
@@ -676,6 +690,7 @@ def test_blank_name_tool_is_dropped_locally(mock_post):
     assert [t["function"]["name"] for t in sent["tools"]] == ["calculator"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_assistant_tool_calls_history_converts_to_v2_shape(mock_post):
     messages = [
@@ -732,6 +747,7 @@ def test_assistant_tool_calls_history_converts_to_v2_shape(mock_post):
     }
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_empty_streamed_arguments_echo_as_empty_json_object(mock_post):
     """Live-gate case B finding (2026-07-17): a NO-ARG streamed call
@@ -757,6 +773,7 @@ def test_empty_streamed_arguments_echo_as_empty_json_object(mock_post):
     assert sent[1]["tool_calls"][0]["function"]["arguments"] == "{}"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_dict_arguments_normalized_via_json_dumps(mock_post):
     messages = [
@@ -782,6 +799,7 @@ def test_dict_arguments_normalized_via_json_dumps(mock_post):
     )
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_unparseable_string_arguments_pass_through_as_is(mock_post):
     """v2 takes `arguments` as a string regardless -- an unparseable string
@@ -804,6 +822,7 @@ def test_unparseable_string_arguments_pass_through_as_is(mock_post):
     assert sent[1]["tool_calls"][0]["function"]["arguments"] == "{broken"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_plan_reattached_from_cohere_tool_plan_extra(mock_post):
     messages = [
@@ -825,6 +844,7 @@ def test_tool_plan_reattached_from_cohere_tool_plan_extra(mock_post):
     assert sent[1]["tool_plan"] == "I should call the calculator."
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_plan_falls_back_to_content_when_no_extra(mock_post):
     messages = [
@@ -845,6 +865,7 @@ def test_tool_plan_falls_back_to_content_when_no_extra(mock_post):
     assert sent[1]["tool_plan"] == "Let me check."
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_result_missing_id_falls_back_to_most_recent_assistant_id(mock_post):
     """Mirrors google's positional fallback (task-266): a tool-result
@@ -873,6 +894,7 @@ def test_tool_result_missing_id_falls_back_to_most_recent_assistant_id(mock_post
     }
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     """When every tool_calls entry is junk, the assistant turn must be sent
@@ -914,6 +936,7 @@ def _cohere_tool_call_response(text=None, tool_plan=None, finish_reason="TOOL_CA
     return {"id": "resp_2", "message": message, "finish_reason": finish_reason}
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_calls_response_normalizes_to_openai_shape(mock_post):
     result = _call_cohere_get_result(
@@ -940,6 +963,7 @@ def test_tool_calls_response_normalizes_to_openai_shape(mock_post):
     assert parsed[0].name == "calculator"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_calls_absent_means_no_tool_calls_key(mock_post):
     result = _call_cohere_get_result(
@@ -950,6 +974,7 @@ def test_tool_calls_absent_means_no_tool_calls_key(mock_post):
     assert "tool_calls" not in result["choices"][0]["message"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_plan_preserved_as_cohere_tool_plan_extra(mock_post):
     result = _call_cohere_get_result(
@@ -963,6 +988,7 @@ def test_tool_plan_preserved_as_cohere_tool_plan_extra(mock_post):
     )
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_tool_plan_absent_omits_extra(mock_post):
     result = _call_cohere_get_result(
@@ -973,6 +999,7 @@ def test_tool_plan_absent_omits_extra(mock_post):
     assert "cohere_tool_plan" not in result["choices"][0]["message"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_text_and_tool_calls_both_present_populate_both(mock_post):
     result = _call_cohere_get_result(
@@ -985,6 +1012,7 @@ def test_text_and_tool_calls_both_present_populate_both(mock_post):
     assert message["tool_calls"][0]["function"]["name"] == "calculator"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_malformed_tool_call_arguments_guaranteed_string(mock_post):
     """Response-side junk: a tool_calls entry whose arguments came through
@@ -1063,6 +1091,7 @@ def _tool_call_fragments(chunks):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_tool_call_start_emits_first_fragment(mock_post):
     events = [
@@ -1085,6 +1114,7 @@ def test_streaming_tool_call_start_emits_first_fragment(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_tool_call_delta_appends_arguments_substring(mock_post):
     events = [
@@ -1103,6 +1133,7 @@ def test_streaming_tool_call_delta_appends_arguments_substring(mock_post):
     assert fragments[2] == {"index": 0, "function": {"arguments": 'sion": "2+2"}'}}
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_tool_plan_accumulated_and_emitted_on_first_fragment(mock_post):
     events = [
@@ -1122,6 +1153,7 @@ def test_streaming_tool_plan_accumulated_and_emitted_on_first_fragment(mock_post
     assert "cohere_tool_plan" not in fragments[1]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_message_end_after_tool_calls_finish_reason_tool_calls(mock_post):
     events = [
@@ -1141,6 +1173,7 @@ def test_streaming_message_end_after_tool_calls_finish_reason_tool_calls(mock_po
     assert finishes == ["tool_calls"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_two_tool_calls_get_distinct_indexes(mock_post):
     events = [
@@ -1164,6 +1197,7 @@ def test_streaming_two_tool_calls_get_distinct_indexes(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_position_fallback_when_index_missing(mock_post):
     """When the stream event omits an explicit index entirely, positions
@@ -1204,6 +1238,7 @@ def test_streaming_position_fallback_when_index_missing(mock_post):
     assert [f["index"] for f in fragments] == [0, 1]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
     """Cross-layer contract pin: feed this handler's yielded SSE strings
@@ -1246,6 +1281,7 @@ def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_emits_exactly_one_done_terminator(mock_post):
     """Qodo #690-3: message-end yielded [DONE] and the generator's finally
@@ -1267,6 +1303,7 @@ def test_streaming_emits_exactly_one_done_terminator(mock_post):
     assert raw.count("data: [DONE]\n\n") == 1
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streamed_entry_level_tool_plan_round_trips_on_echo(mock_post):
     """Qodo #690-4: streamed turns carry cohere_tool_plan INSIDE the
@@ -1297,6 +1334,7 @@ def test_streamed_entry_level_tool_plan_round_trips_on_echo(mock_post):
     assert "cohere_tool_plan" not in sent[1]["tool_calls"][0]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_non_function_tools_entry_dropped_not_forwarded(mock_post):
     """Qodo #690-6: a dict tools entry that is not a valid function tool
@@ -1319,6 +1357,7 @@ def test_non_function_tools_entry_dropped_not_forwarded(mock_post):
     assert names == ["calculator"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_response_tool_call_with_non_dict_function_or_blank_name_skipped(mock_post):
     """Qodo #690-7: a malformed provider tool_call (non-dict function, or a
@@ -1344,6 +1383,7 @@ def test_response_tool_call_with_non_dict_function_or_blank_name_skipped(mock_po
     assert message["content"] == "partial"
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_stream_forwards_token_usage_from_message_end(mock_post):
     """task-32805.2: the Cohere v2 message-end event carries a usage block; it

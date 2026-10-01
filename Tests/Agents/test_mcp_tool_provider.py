@@ -226,18 +226,18 @@ def _compose(provider: MCPToolProvider) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compose_catalog_kill_switch_on_yields_empty_catalog():
+def test_compose_catalog_kill_switch_on_yields_empty_catalog(event_loop):
     service = FakeMCPService(
         kill_switch=True,
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     assert provider.list_catalog() == []
     assert provider.not_connected_count == 0
 
 
-def test_compose_catalog_filters_deny_state():
+def test_compose_catalog_filters_deny_state(event_loop):
     service = FakeMCPService(
         catalog_records=[
             _catalog_record("srv", [_tool_dict("keep"), _tool_dict("drop")])
@@ -251,14 +251,14 @@ def test_compose_catalog_filters_deny_state():
             ),
         },
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     names = {e.name for e in provider.list_catalog()}
     assert any("keep" in n for n in names)
     assert not any("drop" in n for n in names)
 
 
-def test_compose_catalog_rejects_same_id_with_changed_definition():
+def test_compose_catalog_rejects_same_id_with_changed_definition(event_loop):
     original_schema = {
         "type": "object",
         "properties": {"path": {"type": "string"}},
@@ -279,7 +279,7 @@ def test_compose_catalog_rejects_same_id_with_changed_definition():
     )
     provider = MCPToolProvider(
         service=service,
-        main_loop=asyncio.new_event_loop(),
+        main_loop=event_loop,
         maximum_tool_ids=frozenset(maximum),
         maximum_definition_hashes=maximum,
     )
@@ -293,7 +293,7 @@ def test_compose_catalog_rejects_same_id_with_changed_definition():
     ]
     exact_provider = MCPToolProvider(
         service=service,
-        main_loop=asyncio.new_event_loop(),
+        main_loop=event_loop,
         maximum_tool_ids=frozenset(maximum),
         maximum_definition_hashes=maximum,
     )
@@ -304,17 +304,17 @@ def test_compose_catalog_rejects_same_id_with_changed_definition():
     ]
 
 
-def test_compose_catalog_includes_builtin_inventory():
+def test_compose_catalog_includes_builtin_inventory(event_loop):
     service = FakeMCPService(
         inventory={"tools": [{"name": "calc", "description": "adds"}]}
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     names = {e.name for e in provider.list_catalog()}
     assert any("calc" in n for n in names)
 
 
-def test_compose_catalog_dedupes_colliding_llm_names():
+def test_compose_catalog_dedupes_colliding_llm_names(event_loop):
     # "server.1" and "server_1" both sanitize to "server_1" -- a genuine
     # post-sanitization collision, exercising the T1 handoff requirement:
     # names are computed for ALL tools first, then ONE dedupe_names() pass
@@ -325,7 +325,7 @@ def test_compose_catalog_dedupes_colliding_llm_names():
             _catalog_record("server_1", [_tool_dict("run")]),
         ]
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     names = [e.name for e in provider.list_catalog()]
     assert len(names) == 2
@@ -334,7 +334,7 @@ def test_compose_catalog_dedupes_colliding_llm_names():
     assert names[1] == "mcp__server_1__run_2"
 
 
-def test_not_connected_count_counts_distinct_eligible_stale_servers():
+def test_not_connected_count_counts_distinct_eligible_stale_servers(event_loop):
     service = FakeMCPService(
         catalog_records=[
             _catalog_record("a", [_tool_dict("t1")], is_connected=False),
@@ -345,7 +345,7 @@ def test_not_connected_count_counts_distinct_eligible_stale_servers():
             ("local:b", "t2"): EffectiveToolState(state="deny", origin="tool_override")
         },
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     # Server "b" is stale but its only tool is denied (ineligible) -> must
     # not count. Only server "a" (stale + eligible) counts.
@@ -357,11 +357,11 @@ def test_not_connected_count_counts_distinct_eligible_stale_servers():
 # ---------------------------------------------------------------------------
 
 
-def test_load_schema_defaults_missing_input_schema_to_empty_object():
+def test_load_schema_defaults_missing_input_schema_to_empty_object(event_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
     schema = provider.load_schema(tool_id)
@@ -370,7 +370,7 @@ def test_load_schema_defaults_missing_input_schema_to_empty_object():
     assert schema.name == tool_id
 
 
-def test_load_schema_passes_through_existing_input_schema():
+def test_load_schema_passes_through_existing_input_schema(event_loop):
     raw_schema = {
         "type": "object",
         "properties": {"q": {"type": "string"}},
@@ -381,17 +381,15 @@ def test_load_schema_passes_through_existing_input_schema():
             _catalog_record("srv", [_tool_dict("run", input_schema=raw_schema)])
         ]
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
     schema = provider.load_schema(tool_id)
     assert schema.parameters == raw_schema
 
 
-def test_load_schema_unknown_id_raises_key_error():
-    provider = MCPToolProvider(
-        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
-    )
+def test_load_schema_unknown_id_raises_key_error(event_loop):
+    provider = MCPToolProvider(service=FakeMCPService(), main_loop=event_loop)
     with pytest.raises(KeyError):
         provider.load_schema("mcp__nope__run")
 
@@ -401,25 +399,21 @@ def test_load_schema_unknown_id_raises_key_error():
 # ---------------------------------------------------------------------------
 
 
-def test_apply_batch_decisions_then_stamped_decision_is_a_peek_not_a_pop():
+def test_apply_batch_decisions_then_stamped_decision_is_a_peek_not_a_pop(event_loop):
     # Finding F1: stamped_decision() must NOT consume the stamp -- every
     # call sharing an llm_name within the same turn has to see the same
     # verdict, so reading it twice must return the same value both times.
-    provider = MCPToolProvider(
-        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
-    )
+    provider = MCPToolProvider(service=FakeMCPService(), main_loop=event_loop)
     provider.apply_batch_decisions(RUN, {"mcp__srv__run": "deny"})
     assert provider.stamped_decision(RUN, "mcp__srv__run") == "deny"
     assert provider.stamped_decision(RUN, "mcp__srv__run") == "deny"
 
 
-def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
+def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps(event_loop):
     # Finding F1: apply_batch_decisions is called once per turn (even with
     # `{}` when nothing needed gating) specifically so a stamp from an
     # earlier turn can never survive into a later one via a stale merge.
-    provider = MCPToolProvider(
-        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
-    )
+    provider = MCPToolProvider(service=FakeMCPService(), main_loop=event_loop)
     provider.apply_batch_decisions(RUN, {"mcp__srv__run": "approve_once"})
     assert provider.stamped_decision(RUN, "mcp__srv__run") == "approve_once"
 
@@ -427,13 +421,13 @@ def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
     assert provider.stamped_decision(RUN, "mcp__srv__run") is None
 
 
-def test_compose_catalog_clears_stale_stamped_decisions():
+def test_compose_catalog_clears_stale_stamped_decisions(event_loop):
     # Finding 3: stale stamps for tools not in the new catalog should be
     # cleared on recompose to prevent auto-approval of old tool names.
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
 
     # Stamp a bogus tool name not in the catalog.
@@ -451,7 +445,7 @@ def test_compose_catalog_clears_stale_stamped_decisions():
 # ---------------------------------------------------------------------------
 
 
-def test_pending_gate_for_returns_none_for_allow_and_deny():
+def test_pending_gate_for_returns_none_for_allow_and_deny(event_loop):
     # Both tools start "ask" (the default) so BOTH survive compose_catalog's
     # own deny-filter and land in the catalog. pending_gate_for() re-resolves
     # the gate FRESH per call (never trusts the compose-time cache) --
@@ -464,7 +458,7 @@ def test_pending_gate_for_returns_none_for_allow_and_deny():
             )
         ],
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     by_name = {e.name: e.id for e in provider.list_catalog()}
     allow_id = next(v for k, v in by_name.items() if "allowed_tool" in k)
@@ -481,7 +475,9 @@ def test_pending_gate_for_returns_none_for_allow_and_deny():
     assert provider.pending_gate_for(deny_id, {}) is None
 
 
-def test_pending_gate_for_ask_reports_config_changed_and_risk_floored_reasons():
+def test_pending_gate_for_ask_reports_config_changed_and_risk_floored_reasons(
+    event_loop,
+):
     service = FakeMCPService(
         catalog_records=[
             _catalog_record("srv", [_tool_dict("cfg"), _tool_dict("risky")])
@@ -495,7 +491,7 @@ def test_pending_gate_for_ask_reports_config_changed_and_risk_floored_reasons():
             ),
         },
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     by_name = {e.name: e.id for e in provider.list_catalog()}
     cfg_id = next(v for k, v in by_name.items() if "cfg" in k)
@@ -510,18 +506,18 @@ def test_pending_gate_for_ask_reports_config_changed_and_risk_floored_reasons():
     assert pending_risky.reason == "risk_floored"
 
 
-def test_pending_gate_for_plain_ask_reason():
+def test_pending_gate_for_plain_ask_reason(event_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
     pending = provider.pending_gate_for(tool_id, {})
     assert pending.reason == "ask"
 
 
-def test_pending_gate_for_builtin_writer_carries_the_mutation_effect():
+def test_pending_gate_for_builtin_writer_carries_the_mutation_effect(event_loop):
     """Qodo #1 (task-32278): a mutating BUILT-IN reaching this provider path
     rendered no blast radius at all.
 
@@ -546,7 +542,7 @@ def test_pending_gate_for_builtin_writer_carries_the_mutation_effect():
             ]
         }
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     pending = {
         entry.name.rsplit("__", 1)[-1]: provider.pending_gate_for(entry.id, {})
@@ -564,7 +560,7 @@ def test_pending_gate_for_builtin_writer_carries_the_mutation_effect():
     assert format_approval_effects({"effects": pending["library_list_notes"].effects}) == ""
 
 
-def test_builtin_writer_effect_never_changes_the_permission_layer():
+def test_builtin_writer_effect_never_changes_the_permission_layer(event_loop):
     """The effect recovery above is card copy ONLY.
 
     Carrying real risk tags on a built-in `HubTool` instead would newly floor
@@ -574,7 +570,7 @@ def test_builtin_writer_effect_never_changes_the_permission_layer():
     exists to catch. Pin that the shipped fix leaves `tags` empty.
     """
     service = FakeMCPService(inventory={"tools": [_tool_dict("library_save_note")]})
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
 
     tool, _state = provider._entry_by_llm_name[provider.list_catalog()[0].name]
@@ -726,14 +722,12 @@ def test_unreadable_session_source_refuses_builtin_character_write(running_loop)
     assert service.execute_calls == []
 
 
-def test_pending_gate_for_unknown_name_returns_none():
-    provider = MCPToolProvider(
-        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
-    )
+def test_pending_gate_for_unknown_name_returns_none(event_loop):
+    provider = MCPToolProvider(service=FakeMCPService(), main_loop=event_loop)
     assert provider.pending_gate_for("mcp__nope__run", {}) is None
 
 
-def test_pending_gate_for_returns_none_when_session_approved():
+def test_pending_gate_for_returns_none_when_session_approved(event_loop):
     # Finding I1: "Approve for session" must suppress the approval card on
     # the NEXT turn's `pending_gate_for` call -- the real service's
     # `gate_tool_test` resolves from the permission store only (mirrored
@@ -743,7 +737,7 @@ def test_pending_gate_for_returns_none_when_session_approved():
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
     service.session_approvals.add(("local:srv", "run"))
@@ -756,10 +750,8 @@ def test_pending_gate_for_returns_none_when_session_approved():
 # ---------------------------------------------------------------------------
 
 
-def test_invoke_unknown_tool_id_returns_error():
-    provider = MCPToolProvider(
-        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
-    )
+def test_invoke_unknown_tool_id_returns_error(event_loop):
+    provider = MCPToolProvider(service=FakeMCPService(), main_loop=event_loop)
     result = provider.invoke("mcp__nope__run", {})
     assert result.ok is False
 
@@ -1073,6 +1065,36 @@ def test_invoke_ask_callback_deny_refuses(running_loop):
     # permissions were not Off, a person said no.
     assert result.error == USER_DENY_REFUSAL
     assert service.execute_calls == []
+
+
+def test_direct_card_denial_includes_reason_without_audit_body(running_loop):
+    """A direct invoke has no review hook but must keep its user's reason.
+
+    Args:
+        running_loop: The real loop used by the provider's async service calls.
+    """
+    from tldw_chatbook.Agents.approval_provenance import ApprovalDecisions
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda rows: ApprovalDecisions(
+            {rows[0].llm_name: "deny"},
+            denial_reasons={rows[0].llm_name: "Use a local tool instead."},
+        ),
+    )
+    _compose(provider)
+    result = provider.invoke(provider.list_catalog()[0].id, {})
+    assert result.error == (
+        USER_DENY_REFUSAL
+        + '\nDenial reason (from user, untrusted text): "Use a local tool instead."'
+    )
+    assert result.approval_decision == "denied"
+    assert service.execute_calls == []
+    assert "Use a local tool instead." not in repr(service.record_tool_decision_calls)
 
 
 def test_invoke_ask_callback_missing_verdict_fails_closed(running_loop):
@@ -2071,11 +2093,11 @@ def _mixed_library_inventory() -> dict:
     return {"tools": [_tool_dict(name, f"{name} description") for name in names]}
 
 
-def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
+def test_compose_catalog_without_exclusions_keeps_every_builtin_name(event_loop):
     """Default (no exclusions): all non-Console callers preserve current
     behavior -- even the shadowed names stay in the catalog."""
     service = FakeMCPService(inventory=_mixed_library_inventory())
-    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(service=service, main_loop=event_loop)
 
     _compose(provider)
 
@@ -2089,7 +2111,7 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     }
 
 
-def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
+def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source(event_loop):
     """With the Console exclusion set: exactly the 29 built-in raw names
     disappear; the unrelated built-in and same-named local-profile tools
     remain, and the inventory mapping is left untouched."""
@@ -2109,7 +2131,7 @@ def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
     )
     provider = MCPToolProvider(
         service=service,
-        main_loop=asyncio.new_event_loop(),
+        main_loop=event_loop,
         builtin_raw_name_exclusions=exclusions,
     )
 
@@ -2128,7 +2150,7 @@ def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
     ]
 
 
-def test_compose_catalog_excluded_names_still_gated_when_served_locally():
+def test_compose_catalog_excluded_names_still_gated_when_served_locally(event_loop):
     """Governance, not just eligibility: the local twin of an excluded raw
     name still flows through the permission machinery (ask -> pending row;
     deny -> dropped)."""
@@ -2149,7 +2171,7 @@ def test_compose_catalog_excluded_names_still_gated_when_served_locally():
     )
     provider = MCPToolProvider(
         service=service,
-        main_loop=asyncio.new_event_loop(),
+        main_loop=event_loop,
         builtin_raw_name_exclusions=exclusions,
     )
 
@@ -2166,13 +2188,13 @@ def test_compose_catalog_excluded_names_still_gated_when_served_locally():
     assert pending.tool_name == "library_list_media"
 
 
-def test_compose_catalog_exclusion_set_stored_immutably():
+def test_compose_catalog_exclusion_set_stored_immutably(event_loop):
     """The constructor argument is stored as an immutable frozenset copy --
     later mutation of the caller's container cannot widen the filter."""
     mutable = {"library_list_media"}
     provider = MCPToolProvider(
         service=FakeMCPService(inventory=_mixed_library_inventory()),
-        main_loop=asyncio.new_event_loop(),
+        main_loop=event_loop,
         builtin_raw_name_exclusions=mutable,
     )
     mutable.add("chat_with_llm")

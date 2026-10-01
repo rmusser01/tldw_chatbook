@@ -1161,3 +1161,19 @@ would have renumbered the task in response to its own checkpoint.
 blob identity, creation metadata and ref object type before renumbering.
 A checkpoint of the same uncommitted task is not another owner. Do not exclude
 all Codex snapshots: they can also expose another session's uncommitted claim.
+
+## zsh does not word-split `$var`, so `rm -rf $S/$2` became `rm -rf $S/` (Console P0 batch, 2026-09-30)
+
+**Incident.** While exporting two trees for a before/after comparison, a fix-up agent
+ran `for pair in "<sha> <dir>" …; do set -- $pair; rm -rf $S/$2; …` in the Bash tool.
+That tool runs **zsh**, which does not word-split an unquoted `$pair`. So `$2` was empty,
+and the command ran `rm -rf <session scratchpad>/`. It deleted the review's raw
+evidence (1 GB of captures), every parallel unit's logs, several agents' scratch
+profiles (including those of running apps), and the review tooling (the capture,
+contrast and proxy scripts). The P0/P1 evidence survived only because it had already
+been copied into the repo.
+
+**What to do.** Never pass `rm -rf` a path built from a variable. If you must, use
+`${var:?}` (for example `rm -rf "${S:?}/${dir:?}"`) so an empty value aborts instead of
+widening the target. Do not rely on word splitting in the Bash tool, which is zsh:
+split explicitly with `${=pair}` or `read -r a b <<< "$pair"`, or use a literal list.

@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Near-full context test                                                                                                                   │
+                       Context ◂  │         Chat 1         ✕  Near-full context…   ✕    New tab     Temporary                                                                               │  ▸ Inspect
+   Terminal                       │                                                                                                                                                         │                Off · Project
+ ───────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                           ✕  │ ┏What happens if I send now?               ┓
+ Workspaces                  ▸    │  ▊  fundamental constraints have not gone away. Even models with million-token context windows will eventually fill up when working with                │ ┃Where: Default › Near-full context test   ┃
+ ───────────────────────────────  │  ▊  sufficiently large documents or extended conversations. Some researchers are exploring alternative architectures that might not rely as heavily     │ ┃Scope: Everything available               ┃
+ Conversations               ▾    │  ▊  on maintaining the entire context in active memory, but these approaches are still experimental and not yet widely deployed.                        │ ┃Run: Ready                                ┃
+       Archive this chat          │  ▊                                                                                                                                                      │ ┃Sources: None staged                      ┃
+         Archived chats           │  ▊  The psychological and user experience implications of context window limitations also merit attention. Users often develop mental models of how     │ ┗Approvals: None pending                   ┛
+       Search all chats…          │  ▊  language models work based on their interactions. When a model suddenly seems to forget important context or contradicts itself, users become       │ Environment                              ▾
+   Near-full context test         │  ▊  frustrated and lose confidence in the system. The context window limitation, while a technical constraint, has real effects on user                 │   Changes aren't tracked for this workspa…
+                                  │  ▊  satisfaction and trust. Users who don't understand why the model seems to lose track of earlier parts of conversations might attribute it to a      │   Bind a folder and enable Change Review …
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊  lack of intelligence or reliability rather than understanding it as a fundamental architectural constraint.                                         │                   Refresh
+  ▊  Filter visible   ▎           │  ▊                                                                                                                                                      │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊  Understanding context window limitations is therefore not merely an academic exercise but a practical necessity for anyone working with             │  Sources — next send                  none
+                                  │  ▊  language models. It affects how systems are designed, what kinds of tasks can be realistically accomplished, how costs are managed, and how         │  No sources attached. Stage sources from
+  64 more conversations —         │  ▊  user experiences are shaped. As language models become increasingly integrated into business processes, professional workflows, and everyday        │  Library.
+  search with Ctrl+K              │  ▊  applications, the limitations imposed by finite context windows will continue to shape what's possible and what requires creative workarounds       │
+   New conversation               │  ▊  or alternative approaches. The context window, in many ways, represents the most fundamental constraint on what modern language models can          │  Sources: Notes, Media, Conversations
+  Chats                      ▾    │  ▊  accomplish, more limiting in many practical scenarios than the models' raw capabilities or intelligence.                                            │  (Prompts off)
+   Near-full context test   ⛔    │  ▊                                                                                                                                                      │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+   Blocked                     ▁  │  ▊                                                                                                                                                      │  ▊  Ask Library sources before sending   ▎
+   Chat 1                   💬    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+   Long build log review    💬  ▄ │   User                                                                                                                                                  │    Search Library
+   Use the calculator too…  💬    │   Continue with 2000 more words of plain prose.                                                                                                         │
+   Debug watchlist feeds …  💬    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  Scope: everything                Narrow…
+   Research study plan #0…  💬    │  ▊ Assistant                                                                                                                                            │
+ ▼ more — scroll                  │  ▊                                                                                                                                                      │ Run
+ ───────────────────────────────  │  ▊                                                                                                                                                      │ Run recipe: Anthropic / claude-haiku-4-5 /
+ ▼ Model · Agent · Details        │  ▊                                                                                                                                                   ▃  │ ▼ more sections — scroll
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                                                                                                         │
+│  Response accepted; waiting for dispatch.                                                                                                                                                                                               │
+│                                                                                                                                                                                                                                         │
+│   Retry response      Discard                                                                                                                                                                                                           │
+│                                                                                                                                                                                                                                     ▆▆  │
+│                                                                                                                                                                                                                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 80% · Current $1.2
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                                                      Send blocked — resolve response recovery first       Send         Dictate
+
+  Esc composer · F6 panes | n/p Sections | Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Ctrl+P · Ctrl+Q

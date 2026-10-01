@@ -17221,6 +17221,13 @@ When changing shared mount/resume/unmount paths, include their ownership tests
 in the targeted run. Count callbacks by the owner contract being tested, rather
 than assuming every scheduled background callback is its retry.
 
+The same gap reached approval submission in PR #2923 (TASK-18920, 2026-09-30):
+48 focused cases passed, but required UI CI failed both submission orders in a
+namespace fixture missing the new reason input and collector. Updating that
+fixture to bind the real collector retained lock-before-publish and deny-only
+reason assertions; the ownership plus denial group passed 42 cases. Include the
+existing mixed-submission ownership group when extending approval-row state.
+
 ## Private-profile children need an explicit coverage handoff
 
 **PR #2910, 2026-09-30.** Qodo found that the Buddy qualification file passed in private pytest children while parent coverage omitted their application execution. The helper disables plugin autoload, so parent --cov flags alone did not measure the child. A real child-only probe produced zero hits in serial and xdist parent XML reports. Conditional child pytest-cov plus unique parallel files consumed by native parent combination repaired it; both complementary child branches now reach the serial/two-worker report and standalone/--no-cov controls remain unchanged. Keep the child's output private and the parent's report threshold authoritative.
@@ -17307,3 +17314,21 @@ without GC. The private assertion stayed RED. Connection/lease identity and
 native device/inode custody explained this observation; zero owned counters did
 not make the batch green, and the count did not authorize closing a borrower.
 The earlier aggregate growth warning remained a separate observation.
+
+## The Impeccable detector "passes" a Textual screen by scanning zero files (Console UX review, 2026-09-29)
+
+**Incident.** Assessment B of the 2026-09-29 Console critique ran
+`detect.mjs --json` over `UI/Console_Modules`, `Widgets/Console` and
+`Docs/User_Guide/console`, and every run exited 0. `.py` and `.md` are outside the
+detector's `SCANNABLE_EXTENSIONS`, so the directory targets scanned **0 files**. When
+files were passed explicitly, the web-CSS regex rules also missed a Textual
+`border-left: thick $accent` side stripe, even inside a `.css` control file. The
+whole Console produced one hit, `rgb(245,245,245)` in `_console.tcss`, and that was a
+false positive: DESIGN.md's Legible Disabled Rule documents that exact literal. The
+same review's grep audit and SGR census found 52 named-colour literals, 25 side
+stripes, a 1.03:1 focus change and 1,958 unpainted cells.
+
+**What to do.** For Textual surfaces, record a detector zero as "inapplicable", never
+as clean. Use a static token/CSS grep over the Python `DEFAULT_CSS` tier plus
+measured SGR contrast and focus deltas from a real capture as the deterministic
+evidence.

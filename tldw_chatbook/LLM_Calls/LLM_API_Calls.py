@@ -77,6 +77,7 @@ from tldw_chatbook.model_capabilities import (
     openai_model_requires_max_completion_tokens,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     llm_content_byte_count,
@@ -1234,6 +1235,76 @@ def _contains_extended_ttl(obj: Any) -> bool:
     return False
 
 
+#: The shortest credential form ``_credential_redacted_detail`` masks literally.
+#: A 1-3 character value is not a usable secret (Anthropic-compatible proxies
+#: reached through ``api_base_url`` accept a dummy key like ``"x"``), and
+#: masking every occurrence of it would shred the provider message the log
+#: exists to keep.
+_MIN_MASKED_CREDENTIAL_CHARS = 4
+
+
+def _credential_redacted_detail(detail: object, *known_credentials: object) -> str:
+    """Return provider error detail that is safe to write to a log.
+
+    TASK-33621.1: the Anthropic 400 path logged only the exception class, so a
+    request the provider refused (e.g. a tool schema) left no provider message
+    anywhere. The credentials this request held are masked literally -- a
+    provider may echo one back -- and every recognized credential shape is
+    masked by the same redactor the log sinks use.
+
+    Each credential is masked as sent and in its stripped form, since a
+    provider may echo a padded key trimmed. A short key matches none of the
+    redactor's shapes, so any form of ``_MIN_MASKED_CREDENTIAL_CHARS`` or more
+    is masked however short (Qodo #2931); a credential shorter than that once
+    stripped is not a secret, and none of its forms is masked.
+
+    Every occurrence of every form is located in the ORIGINAL text and the
+    union of those spans is masked in one pass. Masking one credential at a
+    time let a key found inside the subscription token be replaced first,
+    splitting the token so that it no longer matched and its remaining
+    characters reached the log. Longest-first ordering alone is not enough
+    either: a key echoed just before the token, overlapping its head, would
+    still be consumed first. The union does not depend on order.
+
+    Args:
+        detail: Provider error body or message (already sensitive-mode safe).
+        *known_credentials: The API key / subscription token this request held.
+
+    Returns:
+        The detail with known and recognizable credentials masked.
+    """
+    text = str(detail or "")
+    # The floor applies to the credential's substance, not to a padded form:
+    # "top " is still a 3-character dummy key.
+    forms = {
+        form
+        for credential in known_credentials
+        if isinstance(credential, str)
+        and len(credential.strip()) >= _MIN_MASKED_CREDENTIAL_CHARS
+        for form in (credential, credential.strip())
+    }
+    spans: list[tuple[int, int]] = []
+    for form in forms:
+        start = text.find(form)
+        while start != -1:
+            spans.append((start, start + len(form)))
+            start = text.find(form, start + 1)
+    if not spans:
+        return redact_log_line(text)
+    pieces: list[str] = []
+    cursor = 0
+    masked_until = -1
+    for start, end in sorted(spans):
+        if start > masked_until:
+            # A new masked run: keep the text before it, open one marker.
+            pieces.append(text[cursor:start])
+            pieces.append(REDACTION_MARKER)
+        masked_until = max(masked_until, end)
+        cursor = masked_until
+    pieces.append(text[cursor:])
+    return redact_log_line("".join(pieces))
+
+
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
@@ -2164,6 +2235,14 @@ def chat_with_anthropic(
             "anthropic_api_error_response_time",
             duration,
             labels={"model": current_model, "status_code": str(status_code)},
+        )
+        # TASK-33621.1: parity with the OpenAI path, which logs the provider
+        # body. Without this a refused request (a rejected tool schema) left
+        # only "Handler for anthropic directly raised" in the log.
+        logger.error(
+            "Anthropic request failed; status={}; detail={}",
+            status_code,
+            _credential_redacted_detail(error_text, final_api_key, subscription_token),
         )
 
         if status_code == 401:

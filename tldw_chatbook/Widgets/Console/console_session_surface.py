@@ -154,8 +154,14 @@ class ConsoleSessionTabButton(Button):
         self._session_id = session_id
 
     async def _on_click(self, event) -> None:
+        # TASK-33621.15: both branches prevent the default, because Textual
+        # also runs `Button._on_click` (it calls every class's handler along
+        # the MRO until the default is prevented). On a middle-click that
+        # pressed -- activated -- the tab it closes; on a left click it was a
+        # second, no-op press.
         if getattr(event, "button", 1) == 2:
             event.stop()
+            event.prevent_default()
             try:
                 close_button = self.screen.query_one(
                     f"#console-close-session-tab-{self._session_id}", Button
@@ -165,6 +171,7 @@ class ConsoleSessionTabButton(Button):
             close_button.press()
             return
         await super()._on_click(event)
+        event.prevent_default()
 
 
 class ConsoleSessionTabStrip(HorizontalScroll):

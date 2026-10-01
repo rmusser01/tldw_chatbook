@@ -6918,8 +6918,7 @@ class ConsoleTranscript(VerticalScroll):
                 self._exit_keyboard_selection(clear=False)
 
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
-        desired_keys = [row.key for row in rows]
-        desired_key_set = set(desired_keys)
+        desired_key_set = {row.key for row in rows}
         turn_file_cards = self._turn_file_cards_enabled()
 
         removals: list[Widget] = []
@@ -7289,7 +7288,12 @@ class ConsoleTranscript(VerticalScroll):
             detail = (
                 f"Arguments\n{presentation.arguments or 'Not retained'}\n\n"
                 + metadata
-                + "Result\n"
+                + (
+                    "Live output\n"
+                    if presentation.status == "running"
+                    and presentation.result_preview is not None
+                    else "Result\n"
+                )
                 + (
                     activity.tool_output_full
                     or (
@@ -7381,8 +7385,7 @@ class ConsoleTranscript(VerticalScroll):
 
     def _build_activity_widgets(self, row: _TranscriptRow) -> tuple[Widget, ...]:
         """Build owned disclosures from the same rows used by standalone messages."""
-        turn = row.assistant_turn
-        assert turn is not None
+        assert row.assistant_turn is not None
         return tuple(
             self._build_activity_disclosure(activity, owned_rows)
             for activity, owned_rows in zip(row.activity_items, row.activity_rows)
@@ -7394,8 +7397,7 @@ class ConsoleTranscript(VerticalScroll):
         row: _TranscriptRow,
     ) -> None:
         """Reconcile same-id disclosures without detaching their focused headers."""
-        turn = row.assistant_turn
-        assert turn is not None
+        assert row.assistant_turn is not None
         disclosures = list(widget.activity_stack.children)
         current_ids = tuple(
             disclosure.activity_message_id
@@ -7512,14 +7514,12 @@ class ConsoleTranscript(VerticalScroll):
 
     def _build_assistant_turn_widget(self, row: _TranscriptRow) -> Widget:
         """Build one Assistant-owned surface from a composite transcript row."""
-        turn = row.assistant_turn
-        assert turn is not None and row.nested_rows
+        assert row.assistant_turn is not None and row.nested_rows
         assistant = row.nested_rows[0].message
         assert assistant is not None
-        presentation = self._message_presentation(assistant)
         header = ConsoleMessageHeader(
             assistant,
-            presentation,
+            self._message_presentation(assistant),
             self._console_speech_state(assistant.id),
             markdown=self._assistant_markdown_enabled(),
         )

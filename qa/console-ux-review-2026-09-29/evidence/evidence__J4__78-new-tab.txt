@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+            │ Conversation | Chat 2                                                                                                                                                   │
+            │   --- Contents of ph…  ✕        Chat 2         ✕    New tab     Temporary                                                                                               │  ▸ Inspect
+            │                                                                                                                                                                         │              Choose folder · Project
+            │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                           ✕  │  What happens if I send now?
+            │                                                                                                                                                                         │  Where: Default › Chat 2
+            │                                                                                                                                                                         │  Scope: Everything available
+            │                                                                                                                                                                         │  Run: Ready
+            │                                                                                                                                                                         │  Sources: None staged
+            │                                                                                                                                                                         │  Approvals: None pending
+            │                                                                                                                                                                         │  Model · Selected — not verified at this endpo…
+            │                                                                                                                                                                         │  Generation · Not tested
+            │                                                                                                                                                                         │  Streaming: off
+            │                                                                                                                                                                         │  Sampling: T 0.60, P 0.95, min_p 0.05, top_k 5…
+            │                                                                                                                                                                         │  Assistant: General
+            │                                                                                                                                                                         │
+            │                                                                                                                                                                         │  Live work sources
+            │                                                                                                                                                                         │ │  fixes CO2 into G3P. Key enzyme: RuBisCO.    │
+            │                                                                                                                                                                         │ │  --- End of photosynthesis.md --- ---        │
+            │                                                                                                                                                                         │ │  Contents of glossary.md --- # Glossary -    │
+ Context ▸  │                                                                                                                                                                         │ │  ATP: adenosine triphosphate - NADPH:        │
+            │                                                                            No messages yet.                                                                             │ │  reduced nicotinamide adenine dinucleotide   │
+            │                                                                                                                                                                         │ │  phosphate --- End of glossary.md --- Using  │
+            │                                                                                                                                                                         │ │  only these two notes, what enzyme fixes     │
+            │                                                                                                                                                                         │ │  CO2? Answer in one sentence. assistant:     │
+            │                                                                                                                                                                         │ │  Based on the photosynthesis.md note,        │
+            │                                                                                                                                                                         │ │  RuBisCO is the key enzyme that fixes CO2    │
+            │                                                                                                                                                                         │ │  into G3P during the Calvin cycle.           │▅
+            │                                                                                                                                                                         │ │  source_authority: local                     │
+            │                                                                                                                                                                         │ │  source_id:                                  │ ▇
+            │                                                                                                                                                                         │ │  0b0a4bad-b761-45aa-9580-ff5c4e1811bf        │
+            │                                                                                                                                                                         │ │  source_selector_state: local                │
+            │                                                                                                                                                                         │ │  target_id:                                  │
+            │                                                                                                                                                                         │ │  local:library-rag:0b0a4bad-b761-45aa-9580-  │
+            │                                                                                                                                                                         │ │  ff5c4e1811bf                                │
+            │                                                                                                                                                                         │ │  title: --- Contents of photosynthe...       │
+            │                                                                                                                                                                         │ │                                              │▇
+            │                                                                                                                                                                         │ ▼ more — scroll
+            │                                                                                                                                                                         │
+            │                                                                                                                                                                         │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Evidence sent with this message · 1 source
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 0% · Current $0.00
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                                                      Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit
