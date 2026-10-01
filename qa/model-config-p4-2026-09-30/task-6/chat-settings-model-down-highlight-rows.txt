@@ -7,7 +7,7 @@
 # The first row (the Model field) and the last ('Saved fallback' line under
 # the list box) sit outside the list and are listed for reference.
 
-## chat-settings-model-down-211x44
+## chat-settings-model-list-down-211x44
 row 13 bg=(30, 30, 30) fg=(225, 225, 225) 'claude-haiku-4-5'
 row 17 bg=(39, 39, 39) fg=(121, 121, 121) 'Saved fallback'
 row 18 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-sonnet-5'
@@ -19,7 +19,7 @@ row 23 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-sonnet-4-20250514'
 row 24 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-3-7-sonnet-20250219'
 row 26 bg=(36, 47, 56) fg=(224, 224, 224) 'Saved fallback'
 
-## chat-settings-model-down-235x52
+## chat-settings-model-list-down-235x52
 row 14 bg=(30, 30, 30) fg=(225, 225, 225) 'claude-haiku-4-5'
 row 18 bg=(39, 39, 39) fg=(121, 121, 121) 'Saved fallback'
 row 19 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-sonnet-5'

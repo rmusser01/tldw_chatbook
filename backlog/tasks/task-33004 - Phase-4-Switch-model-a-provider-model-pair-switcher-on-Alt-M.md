@@ -101,7 +101,7 @@ Out of scope:
 - [x] #6 Ctrl+O opens Chat settings from the Console, and the Console footer, F1 help and palette teach Alt+M, Ctrl+O and /model [query].
 - [x] #7 This PR closes task-338, task-32859 and task-194.
 - [x] #8 chat_screen.py ends the phase within its line and method budget (Tests/Architecture/test_screen_size_ratchet.py:85). If the phase shrank the file, the budget is lowered to the measured size.
-- [x] #9 No ADR-097 ratchet rises: the boot CSS byte budget (608,090, Tests/Performance/test_boot_css_byte_budget.py:117) and the _ui_ready census (1,031, Tests/Performance/test_ui_ready_module_census.py:150). Modules used only by the switcher are not imported on the boot path. If dev is already red, the branch's number equals dev's.
+- [x] #9 No ADR-097 ratchet rises: the boot CSS byte budget (608,090, Tests/Performance/test_boot_css_byte_budget.py:117) and the _ui_ready census (1,033 at Tests/Performance/test_ui_ready_module_census.py:162 when this phase ran; it read 1,031 at :150 when this AC was written). Modules used only by the switcher are not imported on the boot path. If dev is already red, the branch's number equals dev's.
 - [x] #10 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
 - [x] #11 Every printed key hint matches a working binding (ADR-031 rule 4).
 - [x] #12 Live captures at 211x44 and 235x52, taken with a scratch TLDW_CONFIG_PATH profile, are attached to the PR.
