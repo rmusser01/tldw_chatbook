@@ -26,7 +26,7 @@ DB/base_db.py (~738) installs set_trace_callback on every ChaChaNotes connection
 <!-- AC:BEGIN -->
 - [x] #1 Transaction-boundary detection no longer requires a trace callback that expands bound parameters
 - [x] #2 The semantic-mutation guard keeps its fail-closed behaviour (existing guard tests pass)
-- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB measured under 50 ms (28.8 ms median, isolated profile), and a pinned test fails if the hex-expansion cost returns (median above 250 ms)
+- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB measured under 50 ms (28.8 ms median, isolated profile), and a pinned test fails if the hex-expansion cost returns (fastest of five inserts above 250 ms)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,7 +52,7 @@ How:
 - _QuiescentSQLiteConnection now reports transaction boundaries through set_transaction_boundary_listener.
 - Its cursor compares in_transaction before and after every execute/executemany/executescript. The check before a statement also catches a C-level commit from 'with conn:'. executescript always reports a boundary.
 - commit()/rollback() report as well.
-- A statement whose first keyword is BEGIN, COMMIT or ROLLBACK is always a boundary -- the trace callback's own rule. `ROLLBACK TO <savepoint>` keeps `in_transaction` True yet ends the guarded work; review on #2894 caught the listener missing it. RELEASE was never a boundary and still is not.
+- A statement whose first keyword is BEGIN, COMMIT or ROLLBACK is always a boundary -- the trace callback's own rule. `ROLLBACK TO <savepoint>` keeps `in_transaction` True yet ends the guarded work; review on #2894 caught the listener missing it. RELEASE was never a boundary and still is not. The keyword boundary is reported only when the statement ran: a COMMIT the authorizer refuses never executes, and reporting it advanced the generation and refused the scope's next legitimate write (review on #2894). A failed call still reports a real in_transaction change, and a script reports a boundary even when it fails.
 - Every cursor the connection creates is tracked (review on #2894): a caller's cursor type is combined with the tracked cursor through a cached subclass that puts the tracked cursor first, so its statement methods bracket the caller's overrides even without super(); plain sqlite3.Cursor maps to the tracked cursor. A factory that cannot be made tracked fails closed with TypeError: a non-Cursor factory, or a tracked subclass that replaces execute/executemany/executescript (the tracked cursor cannot precede its own subclass in the MRO).
 - A stale cursor's failed call (its connection already closed) releases its quiescence use token, so it cannot pin the registry and block maintenance.
 - register_semantic_mutation_guard uses the listener on quiescent connections (all ChaChaNotes connections; the factory is enforced at open) and keeps trace_transaction as a fallback for any other connection type.
@@ -62,7 +62,7 @@ Fail-closed behaviour is preserved and now pinned. Inside an authorization scope
 
 Measured (isolated profile, load avg ~30):
 - 3 MiB image add_message: 1,217 ms -> 28.8 ms median
-- Pinned (review on #2894): test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost asserts a median of five inserts under 250 ms -- five times under the old cost, loose enough for a loaded runner. With the trace callback restored it fails at 1,226 ms. AC#3 was reworded from "under 50 ms in a pinned test" to match: 50 ms is the measured result, not a CI-stable bound.
+- Pinned (review on #2894): test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost asserts the fastest of five inserts stays under 250 ms. A median read 313 ms with two 8-worker suites running, so the pin uses the fastest sample: load inflates some samples, the hex-rendering cost inflates every one. With the trace callback restored the fastest of five takes 960 ms. AC#3 was reworded from "under 50 ms in a pinned test" to match: 50 ms is the measured result, not a CI-stable bound.
 - text add_message: 10.3 -> 6.6 ms
 
 Tests, all in Tests/DB/test_semantic_guard_transaction_boundaries.py:

@@ -364,6 +364,52 @@ def test_the_direct_methods_advance_the_managed_guard_generation(
         db.close_connection()
 
 
+def test_a_rejected_commit_inside_a_scope_keeps_the_authorization(
+    tmp_path: Path,
+) -> None:
+    """A COMMIT the authorizer refuses never ran, so the transaction is unchanged.
+
+    The trace callback only saw statements that executed. Reporting a keyword
+    boundary for a refused COMMIT advanced the generation and refused the
+    scope's next legitimate write (Qodo and cubic, #2894).
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+    """
+    db = CharactersRAGDB(tmp_path / "refused-commit.sqlite", "refused-commit")
+    try:
+        message_id = _seed_traced_message(db)
+        conn = db.get_connection()
+        authorization = db._semantic_mutation_authorization_for_coordinator(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            with authorization._authorize(
+                message_id=message_id, operations={"message_update"}
+            ):
+                generation = authorization._transaction_generation
+                # A unique text, so the statement cache cannot skip the
+                # authorizer's prepare-time denial.
+                with pytest.raises(sqlite3.DatabaseError):
+                    conn.execute("COMMIT -- refused inside a mutation scope")
+                assert conn.in_transaction
+                assert authorization._transaction_generation == generation
+                conn.execute(
+                    "UPDATE messages SET content = 'authorized' WHERE id = ?",
+                    (message_id,),
+                )
+                authorization._assert_current_transaction()
+            conn.execute("COMMIT")
+        finally:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+        row = conn.execute(
+            "SELECT content FROM messages WHERE id = ?", (message_id,)
+        ).fetchone()
+        assert row[0] == "authorized"
+    finally:
+        db.close_connection()
+
+
 def test_a_savepoint_rollback_advances_the_managed_guard_generation(
     tmp_path: Path,
 ) -> None:
@@ -478,8 +524,9 @@ def test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost(
 
     The trace callback made SQLite hex-render the bound BLOB for the statement
     and every trigger/FTS step (1,217 ms median, isolated profile); without it
-    the insert measured 28.8 ms. The pin is 250 ms -- five times under the old
-    cost, loose enough for a loaded CI runner -- on the median of five inserts.
+    the insert measured 28.8 ms. The pin is 250 ms on the FASTEST of five
+    inserts: load inflates some samples (a median read 313 ms with two 8-worker
+    suites running), but the hex-rendering cost inflates every one.
 
     Args:
         tmp_path: pytest fixture; holds this test's database file.
@@ -505,5 +552,8 @@ def test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost(
     finally:
         db.close_connection()
 
-    median_ms = statistics.median(samples) * 1000
-    assert median_ms < 250, f"3 MiB image insert median {median_ms:.0f} ms (pin 250 ms)"
+    fastest_ms = min(samples) * 1000
+    assert fastest_ms < 250, (
+        f"fastest of five 3 MiB image inserts took {fastest_ms:.0f} ms (pin 250 ms; "
+        f"median {statistics.median(samples) * 1000:.0f} ms)"
+    )

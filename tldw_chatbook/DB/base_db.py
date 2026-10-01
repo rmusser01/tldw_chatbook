@@ -548,23 +548,37 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
             self._release_use()
 
     def _tracked(
-        self, run: Callable[..., sqlite3.Cursor], *args: object, boundary: bool = False
+        self,
+        run: Callable[..., sqlite3.Cursor],
+        *args: object,
+        boundary: bool = False,
+        boundary_if_run: bool = False,
     ) -> sqlite3.Cursor:
         """Run one statement call holding a use reservation, observing boundaries.
 
         Both observations sit inside the handler that releases the reservation,
         so a failure in either (a cursor kept past its connection's close) can
         never leave the quiescence registry pinned.
+
+        ``boundary`` is reported even when the call fails (a script may have
+        committed and begun again before failing). ``boundary_if_run`` only
+        when it succeeds: a COMMIT the authorizer refused never ran, and the
+        trace callback never reported one either. A failed call still reports
+        any real ``in_transaction`` change.
         """
 
         self._begin_use()
         connection = self._quiescent_connection
         try:
             connection._observe_transaction_state()
+            ran = False
             try:
                 result = run(*args)
+                ran = True
             finally:
-                connection._observe_transaction_state(boundary=boundary)
+                connection._observe_transaction_state(
+                    boundary=boundary or (ran and boundary_if_run)
+                )
         except BaseException:
             self._release_use()
             raise
@@ -575,7 +589,10 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         """Hold one use reservation through result consumption."""
 
         return self._tracked(
-            super().execute, sql, parameters, boundary=_is_transaction_statement(sql)
+            super().execute,
+            sql,
+            parameters,
+            boundary_if_run=_is_transaction_statement(sql),
         )
 
     def executemany(self, sql: str, seq_of_parameters: object) -> sqlite3.Cursor:
@@ -585,7 +602,7 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
             super().executemany,
             sql,
             seq_of_parameters,
-            boundary=_is_transaction_statement(sql),
+            boundary_if_run=_is_transaction_statement(sql),
         )
 
     def executescript(self, sql_script: str) -> sqlite3.Cursor:
