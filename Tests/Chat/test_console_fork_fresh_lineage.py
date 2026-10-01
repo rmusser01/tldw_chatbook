@@ -19,6 +19,7 @@ the USER/ASSISTANT parent chain.
 
 from __future__ import annotations
 
+from contextlib import closing
 from uuid import uuid4
 
 import pytest
@@ -299,29 +300,30 @@ async def test_fork_commit_recheck_walks_past_saved_system_rows_only(
         "parent_message_id"
     ]
     walk = ChatPersistenceService._fork_source_parent
-    connection = db.get_connection()
 
     assert saved_parent == note.persisted_message_id
-    assert (
-        walk(
-            connection.cursor(),
-            conversation_id,
-            saved_parent,
-            first_answer.persisted_message_id,
+    with closing(db.get_connection().cursor()) as cursor:
+        assert (
+            walk(
+                cursor,
+                conversation_id,
+                saved_parent,
+                first_answer.persisted_message_id,
+            )
+            == first_answer.persisted_message_id
         )
-        == first_answer.persisted_message_id
-    )
-    # A USER row is conversation content: the walk never skips it, so a copied
-    # row whose saved parent is an UNcopied user message still fails the check.
-    assert (
-        walk(
-            connection.cursor(),
-            conversation_id,
-            second_user.persisted_message_id,
-            first_answer.persisted_message_id,
+        # A USER row is conversation content: the walk never skips it, so a
+        # copied row whose saved parent is an UNcopied user message still
+        # fails the check.
+        assert (
+            walk(
+                cursor,
+                conversation_id,
+                second_user.persisted_message_id,
+                first_answer.persisted_message_id,
+            )
+            == second_user.persisted_message_id
         )
-        == second_user.persisted_message_id
-    )
 
 
 def _fail_provider_call(gateway, failing_call: int) -> None:
