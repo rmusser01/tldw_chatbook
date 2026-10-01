@@ -268,9 +268,7 @@ def test_evidence_for_requires_exact_semantic_identity():
     store = ProviderTestEvidenceStore()
     tested = _evidence_identity(draft_generation=4)
     token = store.begin(tested)
-    assert store.settle(
-        token, ProviderTestEvidence(tested, "reachable", ("model-a",))
-    )
+    assert store.settle(token, ProviderTestEvidence(tested, "reachable", ("model-a",)))
 
     assert store.evidence_for(tested) is not None
     assert store.evidence_for(_evidence_identity(draft_generation=5)) is None
@@ -502,9 +500,7 @@ def test_invalidate_cancels_settlement_during_out_of_lock_conversion(
 def test_identity_mismatch_does_not_cancel_in_flight_settlement(monkeypatch):
     store = ProviderTestEvidenceStore()
     identity = _evidence_identity()
-    other = _evidence_identity(
-        endpoint="http://127.0.0.1:8002/v1/chat/completions"
-    )
+    other = _evidence_identity(endpoint="http://127.0.0.1:8002/v1/chat/completions")
     token = store.begin(identity)
     result = ProviderProbeResult("reachable", ("model-a",))
     conversion_started = Event()
@@ -632,10 +628,34 @@ def test_provider_readiness_verdict_rejects_invalid_construction(kwargs):
     "kwargs",
     [
         {"provider_key": "Custom"},
-        {"provider_key": "custom", "connection_identity": ("custom", "https://user:secret@example.test/v1/chat/completions")},
-        {"provider_key": "custom", "connection_identity": ("custom", "https://example.test/v1/chat/completions?token=secret")},
-        {"provider_key": "custom", "connection_identity": ("custom", "https://example.test/v1/chat/completions#secret")},
-        {"provider_key": "custom", "connection_identity": ("openai", "https://example.test/v1/chat/completions")},
+        {
+            "provider_key": "custom",
+            "connection_identity": (
+                "custom",
+                "https://user:secret@example.test/v1/chat/completions",
+            ),
+        },
+        {
+            "provider_key": "custom",
+            "connection_identity": (
+                "custom",
+                "https://example.test/v1/chat/completions?token=secret",
+            ),
+        },
+        {
+            "provider_key": "custom",
+            "connection_identity": (
+                "custom",
+                "https://example.test/v1/chat/completions#secret",
+            ),
+        },
+        {
+            "provider_key": "custom",
+            "connection_identity": (
+                "openai",
+                "https://example.test/v1/chat/completions",
+            ),
+        },
         {"credential_source": "vault"},
         {"credential_source": []},
         {"credential_revision": -1},
@@ -693,27 +713,29 @@ def test_provider_readiness_snapshot_confirms_only_returned_model_choice():
         environ={},
     )
     identity = _evidence_identity()
-    evidence = ProviderTestEvidence(
-        identity, "reachable", ("model-a", "model-b")
-    )
+    evidence = ProviderTestEvidence(identity, "reachable", ("model-a", "model-b"))
 
     assert readiness.snapshot(
         selected_model="model-b",
         evidence=evidence,
         current_identity=identity,
-    ) == (
-        ProviderReadinessSnapshot("configured", "reachable", "confirmed")
+    ) == (ProviderReadinessSnapshot("configured", "reachable", "confirmed"))
+    assert (
+        readiness.snapshot(
+            selected_model="model-c",
+            evidence=evidence,
+            current_identity=identity,
+        ).model
+        == "unconfirmed"
     )
-    assert readiness.snapshot(
-        selected_model="model-c",
-        evidence=evidence,
-        current_identity=identity,
-    ).model == "unconfirmed"
-    assert readiness.snapshot(
-        selected_model="",
-        evidence=evidence,
-        current_identity=identity,
-    ).model == "missing"
+    assert (
+        readiness.snapshot(
+            selected_model="",
+            evidence=evidence,
+            current_identity=identity,
+        ).model
+        == "missing"
+    )
 
     failure = ProviderTestEvidence(identity, "unreachable", (), "timeout")
     assert (
@@ -731,9 +753,7 @@ def test_provider_readiness_snapshot_confirms_only_returned_model_choice():
     [
         None,
         _evidence_identity(provider="openai"),
-        _evidence_identity(
-            endpoint="http://127.0.0.1:8002/v1/chat/completions"
-        ),
+        _evidence_identity(endpoint="http://127.0.0.1:8002/v1/chat/completions"),
         _evidence_identity(credential_source="draft"),
         _evidence_identity(credential_revision=1),
         _evidence_identity(draft_generation=2),
@@ -754,9 +774,7 @@ def test_snapshot_fails_closed_when_evidence_identity_is_not_current(
         "custom", {"api_settings": {"custom": {}}}, environ={}
     )
     tested_identity = _evidence_identity()
-    evidence = ProviderTestEvidence(
-        tested_identity, "reachable", ("model-a",)
-    )
+    evidence = ProviderTestEvidence(tested_identity, "reachable", ("model-a",))
 
     snapshot = readiness.snapshot(
         selected_model="model-a",
@@ -821,16 +839,22 @@ def test_alias_readiness_accepts_exact_execution_identity(
     )
     evidence = ProviderTestEvidence(identity, "reachable", ("model-a",))
 
-    assert readiness.snapshot(
-        selected_model="model-a",
-        evidence=evidence,
-        current_identity=identity,
-    ).model == "confirmed"
-    assert readiness.verdict(
-        selected_model="model-a",
-        evidence=evidence,
-        current_identity=identity,
-    ).code == "verified"
+    assert (
+        readiness.snapshot(
+            selected_model="model-a",
+            evidence=evidence,
+            current_identity=identity,
+        ).model
+        == "confirmed"
+    )
+    assert (
+        readiness.verdict(
+            selected_model="model-a",
+            evidence=evidence,
+            current_identity=identity,
+        ).code
+        == "verified"
+    )
 
     different_execution_identity = ProviderDraftIdentity(
         provider_key=connection_provider,
@@ -839,11 +863,14 @@ def test_alias_readiness_accepts_exact_execution_identity(
         credential_revision=0,
         draft_generation=1,
     )
-    assert readiness.verdict(
-        selected_model="model-a",
-        evidence=evidence,
-        current_identity=different_execution_identity,
-    ).code == "changed_since_test"
+    assert (
+        readiness.verdict(
+            selected_model="model-a",
+            evidence=evidence,
+            current_identity=different_execution_identity,
+        ).code
+        == "changed_since_test"
+    )
 
 
 def _legacy_readiness(**overrides):
@@ -992,7 +1019,10 @@ def test_provider_readiness_repr_never_contains_credentials(source, env_var):
 
     assert readiness.api_key == credential
     assert credential not in repr(readiness)
-    assert next(item for item in fields(ProviderReadiness) if item.name == "api_key").repr is False
+    assert (
+        next(item for item in fields(ProviderReadiness) if item.name == "api_key").repr
+        is False
+    )
 
 
 def test_provider_readiness_properties_use_private_structured_authority():
@@ -1538,9 +1568,7 @@ def test_explicit_keyless_source_overrides_saved_and_environment_credentials(
     assert readiness.requires_api_key is False
     assert readiness.api_key is None
     assert readiness.api_key_source is None
-    assert readiness.user_message == (
-        f"{provider} is ready. No API key is required."
-    )
+    assert readiness.user_message == (f"{provider} is ready. No API key is required.")
 
 
 def test_missing_credential_source_retains_legacy_saved_then_environment_precedence():
@@ -1918,8 +1946,7 @@ def test_legacy_API_section_only_mistral_key_satisfies_readiness_and_spend(
     assert readiness.api_key == "sk-mistral-legacy-only-key"
     # The exact table `chat_with_mistral` reads (see docstring above).
     assert (
-        settings["api_settings"]["mistral"]["api_key"]
-        == "sk-mistral-legacy-only-key"
+        settings["api_settings"]["mistral"]["api_key"] == "sk-mistral-legacy-only-key"
     )
 
 
@@ -1964,7 +1991,9 @@ def test_widening_the_keyless_set_did_not_weaken_credential_rejection():
     assert keyed.ready is False
     assert keyed.reason == "Missing API key"
 
-    unknown = get_provider_readiness("totally-made-up", {"api_settings": {}}, environ={})
+    unknown = get_provider_readiness(
+        "totally-made-up", {"api_settings": {}}, environ={}
+    )
     assert unknown.ready is False
     assert unknown.reason == "Unknown provider"
 
@@ -2054,12 +2083,16 @@ def test_legacy_only_google_key_lands_in_the_table_chat_with_google_reads(
 
 _ENGINE_PRESETS_FOR_ENV = [
     record
-    for record in __import__("tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]).ALL_RECORDS
+    for record in __import__(
+        "tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]
+    ).ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 ]
 
 
-@pytest.mark.parametrize("record", _ENGINE_PRESETS_FOR_ENV, ids=lambda record: record.key)
+@pytest.mark.parametrize(
+    "record", _ENGINE_PRESETS_FOR_ENV, ids=lambda record: record.key
+)
 def test_engine_preset_documented_env_var_is_found_without_a_settings_table(record):
     """An existing config.toml predates each new preset, so its table is
     absent; readiness must look for the variable the engine reads (Vercel
@@ -2071,22 +2104,32 @@ def test_engine_preset_documented_env_var_is_found_without_a_settings_table(reco
 
     assert default_api_key_env_var(record.key) == record.api_key_env_var
     readiness = get_provider_readiness(
-        record.config_key, {"api_settings": {}}, environ={record.api_key_env_var: "sk-env-canary-1234"}
+        record.config_key,
+        {"api_settings": {}},
+        environ={record.api_key_env_var: "sk-env-canary-1234"},
     )
     if record.key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
-        assert readiness.configuration_issue == "endpoint_missing"  # key found; URL is the gap
+        assert (
+            readiness.configuration_issue == "endpoint_missing"
+        )  # key found; URL is the gap
     else:
         assert readiness.ready is True
         assert readiness.api_key_source == f"env:{record.api_key_env_var}"
 
 
-@pytest.mark.parametrize("record", _ENGINE_PRESETS_FOR_ENV, ids=lambda record: record.key)
+@pytest.mark.parametrize(
+    "record", _ENGINE_PRESETS_FOR_ENV, ids=lambda record: record.key
+)
 def test_first_run_detects_engine_preset_documented_env_var(record):
     """The first-run wizard's 'found in your environment' uses the same name."""
-    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_provider_secret_presence
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        read_provider_secret_presence,
+    )
 
     presence = read_provider_secret_presence(
-        {"api_settings": {}}, {record.api_key_env_var: "sk-env-canary-1234"}, provider_key=record.key
+        {"api_settings": {}},
+        {record.api_key_env_var: "sk-env-canary-1234"},
+        provider_key=record.key,
     )
     assert presence.env_var == record.api_key_env_var
     assert presence.configured is True
