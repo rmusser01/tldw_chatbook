@@ -17069,8 +17069,9 @@ under the repo's own pytest config before merge:
   instead of failing.
 
 Each branch was fixed by adding `pytestmark = pytest.mark.bootstrap_profile`, the
-marker 38 other Console test files already carry. The units that had added it
-themselves (TASK-33621.3, .13, .14) passed.
+marker 36 test files already carried at the batch base `75c06af39a` (10 of them
+`test_console_*` files). The units that had added it themselves (TASK-33621.3, .13,
+.14) passed.
 
 **What to do.** Any new test that drives the real ChatScreen, controller or store must
 carry `bootstrap_profile`, either as a module `pytestmark` or per test. A
