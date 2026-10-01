@@ -2838,8 +2838,8 @@ class ProviderStep(SetupStep):
         previous_provider = self.selected_provider_key
         provider_changed = provider_key != previous_provider
         had_saved_draft = provider_key in self._provider_drafts
-        # TASK-33621.14: all that can raise runs before any state moves, so a failed
-        # switch leaves the previous provider whole (never its key under this one).
+        # TASK-33621.14: the reads that can raise run before any state moves, so a
+        # failed read leaves the old provider whole (never its key under this one).
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         presence = wizard_state.read_provider_secret_presence(
             app_config, self._environment(), provider_key=provider_key

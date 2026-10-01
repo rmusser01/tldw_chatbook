@@ -22,7 +22,10 @@ picked before stays selected, together with any key you typed for it; a key
 is never carried over to a different provider. The highlight stays on the row
 you tried, so the line names the provider that is still selected ("Couldn't
 switch to Anthropic — OpenAI is still selected"), and it goes away once you
-pick a provider that works.
+pick a provider that works. If you had not picked one yet, none is selected,
+and Next goes on without a provider, as if you had skipped the step. A
+failure after the new provider is already selected leaves it selected, and
+the line then names no other provider.
 
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the

@@ -376,8 +376,11 @@ def provider_switch(step: Any, provider_key: str) -> Iterator[None]:
     failure the highlighted row is not the selected provider. The highlight
     stays where the user put it (snapping it back would trap the arrow keys
     above a failing row); the error line names the provider Next will save
-    instead. A pick that succeeds, or a return to the selected row, takes
-    that line down again.
+    instead. A pick that fails after selecting its provider (model discovery
+    raised) leaves highlight and selection agreeing, so its line names none.
+    A failed pick that leaves nothing selected also stops Next falling back
+    to the highlighted row: Next saves no provider, as with no pick. A pick
+    that succeeds, or a return to the selected row, takes that line down.
 
     Args:
         step: The Provider step.
@@ -392,12 +395,18 @@ def provider_switch(step: Any, provider_key: str) -> Iterator[None]:
     except Exception as error:
         if not contains_wizard_errors(step):
             raise
+        selected = getattr(step, "selected_provider_key", "") or ""
+        if not selected:
+            # ``_effective_provider_key`` would hand Next the failed row.
+            step._provider_choice_interacted = False
         container, _raising, _current = _wizard_steps(step)
-        copy = switch_error_copy(
-            _display_name(provider_key),
-            _display_name(kept) if kept else "",
-            back=_back_available(container),
-        )
+        copy = None  # it got as far as selecting: the plain handler line
+        if selected == kept:
+            copy = switch_error_copy(
+                _display_name(provider_key),
+                _display_name(kept) if kept else "",
+                back=_back_available(container),
+            )
         report_contained_error(step, "handler", error, copy=copy)
         return
     clear_contained_error(step)

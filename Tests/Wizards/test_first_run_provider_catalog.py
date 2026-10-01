@@ -370,27 +370,40 @@ async def test_resumed_provider_step_keeps_back_and_exit_available():
 
 
 @pytest.mark.asyncio
-async def test_next_after_a_step_error_never_exits_the_app(monkeypatch):
-    """AC#4: Next from a step whose handler raised stays inside the wizard."""
+@private_profile_test
+async def test_next_after_a_step_error_never_exits_the_app(request, monkeypatch):
+    """AC#4: Next from a step whose handler raised stays inside the wizard.
+
+    Every provider pick raises here, so nothing is ever selected and Next
+    takes the no-provider path rather than committing the row whose pick
+    raised (PR #2938 review). Back returns to a live Provider step. Runs in a
+    private profile because that Next writes the setup checkpoint.
+    """
     _fail_provider_secret_lookup(monkeypatch)
     wizard = _resumed_on_provider()
     app = _WizardHost(wizard, keep_alive=True)
     async with app.run_test(size=_SIZE) as pilot:
         await _wait_for_step(pilot, wizard, STEP_PROVIDER)
-        _container, step = _current_step(wizard)
+        container, step = _current_step(wizard)
         _provider_list(step).focus()
         await pilot.pause()
         await pilot.press("down")
         await pilot.pause()
+        assert "Couldn't switch to" in _pinned_error(wizard)
+        assert step.selected_provider_key == ""
 
         await pilot.press("ctrl+n")
-        await pilot.pause(0.3)
+        await _wait_for_step(pilot, wizard, STEP_MODEL)
 
         assert app.is_running and app._exception is None
         assert app.screen is wizard
-        assert _pinned_error(wizard)
+        assert container._staged_provider_draft is None
         assert wizard.query_one("#wizard-back", Button).disabled is False
         assert wizard.query_one("#wizard-cancel", Button).disabled is False
+        await pilot.press("ctrl+b")
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        assert app.is_running and app._exception is None
+        _assert_step_is_live(app, wizard, step)
 
 
 @pytest.mark.asyncio
@@ -548,6 +561,135 @@ async def test_a_provider_pick_that_succeeds_clears_the_failed_switch_line(
         await pilot.pause()
         assert step.selected_provider_key == "openai"
         assert _pinned_error(wizard) == "A refused Next says why here."
+        assert app.is_running and app._exception is None
+
+
+@pytest.mark.asyncio
+async def test_a_switch_that_fails_after_selecting_does_not_name_the_old_provider(
+    monkeypatch,
+):
+    """PR #2938 review: the line must not name a provider that is no longer selected.
+
+    ``select_provider`` records the new provider before it starts that
+    provider's model discovery, and discovery's config snapshot can raise
+    (an ``OSError`` gets past its ``TypeError``/``ValueError`` catch). That
+    failure left Anthropic selected -- and Next saves Anthropic -- under a
+    line saying OpenAI was still selected. Driven from a session resumed with
+    OpenAI chosen, whose first arrow press runs the pick once (later presses
+    also re-run it from the list's ``Interacted``, a no-op pick that clears
+    the line).
+    """
+    armed: list[bool] = []
+    real_capture = SetupWizardContainer.capture_provider_config_precondition
+
+    def _snapshot_fails_once(discovery_key):
+        if armed and discovery_key.provider_key == "anthropic":
+            armed.clear()
+            raise OSError("config snapshot unreadable")
+        return real_capture(discovery_key)
+
+    monkeypatch.setattr(
+        SetupWizardContainer,
+        "capture_provider_config_precondition",
+        staticmethod(_snapshot_fails_once),
+    )
+    draft = SetupDraft(
+        version=SETUP_DRAFT_VERSION,
+        track=TRACK_QUICK,
+        active_step_id=STEP_PROVIDER,
+        values={
+            STEP_WELCOME: {"track": TRACK_QUICK},
+            STEP_PROVIDER: {"provider_key": "openai"},
+        },
+    )
+    wizard = FirstRunSetupWizard(_app_instance(), resume_draft=draft)
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _container, step = _current_step(wizard)
+        choices = _provider_list(step)
+        choices.focus()
+        await pilot.pause()
+        assert step.selected_provider_key == "openai"
+        assert choices.highlighted_option.provider_key == "openai"
+
+        armed.append(True)
+        await pilot.press("down")  # onto Anthropic: selected, then discovery raises
+        await pilot.pause()
+
+        assert not armed, "the discovery snapshot was never reached"
+        assert choices.highlighted_option.provider_key == "anthropic"
+        assert step.selected_provider_key == "anthropic"
+        message = _pinned_error(wizard)
+        assert "went wrong" in message
+        assert "OpenAI" not in message and "still selected" not in message
+        assert app.is_running and app._exception is None
+        _assert_step_is_live(app, wizard, step)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_next_after_a_failed_first_pick_does_not_save_that_provider(
+    request, monkeypatch
+):
+    """PR #2938 review: a pick that failed with nothing selected is not saved.
+
+    ``commit`` falls back to the highlighted row when no provider is selected.
+    A failed first pick leaves the highlight on its row and nothing selected,
+    so Next staged the provider whose pick had just failed (it was ready
+    through an environment key, so no typed key stopped it) under a line
+    saying the switch to it failed. Next now takes the no-provider path; a
+    retried pick that works is still saved. Runs in a private profile because
+    Next writes the setup checkpoint.
+    """
+    from tldw_chatbook.UI.Wizards import first_run_setup_state
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-REVIEWPROBE-0002")
+    armed: list[bool] = []
+    real_presence = first_run_setup_state.read_provider_secret_presence
+
+    def _fail_once_for_openai(*args, provider_key, **kwargs):
+        if armed and provider_key == "openai":
+            armed.clear()
+            raise ValueError("Provider is not supported.")
+        return real_presence(*args, provider_key=provider_key, **kwargs)
+
+    monkeypatch.setattr(
+        first_run_setup_state, "read_provider_secret_presence", _fail_once_for_openai
+    )
+    wizard = _resumed_on_provider()
+    app = _WizardHost(wizard, keep_alive=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        container, step = _current_step(wizard)
+        choices = _provider_list(step)
+        choices.focus()
+        await pilot.pause()
+        assert step.selected_provider_key == ""
+
+        armed.append(True)
+        await _arrow_to(pilot, choices, "openai")  # the first pick: it raises
+        assert not armed, "the OpenAI pick never ran"
+        assert step.selected_provider_key == ""
+        assert "Couldn't switch to OpenAI" in _pinned_error(wizard)
+
+        await pilot.press("ctrl+n")
+        await _wait_for_step(pilot, wizard, STEP_MODEL)
+        assert app.is_running and app._exception is None
+        assert container._staged_provider_draft is None
+
+        # Control: OpenAI is ready through the environment, so a pick that
+        # works is staged by the same Next.
+        await pilot.press("ctrl+b")
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
+        choices.focus()
+        await pilot.pause()
+        await _arrow_to(pilot, choices, "openai")
+        assert step.selected_provider_key == "openai"
+        await pilot.press("ctrl+n")
+        await _wait_for_step(pilot, wizard, STEP_MODEL)
+        staged = container._staged_provider_draft
+        assert staged is not None and staged.provider == "openai"
         assert app.is_running and app._exception is None
 
 
