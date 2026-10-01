@@ -2644,9 +2644,7 @@ class TLDWAPIClient:
             "DELETE", f"/api/v1/workspaces/{workspace_id}/notes/{note_id}"
         )
 
-    async def list_workspace_sources(
-        self, workspace_id: str
-    ) -> list[Dict[str, Any]]:
+    async def list_workspace_sources(self, workspace_id: str) -> list[Dict[str, Any]]:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         response = await self._request(
             "GET", f"/api/v1/workspaces/{workspace_path}/sources"
@@ -2688,9 +2686,7 @@ class TLDWAPIClient:
         )
         return WorkspaceSourceResponse.model_validate(response).model_dump(mode="json")
 
-    async def delete_workspace_source(
-        self, workspace_id: str, source_id: str
-    ) -> Any:
+    async def delete_workspace_source(self, workspace_id: str, source_id: str) -> Any:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         source_path = _workspace_source_path_id(source_id, "source_id")
         response = await self._request(
@@ -2724,9 +2720,7 @@ class TLDWAPIClient:
             mode="json"
         )
 
-    async def get_workspace_source_status(
-        self, workspace_id: str
-    ) -> Dict[str, Any]:
+    async def get_workspace_source_status(self, workspace_id: str) -> Dict[str, Any]:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         response = await self._request(
             "GET", f"/api/v1/workspaces/{workspace_path}/sources/status"
@@ -2735,9 +2729,7 @@ class TLDWAPIClient:
             mode="json"
         )
 
-    async def get_workspace_capabilities(
-        self, workspace_id: str
-    ) -> Dict[str, Any]:
+    async def get_workspace_capabilities(self, workspace_id: str) -> Dict[str, Any]:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         response = await self._request(
             "GET", f"/api/v1/workspaces/{workspace_path}/capabilities"
@@ -2832,27 +2824,13 @@ class TLDWAPIClient:
         )
         return ServerMediaListResponse.model_validate(response)
 
-
-
-
-
-
     async def get_media_transcription_models(self) -> MediaTranscriptionModelsResponse:
         response = await self._request("GET", "/api/v1/media/transcription-models")
         return MediaTranscriptionModelsResponse.model_validate(response)
 
-
-
     async def trash_media_item(self, media_id: int) -> Dict[str, Any]:
         response = await self._request("DELETE", f"/api/v1/media/{media_id}")
         return {"deleted": True, **response}
-
-
-
-
-
-
-
 
     async def list_media_keywords(
         self, *, query: str | None = None, limit: int = 100
@@ -6296,7 +6274,6 @@ class TLDWAPIClient:
         )
         return [IngestionSourceItemResponse.model_validate(item) for item in response]
 
-
     async def trigger_ingestion_source_sync(
         self, source_id: int
     ) -> IngestionSourceSyncTriggerResponse:
@@ -8143,9 +8120,7 @@ class TLDWAPIClient:
         Returns:
             The parsed capabilities response.
         """
-        response = await self._request(
-            "GET", "/api/v1/scheduled-tasks/capabilities"
-        )
+        response = await self._request("GET", "/api/v1/scheduled-tasks/capabilities")
         return ScheduledTaskAutomationCapabilities.model_validate(response)
 
     async def list_scheduled_task_automation_definitions(
@@ -10031,8 +10006,6 @@ class TLDWAPIClient:
             params={"expected_version": expected_version},
         )
 
-
-
     async def create_flashcard(
         self,
         request_data: FlashcardCreateRequest,
@@ -10056,7 +10029,6 @@ class TLDWAPIClient:
             ],
         )
         return FlashcardListResponse.model_validate(response)
-
 
     async def update_flashcard(
         self,
@@ -10082,11 +10054,6 @@ class TLDWAPIClient:
             ],
         )
         return FlashcardBulkUpdateResponse.model_validate(response)
-
-
-
-
-
 
     async def import_flashcards_tsv(
         self,
@@ -10167,7 +10134,6 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-
     async def get_flashcard_study_assistant_context(
         self,
         card_uuid: str,
@@ -10189,13 +10155,6 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return StudyAssistantRespondResponse.model_validate(response)
-
-
-
-
-
-
-
 
     async def delete_flashcard(
         self,
@@ -11904,7 +11863,6 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-
     async def process_email(
         self, request_data: ProcessEmailRequest, file_paths: Optional[List[str]] = None
     ) -> BatchMediaProcessResponse:
@@ -12198,9 +12156,6 @@ class TLDWAPIClient:
         )
         return PromptResponse.model_validate(response)
 
-
-
-
     async def update_prompt(
         self, prompt_identifier: Union[str, int], request_data: PromptCreateRequest
     ) -> Dict[str, Any]:
@@ -12351,10 +12306,6 @@ class TLDWAPIClient:
         self, prompt_identifier: Union[str, int]
     ) -> Dict[str, Any]:
         return await self._request("POST", f"/api/v1/prompts/{prompt_identifier}/use")
-
-
-
-
 
     async def call_server_characters_endpoint(
         self,
@@ -13181,8 +13132,6 @@ class TLDWAPIClient:
             "GET", f"/api/v1/chat/conversations/{conversation_id}/tree", params=params
         )
 
-
-
     @staticmethod
     def _chat_knowledge_save_request(
         request_data: ChatKnowledgeSaveRequest | Dict[str, Any],
@@ -13198,8 +13147,6 @@ class TLDWAPIClient:
         if isinstance(request_data, ConversationShareLinkCreateRequest):
             return request_data
         return ConversationShareLinkCreateRequest(**dict(request_data))
-
-
 
     async def create_chat_conversation_share_link(
         self,
@@ -13274,12 +13221,6 @@ class TLDWAPIClient:
             params={"limit": limit},
         )
         return SharedConversationResolveResponse.model_validate(response)
-
-
-
-
-
-
 
     async def list_chat_dictionaries(
         self,
@@ -13482,7 +13423,6 @@ class TLDWAPIClient:
         return await self._request(
             "GET", f"/api/v1/chat/dictionaries/{dictionary_id}/statistics"
         )
-
 
     async def get_chat_conversation_messages_with_context(
         self,
@@ -13895,8 +13835,6 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-
-
     async def get_chatbook_export_job(self, job_id: str) -> ChatbookExportJobResponse:
         response = await self._request(
             "GET",
@@ -13904,15 +13842,11 @@ class TLDWAPIClient:
         )
         return ChatbookExportJobResponse.model_validate(response)
 
-
     async def get_chatbook_import_job(self, job_id: str) -> Dict[str, Any]:
         return await self._request(
             "GET",
             f"/api/v1/chatbooks/import/jobs/{job_id}",
         )
-
-
-
 
     async def cleanup_chatbook_exports(self) -> ChatbookCleanupResponse:
         response = await self._request(
@@ -13938,7 +13872,6 @@ class TLDWAPIClient:
             f"/api/v1/chatbooks/download/{job_id}",
             params=params or None,
         )
-
 
     async def list_chatbook_export_jobs(
         self, *, limit: int = 100, offset: int = 0
@@ -16534,8 +16467,10 @@ class TLDWAPIClient:
             if exc.status_code != 409:
                 raise
             try:
-                error_response = SyncPersonalContextBootstrapErrorResponse.model_validate(
-                    exc.response_data
+                error_response = (
+                    SyncPersonalContextBootstrapErrorResponse.model_validate(
+                        exc.response_data
+                    )
                 )
             except ValidationError:
                 raise exc from None
