@@ -619,3 +619,26 @@ The normal merge candidate, local PR draft and frozen integration report await
 one scoped integration gate before any publication. No PR edit, criteria/status
 closure, source opening, production V2/Forget/schema-AAD/future disclosure or
 companion-server activation is authorized by this checkpoint.
+
+
+### Reviewed PR publication checkpoint — 2026-10-01
+
+The scoped integration gate approved the fixed-pin candidate with retained limits
+and no source findings. Qualified source `6e612e3bab79b9785d310000f13abf35b336c3d4`
+was normally published to [PR #2862](https://github.com/rmusser01/tldw_chatbook/pull/2862)
+against dev. Its verified public description covers the delivered memory behavior,
+inactive contracts and closed compatibility barrier, actual targeted checks,
+48 retained resource teardown errors and the remaining limits.
+
+Only TASK-25907.23 AC4 is newly checked; AC2/3/6 stay open and the task remains
+In Progress. The subsequent task/roadmap commit is documentation only, with
+production, tests and supporting source unchanged from the qualified candidate.
+GitHub's MERGEABLE/BEHIND observation and mixed or pending checks do not establish
+merge readiness or native compatibility with later dev. Qualification remains at
+`ef831d9f383f58a806fe54d61a6fd75678ec73c0`; observed later dev
+`2ee6ea78345eedd9ee2bc6509bb66bbff24dff58` remains separate.
+
+Current resource48 runtime errors, historical43, older unattributed failures,
+tight budgets and existing warnings/skips remain disclosed. No dev merge,
+completion, source opening, V2/Forget/schema-AAD/future disclosure or
+companion-server activation follows this publication checkpoint.
