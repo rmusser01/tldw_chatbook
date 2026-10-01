@@ -4,13 +4,17 @@
 -- not tell a lineage fault from a provider error from an unusable summary.
 -- Record the content-free reason code the compaction transaction already
 -- computes. NULL for every row written before this step and for successes.
+-- The CHECK mirrors ConsoleContextRepository.finish_auxiliary_attempt: a
+-- reason only on a non-successful terminal status, shaped [a-z][a-z_]{0,63}.
 
 ALTER TABLE console_auxiliary_attempts
   ADD COLUMN failure_reason TEXT
   CHECK(
     failure_reason IS NULL
     OR (
-      length(failure_reason) BETWEEN 1 AND 64
+      status IN ('failed', 'cancelled', 'stale', 'timed_out')
+      AND length(failure_reason) BETWEEN 1 AND 64
+      AND failure_reason GLOB '[a-z]*'
       AND failure_reason NOT GLOB '*[^a-z_]*'
     )
   );

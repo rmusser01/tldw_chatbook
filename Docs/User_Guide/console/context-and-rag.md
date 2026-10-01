@@ -115,12 +115,14 @@ failed **Compact now** starts with "Compaction failed and nothing changed";
 when the chat has no older complete turns yet, it says "Nothing to compact
 yet" instead.
 
-Every note ends with a next step. In **Conversation settings > Context and
-memory** you can raise **Conversation max tokens**, set **If compaction
-fails** to **Omit older context** (the message is then sent without
-compacting), or set **When limit nears** to **Off**. You can also start a new
-chat. In a saved chat, the unsent turn stays in response recovery, so you can
-**Retry response** or **Discard** it once you have changed something.
+A note that held your message, or that reports a failed **Compact now**, also
+gives a next step. "Nothing to compact yet" is not a failure and gives none.
+In **Conversation settings > Context and memory** you can raise
+**Conversation max tokens**, set **If compaction fails** to **Omit older
+context** (the message is then sent without compacting), or set **When limit
+nears** to **Off**. You can also start a new chat. In a saved chat, the
+unsent turn stays in response recovery, so you can **Retry response** or
+**Discard** it once you have changed something.
 
 With **If compaction fails** set to **Omit older context**, a failed automatic
 compaction does not hold the message: it is sent without compacting. The

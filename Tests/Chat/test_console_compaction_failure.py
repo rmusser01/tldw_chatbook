@@ -22,6 +22,7 @@ from Tests.Chat.test_console_context_compaction import (
     _transaction_inputs,
 )
 from tldw_chatbook.Chat.console_compaction_failure import (
+    _REASON_CLAUSES,
     compaction_failure_copy,
     compaction_spend_copy,
 )
@@ -33,6 +34,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     DurableMessageSnapshot,
     EffectiveMemoryKind,
     EffectiveMemoryResult,
+    LegacyMemorySnapshot,
     compaction_retry_fence,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -169,25 +171,33 @@ def test_omitted_copy_discloses_a_billed_failure_the_send_survived(
     assert "not sent" not in copy
 
 
+_KNOWN_REASONS = (
+    "auxiliary_timed_out",
+    "auxiliary_provider_failed",
+    "invalid_summary_output",
+    "summary_projection_failed",
+    "summary_did_not_make_progress",
+    "memory_commit_failed",
+    "admission_changed",
+    "branch_memory_changed_before_commit",
+    "compaction_already_running",
+    "invalid_automatic_admission",
+    "invalid_manual_admission",
+    "plan_unreachable",
+    "no_positive_useful_summary_allowance",
+    "no_complete_durable_units",
+    "unknown_or_empty_budget",
+    "automatic_visual_input_limit_exceeded",
+    "automatic_visual_input_unsupported",
+)
+
+
 def test_every_known_reason_has_specific_copy() -> None:
+    # The list is written out, not derived, so dropping a reason's copy
+    # fails here; the set check keeps the list from going stale.
+    assert set(_KNOWN_REASONS) == set(_REASON_CLAUSES)
     generic = compaction_failure_copy("not-a-real-reason", manual=True)
-    for reason in (
-        "auxiliary_timed_out",
-        "auxiliary_provider_failed",
-        "invalid_summary_output",
-        "summary_projection_failed",
-        "summary_did_not_make_progress",
-        "memory_commit_failed",
-        "admission_changed",
-        "compaction_already_running",
-        "invalid_automatic_admission",
-        "plan_unreachable",
-        "no_positive_useful_summary_allowance",
-        "no_complete_durable_units",
-        "unknown_or_empty_budget",
-        "automatic_visual_input_limit_exceeded",
-        "automatic_visual_input_unsupported",
-    ):
+    for reason in _KNOWN_REASONS:
         copy = compaction_failure_copy(reason, manual=True)
         assert copy != generic, reason
 
@@ -320,7 +330,10 @@ async def test_success_clears_the_latch() -> None:
 
 
 def _lineage_fence(
-    lineage: tuple[DurableMessageSnapshot, ...], *, active_request: bool = True
+    lineage: tuple[DurableMessageSnapshot, ...],
+    *,
+    active_request: bool = True,
+    effective: EffectiveMemoryResult | None = None,
 ) -> CompactionRetryFence:
     """The fence the controller builds for ``lineage`` (the durable path)."""
 
@@ -329,10 +342,48 @@ def _lineage_fence(
         _resolution(),
         CompactionPromptSnapshot("Preserve decisions."),
         _resolved(),
-        EffectiveMemoryResult(EffectiveMemoryKind.RAW),
+        effective or EffectiveMemoryResult(EffectiveMemoryKind.RAW),
         lineage,
         active_request=active_request,
     )
+
+
+def _legacy(summary: str, boundary: str = "a0") -> EffectiveMemoryResult:
+    return EffectiveMemoryResult(
+        EffectiveMemoryKind.LEGACY_PREFIX,
+        legacy=LegacyMemorySnapshot("conversation-1", summary, boundary),
+    )
+
+
+@pytest.mark.asyncio
+async def test_changing_the_legacy_summary_text_lifts_the_pause() -> None:
+    """AC#5: the legacy summary is effective memory, even on a fixed boundary.
+
+    A legacy compatibility summary has no revision, so its text -- not only
+    its boundary -- is what the fence must notice changing.
+    """
+
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    service = ConsoleCompactionService(repository, gateway)
+    inputs = _transaction_inputs()
+    request = inputs[2] + (_message("u3", "user", "next"),)
+    await _compact(
+        service, inputs, _lineage_fence(request, effective=_legacy("Summary A."))
+    )
+    assert gateway.calls == 1
+
+    same = await _compact(
+        service, inputs, _lineage_fence(request, effective=_legacy("Summary A."))
+    )
+    assert same.suppressed is True
+    assert gateway.calls == 1
+
+    edited = await _compact(
+        service, inputs, _lineage_fence(request, effective=_legacy("Summary B."))
+    )
+    assert edited.suppressed is False
+    assert gateway.calls == 2
 
 
 def _reply(message_id: str, status: str, content: str = "") -> DurableMessageSnapshot:

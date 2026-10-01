@@ -145,3 +145,63 @@ def test_repository_refuses_a_reason_on_success_or_free_text(tmp_path: Path) -> 
         assert repository.get_auxiliary_attempt("op-1")["failure_reason"] is None
     finally:
         db.close_connection()
+
+
+_TERMINAL_FAILURES = ("failed", "cancelled", "stale", "timed_out")
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "accepted"),
+    [
+        # Every non-successful terminal status the compaction service records
+        # a reason on (cancelled, timed_out and stale included).
+        *((status, "memory_commit_failed", True) for status in _TERMINAL_FAILURES),
+        ("failed", "a", True),
+        ("failed", "a" * 64, True),
+        # Rows written before v74, and every success, carry no reason.
+        ("succeeded", None, True),
+        ("failed", None, True),
+        # The repository's reason shape is ``[a-z][a-z_]{0,63}``.
+        ("failed", "_", False),
+        ("failed", "_bad", False),
+        ("failed", "Bad", False),
+        ("failed", "", False),
+        ("failed", "a" * 65, False),
+        # A success, or a still-started attempt, never carries a reason.
+        ("succeeded", "invalid_summary_output", False),
+        ("started", "invalid_summary_output", False),
+    ],
+)
+def test_schema_enforces_the_repository_reason_contract(
+    tmp_path: Path, status: str, reason: str | None, accepted: bool
+) -> None:
+    """A writer that bypasses the repository meets the same contract."""
+
+    db = CharactersRAGDB(tmp_path / "check.db", client_id="check")
+    try:
+        conversation_id = db.add_conversation({"title": "Check"})
+
+        def insert() -> None:
+            with db.transaction() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO console_auxiliary_attempts(
+                        operation_id, conversation_id, purpose, provider,
+                        model, requested_output_cap, estimated_input_tokens,
+                        status, started_at, failure_reason
+                    ) VALUES ('op', ?, 'conversation_compaction', 'openai',
+                              'gpt-test', 100, 1000, ?,
+                              '2026-09-30T00:00:00+00:00', ?)
+                    """,
+                    (conversation_id, status, reason),
+                )
+
+        if accepted:
+            insert()
+            row = ConsoleContextRepository(db).get_auxiliary_attempt("op")
+            assert row is not None and row["failure_reason"] == reason
+        else:
+            with pytest.raises(sqlite3.IntegrityError):
+                insert()
+    finally:
+        db.close_connection()

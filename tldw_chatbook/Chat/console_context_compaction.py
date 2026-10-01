@@ -613,6 +613,14 @@ def compaction_retry_fence(
             memory_id,
             effective.memory.revision if effective.memory is not None else None,
             legacy_boundary,
+            # A legacy summary has no revision: digest its text, as the
+            # repository's memory fence does, so editing it on a fixed
+            # boundary still lifts the pause.
+            (
+                _digest_json(effective.legacy.summary_text)
+                if effective.legacy is not None
+                else None
+            ),
         ],
     }
     return CompactionRetryFence(
