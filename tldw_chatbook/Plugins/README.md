@@ -1,6 +1,6 @@
 # Native package inspection
 
-`inspect_package(root: Path, *, dialect=None)` reads an existing canonical absolute
+`inspect_package(root: Path, *, dialect=None, catalog_overlay=None)` reads an existing canonical absolute
 package directory. It does not execute commands, launch MCP, fetch schemas,
 install a package, or grant trust. Use a worker for this bounded filesystem work.
 `PackageInspection` is an immutable record; component definitions are canonical
@@ -36,7 +36,7 @@ foundation module.
 
 ## Snapshot operation and identity
 
-`materialize_package(source, destination)` requires an absent destination under
+`materialize_package(source, destination, *, dialect=None)` requires an absent destination under
 an existing canonical parent. It rejects all unsafe or incomplete source captures
 before writing, creates a private destination, writes regular files, and verifies
 its resulting content digest. Existing destinations are never overwritten.
@@ -76,9 +76,9 @@ or keys before normalization. Numeric timeout bounds precede float conversion.
 
 POSIX descriptor APIs and no-follow support are required. Automated filesystem
 checks currently run on macOS; Windows fails closed as `platform_capture_unqualified`.
-Windows reparse behavior is not claimed qualified. Vendor markers retain candidate
-identity and ambiguity but are explicitly unsupported/unqualified until a vendor
-adapter is delivered. A valid native root defaults to its native interpretation;
+Windows reparse behavior is not claimed qualified. Version-pinned vendor adapters
+retain candidate identity and ambiguity with parsed-only evidence. A valid native
+root defaults to its native interpretation;
 independent vendor roots require an explicit choice. An inline OpenAI overlay
 replaces the compatibility-file overlay wholesale.
 
@@ -676,3 +676,38 @@ and pipes settle. Hook dependencies are checked for the actual tool definition a
 live attributed material, so an unrelated ordinary tool does not inherit another
 component's failed initialization requirement. Owned MCP composition delegates to the
 existing connection, permission, discovery, source and result-currentness owners.
+
+## Pinned foreign interpretation (I2)
+
+`inspect_codex` and `inspect_cursor` use adapters `2026-10-01.1`. Inline
+`extensions.com.openai` replaces the compatibility overlay wholesale; portable
+identity and component locations stay canonical. Independent vendor manifests
+require an explicit interpretation when ambiguous. Cursor component paths replace
+that component's default discovery; `[]` deliberately excludes it. Missing explicit
+paths are diagnosed, and missing explicit MCP definitions refuse interpretation.
+
+Supported Cursor material includes plain manual commands, skills, unconditional
+`alwaysApply` rules, and unconstrained/inherit or EMPTY agent presets. File/model
+selected rules, readonly/background constraints, undocumented Codex command/rule/
+agent semantics, expansion, apps and unconfigured variables remain unavailable.
+Codex skill `agents/openai.yaml` manual-only policy is normalized and hash-bound;
+conflicts, dependencies and undocumented frontmatter flags remain unavailable.
+Tool/model/MCP use still needs existing exact host mappings and normal permission.
+
+Executable catalog fields must be retained in the bounded regular package member
+`.chatbook-plugin/catalog.json`. Manifest fields win wholesale. Review, copying and
+recovery retain the chosen interpretation and exact bytes. An external overlay
+without identical retained material cannot activate. Foreign effective identity
+also binds the whole content digest, including executable bits; native portable
+identity remains unchanged. Acquisition producers belong to later work.
+
+Foreign hooks are inventoried as unsupported qualification proposals, never native
+handlers. Simple POSIX argv parsing does not qualify payload, cwd, timing, output or
+timeout; shell syntax/substitution and source regex semantics are not translated.
+Required, unknown or malformed guard scope (including root/group constraints)
+fences the package conservatively. Known optional observers stay visible without
+blocking unrelated supported material. An unavailable manual mention remains literal
+ordinary user text: no retained body, automatic rule or executable authority is added.
+No original Codex/Cursor host execution, GUI or cross-platform certification is
+claimed. See [fixture provenance](../../Tests/Plugins/fixtures/interop/README.md)
+and the [integration evidence](../../Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md).

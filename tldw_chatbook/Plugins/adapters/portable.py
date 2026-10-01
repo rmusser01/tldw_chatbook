@@ -24,7 +24,14 @@ class ComponentLimitError(Exception):
     """Exhaustion must bypass component-local parse failure isolation."""
 
 
-def inventory_package(capture, manifest: dict, *, max_components: int):
+def inventory_package(
+    capture,
+    manifest: dict,
+    *,
+    max_components: int,
+    skill_paths=None,
+    skill_definitions=None,
+):
     """Return inventory and constraints; missing declarations never imply permission."""
     inventory = {}
     diagnostics = []
@@ -62,14 +69,23 @@ def inventory_package(capture, manifest: dict, *, max_components: int):
 
     if "skills" in capture.files:
         diagnostics.append(Diagnostic(code="skills_location_invalid", path="skills"))
-    for path in sorted(capture.files):
-        parts = PurePosixPath(path).parts
-        if len(parts) != 3 or parts[0] != "skills" or parts[2] != "SKILL.md":
-            continue
+    if skill_paths is None:
+        skill_paths = [
+            path
+            for path in capture.files
+            if len(PurePosixPath(path).parts) == 3
+            and PurePosixPath(path).parts[0] == "skills"
+            and PurePosixPath(path).name == "SKILL.md"
+        ]
+    for path in sorted(skill_paths):
         try:
-            definition = frontmatter(
-                capture.read(path), "skill", directory_name=parts[1]
-            )
+            definition = (skill_definitions or {}).get(path)
+            if definition is None:
+                definition = frontmatter(
+                    capture.read(path),
+                    "skill",
+                    directory_name=PurePosixPath(path).parent.name,
+                )
             blockers = (
                 ("skill_tools_mapping_required",)
                 if definition.get("allowed-tools")

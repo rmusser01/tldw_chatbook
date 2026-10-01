@@ -1,0 +1,56 @@
+{
+  "portable-openai": {
+    "dialect": "openai",
+    "components": [
+      "skill:review"
+    ],
+    "unavailable": []
+  },
+  "codex": {
+    "dialect": "openai",
+    "components": [
+      "command:note",
+      "skill:review"
+    ],
+    "unavailable": [
+      "command:note"
+    ]
+  },
+  "cursor": {
+    "dialect": "cursor",
+    "components": [
+      "agent:empty",
+      "command:note",
+      "mcp:peer",
+      "rule:always",
+      "rule:conditional",
+      "skill:review"
+    ],
+    "unavailable": [
+      "rule:conditional"
+    ]
+  },
+  "cursor-guard": {
+    "dialect": "cursor",
+    "kinds": [
+      "hook",
+      "skill"
+    ],
+    "global_blocker": "vendor_guard_scope_unknown"
+  },
+  "cursor-observer": {
+    "dialect": "cursor",
+    "kinds": [
+      "hook",
+      "skill"
+    ],
+    "global_blocker": null
+  },
+  "cursor-catalog": {
+    "dialect": "cursor",
+    "components": [
+      "command:catalog-note"
+    ],
+    "unavailable": []
+  }
+}

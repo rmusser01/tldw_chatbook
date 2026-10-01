@@ -535,3 +535,17 @@ real terminal settlement. The existing checkpoint validates dependencies of the
 actual tool definition and live typed material; unavailable graph nodes refuse the
 affected operation while unrelated tools remain eligible. Manual preparation retains
 an unchanged native configuration; changing workspace requires fresh configuration.
+
+
+### I2 foreign hook qualification boundary
+
+Pinned Codex/Cursor event correspondences are proposals, not HookHandlers. Native
+payloads cannot currently reproduce full vendor cwd/model/permission/transcript,
+input/output, success-only timing and timeout behavior. Every proposal records all
+qualification axes; no incomplete mapping enters H2/H6. Shell syntax/substitution
+and unqualified regex semantics never become argv/globs. Root/group/handler unknown
+or required guard constraints are preserved and fence affected package activation;
+known optional observers remain visible but unavailable. Ordinary user messages
+remain possible without expanding blocked package material. No foreign allow result
+can reach or bypass the native permission store. This documents the deliberately
+unsupported runtime subset of TASK-32687, not original-host qualification.

@@ -198,3 +198,16 @@ async def native_console(tmp_path, native_package):
         await service.aclose()
         store.persistence.db.close()
         registry.db.close()
+
+
+@pytest.fixture
+def interop_package(tmp_path):
+    """Copy independently authored, version-pinned foreign interpretation fixtures."""
+
+    def copy(name):
+        source = Path(__file__).parent / "fixtures/interop" / name
+        destination = tmp_path / name
+        shutil.copytree(source, destination)
+        return destination
+
+    return copy

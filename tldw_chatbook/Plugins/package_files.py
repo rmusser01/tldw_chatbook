@@ -390,7 +390,9 @@ def _output_parent(root_fd: int, path: str):
         os.close(descriptor)
 
 
-def materialize_package(source: Path, destination: Path) -> PackageInspection:
+def materialize_package(
+    source: Path, destination: Path, *, dialect: str | None = None
+) -> PackageInspection:
     """Validate and copy into an absent child of a canonical directory.
 
     Existing destinations are never replaced. POSIX descriptor support is
@@ -403,7 +405,7 @@ def materialize_package(source: Path, destination: Path) -> PackageInspection:
     capture = capture_package(source)
     if capture.errors:
         raise PackageFileError(capture.errors[0].code)
-    inspection = inspect_capture(capture)
+    inspection = inspect_capture(capture, dialect=dialect)
     if inspection.rejected:
         raise PackageFileError("package_inspection_rejected")
     try:

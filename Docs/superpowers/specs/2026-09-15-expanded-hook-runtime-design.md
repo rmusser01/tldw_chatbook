@@ -1394,3 +1394,17 @@ Retire this scope/view at the bounded notification boundary without confusing th
 For shutdown, admission/cancellation fencing fixes the clock immediately. The same lifecycle owner then captures already-prepared positive source/dependency provenance before retiring normal checkpoint scopes; its bounded teardown scope cannot reinterpret missing state as independence. Nested guard/post executions require an actual engine-issued teardown delivery and inherit its original deadline. Queued notifications retain their exact admission view. Repeated close neither extends the clock nor reissues authority.
 
 Resource acceptance joins actual local invocation completion, known lower settled/not-started state and every exact M4 owned request completion record. A cancelled Future is not completion evidence. Standalone uncertainty with no positive later evidence deliberately retains cleanup-pending counters; the adapter creates no second request owner to invent settlement. No replay occurs. The Task18 report records actual stdio/controlled HTTP, application-entry, cancellation/approval/teardown evidence and platform limits.
+
+
+### I2 foreign hook qualification boundary
+
+Pinned Codex/Cursor event correspondences are proposals, not HookHandlers. Native
+payloads cannot currently reproduce full vendor cwd/model/permission/transcript,
+input/output, success-only timing and timeout behavior. Every proposal records all
+qualification axes; no incomplete mapping enters H2/H6. Shell syntax/substitution
+and unqualified regex semantics never become argv/globs. Root/group/handler unknown
+or required guard constraints are preserved and fence affected package activation;
+known optional observers remain visible but unavailable. Ordinary user messages
+remain possible without expanding blocked package material. No foreign allow result
+can reach or bypass the native permission store. This documents the deliberately
+unsupported runtime subset of TASK-32687, not original-host qualification.

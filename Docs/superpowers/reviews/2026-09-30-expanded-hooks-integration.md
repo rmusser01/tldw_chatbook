@@ -726,3 +726,56 @@ responses and protected marker storage are controlled test owners. This does not
 certify OS Keychain, OAuth, arbitrary remote isolation, original vendor hosts, full
 GUI behavior, Windows/Linux, a full test suite, or distribution packaging. Skill model
 overrides remain explicitly unsupported; agent model mappings retain the parent route.
+
+
+## I2 — TASK-32687 pinned Cursor/Codex interpretation
+
+Adapters `chatbook-openai/2026-10-01.1` and `chatbook-cursor/2026-10-01.1`
+interpret captured bytes through existing native validation and authority owners.
+Inline OpenAI overlays replace compatibility wholesale; portable identity and
+locations remain canonical. Explicit Cursor paths/empty exclusions replace default
+scans. Supported instruction subsets retain manual-only policy, unconditional rules
+and EMPTY agent constraints. Unavailable variables/apps, conditional rules,
+undocumented Codex presets and source hook contracts remain explicit blockers.
+Retained catalog fields participate in executable/content identity; materialization
+and recovery preserve the chosen dialect without a second store or trust owner.
+
+Behavioral RED: absent OpenAI adapter/standalone inventory
+(`/private/tmp/hooks-i2-codex-red.xml`), missing dialect materialization argument
+(`/private/tmp/hooks-i2-dialect-red.xml`), and dropped root/group/handler guard scope
+plus explicit missing MCP file (`/private/tmp/hooks-i2-controls-red.xml`). The last
+run also had two corrected harness assertions: a wrong schema URL and the protected
+revision field name. These are not behavioral RED. Earlier parser/Console harness
+mistakes likewise do not count as qualification. Unavailable manual mentions are
+ordinary literal user messages; expecting the entire message to refuse was wrong.
+
+Final adapter/native-inspection/capture run: **117 passed in 5.77s**, no skips,
+`/private/tmp/hooks-i2-final.xml`. It exercises actual reviewed Console command/rule
+content and guarded non-expansion, plus protected review/commit and registry-loss
+recovery after deleting the original source for both OpenAI and retained Cursor
+catalog interpretations. Neighboring native components, native skill flow,
+coordinator and recovery: **127 passed in 226.21s**, no skips,
+`/private/tmp/hooks-i2-neighbors.xml`.
+
+Fixture inventories are independently authored original AGPL test data. Provenance
+pins OpenAI plugins `5fd93af4cd0c623e020d0cc7e9ce178b4ac1f70f` and Cursor template
+`46216072ac5750f782f95bb325b4d12b7c3ae9c9`; licenses, official primary links and
+dated unversioned documentation observations are in the interop README. No vendor
+asset/script/skill prose is copied or executed. Parsing evidence is recorded as
+parsed, separate from the actual Chatbook behavior exercised above.
+
+Deliberate implementation adjustment: `normalize_vendor_hook` returns a data-only
+qualification proposal, not the plan's prototype HookHandler. No foreign mapping
+qualifies the complete payload/cwd/timing/output/timeout contract, so **all foreign
+hooks remain unsupported**. Required/unknown guards fence affected package material;
+known optional observers remain visible without fencing unrelated material. Native
+v2 hooks keep their existing qualified runtime. No original-host comparison,
+Windows/Linux, real Keychain/OAuth, GUI, full-suite or distribution certification
+is claimed. I3+ acquisition/marketplace/UI tasks are outside this requested work.
+
+Authored final run after type/format cleanup: **25 passed in 6.11s**,
+`/private/tmp/hooks-i2-authored-final.xml`. Two exact interpretation controls pass
+after the final lint-only set/tuple corrections (`hooks-i2-lint-final.xml`). All
+changed Python/fixture JSON parses, all nine new Python files pass Ruff lint/format,
+changed ranges are formatted, shared Python adds no Ruff diagnostics versus I1 HEAD,
+and `git diff --check` passes. No dependency or copied-source licensing change.

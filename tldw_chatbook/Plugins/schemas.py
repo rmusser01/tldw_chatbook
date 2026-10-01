@@ -7,6 +7,7 @@ codes only; package bodies and configuration values are never diagnostics.
 
 import math
 import re
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 import yaml
@@ -158,7 +159,13 @@ class _FrontmatterLoader(yaml.SafeLoader):
         return result
 
 
-def frontmatter(data: bytes, kind: str, *, directory_name: str | None = None) -> dict:
+def frontmatter(
+    data: bytes,
+    kind: str,
+    *,
+    directory_name: str | None = None,
+    transform: Callable[[dict], dict] | None = None,
+) -> dict:
     require(len(data) <= package_files.MAX_DOCUMENT_BYTES, "document_bytes_limit")
     try:
         text = data.decode("utf-8")
@@ -178,6 +185,8 @@ def frontmatter(data: bytes, kind: str, *, directory_name: str | None = None) ->
         ValueError,
     ):
         raise PackageFileError("frontmatter_invalid") from None
+    if transform is not None:
+        value = transform(value)
     common = {"name", "description"}
     allowed = {
         "skill": common | {"license", "compatibility", "metadata", "allowed-tools"},
@@ -193,7 +202,7 @@ def frontmatter(data: bytes, kind: str, *, directory_name: str | None = None) ->
     require(isinstance(name, str) and bool(name) and len(name) <= 64)
     if kind == "skill":
         require(
-            name == directory_name
+            (directory_name is None or name == directory_name)
             and name == name.lower()
             and not name.startswith("-")
             and not name.endswith("-")

@@ -90,5 +90,7 @@ def component_body(snapshot: RunPluginSnapshot, component_id: str) -> str:
     """Preserve the complete validated Markdown body without interpolation."""
     capture, component = capture_component(snapshot, component_id)
     lines = capture.read(component.path).decode("utf-8").splitlines()
-    end = next(index for index, line in enumerate(lines[1:], 1) if line == "---")
-    return "\n".join(lines[end + 1 :]).strip()
+    if lines and lines[0] == "---":
+        end = next(index for index, line in enumerate(lines[1:], 1) if line == "---")
+        lines = lines[end + 1 :]
+    return "\n".join(lines).strip()

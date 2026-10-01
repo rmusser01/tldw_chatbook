@@ -252,8 +252,8 @@ def test_ambiguous_vendor_candidates_are_not_unioned(native_package):
     assert "dialect_choice_required" in result.activation_blockers
     selected = inspect_package(root, dialect="cursor")
     assert selected.dialect == "cursor"
-    assert not selected.inventory
-    assert "adapter_unqualified" in selected.activation_blockers
+    assert set(selected.inventory) == {"skill:review"}
+    assert not selected.activation_blockers
 
 
 def test_inline_openai_overlay_replaces_compatibility_file(native_package):
@@ -266,7 +266,8 @@ def test_inline_openai_overlay_replaces_compatibility_file(native_package):
     selected = inspect_package(root, dialect="openai")
     assert selected.overlay_identities == ("plugin.json#/extensions/com.openai",)
     assert selected.root_manifest == "plugin.json"
-    assert "adapter_unqualified" in selected.activation_blockers
+    assert not selected.activation_blockers
+    assert set(selected.inventory) == {"skill:review"}
 
 
 def test_content_and_effective_identity_are_distinct(native_package):

@@ -1566,3 +1566,25 @@ Per-definition and live-material graph requirements use existing H3 checkpoints.
 See `tldw_chatbook/Plugins/README.md` for the exact supported API and current-dev
 integration evidence for TASK-32686; no original-host or cross-platform certification
 is implied.
+
+
+### I2 pinned foreign interpretation
+
+OpenAI/Cursor adapters `2026-10-01.1` normalize only supported package/instruction
+contracts into the existing immutable inventory. Inline OpenAI overlays replace
+compatibility wholesale; portable identity/locations remain canonical. Cursor
+explicit paths replace defaults, including empty exclusions. Catalog execution
+fields must survive as `.chatbook-plugin/catalog.json` retained bytes; manifest
+fields take precedence. Existing review/materialization/recovery retain the exact
+chosen dialect, and foreign effective identity includes complete content/exec bits.
+No second trust, permission, snapshot store or acquisition owner is introduced.
+
+Unknown vendor constraints, unavailable variables/apps, conditional rules and
+undocumented Codex presets remain unavailable. Full foreign hook timing, payload,
+matcher, output, cwd, argv and timeout contracts are not yet runtime-qualified.
+Source hooks remain non-executable proposals; unknown/required root, group or
+handler guard scope fences the affected package. Known optional observers remain
+visible. Parsing and exercised Chatbook behavior are separate from original-host
+comparison; fixtures record immutable upstream references and license context in
+`Tests/Plugins/fixtures/interop/README.md`. TASK-32687 implements this conservative
+subset, with evidence in the current-dev integration report.

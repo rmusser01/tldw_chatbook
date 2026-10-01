@@ -30,12 +30,16 @@ _MANIFEST_FIELDS = {
 }
 
 
-def inspect_package(root: Path, *, dialect: str | None = None) -> PackageInspection:
+def inspect_package(
+    root: Path, *, dialect: str | None = None, catalog_overlay: dict | None = None
+) -> PackageInspection:
     """Inspect a bounded package without fetching, executing, or granting trust.
 
     Args:
         root: Existing canonical absolute package directory.
         dialect: Explicit portable, openai, or cursor interpretation.
+        catalog_overlay: Executable vendor catalog fields; identical retained bytes
+            are required before activation.
 
     Returns:
         Immutable inventory and diagnostics. Rejected packages remain visible
@@ -50,11 +54,11 @@ def inspect_package(root: Path, *, dialect: str | None = None) -> PackageInspect
             activation_blockers=(str(exc),),
             diagnostics=(Diagnostic(code=str(exc)),),
         )
-    return inspect_capture(capture, dialect=dialect)
+    return inspect_capture(capture, dialect=dialect, catalog_overlay=catalog_overlay)
 
 
 def inspect_capture(
-    capture: PackageCapture, *, dialect: str | None = None
+    capture: PackageCapture, *, dialect: str | None = None, catalog_overlay: dict | None = None
 ) -> PackageInspection:
     """Interpret exactly the captured bytes (also used by materialization)."""
     diagnostics = list(capture.diagnostics) + list(capture.errors)
@@ -91,8 +95,7 @@ def inspect_capture(
     ):
         diagnostics.append(Diagnostic(code="manifest_unavailable", path="plugin.json"))
 
-    # Candidate detection preserves identity only. Vendor adapters qualify their
-    # inventories later; F1 must not guess at their execution constraints.
+    # Vendor views use pinned interpretation adapters; parsing never grants use.
     extensions = manifest.get("extensions", {}) if manifest else {}
     for dialect_name, path in (
         ("openai", ".codex-plugin/plugin.json"),
@@ -122,7 +125,10 @@ def inspect_capture(
                         overlays=(
                             (overlay,) if manifest and dialect_name == "openai" else ()
                         ),
-                        support="unsupported",
+                        format_version="portable/1.0.0"
+                        if manifest and dialect_name == "openai"
+                        else "docs/2026-10-01",
+                        adapter_version="chatbook-" + dialect_name + "/2026-10-01.1",
                     )
                 )
             except PackageFileError as exc:
@@ -170,14 +176,91 @@ def inspect_capture(
         overlay_identities=selected.overlays,
     )
     if dialect != "portable":
-        subject = {"candidate": selected.model_dump(), "content_digest": capture.digest}
-        return PackageInspection(
-            **base,
-            effective_digest=hashlib.sha256(
-                canonical_json(subject).encode()
-            ).hexdigest(),
-            activation_blockers=("adapter_unqualified",),
-        )
+        from .adapters.codex import overlay_for_openai
+        from .adapters.vendor import CATALOG_PATH, catalog_input, inventory_vendor
+
+        try:
+            catalog, retained = catalog_input(capture, catalog_overlay)
+            if dialect == "openai" and manifest is not None:
+                compatibility = (
+                    capture.document(".codex-plugin/plugin.json")
+                    if ".codex-plugin/plugin.json" in capture.files
+                    and "com.openai" not in extensions
+                    else None
+                )
+                overlay = overlay_for_openai(
+                    extensions.get("com.openai"), compatibility
+                )
+                identity = {
+                    key: value
+                    for key, value in manifest.items()
+                    if key in _MANIFEST_FIELDS - {"extensions"}
+                }
+                declaration = {**catalog, **overlay, **identity}
+                portable = manifest
+            else:
+                declaration = {**catalog, **capture.document(selected.root_manifest)}
+                portable = None
+            inventory, edges, variables, extra, blockers, bodies, identity = (
+                inventory_vendor(
+                    capture,
+                    declaration,
+                    dialect,
+                    max_components=MAX_COMPONENTS,
+                    portable_manifest=portable,
+                )
+            )
+            if not retained:
+                blockers = tuple(sorted({*blockers, "catalog_overlay_not_retained"}))
+            overlays = tuple(
+                dict.fromkeys(
+                    (*selected.overlays, *((CATALOG_PATH,) if catalog else ()))
+                )
+            )
+            subject = {
+                "identity": identity,
+                "dialect": dialect,
+                "adapter": selected.adapter_version,
+                "declaration": declaration,
+                "overlays": overlays,
+                "content_digest": capture.digest,
+                "components": {
+                    key: row.model_dump(exclude={"evidence"})
+                    for key, row in inventory.items()
+                },
+                "dependencies": edges,
+                "variables": variables,
+                "blockers": blockers,
+                "bodies": bodies,
+            }
+            evidence = InspectionEvidence(
+                adapter=selected.adapter_version,
+                revision=capture.digest,
+                platform=sys.platform,
+                observed_at=datetime.now(UTC).isoformat(),
+            )
+            inventory = {
+                key: row.model_copy(update={"evidence": (evidence,)})
+                for key, row in inventory.items()
+            }
+            base.update(diagnostics=(*diagnostics, *extra), overlay_identities=overlays)
+            return PackageInspection(
+                **base,
+                inventory=inventory,
+                dependency_edges=edges,
+                variables_json=canonical_json(variables),
+                activation_blockers=blockers,
+                effective_digest=hashlib.sha256(
+                    canonical_json(subject).encode()
+                ).hexdigest(),
+            )
+        except (PackageFileError, ComponentLimitError, TypeError, ValueError) as error:
+            code = (
+                str(error)
+                if isinstance(error, (PackageFileError, ComponentLimitError))
+                else "vendor_interpretation_invalid"
+            )
+            return PackageInspection(**base, rejected=True, activation_blockers=(code,))
     try:
         inventory, edges, variables, extra, blockers, bodies = inventory_package(
             capture, manifest, max_components=MAX_COMPONENTS

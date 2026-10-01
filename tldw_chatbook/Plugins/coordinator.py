@@ -885,7 +885,7 @@ class PluginCoordinator:
             update={"materialized_identity": str(destination)}
         )
         if not os.path.lexists(destination):
-            copied = materialize_package(source, destination)
+            copied = materialize_package(source, destination, dialect=review.inspection.dialect)
             if copied.content_digest != retained.content_digest:
                 raise ValueError("stale package during materialization")
         reinspect(retained, destination)
