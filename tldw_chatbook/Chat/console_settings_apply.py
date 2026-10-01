@@ -236,13 +236,15 @@ def quick_blank_field_default(
     app_config: Mapping[str, object],
     target_defaults: ConsoleSessionSettings,
     name: str,
-) -> object | None:
+) -> tuple[object | None, object | None]:
     """Resolve one blank quick field the way its quick default Save will.
 
     A blankable field (Max tokens) skips the exact model profile, because a
     quick Save of that blank deletes the override (ADR-095 D3); resolving it
     through the profile would give the live chat the cap the Save removes.
-    Every other field takes the target default.
+    Its profile override stays ``None`` ("inherit"), so that Save deletes the
+    override instead of writing the fallback cap (Qodo #2947). Every other
+    field takes the target default as both values.
 
     Args:
         app_config: The live application configuration snapshot.
@@ -250,16 +252,16 @@ def quick_blank_field_default(
         name: The quick field whose submitted value is blank.
 
     Returns:
-        The value the rebased draft and the live chat should carry.
+        ``(effective_value, profile_override)``: the value the live chat
+        carries, and the value the rebased draft saves as the override.
     """
     if name not in QUICK_BLANKABLE_DEFAULT_FIELDS:
-        return getattr(target_defaults, name)
-    return getattr(
-        build_target_default_console_session_settings(
-            app_config,
-            provider_identity_key(target_defaults.provider),
-            normalize_console_model_value(target_defaults.model),
-            excluded_model_profile_fields=frozenset({name}),
-        ),
-        name,
+        value = getattr(target_defaults, name)
+        return value, value
+    fallback = build_target_default_console_session_settings(
+        app_config,
+        provider_identity_key(target_defaults.provider),
+        normalize_console_model_value(target_defaults.model),
+        excluded_model_profile_fields=frozenset({name}),
     )
+    return getattr(fallback, name), None

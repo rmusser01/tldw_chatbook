@@ -4846,15 +4846,6 @@ class ConsoleChatStore:
             self._bump_library_activity_revision(session_id)
             return result
 
-    def final_flush_all_library_activity(
-        self,
-    ) -> dict[str, LibraryActivityFlushResult]:
-        """Perform one bounded shutdown flush for every live Console session."""
-        return {
-            session_id: self.final_flush_library_activity(session_id)
-            for session_id in tuple(self._sessions)
-        }
-
     def _persist_library_activity_batch(
         self,
         session_id: str,
@@ -8623,9 +8614,7 @@ class ConsoleChatStore:
                 current_settings.provider,
                 current_settings.model,
             ) != (settings.provider, settings.model):
-                # Applying a pair is a use of it: Switch model's RECENT reads
-                # an open chat's last use from this, as its row moved too.
-                session.updated_at = _utc_now_iso()
+                session.updated_at = _utc_now_iso()  # a new pair is a use (RECENT)
             self._replace_session_context_policy_live(
                 session,
                 submission.draft.context_policy_overrides,
