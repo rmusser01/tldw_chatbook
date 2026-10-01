@@ -677,12 +677,3 @@ landing in the Library editor with the captured note's Info showing its
 `console` / `conversation:<id>` / `message:<id>` keywords; **Save as…** ▸
 Note still titles after the conversation; Alt+C and Alt+I open the rails at
 235x52.)*
-
-*Verified against fix/task-33620.4-healthy-run-not-blocked — 2026-10-01
-(task-33620.4: a healthy run reads Running / Waiting for approval instead of
-"Blocked / Provider setup needed", and the Inspect handle reads **running**
-while a turn is in flight; the Prompt queue bullets now say which
-strip copy a Preparing turn, an accepted empty draft, a regenerate or
-continue, and a full queue show, and that queue messages never route to
-provider setup. Checked against the composer, send-authority summary and
-prompt-queue presentation and rail-state code and their tests; no live walk.)*
