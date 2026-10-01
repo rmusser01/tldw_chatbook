@@ -1963,8 +1963,9 @@ def test_linux_lane_refuses_callers_session_bus_before_keyring_access(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX Secret Service socket fixture")
-def test_linux_lane_refuses_locked_private_session_before_native_reads(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("reply", [(), (False,), ("error",), (1,), (True,)])
+def test_linux_lane_refuses_unready_private_session_before_native_reads(
+    tmp_path, monkeypatch, reply
 ):
     monkeypatch.setattr(runner.platform, "system", lambda: "Linux")
     root = tmp_path / "credential-session"
@@ -1978,12 +1979,34 @@ def test_linux_lane_refuses_locked_private_session_before_native_reads(
         "lstat",
         lambda path: socket_info if path == root / "bus" else native_lstat(path),
     )
+    calls = []
+
+    def query(message):
+        assert message == ("NameHasOwner", "org.freedesktop.secrets")
+        calls.append("owner")
+        return SimpleNamespace(body=reply)
+
+    def collection(connection, path):
+        calls.append("collection")
+        return SimpleNamespace(is_locked=lambda: True)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "jeepney.bus_messages",
+        SimpleNamespace(
+            message_bus=SimpleNamespace(
+                NameHasOwner=lambda name: ("NameHasOwner", name)
+            )
+        ),
+    )
     monkeypatch.setitem(
         sys.modules,
         "secretstorage",
         SimpleNamespace(
-            dbus_init=lambda: SimpleNamespace(close=lambda: None),
-            Collection=lambda connection, path: SimpleNamespace(is_locked=lambda: True),
+            dbus_init=lambda: SimpleNamespace(
+                close=lambda: None, send_and_get_reply=query
+            ),
+            Collection=collection,
         ),
     )
     import keyring
@@ -2001,8 +2024,11 @@ def test_linux_lane_refuses_locked_private_session_before_native_reads(
             "KEYRING_PROPERTY_PREFERRED_COLLECTION": "/org/freedesktop/secrets/collection/login",
         },
     )
-    with pytest.raises(RuntimeError, match="session_locked"):
+    running = reply == (True,) and reply[0] is True
+    reason = "session_locked" if running else "service_not_running"
+    with pytest.raises(RuntimeError, match=reason):
         runner.validate_native_credential_environment()
+    assert calls == (["owner", "collection"] if running else ["owner"])
 
 
 def test_native_child_environment_preserves_backend_and_bus(tmp_path, monkeypatch):

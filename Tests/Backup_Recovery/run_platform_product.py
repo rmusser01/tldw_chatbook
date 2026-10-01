@@ -494,8 +494,16 @@ def validate_native_credential_environment() -> str:
         ):
             raise RuntimeError("native_credential_private_collection_required")
         import secretstorage
+        from jeepney.bus_messages import message_bus
 
         with closing(secretstorage.dbus_init()) as connection:
+            # A collection query can auto-activate another daemon before the
+            # explicitly unlocked private daemon has finished starting.
+            owner = connection.send_and_get_reply(
+                message_bus.NameHasOwner("org.freedesktop.secrets")
+            )
+            if len(owner.body) != 1 or owner.body[0] is not True:
+                raise RuntimeError("native_credential_service_not_running")
             collection = secretstorage.Collection(
                 connection, _LINUX_CREDENTIAL_COLLECTION
             )
