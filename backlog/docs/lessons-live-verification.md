@@ -1727,7 +1727,7 @@ earlier script got away with it only because it measured cells that sat after an
 explicit sequence on the same line.
 
 **What to do.** Parse the whole dump as one stream and carry fg, bg and attributes
-across newlines (`qa/model-config-p3-2026-09-28/task-6/ansi_cells.py`, `rows()`). In a
+across newlines (Phase 3's one-off `ansi_cells.py` did this in `rows()`; it is not kept). In a
 truecolor Textual capture every painted cell has a background, so a `None`
 *background* is a parser bug, not a transparent cell. A `None` foreground can be real:
 `\x1b[39m` (default foreground) is exactly what the sample above emits for blank cells.
