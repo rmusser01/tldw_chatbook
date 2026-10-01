@@ -1440,6 +1440,7 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     assert store.preparation_for_session(session.id) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "bypass"])
 async def test_queued_reclaim_thinking_refusal_returns_owner_to_recoverable_head(
