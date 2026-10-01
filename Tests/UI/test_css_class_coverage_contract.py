@@ -324,16 +324,16 @@ def test_f_string_default_css_block_is_visible_to_styled_tokens():
     here, or it would wrongly need a KNOWN_UNSTYLED entry that
     test_registry_entries_are_still_unstyled could never flag as stale.
 
-    Only .console-settings-error is pinned here, not all four siblings:
-    css_selectors() reads a rule's selector text from before the first
-    brace IT matches, which is reliable only when nothing brace-bearing
-    (like this file's `{MODAL_CONTROL_HEIGHT}` interpolations) precedes the
-    rule's own opening brace pair inside the SAME body -- true for
-    .console-settings-error (no interpolation in its body) but not for
-    .console-settings-modal-row/-label (interpolated declarations before/
-    inside them steal the match), which is exactly why f-string DEFAULT_CSS
-    blocks stay unreliable enough that KNOWN_UNSTYLED tokens must keep
-    verifying styling against the bundle too, not this regex alone."""
+    Only .console-settings-error is pinned here: css_selectors() reads a
+    rule's selector text from before the first brace IT matches, which is
+    reliable only when nothing brace-bearing (like this file's
+    `{MODAL_BODY_MIN_HEIGHT}` interpolation) precedes the rule's own opening
+    brace pair inside the SAME body -- true for .console-settings-error (no
+    interpolation in its body). The interpolated .console-settings-modal-row/
+    -label rules that used to show the failure moved to the app sheets in
+    TASK-33003.2, but the hazard is why f-string DEFAULT_CSS blocks stay
+    unreliable enough that KNOWN_UNSTYLED tokens must keep verifying styling
+    against the bundle too, not this regex alone."""
     path = PACKAGE / "Widgets" / "Console" / "console_settings_modal.py"
     text = path.read_text(encoding="utf-8")
     blocks = list(DEFAULT_CSS_BLOCK.finditer(text))

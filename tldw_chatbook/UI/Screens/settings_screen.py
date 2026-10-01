@@ -893,6 +893,16 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
+# TASK-33003.7: from this width the Scope Inspector keeps 36 columns
+# (.settings-inspector-floor) and the detail pane still keeps 56: a 24-cell
+# label plus a 20-cell field (test_settings_compact_fields). Rail and
+# gutters take 42.
+SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + 56 + 36
+# cubic review of #2937: the detail pane width that fits the widest action row
+# (Library > RAG's built-in profile row, 83 cells). Narrower, the rows stack:
+# at 140 columns the floor above leaves the pane 62, which cut "Open Advanced
+# Config" to "Open Adva" (test_settings_action_rows_keep_every_button_whole).
+SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH = 84
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
@@ -2782,19 +2792,39 @@ class SettingsRegion(Vertical):
     matching (Textual type selectors match base classes too).
     """
 
-    def __init__(self, builder: Callable[[], ComposeResult], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        builder: Callable[[], ComposeResult],
+        *,
+        stack_actions_below: int = 0,
+        **kwargs: Any,
+    ) -> None:
         """Store the screen-side builder for this region's children.
 
         Args:
             builder: Zero-argument callable yielding the region's children.
+            stack_actions_below: Below this own width the region carries
+                ``settings-stacked-actions``, which stacks its action rows
+                (0: never).
             **kwargs: Forwarded to ``Vertical`` (id, classes, ...).
         """
         super().__init__(**kwargs)
         self._builder = builder
+        self._stack_actions_below = stack_actions_below
 
     def compose(self) -> ComposeResult:
         """Yield this region's children from the screen's builder."""
         yield from self._builder()
+
+    def on_resize(self, event: Resize) -> None:
+        """Stack the action rows while one cannot fit (a Horizontal never wraps).
+
+        Args:
+            event: The resize event carrying this region's new size.
+        """
+        self.set_class(
+            event.size.width < self._stack_actions_below, "settings-stacked-actions"
+        )
 
 
 @contextmanager
@@ -4366,6 +4396,9 @@ class SettingsScreen(BaseAppScreen):
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
 
+    def _inspector_floor_now(self) -> bool:
+        return self.size.width >= SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH
+
     def _sync_responsive_workbench(self) -> None:
         """Toggle compact workbench classes to match the terminal width.
 
@@ -4374,6 +4407,12 @@ class SettingsScreen(BaseAppScreen):
         recompose=True reactives cannot drop them; this sync only handles
         live resizes between recomposes.
         """
+        try:
+            self.query_one("#settings-impact-pane").set_class(
+                self._inspector_floor_now(), "settings-inspector-floor"
+            )
+        except QueryError:
+            pass
         compact = self._workbench_compact_now()
         if self._workbench_compact == compact:
             return
@@ -23340,6 +23379,7 @@ class SettingsScreen(BaseAppScreen):
                 # which read the category's content).
                 detail_pane = SettingsRegion(
                     self._compose_detail_pane_region,
+                    stack_actions_below=SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH,
                     id="settings-detail-pane",
                     classes="destination-workbench-pane" + pane_class_suffix,
                 )
@@ -23359,6 +23399,9 @@ class SettingsScreen(BaseAppScreen):
                 # this the 1fr body below collapses to zero (StyledSettings
                 # harness caught it; the plain harness cannot).
                 impact_pane.add_class("h-full")
+                impact_pane.set_class(
+                    self._inspector_floor_now(), "settings-inspector-floor"
+                )
                 yield impact_pane
             # task-2835: keyboard-reachable mirror of the focused control's
             # hover-only tooltip; updated by handle_descendant_focus.
@@ -25608,10 +25651,14 @@ class SettingsScreen(BaseAppScreen):
         self._reveal_settings_focus_after_refresh()
 
     def _reveal_settings_focus_after_refresh(self) -> None:
-        """Keep the same attached control visible after a layout change."""
+        """Keep the same attached control, and its field guide, visible after a layout change."""
         focused = self.focused
         if focused is None:
             return
+        if focused.id and focused.id == self._active_settings_field_id:
+            # TASK-33003.9: a resize re-wraps the inspector but keeps its
+            # scroll offset, which slid the guide past the fold.
+            self._scroll_impact_pane_to_field_guide(self._active_category_id())
 
         def reveal_retained_focus() -> None:
             if self.is_current and focused is self.focused and focused.is_attached:

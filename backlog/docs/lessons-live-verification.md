@@ -1714,6 +1714,46 @@ for the comment to have drifted out of sync with a later refactor.
 
 ---
 
+## `capture-pane -e` colours carry across lines — parse the dump as one stream (TASK-33003.6, 2026-09-29)
+
+**What happened.** Measuring the Settings category rail's new focus edge from a
+`tmux capture-pane -p -e` dump, the first cells of every rail row came back with no
+background at all, so the edge's contrast could not be taken. The parser reset its
+colour state at every newline, like the Chat settings script before it. tmux writes an
+SGR sequence only when a colour changes, so a captured line starts in whatever state
+the previous line ended in: the rail row's raw text was
+`│\x1b[39m \x1b[38;2;0;255;0m \x1b[39m …` with no `48;2;…` until the fifth cell. The
+earlier script got away with it only because it measured cells that sat after an
+explicit sequence on the same line.
+
+**What to do.** Parse the whole dump as one stream and carry fg, bg and attributes
+across newlines (Phase 3's one-off `ansi_cells.py` did this in `rows()`; it is not kept). In a
+truecolor Textual capture every painted cell has a background, so a `None`
+*background* is a parser bug, not a transparent cell. A `None` foreground can be real:
+`\x1b[39m` (default foreground) is exactly what the sample above emits for blank cells.
+
+## A capture taken after resizing the session carries the first size's scroll state (TASK-33003.9, 2026-09-30)
+
+**What happened.** The Phase 2 capture of Settings ▸ Console Behavior with the
+Temperature fallback focused at 211x44 showed the Focused field guide cut off after
+"Saved as", with "Validation" below the inspector's fold. The capture triage re-drove it
+live at 211x44 by click, and by Shift+Tab then Tab, and every time the whole guide was in
+view, so the filed task called the route unknown. The capture was not a fresh 211x44
+state: the captures were taken at 235x52 and at 211x44, and in this one the terminal had
+been resized from 235x52 after Temperature took focus. Focus pins the guide once
+(`_scroll_impact_pane_to_field_guide`). The resize re-wrapped the narrower inspector but
+kept the 235x52 scroll offset. A pilot that focused at 235x52 and then called
+`resize_terminal(211, 44)` put every guide row on the captured screen row ("Focused
+setting" y=32, "Purpose" y=34, "Saved as" y=38, "Validation" y=40 against a 16..39
+view). The same pilot started directly at 211x44 put the guide at y=18..27.
+
+**What to do.** When a capture shows a state that a re-drive at that size cannot
+produce, ask how the capture reached that size before hunting for a focus route. Re-drive
+in the same size order, and treat "resized after the focus" as a route of its own.
+Anything that scrolls to follow focus has to run again on a resize: here
+`SettingsScreen._reveal_settings_focus_after_refresh`, which already ran on resize for
+the focused control, now re-pins the guide too.
+
 ## A model's response can reveal in the transcript UI as one late batch, not incrementally — "stop while nothing is visible yet" is not proof the click missed (task-18300, 2026-08-20)
 
 **What happened.** Live-verifying Console's Stop-mid-stream capture (a real

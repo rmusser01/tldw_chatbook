@@ -5274,21 +5274,188 @@ async def test_settings_active_category_uses_explicit_nav_marker():
 
 
 def test_settings_active_category_focus_style_keeps_label_readable():
+    """Deliberately rewritten for TASK-33003.6 AC#6: the active row's focus
+    rule used to repeat the unfocused active rule, so focus on the current
+    category was invisible. The intent is kept (a readable label: no
+    reverse, bold underline), and the focused active row now also carries
+    the thick focus edge that the unfocused one lacks."""
+    from Tests.UI.test_non_obscuring_focus_contract import css_block
+
     css_path = (
         Path(__file__).resolve().parents[2]
         / "tldw_chatbook/css/features/_settings.tcss"
     )
     css = css_path.read_text()
-    match = re.search(
-        r"Button\.settings-category-button\.settings-active-section:focus\s*\{(?P<body>[^}]*)\}",
-        css,
-        flags=re.DOTALL,
+    active = "Button.settings-category-button.settings-active-section"
+    focused = css_block(css, f"{active}:focus")
+    rest = css_block(css, active)
+
+    assert "reverse" not in focused
+    assert "text-style: bold underline;" in focused
+    assert "border-left: thick $ds-active-fg;" in focused
+    assert "border-left" not in rest
+
+
+def _styled_settings_host():
+    """Settings under the production sheets, agentic_terminal registered."""
+    from typing import ClassVar
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS
+    from tldw_chatbook.css.Themes.themes import agentic_terminal_theme
+
+    class _StyledHost(DestinationHarness):
+        CSS_PATH: ClassVar[list[str]] = [str(path) for path in APP_STYLESHEETS]
+
+    host = _StyledHost(_build_test_app(), "settings")
+    host.register_theme(agentic_terminal_theme)
+    return host
+
+
+def _rendered_cell(screen, x: int, y: int):
+    """(glyph, fg, bg) the compositor paints at screen cell (x, y)."""
+    position = 0
+    for segment in screen._compositor.render_strips()[y]:
+        if position + len(segment.text) > x:
+            return segment.text[x - position], segment.style.color, segment.style.bgcolor
+        position += len(segment.text)
+    raise AssertionError(f"({x}, {y}) is off screen")
+
+
+def _wcag_ratio(first, second) -> float:
+    from textual.color import Color
+
+    from tldw_chatbook.css.Themes.themes import _contrast_ratio
+
+    return _contrast_ratio(
+        Color.from_rich_color(first), Color.from_rich_color(second)
     )
 
-    assert match
-    body = match.group("body")
-    assert "reverse" not in body
-    assert "text-style: bold underline;" in body
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_rail_focus_draws_a_readable_edge_on_every_row(request):
+    """TASK-33003.6 AC#3: a focused category row differs from the same row
+    unfocused by a thick left edge at 3:1 or more against the row, for the
+    active row and an inactive one, in agentic_terminal and a light theme.
+    Focus swapped only the fill before (1.1:1), and not at all on the active
+    row. The edge's column is blank at rest, so the label never moves."""
+    host = _styled_settings_host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        for theme in ("agentic_terminal", "textual-light"):
+            host.theme = theme
+            await pilot.pause()
+            rows = [
+                row
+                for row in screen.query("Button.settings-category-button")
+                if row.region.area
+            ]
+            active = next(r for r in rows if r.has_class("settings-active-section"))
+            inactive = next(r for r in rows if r is not active)
+            for row in (active, inactive):
+                host.set_focus(None)
+                await pilot.pause()
+                label_at = str(screen._compositor.render_strips()[row.region.y].text).find(
+                    str(row.label).strip()
+                )
+                glyph, _fg, rest_bg = _rendered_cell(screen, row.region.x, row.region.y)
+                assert glyph == " ", (theme, row.id, glyph)
+                row.focus()
+                await pilot.pause()
+                glyph, edge, _bg = _rendered_cell(screen, row.region.x, row.region.y)
+                _, _, focus_bg = _rendered_cell(screen, row.region.x + 1, row.region.y)
+                assert glyph == "█", (theme, row.id, glyph)
+                assert _wcag_ratio(edge, rest_bg) >= 3.0, (theme, row.id)
+                assert _wcag_ratio(edge, focus_bg) >= 3.0, (theme, row.id)
+                assert str(screen._compositor.render_strips()[row.region.y].text).find(
+                    str(row.label).strip()
+                ) == label_at, (theme, row.id)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_highlighted_option_is_a_readable_bar(request):
+    """TASK-33003.6 AC#5: in Settings ▸ Providers & Models the highlighted
+    provider differs from the other rows by 3:1 and its label stays AA on
+    the bar, focused or not, in agentic_terminal and a light theme. The
+    shared OptionList contract painted $surface on $panel (1.12:1)."""
+    host = _styled_settings_host()
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        picker.scroll_visible(animate=False)
+        # The focus outline paints over this compact list's first and last
+        # rows (TASK-33007.2 owns that); keep the highlight off them.
+        picker.scroll_to(y=picker.scroll_offset.y + 2, animate=False)
+        await pilot.pause()
+        for theme in ("agentic_terminal", "textual-light"):
+            host.theme = theme
+            for focused in (False, True):
+                if focused:
+                    picker.focus()
+                else:
+                    host.set_focus(None)
+                await pilot.pause()
+                box = picker.content_region
+                label = str(picker.get_option_at_index(picker.highlighted).prompt)
+                strips = screen._compositor.render_strips()
+                rows = {
+                    y: strips[y].text[box.x : box.right]
+                    for y in range(box.y, box.bottom)
+                }
+                # The outline also covers each row's first cell when focused.
+                needle = label.strip()[1:8]
+                row_y = next(y for y, text in rows.items() if needle in text)
+                other_y = next(
+                    y for y, text in rows.items() if y != row_y and text.strip()
+                )
+                ink_x = box.x + rows[row_y].index(needle)
+                _, ink, bar = _rendered_cell(screen, ink_x, row_y)
+                _, _, rest = _rendered_cell(screen, ink_x, other_y)
+                assert _wcag_ratio(bar, rest) >= 3.0, (theme, focused, bar, rest)
+                assert _wcag_ratio(ink, bar) >= 4.5, (theme, focused, ink, bar)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_focused_button_keeps_its_contrast(request):
+    """TASK-33003.6 AC#4: focus never lowers a Providers & Models button's
+    contrast against the card. `#settings-shell Button:focus` painted the
+    resting `$ds-surface-raised`; with Textual's focus tint on top, a focused
+    default button fell toward the card on textual-light (1.08 -> 1.02:1).
+    Review round 1: dropping that rule left the house tint, which sat closer
+    to the card than the resting fill on 14 themes (paradise_virtua 2.47 ->
+    1.12, earthy_nature 1.70 -> 1.07); FOCUS_FILL_VARIABLE pins those."""
+    from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
+    themes = ("agentic_terminal", "textual-light", "paradise_virtua", "earthy_nature")
+    host = _styled_settings_host()
+    for theme in ALL_THEMES:
+        if theme.name in themes:
+            host.register_theme(theme)
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        button = screen.query_one("#settings-test-provider", Button)
+        button.scroll_visible(animate=False)
+        await pilot.pause()
+        for theme in themes:
+            host.theme = theme
+            host.set_focus(None)
+            await pilot.pause()
+            card = button.parent.background_colors[1].rich_color
+            _, _, rest = _rendered_cell(screen, button.region.x + 1, button.region.y)
+            button.focus()
+            await pilot.pause()
+            _, _, focused = _rendered_cell(screen, button.region.x + 1, button.region.y)
+            assert _wcag_ratio(focused, card) >= _wcag_ratio(rest, card), (
+                theme,
+                rest,
+                focused,
+                card,
+            )
 
 
 def test_settings_action_button_focus_style_keeps_label_readable():

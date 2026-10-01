@@ -434,6 +434,50 @@ button, the Model section's **Configure** button in the left rail, or the
   applies to this session only. Save as default also writes provider +
   streaming defaults to config."
 
+The modal is a dense form: every field, dropdown and button in it (the
+**Model and generation** / **Context and memory** tabs included) is one row
+tall, with its label on the same row. A thin bar at a field's left edge marks
+it as editable; the focused field's bar turns thick, its row fills with the
+focus colour and its value turns bold. The bars and the modal's frame are
+drawn at 3:1 or more against the background in every theme, so they stay
+visible. In an open dropdown or the model list, the highlighted choice is a
+solid bar in the theme's primary text colour with its label in the panel
+colour, and a focused **Apply to this chat** keeps its colour instead of
+dimming; a focused plain button always stands out from the panel at least as much as it does unfocused. Each field is as wide as the value it
+holds, not as wide as the window: a number gets 12 columns, a dropdown is as
+wide as its longest choice, and text is capped by what it holds (your name in
+this chat 32, the provider and model 48, an endpoint URL 64). The fields keep
+their width on a wider terminal. The reasoning and thinking dropdowns
+(**Reasoning effort**, **Reasoning summary**, **Verbosity**, **Thinking**)
+show their choice, or "Select" when none is set. A value saved earlier that
+the dropdown does not offer is not dropped silently: "Saved value is
+unavailable. Choose one of: …" appears beside the dropdown in the error
+colour, and saving waits until you pick a choice. When the form is taller
+than the window,
+"▼ more — scroll for the rest" sits under it while anything is left below and
+disappears once you have scrolled to the bottom; scroll back up and it
+returns.
+
+Closing never throws edits away without asking. Left of **Cancel**, the
+footer reads "Esc close" while nothing is edited, and "Esc close (asks: 2
+unsaved)" once something is, counting edits in both tabs and any carried in
+from the **Alt+M** popover. Changing a value back to what the chat already
+uses is not an edit. Clearing **Temperature** or **Top P** is one, and so is
+moving **Streaming** between Inherit, On and Off, even to the value Inherit
+already gives; switching model can move it to Inherit, which counts too.
+With edits, **Esc**, a click outside the modal, and
+**Cancel** open a prompt that names the edited fields ("2 unsaved edits to
+this chat: Temperature, Max tokens.") and offers **Apply to this chat**
+(Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
+back in the field you were editing. Apply goes through the same path as the
+footer's **Use for this conversation** button, so it writes nothing to
+`config.toml`; if a value is invalid, the modal stays open with the error
+summary. When Apply is unavailable (a run is active, say), the prompt says
+so, shows **Apply to this chat** dimmed, and starts on **Keep editing**. A
+pending memory reset or a running compaction still asks first, and the
+footer says so ("Esc close (asks: memory reset)", "Esc close (asks:
+compaction running)"); once you answer that, the unsaved prompt follows.
+
 Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named

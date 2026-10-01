@@ -16,7 +16,7 @@ colors:
   ready-success: "$success"
   warning-amber: "$warning"
   blocked-error: "$error"
-  grid-line: "$surface-lighten-1"
+  grid-line: "$tldw-boundary"
 typography:
   display:
     fontFamily: "terminal emulator monospace"
@@ -253,16 +253,35 @@ one-row field. The Console composer joined the convention in
 task-17651 — it renders as a one-row bar (growing to four with the
 draft) whose left edge recolors for the has-draft state and flips to
 the thick focus accent, and the Console workbench frame now closes at
-the workspace grid's single bottom border. The convention for these
+the workspace grid's single bottom border. Chat settings (the Console's
+`ConsoleSettingsModal`) is a dense form too (TASK-33003.2): every Input,
+Select and in-form Button is one row from `$ds-control-height-compact`,
+and its Inputs and Selects carry the left edge described below. The convention for these
 fields (task-1586):
 
 - **Rest:** every editable field carries a one-column left edge
   (`border-left: solid $ds-control-edge`). The edge's *presence* is the
   carrier — a structural marker separating controls from prose — so
-  color is reinforcement, never the sole signal. Muted at rest.
+  color is reinforcement, never the sole signal. Quieter than text at
+  rest, but at least 3:1 against both surfaces in every theme
+  (TASK-33003.6): `$ds-control-edge` and `$ds-grid-line` resolve to
+  `$tldw-boundary`, which `ensure_readable_text_hues` (themes.py) works out
+  per theme, user themes included.
 - **Focus:** the edge flips to `thick $ds-action-focus` and the
   background swaps to `$ds-focus-bg` (the task-345 focus surface) with
   bold text. Three concurrent signals: edge weight, background, weight.
+  The Settings category rail uses the same thick edge, in `$ds-active-fg`
+  (3:1 on every row fill). A variant Button (primary, success, warning,
+  error) keeps its fill on focus; the focus tint would make it darker. A
+  default Button's focus fill is `$tldw-focus-fill`: the focus tint where
+  that sits at least as far from a `$panel` card as the resting `$surface`
+  fill (and 1.25x off a `$surface` pane, label AA), otherwise a colour
+  `ensure_readable_text_hues` works out per theme (22 of 89 themes).
+  Textual's 5% focus `background-tint` is dropped for every Button.
+- **Highlighted list rows:** where the shared `$surface` highlight reads
+  under 3:1 (Chat settings; Settings ▸ Providers & Models; the Theme
+  picker), the highlighted option is an inverted bar: `$ds-active-fg`
+  fill, `$ds-surface-panel` label.
 - **Toggles and switches:** always paired with a text-state word
   ("On"/"Off", "Enabled"/"Disabled") — the word is the state.
 - **Inert actions:** disabled buttons carry a text annotation for *why*

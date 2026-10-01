@@ -96,7 +96,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7802,
+    # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
+    # the control-height rules to app CSS, .4/.5/.8 spent part of that.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7764,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

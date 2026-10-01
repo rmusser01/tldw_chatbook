@@ -15,7 +15,8 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-$ds-grid-line: $surface-lighten-1;
+
+$ds-grid-line: $tldw-boundary;
 $ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
@@ -30,7 +31,7 @@ $ds-input-focus-border: $primary;
 $ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
 
-$ds-control-edge: $surface-lighten-2;
+$ds-control-edge: $tldw-boundary;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;
@@ -1258,20 +1259,20 @@ Button:hover {
 }
 
 
-Button:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    outline: none;
-}
-
-
+Button:focus,
 Button:hover:focus {
-    background: $ds-focus-bg;
+    background: $tldw-focus-fill;
+    background-tint: transparent;
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
 }
+
+
+Button.-primary:focus { background: $primary; }
+Button.-success:focus { background: $success; }
+Button.-warning:focus { background: $warning; }
+Button.-error:focus { background: $error; }
 
 
 Button:disabled,
@@ -1820,6 +1821,15 @@ LibraryFileNotesWorkspace Tree:focus > .tree--cursor {
     text-style: bold underline;
 }
 
+
+ConsoleSettingsModal OptionList > .option-list--option-highlighted,
+ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted,
+#settings-providers-models-card OptionList > .option-list--option-highlighted {
+    background: $ds-active-fg;
+    color: $ds-surface-panel;
+    text-style: bold;
+}
+
 OptionList > .option-list--option-hover,
 Tree > .tree--highlight-line {
     background: $surface-lighten-1;
@@ -2177,7 +2187,6 @@ FileSave InputBar Select,
 FileOpen InputBar Select,
 EnhancedFileDialog InputBar Select {
     width: $ds-size-24;
-    margin-bottom: $ds-space-0;
 }
 
 
@@ -2476,13 +2485,15 @@ ConsoleSettingsModal {
     align: center middle;
 }
 
+
 ConsoleSettingsModal Input {
     width: $ds-width-fill;
     min-width: $ds-size-0;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
     padding: $ds-space-0 $ds-space-1;
-    border: tall $ds-grid-line;
+    border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
@@ -2490,9 +2501,10 @@ ConsoleSettingsModal Input {
 ConsoleSettingsModal Select {
     width: $ds-width-fill;
     min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
     border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
@@ -2527,9 +2539,10 @@ ConsoleSettingsModal Select > SelectCurrent .arrow {
 }
 
 ConsoleSettingsModal Input:focus {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    border: tall $ds-input-focus-accent;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    border-left: thick $ds-input-focus-accent;
     outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
@@ -2549,7 +2562,9 @@ ConsoleSettingsModal Input > .input--selection {
 ConsoleSettingsModal Select:focus {
     border: none;
     border-bottom: none;
-    outline: solid $ds-input-focus-accent;
+    border-left: thick $ds-input-focus-accent;
+
+    outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
 }
@@ -2560,32 +2575,17 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
     text-style: bold;
 }
 
+
 ConsoleSettingsModal Select > SelectOverlay {
     padding: $ds-space-0 $ds-space-1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
+    background-tint: transparent;
     color: $ds-text-primary;
     min-width: $ds-size-30;
 }
 
-ConsoleSettingsModal Select > SelectOverlay Option {
-    padding: $ds-space-0 $ds-space-2;
-    min-height: $ds-size-3;
-    background: $ds-surface-inspector;
-    color: $ds-text-primary;
-}
 
-ConsoleSettingsModal Select > SelectOverlay Option:hover {
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-}
-
-ConsoleSettingsModal Select > SelectOverlay Option.-selected {
-    padding: $ds-space-0 $ds-space-2;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
 
 ConsolePromptPickerModal {
     align: center middle;
@@ -3907,14 +3907,9 @@ LibraryIngestCanvas Collapsible Contents {
 
 
 LibraryIngestCanvas Collapsible > CollapsibleTitle:focus {
-    border-bottom: none;
     text-style: bold reverse;
     outline-left: heavy $ds-focus-accent;
     outline-right: heavy $ds-focus-accent;
-}
-
-LibraryIngestCanvas Collapsible.-collapsed > CollapsibleTitle:focus {
-    border-bottom: none;
 }
 
 
@@ -4851,12 +4846,7 @@ Collapsible > CollapsibleTitle:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-bottom: solid $ds-focus-accent;
     outline: none;
-}
-
-Collapsible.-collapsed > CollapsibleTitle:focus {
-    border-bottom: solid $ds-focus-accent;
 }
 
 
@@ -5461,6 +5451,7 @@ StatCard:hover {
 }
 
 #settings-theme-card-column .settings-action-row {
+    layout: horizontal;
     height: auto;
 }
 #settings-theme-card-column .theme-action-group {
@@ -7240,13 +7231,6 @@ Button.console-rail-focus-carrier:focus {
     color: $ds-text-primary;
 }
 
-#console-chat-tabs,
-#console-chat-tabs #chat-sessions-container,
-#console-chat-tabs .chat-session {
-    height: $ds-height-full;
-    min-height: $ds-size-0;
-}
-
 
 #console-task-surface {
     height: auto;
@@ -8184,18 +8168,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     margin: $ds-space-0;
 }
 
-#console-workspace-tree-selection-context {
-    width: $ds-percent-99;
-    max-width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    color: $ds-text-muted;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-}
-
 .console-workspace-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -8210,14 +8182,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     min-width: $ds-size-0;
     height: $ds-size-3;
     min-height: $ds-size-3;
-}
-
-#console-workspace-tree-star {
-    width: $ds-width-full;
-    min-width: $ds-size-6;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-0;
 }
 
 #console-workspace-search-status {
@@ -8411,10 +8375,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     text-style: bold;
 }
 
-#console-chat-tabs {
-    display: none;
-}
-
 #console-session-surface .chat-empty-state {
     min-height: $ds-size-5;
     padding: $ds-space-0 $ds-space-1;
@@ -8566,6 +8526,19 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
+
+ConsoleSettingsModal Collapsible {
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+
+ConsoleSettingsModal Collapsible > Contents {
+    background: $ds-surface-panel;
+}
+
 #console-settings-provider-model-section,
 #console-settings-connection {
     width: $ds-width-full;
@@ -8591,15 +8564,76 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     min-width: $ds-size-10;
     max-width: $ds-size-23;
     height: auto;
-    min-height: $ds-size-3;
+    min-height: $ds-control-height-compact;
     content-align: left middle;
     text-wrap: wrap;
+}
+
+
+ConsoleSettingsModal Button,
+ConsoleSettingsModal #console-settings-view-tabs,
+ConsoleSettingsModal #console-settings-default-recovery-actions,
+ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+ConsoleSettingsModal .console-context-action-row {
+    height: auto;
+    min-height: $ds-control-height-compact;
 }
 
 .console-settings-control {
     width: $ds-width-fill;
     min-width: $ds-size-0;
     max-width: $ds-percent-75;
+}
+
+
+#console-settings-generation-advanced Input,
+#console-settings-context-view Input {
+    width: $ds-size-12;
+}
+
+#console-settings-verbosity,
+#console-settings-thinking-effort {
+    width: $ds-size-11;
+}
+
+#console-settings-reasoning-effort,
+#console-context-thinking-history-policy {
+    width: $ds-size-12;
+}
+
+#console-settings-reasoning-summary {
+    width: $ds-size-13;
+}
+
+#console-context-budget-mode,
+#console-context-compaction-mode {
+    width: $ds-size-14;
+}
+
+#console-context-compaction-representation {
+    width: $ds-size-22;
+}
+
+#console-context-failure-behavior {
+    width: $ds-size-23;
+}
+
+#console-context-carry-forward,
+#console-settings-user-display-name {
+    max-width: $ds-size-32;
+}
+
+#console-settings-provider-picker,
+#console-settings-model-picker {
+    max-width: $ds-size-48;
+}
+
+#console-settings-base-url {
+    max-width: $ds-size-64;
 }
 
 .console-settings-modal-actions {
@@ -8717,7 +8751,9 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     max-width: $ds-console-settings-wide-max-width;
 }
 
+
 .console-settings-error {
+    width: $ds-width-fill;
     height: auto;
     min-height: $ds-size-1;
     max-height: $ds-size-3;
@@ -9246,13 +9282,6 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     width: $ds-width-fill;
     min-width: $ds-size-10;
     color: $ds-value-fg;
-}
-
-#console-model-section-provider .console-model-section-value,
-#console-model-section-model .console-model-section-value {
-    text-wrap: wrap;
-    max-height: $ds-size-3;
-    overflow: hidden;
 }
 
 #console-model-section-temperature .console-model-section-value,
@@ -11377,11 +11406,6 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 }
 
 
-#chat-prompts-collapsible Input,
-#chat-prompts-collapsible ListView,
-#chat-prompts-collapsible Button {
-    margin-bottom: $ds-space-stack;
-}
 #chat-prompt-list-view {
     height: $ds-size-8;
     border: round $ds-surface-raised;
@@ -11982,28 +12006,11 @@ WatchlistsOperationCard {
 }
 
 
-Collapsible {
-    margin-bottom: $ds-space-1;
-}
-
-Collapsible > CollapsibleTitle {
-    background: $primary-background-darken-1;
-    color: $text;
-    padding: $ds-space-0 $ds-space-1;
-    height: $ds-size-3;
-}
-
 Collapsible.-active > CollapsibleTitle {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
     border-bottom: solid $ds-focus-accent;
-}
-
-
-Select {
-    width: $ds-width-full;
-    margin-bottom: $ds-space-1;
 }
 
 
@@ -12505,17 +12512,6 @@ VerticalScroll.media-content-right-pane > Markdown {
     margin-bottom: $ds-space-1;
     border: round $primary-lighten-2;
     background: $primary-background;
-}
-
-#rename-buttons, #merge-buttons {
-    layout: horizontal;
-    height: $ds-size-3;
-    align: center middle;
-}
-
-#rename-buttons Button, #merge-buttons Button {
-    margin: $ds-space-0 $ds-space-1;
-    min-width: $ds-size-12;
 }
 
 
@@ -14177,19 +14173,6 @@ EvalsWindow {
 }
 
 
-Collapsible {
-    margin-bottom: $ds-space-1;
-    border: tall $surface;
-    background: $panel;
-}
-
-Collapsible > Container {
-    padding: $ds-space-1;
-}
-
-Collapsible.-collapsed {
-    margin-bottom: $ds-space-1;
-}
 
 
 
@@ -17732,14 +17715,12 @@ SnapshotViewModal {
     width: $ds-size-24;
     min-width: $ds-size-18;
     margin-left: $ds-space-1;
-    margin-bottom: $ds-space-0;
 }
 
 RemoteView.-narrow #remote-variant-sort {
     width: $ds-width-full;
     min-width: $ds-size-0;
     margin-left: $ds-space-0;
-    margin-bottom: $ds-space-0;
 }
 
 

@@ -1998,10 +1998,10 @@ async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
 @pytest.mark.asyncio
 async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
     """Without an explicit width, `_conversations.tcss`'s bare `Select {
-    width: 100%; }` rule would size a row's decision Select to the FULL
-    row width (not just its own share), overlapping/clipping it behind the
-    header and args Statics laid out before it in the row's Horizontal --
-    verified empirically before landing the fix. Asserts all three
+    width: 100%; }` rule (retired in TASK-33003.1) sized a row's decision
+    Select to the FULL row width (not just its own share), overlapping/
+    clipping it behind the header and args Statics laid out before it in the
+    row's Horizontal -- verified empirically before landing the fix. Asserts all three
     per-row widgets render with real size AND stay within the row's own
     bounds in left-to-right order, under the real bundled stylesheet.
 
@@ -2181,8 +2181,8 @@ def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bun
     None
 ):
     """T9: id-scoped bundle rule directly on `.approval-row-decision`
-    (a class selector -- higher specificity than `_conversations.tcss`'s
-    bare `Select { width: 100%; }` type selector, so it wins regardless of
+    (a class selector -- it outranked `_conversations.tcss`'s bare `Select
+    { width: 100%; }` type selector, retired in TASK-33003.1, regardless of
     the two files' relative concatenation order in build_css.py) -- same
     Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
     / `#mcp-audit-filter-decision` above, applied to the approval card."""

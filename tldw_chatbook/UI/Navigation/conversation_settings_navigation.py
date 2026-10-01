@@ -14,17 +14,32 @@ from ...Utils.input_validation import (
     validate_navigation_provider_key,
 )
 
+# Must cover every focus target a Chat settings draft snapshot may carry
+# (TASK-33003.10: a missing id failed the Configure credential handoff).
 _FOCUS_CONTROL_IDS = frozenset(
     {
         "console-settings-provider",
+        "console-settings-provider-picker",
         "console-settings-model-picker",
         "console-settings-model-select",
         "console-settings-model-input",
         "console-settings-model-custom",
         "console-settings-base-url",
+        "console-settings-user-display-name",
         "console-settings-temperature",
+        "console-settings-top-p",
+        "console-settings-min-p",
+        "console-settings-top-k",
         "console-settings-max-tokens",
+        "console-settings-seed",
+        "console-settings-presence-penalty",
+        "console-settings-frequency-penalty",
         "console-settings-streaming",
+        "console-settings-reasoning-effort",
+        "console-settings-reasoning-summary",
+        "console-settings-verbosity",
+        "console-settings-thinking-effort",
+        "console-settings-thinking-budget-tokens",
         "console-settings-view-model",
         "console-settings-view-context",
         "console-context-budget-mode",

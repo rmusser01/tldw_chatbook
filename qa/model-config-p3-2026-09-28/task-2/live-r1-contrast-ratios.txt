@@ -1,0 +1,72 @@
+## textual-dark 211x44
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.56:1   (62, 62, 62) on (30, 30, 30)
+rest edge fg vs rest fill           1.56:1   (62, 62, 62) on (30, 30, 30)
+focus edge `█` fg vs surface        3.68:1   (1, 120, 212) on (30, 30, 30)
+focus edge fg vs focus fill         2.62:1   (1, 120, 212) on (24, 58, 84)
+focus fill vs rest fill             1.41:1   (24, 58, 84) on (30, 30, 30)
+focused value text vs focus fill    9.34:1   (224, 229, 232) on (24, 58, 84)
+resting value text vs rest fill    12.75:1   (225, 225, 225) on (30, 30, 30)
+## textual-dark 235x52
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.56:1   (62, 62, 62) on (30, 30, 30)
+rest edge fg vs rest fill           1.56:1   (62, 62, 62) on (30, 30, 30)
+focus edge `█` fg vs surface        3.68:1   (1, 120, 212) on (30, 30, 30)
+focus edge fg vs focus fill         2.62:1   (1, 120, 212) on (24, 58, 84)
+focus fill vs rest fill             1.41:1   (24, 58, 84) on (30, 30, 30)
+focused value text vs focus fill    9.34:1   (224, 229, 232) on (24, 58, 84)
+resting value text vs rest fill    12.75:1   (225, 225, 225) on (30, 30, 30)
+## textual-light 211x44
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.43:1   (255, 255, 255) on (216, 216, 216)
+rest edge fg vs rest fill           1.43:1   (255, 255, 255) on (216, 216, 216)
+focus edge `█` fg vs surface        6.94:1   (0, 69, 120) on (216, 216, 216)
+focus edge fg vs focus fill         4.17:1   (0, 69, 120) on (151, 171, 185)
+focus fill vs rest fill             1.67:1   (151, 171, 185) on (216, 216, 216)
+focused value text vs focus fill    7.65:1   (19, 22, 24) on (151, 171, 185)
+resting value text vs rest fill    11.96:1   (28, 28, 28) on (216, 216, 216)
+## textual-light 235x52
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.43:1   (255, 255, 255) on (216, 216, 216)
+rest edge fg vs rest fill           1.43:1   (255, 255, 255) on (216, 216, 216)
+focus edge `█` fg vs surface        6.94:1   (0, 69, 120) on (216, 216, 216)
+focus edge fg vs focus fill         4.17:1   (0, 69, 120) on (151, 171, 185)
+focus fill vs rest fill             1.67:1   (151, 171, 185) on (216, 216, 216)
+focused value text vs focus fill    7.65:1   (19, 22, 24) on (151, 171, 185)
+resting value text vs rest fill    11.96:1   (28, 28, 28) on (216, 216, 216)
+## agentic_terminal 211x44
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.51:1   (48, 57, 75) on (16, 26, 42)
+rest edge fg vs rest fill           1.51:1   (48, 57, 75) on (16, 26, 42)
+focus edge `█` fg vs surface        9.08:1   (76, 201, 240) on (16, 26, 42)
+focus edge fg vs focus fill         4.65:1   (76, 201, 240) on (35, 78, 101)
+focus fill vs rest fill             1.95:1   (35, 78, 101) on (16, 26, 42)
+focused value text vs focus fill    7.17:1   (226, 231, 234) on (35, 78, 101)
+resting value text vs rest fill    13.31:1   (223, 225, 227) on (16, 26, 42)
+## agentic_terminal 235x52
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.51:1   (48, 57, 75) on (16, 26, 42)
+rest edge fg vs rest fill           1.51:1   (48, 57, 75) on (16, 26, 42)
+focus edge `█` fg vs surface        9.08:1   (76, 201, 240) on (16, 26, 42)
+focus edge fg vs focus fill         4.65:1   (76, 201, 240) on (35, 78, 101)
+focus fill vs rest fill             1.95:1   (35, 78, 101) on (16, 26, 42)
+focused value text vs focus fill    7.17:1   (226, 231, 234) on (35, 78, 101)
+resting value text vs rest fill    13.31:1   (223, 225, 227) on (16, 26, 42)
+## paper_light 211x44
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.32:1   (255, 255, 255) on (224, 224, 224)
+rest edge fg vs rest fill           1.32:1   (255, 255, 255) on (224, 224, 224)
+focus edge `█` fg vs surface        6.73:1   (90, 70, 54) on (224, 224, 224)
+focus edge fg vs focus fill         4.19:1   (90, 70, 54) on (183, 177, 173)
+focus fill vs rest fill             1.61:1   (183, 177, 173) on (224, 224, 224)
+focused value text vs focus fill    8.46:1   (23, 23, 22) on (183, 177, 173)
+resting value text vs rest fill    12.77:1   (29, 29, 29) on (224, 224, 224)
+## paper_light 235x52
+focused value bold=True resting value bold=False
+rest edge `│` fg vs its cell bg     1.32:1   (255, 255, 255) on (224, 224, 224)
+rest edge fg vs rest fill           1.32:1   (255, 255, 255) on (224, 224, 224)
+focus edge `█` fg vs surface        6.73:1   (90, 70, 54) on (224, 224, 224)
+focus edge fg vs focus fill         4.19:1   (90, 70, 54) on (183, 177, 173)
+focus fill vs rest fill             1.61:1   (183, 177, 173) on (224, 224, 224)
+focused value text vs focus fill    8.46:1   (23, 23, 22) on (183, 177, 173)
+resting value text vs rest fill    12.77:1   (29, 29, 29) on (224, 224, 224)

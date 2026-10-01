@@ -22,6 +22,7 @@ from textual.widgets import (
     Button,
     Collapsible,
     Input,
+    Label,
     OptionList,
     Select,
     Static,
@@ -162,13 +163,16 @@ from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPicke
 # edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_summary import build_console_readiness_presentation
+from .console_settings_unsaved import (
+    ConsoleSettingsUnsavedGuardMixin,
+    snapshot_unsaved_baseline,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
 MODAL_BODY_MIN_HEIGHT = 0
-MODAL_CONTROL_HEIGHT = 3
 MODAL_LABEL_WIDTH = 23
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
@@ -569,13 +573,16 @@ class ConsoleSettingsDraftSnapshot:
 
     settings: ConsoleSessionSettings
     context_policy_overrides: ConsoleContextPolicyOverrides
-    raw_values: Mapping[str, str | bool]
+    raw_values: Mapping[str, str | bool | None]
     provider_model_drafts: Mapping[str, str | None]
     provider_base_url_drafts: Mapping[str, str]
     active_view: str
     scroll_anchor: int
     focus_control_id: str | None
     disclosure_state: Mapping[str, bool]
+    # The first modal's unsaved-edits baseline (TASK-33003.5); optional
+    # because a draft captured before the modal's initial sync has none.
+    unsaved_baseline: Mapping[str, object] | None = None
 
     def __repr__(self) -> str:
         """Return diagnostic metadata without exposing Console-owned content."""
@@ -619,12 +626,12 @@ class ConsoleSettingsDraftSnapshot:
             _SNAPSHOT_RAW_VALUE_IDS
         ):
             raise ValueError("raw modal values are invalid")
-        raw_values: dict[str, str | bool] = {}
+        raw_values: dict[str, str | bool | None] = {}
         for key, value in self.raw_values.items():
             if type(key) is not str:
                 raise ValueError("raw modal values are invalid")
-            if key == "console-settings-streaming":
-                if type(value) is not bool:
+            if key == "console-settings-streaming":  # None is Inherit
+                if value is not None and type(value) is not bool:
                     raise ValueError("raw modal values are invalid")
             elif key == "console-settings-provider":
                 if _snapshot_provider(value) is None:
@@ -661,6 +668,9 @@ class ConsoleSettingsDraftSnapshot:
         object.__setattr__(self, "provider_model_drafts", model_drafts)
         object.__setattr__(self, "provider_base_url_drafts", base_url_drafts)
         object.__setattr__(self, "disclosure_state", disclosure_state)
+        object.__setattr__(
+            self, "unsaved_baseline", snapshot_unsaved_baseline(self.unsaved_baseline)
+        )
 
     def to_mapping(self) -> dict[str, object]:
         """Return a structurally detached primitive mapping for screen state."""
@@ -678,6 +688,7 @@ class ConsoleSettingsDraftSnapshot:
             "scroll_anchor": self.scroll_anchor,
             "focus_control_id": self.focus_control_id,
             "disclosure_state": dict(self.disclosure_state),
+            "unsaved_baseline": snapshot_unsaved_baseline(self.unsaved_baseline),
         }
 
     @classmethod
@@ -697,7 +708,9 @@ class ConsoleSettingsDraftSnapshot:
             "focus_control_id",
             "disclosure_state",
         }
-        if not isinstance(source, Mapping) or set(source) != required_keys:
+        if not isinstance(source, Mapping) or (
+            set(source) - {"unsaved_baseline"} != required_keys
+        ):
             return None
         if (
             type(source.get("version")) is not int
@@ -738,6 +751,7 @@ class ConsoleSettingsDraftSnapshot:
                 scroll_anchor=source["scroll_anchor"],  # type: ignore[arg-type]
                 focus_control_id=source["focus_control_id"],  # type: ignore[arg-type]
                 disclosure_state=dict(disclosure_state),
+                unsaved_baseline=source.get("unsaved_baseline"),
             )
         except (ContextPolicyError, TypeError, ValueError):
             return None
@@ -1014,6 +1028,7 @@ class ConsoleSettingsRecoveryButton(Button):
 
 
 class ConsoleSettingsModal(
+    ConsoleSettingsUnsavedGuardMixin,
     SafeModalDismissMixin,
     ModalScreen[
         ConsoleSettingsCommittedSubmission
@@ -1048,28 +1063,6 @@ class ConsoleSettingsModal(
         height: auto;
     }}
 
-    ConsoleSettingsModal .console-settings-modal-row {{
-        height: auto;
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
-    ConsoleSettingsModal .console-settings-modal-label {{
-        height: {MODAL_CONTROL_HEIGHT};
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
-    ConsoleSettingsModal Input,
-    ConsoleSettingsModal Select,
-    ConsoleSettingsModal Button {{
-        height: {MODAL_CONTROL_HEIGHT};
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
-    ConsoleSettingsModal #console-settings-view-tabs {{
-        height: 3;
-        min-height: 3;
-    }}
-
     ConsoleSettingsModal #console-settings-fold-hint {{
         height: 1;
         min-height: 1;
@@ -1091,22 +1084,12 @@ class ConsoleSettingsModal(
         margin: 1 0 0 0;
     }}
 
-    ConsoleSettingsModal #console-settings-default-recovery-actions {{
-        height: {MODAL_CONTROL_HEIGHT};
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
-
     ConsoleSettingsModal #console-settings-memory-review {{
         height: auto;
         max-height: 12;
         overflow-y: auto;
         background: $surface;
         padding: 0 1;
-    }}
-
-    ConsoleSettingsModal .console-context-action-row {{
-        height: auto;
-        min-height: 3;
     }}
 
     ConsoleSettingsModal #console-settings-close-guard {{
@@ -1183,6 +1166,7 @@ class ConsoleSettingsModal(
         expected_settings_revision: int = 0,
     ) -> None:
         super().__init__()
+        self._unsaved_committed = (settings, context_state, user_display_name_override)
         if transfer is not None:
             origin = transfer.origin
             initial_draft = transfer.draft
@@ -1341,16 +1325,12 @@ class ConsoleSettingsModal(
             str, tuple[ResolvedProviderModelOption, ...]
         ] = {}
         self._streaming_draft: bool | None = (
-            bool(suspended_draft.raw_values.get("console-settings-streaming"))
+            suspended_draft.raw_values["console-settings-streaming"]  # type: ignore[assignment]
             if suspended_draft is not None
-            and type(suspended_draft.raw_values.get("console-settings-streaming"))
-            is bool
+            and "console-settings-streaming" in suspended_draft.raw_values
             else streaming_field.profile_override
             if streaming_field is not None
-            and (
-                streaming_field.profile_override is None
-                or type(streaming_field.profile_override) is bool
-            )
+            and type(streaming_field.profile_override) in (bool, type(None))
             else bool(self._settings.streaming)
         )
         self._streaming_effective_fallback = bool(self._settings.streaming)
@@ -1596,6 +1576,14 @@ class ConsoleSettingsModal(
         )
         select.tooltip = self._choice_placeholder(control_id)
         return select
+
+    def _generation_choice_validation(self, control_id: str) -> Static:
+        """Build an obsolete restored choice's recovery line, hidden while empty."""
+        validation = Static(
+            id=f"{control_id}-validation", classes="console-settings-error", markup=False
+        )
+        self._sync_generation_choice_validation(control_id, validation)
+        return validation
 
     def _generation_choice_validation_copy(self, control_id: str) -> str:
         """Return inline recovery copy for an obsolete restored enum value."""
@@ -2034,19 +2022,12 @@ class ConsoleSettingsModal(
                             "console-settings-reasoning-effort",
                             self._settings.reasoning_effort,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-reasoning-effort-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-reasoning-effort"
-                            ),
-                            id="console-settings-reasoning-effort-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-reasoning-effort")
                     with Horizontal(
                         id="console-settings-reasoning-summary-row",
                         classes="console-settings-modal-row",
@@ -2056,19 +2037,12 @@ class ConsoleSettingsModal(
                             "console-settings-reasoning-summary",
                             self._settings.reasoning_summary,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-reasoning-summary-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-reasoning-summary"
-                            ),
-                            id="console-settings-reasoning-summary-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-reasoning-summary")
                     with Horizontal(
                         id="console-settings-verbosity-row",
                         classes="console-settings-modal-row",
@@ -2078,19 +2052,12 @@ class ConsoleSettingsModal(
                             "console-settings-verbosity",
                             self._settings.verbosity,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-verbosity-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-verbosity"
-                            ),
-                            id="console-settings-verbosity-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-verbosity")
                     with Horizontal(
                         id="console-settings-thinking-effort-row",
                         classes="console-settings-modal-row",
@@ -2100,19 +2067,12 @@ class ConsoleSettingsModal(
                             "console-settings-thinking-effort",
                             self._settings.thinking_effort,
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-thinking-effort-support",
                             classes="console-settings-control-support",
                         )
-                        yield Static(
-                            self._generation_choice_validation_copy(
-                                "console-settings-thinking-effort"
-                            ),
-                            id="console-settings-thinking-effort-validation",
-                            classes="console-settings-error",
-                            markup=False,
-                        )
+                        yield self._generation_choice_validation("console-settings-thinking-effort")
                     with Horizontal(
                         id="console-settings-thinking-budget-tokens-row",
                         classes="console-settings-modal-row",
@@ -2125,7 +2085,7 @@ class ConsoleSettingsModal(
                             id="console-settings-thinking-budget-tokens",
                             classes="console-settings-control",
                         )
-                        yield Static(
+                        yield Label(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-thinking-budget-tokens-support",
                             classes="console-settings-control-support",
@@ -2258,7 +2218,7 @@ class ConsoleSettingsModal(
                                 value=self._format_value(
                                     self._context_state.resolved_policy.policy.custom_budget_tokens
                                 ),
-                                placeholder="Required in Custom mode",
+                                placeholder="if Custom",
                                 id="console-context-custom-budget",
                                 classes="console-settings-control",
                             )
@@ -2557,6 +2517,7 @@ class ConsoleSettingsModal(
                 id="console-settings-actions",
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
+                yield Label("Esc close", id="console-settings-esc-hint", classes="console-settings-action-scope", markup=False)
                 with Horizontal(classes="console-settings-action-group"):
                     yield Button("Cancel", id="console-settings-cancel")
                     save_default = Button(
@@ -2598,6 +2559,8 @@ class ConsoleSettingsModal(
             guard = Vertical(
                 Static("", id="console-settings-close-message", markup=False),
                 Horizontal(
+                    Button("Apply to this chat", id="console-settings-close-apply"),
+                    Button("Discard", id="console-settings-close-discard"),
                     Button(
                         "Undo and close",
                         id="console-settings-close-undo",
@@ -2621,6 +2584,16 @@ class ConsoleSettingsModal(
     def on_mount(self) -> None:
         self._subscription_readiness_snapshot: tuple[int, str | None] | None = None
         self.set_interval(0.25, self._poll_subscription_readiness)
+        body = self.query_one("#console-settings-body", ScrollableContainer)
+        self.watch(body, "scroll_y", self._sync_fold_hint, init=False)
+        # Content can grow with no caller (a focused picker's results); sync
+        # after the refresh, once container_size has caught up too.
+        self.watch(
+            body,
+            "virtual_size",
+            lambda: self.call_after_refresh(self._sync_fold_hint),
+            init=False,
+        )
         self._sync_action_layout(self.size.width)
         self._show_settings_view(self._active_view)
         self._sync_default_recovery_region()
@@ -2659,6 +2632,7 @@ class ConsoleSettingsModal(
         """Allow feedback reveals after the initial mount/resize callback batch."""
 
         self._initial_feedback_sync = False
+        self._capture_unsaved_baseline()
 
     def _focus_highest_priority_connection(self) -> None:
         """Focus the first actionable blocker, or Provider when ready."""
@@ -2755,15 +2729,13 @@ class ConsoleSettingsModal(
                             self._invalid_generation_choice_drafts[control_id] = value
                             control.value = Select.NULL
                         self._sync_generation_choice_validation(control_id)
-                    else:
-                        control.value = value
+                    else:  # A blank Select was captured as "".
+                        control.value = value or Select.NULL
             self._active_provider = self._select_value_text(
                 self.query_one("#console-settings-provider", Select).value
             )
-            self._streaming_draft = bool(
-                snapshot.raw_values.get(
-                    "console-settings-streaming", self._streaming_draft
-                )
+            self._streaming_draft = snapshot.raw_values.get(  # type: ignore[assignment]
+                "console-settings-streaming", self._streaming_draft
             )
             self.query_one("#console-settings-streaming", Button).label = (
                 self._streaming_toggle_label()
@@ -2962,7 +2934,7 @@ class ConsoleSettingsModal(
             self._context_state = self._context_state_with_overrides(
                 context_overrides
             )
-        raw_values: dict[str, str | bool] = {}
+        raw_values: dict[str, str | bool | None] = {}
         for control_id in _SNAPSHOT_RAW_VALUE_IDS:
             if control_id == "console-settings-streaming":
                 raw_values[control_id] = self._streaming_draft
@@ -3016,6 +2988,7 @@ class ConsoleSettingsModal(
                     getattr(self, "_connection_details_disclosed", False)
                 ),
             },
+            unsaved_baseline=self._unsaved_baseline,
         )
 
     def _context_state_with_overrides(
@@ -3245,35 +3218,6 @@ class ConsoleSettingsModal(
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
         )
-        view_tabs = self.query_one("#console-settings-view-tabs", Horizontal)
-        view_height = 1 if compact else MODAL_CONTROL_HEIGHT
-        view_tabs.remove_class(*(name for name in view_tabs.classes if name.startswith("h-")))
-        view_tabs.set_styles(height=None)
-        view_tabs.add_class("h-1" if compact else "h-3")
-        view_tabs.styles.min_height = view_height
-        for button in view_tabs.query(Button):
-            button.remove_class(*(name for name in button.classes if name.startswith("h-")))
-            button.set_styles(height=None)
-            button.add_class("h-1" if compact else "h-3")
-            button.styles.min_height = view_height
-        for selector in ("#console-settings-readiness", "#console-settings-scope"):
-            summary = self.query_one(selector, Static)
-            summary.remove_class(*(name for name in summary.classes if name.startswith("h-")))
-            summary.set_styles(height=None)
-            summary.add_class("h-auto")
-            summary.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
-        recovery_actions = self.query_one(
-            "#console-settings-default-recovery-actions", Horizontal
-        )
-        recovery_actions.remove_class(*(name for name in recovery_actions.classes if name.startswith("h-")))
-        recovery_actions.set_styles(height=None)
-        recovery_actions.add_class("h-1" if compact else "h-3")
-        recovery_actions.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
-        for button in recovery_actions.query(Button):
-            button.remove_class(*(name for name in button.classes if name.startswith("h-")))
-            button.set_styles(height=None)
-            button.add_class("h-1" if compact else "h-3")
-            button.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         actions = self.query_one("#console-settings-actions", Vertical)
         actions.styles.layout = "vertical" if compact else "horizontal"
         actions.remove_class(*(name for name in actions.classes if name.startswith("h-")))
@@ -3423,6 +3367,7 @@ class ConsoleSettingsModal(
         """Refresh completion controls using the transactional default gates."""
 
         self._sync_default_readiness()
+        self._sync_unsaved_hint()  # compaction start/finish changes what Esc does
 
     def _sync_default_readiness(self) -> None:
         """Gate default actions on an exact model and future-chat readiness."""
@@ -3835,7 +3780,7 @@ class ConsoleSettingsModal(
         )
 
     def _sync_fold_hint(self) -> None:
-        """Show a persistent cue whenever the modal body has hidden content."""
+        """Show the cue only while body content remains below (on scroll too)."""
         try:
             body = self.query_one("#console-settings-body", ScrollableContainer)
             hint = self.query_one("#console-settings-fold-hint", Static)
@@ -3845,13 +3790,14 @@ class ConsoleSettingsModal(
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
         )
-        overflow = body.virtual_size.height > body.container_size.height
-        if recovery_active:
-            hint.update("▼ more — scroll recovery summary")
-            hint.display = overflow
-            return
-        hint.update("▼ more — scroll for the rest")
-        hint.display = overflow
+        text = (
+            "▼ more — scroll recovery summary"
+            if recovery_active
+            else "▼ more — scroll for the rest"
+        )
+        if hint.content != text:  # a scroll step must not relayout the modal
+            hint.update(text)
+        hint.display = body.scroll_y < body.max_scroll_y
 
     def _sync_responsive_layout(self) -> None:
         """Derive the compact and wide layout tiers from measured widths."""
@@ -3894,7 +3840,13 @@ class ConsoleSettingsModal(
         """Dismiss through the typed, secret-free credential recovery result."""
         event.stop()
         if self._missing_credential_recovery_available():
-            self.dismiss(self.credential_request())
+            try:  # A refused draft snapshot keeps the modal; it never exits the app.
+                request = self.credential_request()
+            except ValueError:
+                return self.notify(
+                    "Settings could not open; your edits are kept.", severity="warning"
+                )
+            self.dismiss(request)
 
     # Textual 8 composes same-named sync/async MRO message handlers; this is not
     # an ordinary OO override of the mixin hook.
@@ -4021,10 +3973,6 @@ class ConsoleSettingsModal(
         """Route the dismiss action through the applicable close guard."""
         self._request_settings_close()
 
-    async def _perform_safe_cancel(self, *, source: str) -> None:
-        del source
-        self._request_settings_close()
-
     def _request_settings_close(self) -> None:
         """Dismiss cleanly or reveal the one applicable side-effect guard."""
         guard = self.query_one("#console-settings-close-guard", Vertical)
@@ -4036,6 +3984,8 @@ class ConsoleSettingsModal(
             return
         if self._compaction_is_active():
             self._show_settings_close_guard("compaction")
+            return
+        if self._ask_before_discarding(self._request_settings_close):
             return
         self._cancel_generation_test()
         self.dismiss_safe_once(None)
@@ -4051,7 +4001,7 @@ class ConsoleSettingsModal(
         is_reset = mode == "reset"
         self.query_one("#console-settings-close-undo", Button).display = is_reset
         self.query_one("#console-settings-close-keep", Button).display = is_reset
-        self.query_one("#console-settings-close-anyway", Button).display = not is_reset
+        self.query_one("#console-settings-close-anyway", Button).display = mode == "compaction"
         message = self.query_one("#console-settings-close-message", Static)
         message.update(
             (
@@ -4062,16 +4012,16 @@ class ConsoleSettingsModal(
                 f"{COMPACTION_CLOSE_WARNING}"
             )
         )
+        self._sync_unsaved_prompt(mode)
         guard.add_class("visible")
         guard.display = True
         self.call_after_refresh(self._focus_settings_close_guard)
 
     def _focus_settings_close_guard(self) -> None:
-        selector = (
-            "#console-settings-close-undo"
-            if self._settings_close_guard_mode == "reset"
-            else "#console-settings-close-anyway"
-        )
+        selector = {
+            "reset": "#console-settings-close-undo",
+            "unsaved": self._unsaved_prompt_focus_selector(),
+        }.get(self._settings_close_guard_mode, "#console-settings-close-anyway")
         self.query_one(selector, Button).focus()
 
     def action_settings_focus_next(self) -> None:
@@ -4261,11 +4211,14 @@ class ConsoleSettingsModal(
             )
             self._show_settings_close_guard("compaction")
             return
-        self.dismiss_safe_once(None)
+        if not self._ask_before_discarding(self._finish_reset_close_choice):
+            self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#console-settings-close-anyway")
     def _close_during_compaction(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._ask_before_discarding(partial(self._close_during_compaction, event)):
+            return
         if self._compaction_result_definitive:
             self.dismiss_safe_once(None)
             return
@@ -4999,13 +4952,22 @@ class ConsoleSettingsModal(
                 self._choice_placeholder(input_id)
             )
 
-    def _sync_generation_choice_validation(self, control_id: str) -> None:
-        """Render an obsolete restored choice beside its constrained control."""
-        try:
-            validation = self.query_one(f"#{control_id}-validation", Static)
-        except (NoMatches, QueryError):
-            return
-        validation.update(self._generation_choice_validation_copy(control_id))
+    def _sync_generation_choice_validation(
+        self, control_id: str, validation: Static | None = None
+    ) -> None:
+        """Render an obsolete restored choice beside its constrained control.
+
+        An empty line is hidden: displayed, it took the whole row (no width)
+        and painted its error edge plus a blank margin row (TASK-33003.8).
+        """
+        if validation is None:
+            try:
+                validation = self.query_one(f"#{control_id}-validation", Static)
+            except (NoMatches, QueryError):
+                return
+        copy = self._generation_choice_validation_copy(control_id)
+        validation.update(copy)
+        validation.display = bool(copy)
 
     @on(
         Select.Changed,

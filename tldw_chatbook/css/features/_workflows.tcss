@@ -113,8 +113,6 @@ WorkflowRunPanel Collapsible { height: 1fr; padding: $ds-space-0; margin: $ds-sp
 WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: 1fr; }
 WorkflowRunPanel #workflow-session-content { height: 1fr; min-height: $ds-control-height; }
 WorkflowRunPanel Static.workflow-run-copy { height: auto; }
-/* CollapsibleTitle inherits Static; preserve its compact height explicitly. */
-#workflow-session-collapse > CollapsibleTitle { height: auto; }
 WorkflowRunPanel #workflow-session-status { height: $ds-control-height-compact; color: $ds-status-info; }
 WorkflowRunPanel TextArea { height: 6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
 .workflow-run-actions { height: $ds-control-height-compact; margin: $ds-space-0; }

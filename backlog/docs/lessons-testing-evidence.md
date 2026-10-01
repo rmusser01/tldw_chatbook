@@ -95,6 +95,48 @@ collects) made it run and pass locally. Pick the cheapest fix that matches
 where the config read happens: collection-time import for import-time reads,
 `@private_profile_test` for tests that build or reload app config.
 
+## A local red wall of `RecoveryRequired` hides the guard you meant to run
+
+**TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard
+(`test_console_mcp_approval.py::test_batch_row_widgets_...`) was reported as
+"red at base and head, CI will confirm". Neither half held. CI does not run
+that file on PRs at all: the UI Fast Lane runs only `scripts/ui_pr_gate_census.txt`,
+and the full UI shards (`test.yml`) run only on pushes to `main` and on manual
+dispatch; the whole-tree `nightly-deep.yml` runs only from `main`. Locally, whole-file runs fail
+mostly at fixture setup: `Tests/UI/conftest.py` imports `tldw_chatbook.app`
+for the first time inside the per-test redirect. `test_mcp_schema_form.py` +
+`test_mcp_tools_mode.py` gave 58 passed, 38 errors. A scratch `-p` plugin whose
+`pytest_collection_modifyitems` imports `tldw_chatbook.app` (after
+`Tests/conftest.py` has set its sandbox env) gave 96 passed. It changes when the
+import happens and edits no test. For a mounted-app test that also builds app config in
+its body, add the repo's own `bootstrap_profile` marker to that node from the same
+kind of plugin. Give it a scratch `TLDW_TEST_CONFIG_ROOT` whose config disables the
+splash, because the 7 s splash outlasts the Console-ready wait. That made the
+approval guard reach every assertion: green at base and head. A negative
+control (`.approval-row-decision` widened to full width) failed it. Before you
+call a guard "environmental", check whether any runner runs it, and make it
+reach its assertions once.
+
+## A marker "inside the pane" can still sit under the fold hint (TASK-33003.7, 2026-09-29)
+
+`_assert_marker_inside_container` (Tests/UI/test_destination_visual_parity_correction.py)
+checks that a marker's top-left cell falls inside the pane's rectangle. For a child
+of a scroll body, `widget.region` is its unclipped placement at the current scroll
+offset. The pane rectangle also contains its pinned header, the reserved
+"▼ more" fold-hint row and its padding rows. So a marker whose top row lands on the
+hint row passes while none of it is painted.
+
+The incident: while fixing TASK-25890, a trial `min-width: $ds-size-34` on
+`#settings-impact-pane` put `#settings-boundary-note` at y 37..40. The body window
+was 18..37 and the pane 5..40, so the strict xfail's contract would have gone
+green (37 < 40) with the note hidden behind the hint. Only `$ds-size-36` together
+with dropping the blank-row margin made the note visible (35..38 in a 18..38 window).
+
+**What to do.** When a geometry check means "the user can see it", compare the
+widget's region with the scroll body's `scrollable_content_region` (the painted
+window), not with the outer pane. `test_settings_boundary_note_is_fully_visible_at_rest`
+does that next to the contract.
+
 ## Executable QA documentation can retain removed production imports
 
 **TASK-32882, 2026-09-21.** A native MCP launch stopped before app startup because

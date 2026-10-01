@@ -30,7 +30,7 @@
         "settings-detail-row": {
           "status": "canonical",
           "variant_of": "form-row",
-          "note": "Documented variant (ADR-161 task 9 probe, 2026-09-13): the read-only detail line (panel fill, primary text, one-row minimum, padding 0 1) vs form-row's auto-height unstyled row (5 computed-property diffs). Moved tokenized from components/_agentic_terminal.tcss: consumed on TWO production surfaces (Settings workbench + the STTS speech settings pane via SpeechSettingsPane), so it rides the boot bundle -- previously it lived on the lazily-loaded settings screen sheet, leaving STTS rows unstyled until Settings was first visited (the exact AGENTIC_SPLIT_PINNED_TOKENS trap; fixed by the move). #settings-impact-pane .settings-detail-row stays with the Settings surface."
+          "note": "Documented variant (ADR-161 task 9 probe, 2026-09-13): the read-only detail line (panel fill, primary text, one-row minimum, padding 0 1) vs form-row's auto-height unstyled row (5 computed-property diffs). Moved tokenized from components/_agentic_terminal.tcss: consumed on TWO production surfaces (Settings workbench + the STTS speech settings pane via SpeechSettingsPane), so it rides the boot bundle -- previously it lived on the lazily-loaded settings screen sheet, leaving STTS rows unstyled until Settings was first visited (the exact AGENTIC_SPLIT_PINNED_TOKENS trap; fixed by the move)."
         },
         "settings-input-row": {
           "status": "draft",

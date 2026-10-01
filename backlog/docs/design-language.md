@@ -38,7 +38,11 @@ source or copied token definitions are needed (TASK-32816).
 ### 2.1 Color and semantic meaning (existing layer)
 
 - **Surfaces:** `$ds-surface-panel`, `$ds-surface-raised`,
-  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`,
+  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`
+  (`$ds-grid-line` and `$ds-control-edge` resolve to the theme variable
+  `$tldw-boundary`; the themes.py guard function `ensure_readable_text_hues`
+  pins that variable to 3:1 on surface and panel for every theme,
+  TASK-33003.6),
   `$ds-surface-sunken` (recessed resting surface for **enabled** chrome —
   inactive toggles, sunken strips; never a disabled state)
 - **Text:** `$ds-text-primary`, `$ds-text-muted`, `$ds-text-disabled`
@@ -72,7 +76,11 @@ make intent visible:
 
 - `$ds-control-height: 3` — standard action control (buttons, selects,
   single-line inputs)
-- `$ds-control-height-compact: 1` — tab bars, status lines, chip rows
+- `$ds-control-height-compact: 1` — tab bars, status lines, chip rows, and
+  every control in a dense form. Chat settings (`ConsoleSettingsModal`) is a
+  dense form (TASK-33003.2): its Inputs, Selects, in-form Buttons and view tabs
+  are one row; the Inputs and Selects are marked by the one-column left edge
+  of DESIGN.md's dense-form convention instead of a border box
 - `$ds-tool-preview-max-height: 3` — collapsed tool-result rows, including
   their omission hint; clips resize frames until text is rewrapped
 - `$ds-textarea-min-height: 5` — multi-line text inputs
@@ -109,7 +117,12 @@ Every interactive control must define, at minimum:
 - **focus:** `$ds-focus-bg` / `$ds-focus-fg` / `bold underline` — the
   non-obscuring focus contract: focus must be visibly distinct from rest
   AND must not obscure content. Never alias the focus surface back to a
-  resting surface (this nullified focus twice: TASK-345, task-1586)
+  resting surface (this nullified focus twice: TASK-345, task-1586). A
+  variant Button keeps its own fill on focus (the tint is darker than
+  `$primary`), and a focus cue that is an edge must reach 3:1 against the
+  row it marks (TASK-33003.6: the Settings rail edge is `$ds-active-fg`).
+  A default Button's focus fill is `$tldw-focus-fill`, never closer to its
+  card than the resting fill (themes.py `FOCUS_FILL_VARIABLE`)
 - **disabled:** `$ds-disabled-bg` + `$ds-text-disabled-readable` at full
   opacity (never opacity-stacked — see §2.5); hover on disabled keeps the
   disabled surface

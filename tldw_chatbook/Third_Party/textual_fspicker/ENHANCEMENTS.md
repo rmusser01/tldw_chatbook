@@ -129,9 +129,10 @@ Live UAT of a keyboard-only export flow (Evals results-grid export, at a
   columns because the file-type filter `Select` next to it was set to
   `width: 1fr` -- flexible, not fixed, so it competed with the Input for
   space and, once the app's own `Select { width: 100%; }` bundle rule
-  (`components/_dialogs.tcss` documents this in full) wins the CSS-origin
-  battle against this package's `DEFAULT_CSS` regardless of source order,
-  the Select claimed the entire row. The filter `Select` now gets a fixed
+  (`components/_dialogs.tcss` documents this in full; the rule was retired
+  in TASK-33003.1) won the CSS-origin battle against this package's
+  `DEFAULT_CSS` regardless of source order, the Select claimed the entire
+  row. The filter `Select` now gets a fixed
   `width: 24` in `file_dialog.py`'s `DEFAULT_CSS`, and the app bundle pins
   the same width with a selector specific enough to win there too.
 - `FileSave` (not `FileOpen`) now focuses its filename `Input` on mount

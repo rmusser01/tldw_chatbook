@@ -1,0 +1,42 @@
+                                                                                                             ╭─────────────╮
+ ‹ le    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Re  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Privacy & Security
+┌──────────────────────────────┐  │  ┌───────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────┐
+│                              │  │  │                                                                       │  │  │                       │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Canvas availability and create          │  │  │  Scope Inspector      │
+│  No filter | / focus         │  │  │  auto-open are editable; hard quotas, privacy posture, and secrets    │  │  │                       │
+│  category search             │  │  │  remain read-only and redacted.                                       │  │  │ Selected category:    │
+│                              │  │  │                                                                       │  │  │ Privacy & Security    │
+│  Core                        │  │  │  Privacy & Security                                                   │  │  │ No unsaved changes    │
+│      Overview (view)         │  │  │ ┌──────────────────────────────────────────────────────────────────┐  │  │  │  Guided edits:        │
+│      Providers & Models      │  │  │ │                                                                  │  │  │  │  Canvas controls and  │
+│      Web Search              │  │  │ │  Privacy posture                                                 │  │  │  │  host-access unlock;  │
+│      Speech & TTS            │  │  │ │  Config encryption: disabled                                     │  │  │  │  quotas stay          │
+│  Interface                   │  │  │ │  Redaction: active; raw secret values hidden                     │  │  │  │  read-only.           │
+│      Appearance              │  │  │ │  Sensitive config fields: 10 present                             │▆ │  │  │  Save (s) — no change │
+│      Theme                   │  │  │ │  Provider config secrets: 0 present                              │  │  │  │  Revert (r) — no chan │
+│      Splash Screen           │  │  │ │                                                                  │  │  │  │ Local-only: saves     │
+│      Console Behavior        │  │  │ │  Credential sources                                              │  │  │  │ write your config     │
+│  Data & Privacy              │  │  │ │  Provider env vars: 0 of 30 referenced env vars are set (30      │  │  │  │ file.                 │
+│      Storage                 │  │  │ │  unset)                                                          │  │  │  │                       │
+│      Workspaces              │  │  │ │  Preferred source: environment variables                         │  │  │  │  Recovery: save or    │
+│      Tool Profiles           │  │  │ │  Config secrets: counted only; raw values are never displayed    │  │  │  │  revert Canvas and    │
+│ █  > Privacy & Security      │  │  │ │  Recovery actions: Check Privacy | Open Providers & Models |     │  │  │  │  host-access          │
+│      Network                 │  │  │ │  Open Advanced Config                                            │  │  │  │  changes; use Check   │
+│      My Profile              │  │  │ │  Skill trust: uninitialized                                      │  │  │  │  Privacy for          │
+│  Troubleshooting             │  │  │ │  Skill trust keyring convenience: disabled                       │  │  │  │  posture              │
+│      Diagnostics (view)      │  │  │ │  Skill trust rollback protection: reduced                        │  │  │  │  verification         │
+│      About (view)            │  │  │ │  Check Privacy    Open Providers & Models   Open Advanced Config │  │  │  │                       │
+│      Agents                  │  │  │ │                                                                  │  │  │  │  Boundary: arming     │
+│  Expert                      │  │  │ │  Data boundary                                                   │  │  │  │  applies only to    ▂ │
+│      Internal Prompts        │  │  │ │  Local data: local data stays local unless explicit server       │  │  │  │  this launch; raw     │
+│      Advanced Config         │  │  │ │  handoff or sync is enabled                                      │  │  │  │  secrets remain       │
+│   Domain Defaults ▸ (11)     │  │  │ │  Server tokens: server tokens are reported as                    │  │  │  │  hidden               │
+│                              │  │  │ │  configured/missing only                                         │  │  │  │                       │
+│                              │  │  │ │  Credential mutation: not available yet - password-gated flow    │  │  │  │ ▼ more — scroll the   │
+│                              │  │  │                                                                       │  │  │                       │
+└──────────────────────────────┘  │  └───────────────────────────────────────────────────────────────────────┘  │  └───────────────────────┘
+ Raw CLI host-access gate, secrets, redaction, and local privacy boundaries.
+  s save category | r revert category | t check privacy | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

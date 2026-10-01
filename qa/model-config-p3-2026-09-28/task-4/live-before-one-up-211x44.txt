@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
+                │                         ▊ Cerebras                                  ▅▅ ▎                                                                                                        │     │
+   Terminal     │                         ▊ Cohere                                       ▎                                                                                                        │     │
+ ───────────────│                         ▊ Databricks                                   ▎                                                                                                        │     │
+ Workspaces     │                         ▊ DeepInfra                                    ▎                                                                                                        │     │
+ ───────────────│                         ▊ DeepSeek                                     ▎                                                                                                        │     │
+ Conversations  │                         ▊ Fireworks                                    ▎                                                                                                     ▅  │     │
+        Archive │                         ▊ Google Gemini                                ▎                                                                                                        │     │
+          Archiv│                         ▊ Groq                                         ▎                                                                                                        │     │
+        Search a│                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+   Chat 1       │  Endpoint               │ http://127.0.0.1:9099                                           New endpoint…                                                                         │     │
+                │  Model                  │ model-a                                                                                                                                               │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│                         1 model available. Type to filter.                                                                                                                      │     │
+  ▊  Filter visi│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                         ▊ Saved fallback                               ▎                                                                                                        │     │
+                │                         ▊ model-a                                      ▎                                                                                                        │     │◂ Inspect
+   New conversat│                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+  Chats         │  Saved fallback                                                                                                                                                                 │     │
+   Chat 1       │                            Custom model    Test connection & list models                                                                                                        │     │
+                │  Tests this endpoint by listing models; this does not test generation.                                                                                                          │     │
+ ───────────────│  Ready to send                                                                                                                                                                  │     │
+ Character · No │  A send attempt is permitted with these settings.                                                                                                                               │     │
+ ───────────────│  Credential · Not required                                                                                                                                                      │     │
+ Model          │  Endpoint · Not tested                                                                                                                                                          │     │
+ ───────────────│  Model · Selected — not verified at this endpoint                                                                                                                               │     │
+ Agent          │  Generation · Not tested                                                                                                                                                        │     │
+ ───────────────│   Test generation                                                                                                                                                               │     │
+ Details        │                                                                                                                                                                                 │     │
+                │   ▶ Advanced generation                                                                                                                                                         │     │
+                │                                                                                                                                                                              ▄  │     │
+                │   ▶ Conversation identity                                                                                                                                                       │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                                  Cancel    Save as generation defaults  Make default for new chats  Use for this conversation   │rrent $0.00 · O
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

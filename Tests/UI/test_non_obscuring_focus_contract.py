@@ -161,6 +161,26 @@ NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
     "#settings-discovered-models-list .selection-list--button-selected-highlighted",
 )
 
+# TASK-33065 / TASK-33003.6: where a list's highlighted row must read at 3:1
+# against the other rows (the shared $surface highlight measured 1.0-1.12:1),
+# it is an inverted bar -- the AA-pinned primary text tint as the fill, the
+# panel colour as the label -- measured rendered by the owning tests
+# (test_settings_theme_card_contrast.py, test_theme_contrast.py and
+# test_console_session_settings.py / test_settings_configuration_hub.py).
+NATIVE_CHOICE_BAR_OVERRIDES = (
+    "#settings-theme-list > .option-list--option-highlighted",
+    "ConsoleSettingsModal OptionList > .option-list--option-highlighted",
+    "ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted",
+    "#settings-providers-models-card OptionList > .option-list--option-highlighted",
+)
+
+
+def assert_native_choice_bar_contract(block: str) -> None:
+    assert "reverse" not in block
+    assert re.search(r"background: \$(text-primary|ds-active-fg);", block), block
+    assert "color: $ds-surface-panel;" in block
+    assert "text-style: bold;" in block
+
 
 def css_blocks(text: str, selector: str) -> list[str]:
     """Return CSS rule bodies whose selector lists contain selector."""
@@ -386,7 +406,10 @@ def assert_all_native_choice_selectors_follow_contracts(text: str) -> None:
     assert selected_selectors
     for selector in selected_selectors:
         for block in css_blocks(text, selector):
-            assert_native_row_selected_state_contract(block)
+            if selector in NATIVE_CHOICE_BAR_OVERRIDES:
+                assert_native_choice_bar_contract(block)
+            else:
+                assert_native_row_selected_state_contract(block)
 
     hover_selectors = [
         selector
@@ -542,12 +565,19 @@ def test_global_focus_fallback_is_visible_but_not_heavy():
     assert any(cue in block for cue in ("outline: solid", "border:", "text-style:"))
 
 
+#: TASK-33003.6 review round 1: the global Button focus fill is the guard's
+#: FOCUS_FILL_VARIABLE -- the house $ds-focus-bg tint wherever that keeps a
+#: focused default button at least as far from its card as at rest (gated
+#: per theme in test_theme_contrast.py). Never the resting surface.
+BUTTON_FOCUS_FILL = "background: $tldw-focus-fill;"
+
+
 def test_global_button_focus_uses_two_non_obscuring_cues():
     text = BUTTONS.read_text(encoding="utf-8")
     for selector in ("Button:focus", "Button:hover:focus"):
         block = css_block(text, selector)
         assert_non_obscuring_focus(block)
-        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+        assert BUTTON_FOCUS_FILL in block
 
 
 def test_shared_button_hover_uses_non_obscuring_surface_contract():
@@ -921,21 +951,30 @@ def test_console_structural_separators_use_visible_column_line_token():
 
 
 @pytest.mark.unit
-def test_console_settings_modal_select_uses_compact_focus_outline():
+def test_console_settings_modal_select_uses_dense_form_focus_edge():
+    """TASK-33003.2 deliberately rewrote this pin (was ..._compact_focus_outline).
+
+    Chat settings follows the dense-form convention: a one-row Select carries
+    a one-column left edge that turns thick on focus. The old `outline: solid`
+    was invisible behind SelectCurrent, but once the Select paints its own edge
+    cell the outline's corner glyph lands on it, so the outline is now off.
+    """
     for _, text in (
         ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Select")
         focus = css_block(text, "ConsoleSettingsModal Select:focus")
-        assert "height: 1;" in base
+        assert "height: $ds-control-height-compact;" in base
         assert "border: none;" in base
+        assert "border-left: solid $ds-control-edge;" in base
         assert "border: none;" in focus
         assert "border-bottom: none;" in focus
         assert "border: solid" not in focus
         assert "border-bottom: solid" not in focus
         assert "border: thick" not in focus
-        assert "outline: solid $ds-input-focus-accent;" in focus
+        assert "border-left: thick $ds-input-focus-accent;" in focus
+        assert "outline: none;" in focus
         assert "background: $ds-input-focus-bg;" in focus
         assert "color: $ds-text-primary;" in focus
         assert "$primary" not in focus
@@ -946,7 +985,13 @@ def test_console_settings_modal_select_uses_compact_focus_outline():
 
 @pytest.mark.unit
 def test_console_settings_modal_focused_inputs_keep_value_row_visible():
-    """Focused settings inputs must keep Textual's editable value row visible."""
+    """Focused settings inputs must keep Textual's editable value row visible.
+
+    TASK-33003.2 deliberately rewrote this pin from the 3-row tall-border box
+    to the one-row dense-form field: a left edge at rest, a thick left edge on
+    focus, and no outline (which would paint over the only row). The painted
+    proof is test_console_settings_focused_one_row_field_paints_value_and_focus_edge.
+    """
     for _, text in (
         ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
@@ -954,12 +999,16 @@ def test_console_settings_modal_focused_inputs_keep_value_row_visible():
         base = css_block(text, "ConsoleSettingsModal Input")
         focus = css_block(text, "ConsoleSettingsModal Input:focus")
 
-        assert "height: 3;" in base
-        assert "min-height: 3;" in base
-        assert "border: tall $ds-grid-line;" in base
-        assert "height: 3;" in focus
-        assert "min-height: 3;" in focus
-        assert "border: tall $ds-input-focus-accent;" in focus
+        assert "height: $ds-control-height-compact;" in base
+        assert "min-height: $ds-control-height-compact;" in base
+        assert "border: none;" in base
+        assert "border-left: solid $ds-control-edge;" in base
+        assert "border: tall" not in base
+        assert "height: $ds-control-height-compact;" in focus
+        assert "min-height: $ds-control-height-compact;" in focus
+        assert "border: none;" in focus
+        assert "border-left: thick $ds-input-focus-accent;" in focus
+        assert "border: tall" not in focus
         assert "outline: none;" in focus
 
 
@@ -989,16 +1038,16 @@ def test_console_settings_modal_select_current_preserves_visible_value_row():
 @pytest.mark.unit
 def test_console_settings_modal_select_overlay_is_readable():
     for _, text in (
-        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
+        (
+            "agentic family + list source sheets",
+            AGENTIC.read_text(encoding="utf-8") + LISTS.read_text(encoding="utf-8"),
+        ),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
-        option = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option")
-        hover = css_block(
-            text, "ConsoleSettingsModal Select > SelectOverlay Option:hover"
-        )
-        selected = css_block(
-            text, "ConsoleSettingsModal Select > SelectOverlay Option.-selected"
+        highlighted = css_block(
+            text,
+            "ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted",
         )
 
         assert "border: solid $ds-grid-line;" in overlay
@@ -1006,15 +1055,16 @@ def test_console_settings_modal_select_overlay_is_readable():
         assert "color: $ds-text-primary;" in overlay
         assert "padding: 0 1;" in overlay
         assert "min-width: 30;" in overlay
-        assert "background: $ds-surface-inspector;" in option
-        assert "color: $ds-text-primary;" in option
-        assert "min-height: 3;" in option
-        assert "background: $ds-input-focus-bg;" in hover
-        assert "color: $ds-text-primary;" in hover
-        assert "background: $ds-focus-bg;" in selected
-        assert "color: $ds-focus-fg;" in selected
-        assert "text-style: bold underline;" in selected
-        assert "reverse" not in overlay + option + hover + selected
+        # Deliberately rewritten for TASK-33003.6 AC#5: the three
+        # `SelectOverlay Option` rules this pinned never matched (Textual 8
+        # options are lines, not widgets) and were removed. The highlighted
+        # option is now a readable bar; its contrast is measured rendered in
+        # test_console_settings_select_highlight_is_a_readable_bar.
+        assert "ConsoleSettingsModal Select > SelectOverlay Option" not in text
+        assert "background: $ds-active-fg;" in highlighted
+        assert "color: $ds-surface-panel;" in highlighted
+        assert "text-style: bold;" in highlighted
+        assert "reverse" not in overlay + highlighted
 
 
 @pytest.mark.unit
@@ -1137,20 +1187,36 @@ def test_settings_detail_and_inspector_panes_scroll_long_content():
 
 
 def test_settings_category_active_states_use_selected_contract():
+    """Deliberately rewritten for TASK-33003.6 AC#6: this pinned one body for
+    the active row and the focused active row, so focus on the current
+    category was invisible. The intent holds -- a readable selected label and
+    no dominant geometry -- and the two focus states add a thick focus edge
+    whose column the base rule reserves as a blank edge, so focus costs no
+    row and moves no label (the rendered check is
+    test_settings_rail_focus_draws_a_readable_edge_on_every_row)."""
+    focus_edge = "border-left: thick $ds-active-fg;"
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         _bundle_union_text(),
     ):
+        base = css_block(text, "Button.settings-category-button")
+        assert "border-left: blank;" in base
         for selector in (
             ".settings-active-section",
             "Button.settings-category-button.settings-active-section",
-            "Button.settings-category-button.settings-active-section:focus",
             "Button.settings-category-button.settings-active-section:hover",
-            "Button.settings-category-button.settings-active-section:hover:focus",
         ):
             active = css_block(text, selector)
             assert_readable_selected_state_contract(active)
             assert_no_dominant_selected_geometry(active)
+        for selector in (
+            "Button.settings-category-button.settings-active-section:focus",
+            "Button.settings-category-button.settings-active-section:hover:focus",
+        ):
+            focused = css_block(text, selector)
+            assert_readable_selected_state_contract(focused)
+            assert focus_edge in focused, selector
+            assert_no_dominant_selected_geometry(focused.replace(focus_edge, ""))
 
 
 def test_acp_selected_session_row_uses_selected_contract():
@@ -1209,12 +1275,16 @@ def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contrac
 
 
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
+    # TASK-33003.1 review: the shared rule no longer adds a focus
+    # border-bottom (it cost a row once titles became 1 row tall), so the
+    # `.-collapsed` twin that re-added it is gone too.
     text = WIDGETS.read_text(encoding="utf-8")
     block = css_block(text, "Collapsible > CollapsibleTitle:focus")
-    collapsed_focus = css_block(text, "Collapsible.-collapsed > CollapsibleTitle:focus")
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
-    assert "border-bottom: solid $ds-focus-accent;" in collapsed_focus
+    assert "background: $ds-focus-bg;" in block
+    assert "border" not in block
+    assert css_blocks(text, "Collapsible.-collapsed > CollapsibleTitle:focus") == []
 
 
 def test_conversations_collapsible_active_header_uses_selected_contract():
@@ -1300,7 +1370,7 @@ def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_
     for selector in ("Button:focus", "Button:hover:focus"):
         block = css_block(button_text, selector)
         assert_non_obscuring_focus(block)
-        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+        assert BUTTON_FOCUS_FILL in block
 
     assert (
         css_blocks(CODING.read_text(encoding="utf-8"), ".coding-nav-button:focus") == []

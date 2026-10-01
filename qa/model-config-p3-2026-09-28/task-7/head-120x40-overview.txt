@@ -1,0 +1,40 @@
+                                                                                            ╭─────────────╮
+ ‹  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Overview | Runtime controls stay in MCP and ACP
+┌──────────────────────────────┐  │  ┌───────────────────────────────────────────────────────┐  │  ┌───────────────────┐
+│                              │  │  │                                                       │  │  │                   │
+│  Filter categories (/)       │  │  │  State: Read-only here | Review readiness across      │  │  │  Scope Inspector  │
+│  No filter | / focus         │  │  │  Settings categories.                                 │  │  │                   │
+│  category search             │  │  │                                                       │  │  │ Selected          │
+│                              │  │  │  Overview                                             │  │  │ category:         │
+│  Core                        │  │  │  Backup & Restore                                     │  │  │ Overview          │
+│    > Overview (view)         │  │  │ ┌──────────────────────────────────────────────────┐  │  │  │ No unsaved        │
+│      Providers & Models      │  │  │ │                                                  │  │  │  │ changes           │
+│      Web Search              │  │  │ │  Status                                          │  │  │  │  Guided edits:    │
+│      Speech & TTS            │  │  │ │  Configuration: llama.cpp / model-a; Status:     │  │  │  │  choose           │
+│  Interface                   │  │  │ │  Ready                                           │  │  │  │  Providers or     │
+│      Appearance              │  │  │ │  Open Providers & Models                         │  │  │  │  Console.         │
+│      Theme                   │  │  │ │  Last connection test: Configuration check has   │  │  │  │  Open Theme picke │
+│      Splash Screen           │  │  │ │  not run.                                        │  │  │  │ Saves apply to    │
+│      Console Behavior        │  │  │ │  Storage & privacy: Config path: config.toml —   │  │  │  │ your local config │
+│  Data & Privacy              │  │  │ │  override config, writable; Privacy: local       │  │  │  │ file. Nothing is  │
+│      Storage                 │  │  │ │  config by default; secret-looking diagnostics   │  │  │  │ sent to a server  │
+│      Workspaces              │  │  │ │  are redacted                                    │  │  │  │ unless you run    │
+│      Tool Profiles           │  │  │ │   Open Storage    Open Privacy & Security        │  │  │  │ Manual sync       │
+│      Privacy & Security      │  │  │ │  Sync: blocked; pending outgoing: none           │  │  │  │ yourself.         │
+│      Network                 │  │  │ │  Preview manual sync   Run manual sync           │  │  │  │ Impact and        │
+│      My Profile              │  │  │ │ ╭──────────────────────────────────────────────╮ │  │  │  │ boundaries        │
+│  Troubleshooting             │  │  │ │ │  ▶ Advanced / Diagnostics                    │ │  │  │  │ Readiness,        │
+│      Diagnostics (view)      │  │  │ │ │                                              │ │  │  │  │ storage,          │
+│      About (view)            │  │  │ │ ╰──────────────────────────────────────────────╯ │  │  │  │ privacy, Console  │
+│      Agents                  │  │  │ │                                                  │  │  │  │ behavior,         │
+│  Expert                      │  │  │ │ ╭──────────────────────────────────────────────╮ │  │  │  │ diagnostics.      │
+│      Internal Prompts        │  │  │ │ │  ▶ Where changes happen                      │ │▅ │  │  │  Runtime owner:   │
+│      Advanced Config         │  │  │ │ │                                              │ │  │  │  │  owning           │
+│   Domain Defaults ▸ (11)     │  │  │ │ ╰──────────────────────────────────────────────╯ │  │  │  │ ▼ more — scroll   │
+│                              │  │  │                                                       │  │  │                   │
+└──────────────────────────────┘  │  └───────────────────────────────────────────────────────┘  │  └───────────────────┘
+ Open dashboard, notifications, and active work.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

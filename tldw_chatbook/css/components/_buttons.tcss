@@ -21,21 +21,29 @@ Button:hover {
     text-style: $ds-text-strong;
 }
 
-/* Enhanced focus state with visible, non-obscuring cues */
-Button:focus {
-    background: $ds-focus-bg;
+/* Enhanced focus state with visible, non-obscuring cues, hovered or not.
+   TASK-33003.6: the fill is the house focus tint ($ds-focus-bg) wherever that
+   keeps a focused default button at least as far from its card as at rest;
+   themes.py FOCUS_FILL_VARIABLE pins the rest (22 of 89). Textual's 5%
+   $foreground tint is dropped: on a variant it lowered the fill's contrast
+   (paradise_virtua primary 3.69 -> 3.64:1), so a focused variant now paints
+   exactly its resting fill and the text style carries its focus. */
+Button:focus,
+Button:hover:focus {
+    background: $tldw-focus-fill;
+    background-tint: transparent;
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
 }
 
-/* When both hovering AND focused */
-Button:hover:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    outline: none;
-}
+/* TASK-33003.6: a variant keeps its fill on focus; the tint above made a
+   focused primary darker, so it read as disabled. Same specificity as
+   `Button:hover:focus` and later, so these win hovered too. */
+Button.-primary:focus { background: $primary; }
+Button.-success:focus { background: $success; }
+Button.-warning:focus { background: $warning; }
+Button.-error:focus { background: $error; }
 
 /* Disabled state.
    TASK-25822: the darkened surface plus muted-but-readable text IS the cue --

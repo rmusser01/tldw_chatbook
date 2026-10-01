@@ -320,8 +320,11 @@ def test_console_settings_input_focus_does_not_outline_single_row_value():
 
     block = css_block(css_content, "ConsoleSettingsModal Input:focus")
     # Focus styling moved from an outline (which can repaint over the typed
-    # value in Textual Web) to a tall border with the outline suppressed.
-    assert "border: tall $ds-input-focus-accent;" in block
+    # value in Textual Web) to a border with the outline suppressed; since
+    # TASK-33003.2 (deliberate rewrite) the field is one row, so the border is
+    # the dense-form thick left edge rather than a 3-row tall box.
+    assert "border-left: thick $ds-input-focus-accent;" in block
+    assert "border: tall" not in block
     assert "outline: none;" in block
     assert "background: $ds-input-focus-bg;" in block
     assert "color: $ds-text-primary;" in block

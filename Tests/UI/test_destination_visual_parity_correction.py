@@ -57,6 +57,9 @@ from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
+from tldw_chatbook.UI.Screens.settings_screen import (
+    SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH,
+)
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
@@ -2370,7 +2373,11 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
             ("#acp-empty-state", "#acp-console-unavailable"),
             "#acp-detail-pane",
         ),
-        pytest.param(
+        # TASK-33003.7 (absorbs TASK-25890): this param was a strict xfail --
+        # under the production stylesheet the note sat at y=55, below the
+        # 25-column inspector's fold (pane 5..40). The inspector now keeps
+        # its spec width (36) as a floor and a one-row rhythm, so it fits.
+        (
             "settings",
             "#settings-category-strip",
             "#settings-workbench",
@@ -2382,17 +2389,6 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
             ("#settings-open-appearance",),
             ("#settings-boundary-note",),
             "#settings-impact-pane",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "TASK-25890: #settings-boundary-note escapes "
-                    "#settings-impact-pane under the PRODUCTION stylesheet "
-                    "at 140x42. Pre-existing -- the branch base fails "
-                    "identically under production CSS; this test was only "
-                    "green because DestinationHarness loaded no agentic "
-                    "CSS at all, so it asserted geometry no user ever saw."
-                ),
-            ),
         ),
     ],
 )
@@ -2424,6 +2420,158 @@ async def test_runtime_and_settings_default_states_preserve_workbench_geometry(
             marker_container,
             context=f"{route} non-happy marker escaped workbench pane",
         )
+
+
+def _inspector_parts(screen):
+    pane = screen.query_one("#settings-impact-pane")
+    body = screen.query_one("#settings-impact-pane-body")
+    header = [
+        child
+        for child in pane.children
+        if child is not body
+        and child.display
+        and child.id != "settings-impact-overflow-hint"
+    ]
+    return pane, body, header
+
+
+@pytest.mark.parametrize("size", [(140, 42), (211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_settings_boundary_note_is_fully_visible_at_rest(size):
+    """TASK-33003.7 AC#1: stronger than the contract above, which accepts
+    a note whose top row merely lands inside the pane rectangle (under the
+    fold hint counts). The whole note must sit inside the inspector body's
+    visible window, unscrolled -- at 211x44 its last row was cut at the
+    fold (note 37..40, window 17..39)."""
+    app = _build_test_app()
+    host = _ProductionDestinationHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-boundary-note")
+        await pilot.pause()
+        _pane, body, _header = _inspector_parts(screen)
+        note = screen.query_one("#settings-boundary-note").region
+        window = body.scrollable_content_region
+        assert body.scroll_y == 0
+        assert window.y <= note.y and note.bottom <= window.bottom, (
+            f"boundary note {note} outside the inspector window {window} at {size}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_inspector_floor_yields_to_the_detail_pane_when_narrow():
+    """TASK-33003.7: the 36-column inspector floor applies only from
+    SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH. At 120 columns a static floor cut
+    the detail pane from 57 to 42 columns and left the Network CA path 7
+    editable cells (test_settings_compact_fields); a live resize must move
+    the class both ways. The threshold is pinned at its edge: it hard-codes
+    the rail and gutters (42), so a wider rail must turn this red."""
+    app = _build_test_app()
+    host = _ProductionDestinationHarness(app, "settings")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-impact-pane")
+        inspector = screen.query_one("#settings-impact-pane")
+        detail = screen.query_one("#settings-detail-pane")
+        from tldw_chatbook.UI.Screens.settings_screen import (
+            SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH as edge,
+        )
+
+        for width, floor in (
+            (140, 36),
+            (120, None),
+            (edge - 1, None),
+            (edge, 36),
+            (140, 36),
+        ):
+            await pilot.resize_terminal(width, 42)
+            await pilot.pause()
+            await pilot.pause()
+            assert detail.region.width >= 56, (width, detail.region)
+            if floor:
+                assert inspector.region.width == floor, (width, inspector.region)
+            else:
+                assert inspector.region.width < 36, (width, inspector.region)
+
+
+@pytest.mark.parametrize("size", [(140, 42), (211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_settings_inspector_rows_stay_reachable_in_every_category(size):
+    """TASK-33003.7 AC#3: the pane clips (overflow hidden), so a pinned
+    header row that does not fit, or any row wider than the pane, is lost
+    for good; body rows are reachable only if the body keeps a window and
+    scrolls to its last row. 140x42 carries AC#1 into every category (the
+    note is a body row): red at base, where the 25-column pane clipped
+    Providers & Models' 23-column Save button in its 21-column interior."""
+    app = _build_test_app()
+    host = _ProductionDestinationHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-impact-pane-body")
+        await host.workers.wait_for_complete()
+        for summary in screen._category_summaries():
+            screen._select_category(summary.category.value)
+            await pilot.pause()
+            await pilot.pause()
+            category = summary.category.value
+            pane, body, header = _inspector_parts(screen)
+            inner = pane.content_region
+            window = body.scrollable_content_region
+            assert window.height >= 1, (category, window)
+            for row in header:
+                assert inner.contains_region(row.region), (category, row, inner)
+                assert row.region.bottom <= body.region.y, (category, row)
+            rows = [child for child in body.children if child.display]
+            for row in rows:
+                assert inner.x <= row.region.x, (category, row)
+                assert row.region.right <= inner.right, (category, row, inner)
+            body.scroll_end(animate=False, immediate=True)
+            await pilot.pause()
+            if rows:
+                last = rows[-1].region
+                assert window.y <= last.y and last.bottom <= window.bottom, (
+                    category,
+                    last,
+                    window,
+                )
+            body.scroll_home(animate=False, immediate=True)
+            await pilot.pause()
+
+
+@pytest.mark.parametrize("size", [(120, 42), (140, 42), (211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_settings_action_rows_keep_every_button_whole(size):
+    """cubic review of #2937: a Horizontal action row never wraps, so a
+    button past the detail pane's edge is cut mid-label ("Open Adva"). The
+    TASK-33003.7 inspector floor left the detail pane 56 columns at 140x42,
+    which clipped Privacy's recovery actions, Speech's presets and the RAG
+    profile row (red before the fix). Full-screen sizes must not stack."""
+    app = _build_test_app()
+    host = _ProductionDestinationHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-impact-pane-body")
+        await host.workers.wait_for_complete()
+        detail = screen.query_one("#settings-detail-pane")
+        # The pane stacks by its own width (its on_resize), not the screen's.
+        stacked = detail.size.width < SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH
+        assert detail.has_class("settings-stacked-actions") == stacked, size
+        if size[0] >= 211:
+            assert not stacked, size  # full-screen sizes keep rows inline
+        clipped = []
+        for summary in screen._category_summaries():
+            screen._select_category(summary.category.value)
+            await pilot.pause()
+            await pilot.pause()
+            for row in screen.query(".settings-action-row"):
+                if not row.display or not row.region.width:
+                    continue
+                clipped += [
+                    (summary.category.value, str(button.label))
+                    for button in row.query(Button)
+                    if button.display and button.region.right > row.region.right
+                ]
+        assert not clipped, (size, clipped)
 
 
 @pytest.mark.asyncio

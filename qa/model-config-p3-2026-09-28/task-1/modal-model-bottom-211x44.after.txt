@@ -1,0 +1,43 @@
+
+                ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+                │                                                                                                                                                                                 │
+                │   Conversation settings                                                                                                                                                         │
+                │                                                                                                                                                                                 │
+                │                                                                                                                                                                                 │
+                │   Model and generation · Selected  Context and memory                                                                                                                           │
+                │                                                                                                                                                                                 │
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │
+                │                                                                                                                                                                                 │
+                │                                                                                                                                                                                 │
+                │                         2 models available. Type to filter.                                                                                                                     │
+                │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   │
+                │                         ▊ Saved fallback                                                                                                                                    ▎   │
+                │                         ▊ model-a                                                                                                                                           ▎   │
+                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   │
+                │  Saved fallback                                                                                                                                                                 │
+                │                                                                                                                                                                                 │
+                │                            Custom model    Test connection & list models                                                                                                        │
+                │                                                                                                                                                                                 │
+                │  Tests this endpoint by listing models; this does not test generation.                                                                                                          │
+                │  Ready to send                                                                                                                                                                  │
+                │  A send attempt is permitted with these settings.                                                                                                                               │
+                │  Credential · Not required                                                                                                                                                      │
+                │  Endpoint · Not tested                                                                                                                                                          │
+                │  Model · Selected — not verified at this endpoint                                                                                                                               │
+                │  Generation · Not tested                                                                                                                                                        │
+                │                                                                                                                                                                                 │
+                │   Test generation                                                                                                                                                               │
+                │                                                                                                                                                                                 │
+                │                                                                                                                                                                                 │
+                │   ▶ Advanced generation                                                                                                                                                         │
+                │                                                                                                                                                                                 │
+                │   ▶ Conversation identity                                                                                                                                                       │
+                │                                                                                                                                                                                 │
+                │   ▶ Request estimate                                                                                                                                                            │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │
+                │                                                                                                                                                                                 │
+                │                                                                                    Cancel    Save as provider defaults  Make default for new chats  Use for this conversation   │
+                │                                                                                                                                                                                 │
+                ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

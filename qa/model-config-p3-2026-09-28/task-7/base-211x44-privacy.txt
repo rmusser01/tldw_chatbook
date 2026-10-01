@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Privacy & Security
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Canvas availability and create auto-open are editable; hard quotas, privacy posture, and     │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │  secrets remain read-only and redacted.                                                                                    │  │  │                                         │
+│  category search             │  │  │                                                                                                                            │  │  │ Selected category: Privacy & Security   │
+│                              │  │  │  Privacy & Security                                                                                                        │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Guided edits: Canvas controls and      │
+│      Overview (view)         │  │  │ │                                                                                                                       │  │  │  │  host-access unlock; quotas stay        │
+│      Providers & Models      │  │  │ │  Privacy posture                                                                                                      │  │  │  │  read-only.                             │
+│      Web Search              │  │  │ │  Config encryption: disabled                                                                                          │  │  │  │  Save (s) — no changes                  │
+│      Speech & TTS            │  │  │ │  Redaction: active; raw secret values hidden                                                                          │  │  │  │  Revert (r) — no changes                │
+│  Interface                   │  │  │ │  Sensitive config fields: 10 present                                                                                  │  │  │  │ Local-only: saves write your config     │
+│      Appearance              │  │  │ │  Provider config secrets: 0 present                                                                                   │  │  │  │ file.                                   │
+│      Theme                   │  │  │ │                                                                                                                       │  │  │  │ Impact and boundaries                   │
+│      Splash Screen           │  │  │ │  Credential sources                                                                                                   │▇ │  │  │ Raw CLI host-access gate, secrets,      │
+│      Console Behavior        │  │  │ │  Provider env vars: 0 of 30 referenced env vars are set (30 unset)                                                    │  │  │  │ redaction, and local privacy            │
+│  Data & Privacy              │  │  │ │  Preferred source: environment variables                                                                              │  │  │  │ boundaries.                             │
+│      Storage                 │  │  │ │  Config secrets: counted only; raw values are never displayed                                                         │  │  │  │  Runtime owner: Canvas global           │
+│      Workspaces              │  │  │ │  Recovery actions: Check Privacy | Open Providers & Models | Open Advanced Config                                     │  │  │  │  execution gate plus Settings unlock    │
+│      Tool Profiles           │  │  │ │  Skill trust: uninitialized                                                                                           │  │  │  │  and RawCliRuntime launch-local arm     │
+│ █  > Privacy & Security      │  │  │ │  Skill trust keyring convenience: disabled                                                                            │  │  │  │  state                                  │
+│      Network                 │  │  │ │  Skill trust rollback protection: reduced                                                                             │  │  │  │                                         │
+│      My Profile              │  │  │ │  Check Privacy    Open Providers & Models   Open Advanced Config                                                      │  │  │  │  Writes allowed: Yes                    │
+│  Troubleshooting             │  │  │ │                                                                                                                       │  │  │  │                                         │
+│      Diagnostics (view)      │  │  │ │  Data boundary                                                                                                        │  │  │  │  Owns: canvas.enabled                   │
+│      About (view)            │  │  │ │  Local data: local data stays local unless explicit server handoff or sync is enabled                                 │  │  │  │  canvas.auto_open_on_create             │
+│      Agents                  │  │  │ │  Server tokens: server tokens are reported as configured/missing only                                                 │  │  │  │  console.raw_cli_permitted              │
+│  Expert                      │  │  │ │  Credential mutation: not available yet - password-gated flow required                                                │  │  │  │                                       ▆ │
+│      Internal Prompts        │  │  │ │  Privacy check: not run                                                                                               │  │  │  │  Affected config: Canvas availability   │
+│      Advanced Config         │  │  │ │  Run Check Privacy or press t to verify redacted secret status.                                                       │  │  │  │  and auto-open plus the raw CLI         │
+│   Domain Defaults ▸ (11)     │  │  │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  host-access unlock                     │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Credential source: Environment         │
+│                              │  │  │ │                                                                                                                       │  │  │  │  variables are preferred for provider   │
+│                              │  │  │ │  Canvas                                                                                                               │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Raw CLI host-access gate, secrets, redaction, and local privacy boundaries.
+  s save category | r revert category | t check privacy | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

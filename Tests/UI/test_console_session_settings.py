@@ -36,9 +36,10 @@ from Tests.UI.app_factory import persist_seeded_config
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp, app_css_text
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_non_obscuring_focus_contract import css_blocks
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -113,8 +114,6 @@ from tldw_chatbook.Widgets.Console.console_provider_picker import (
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
-    MODAL_BODY_MIN_HEIGHT,
-    MODAL_CONTROL_HEIGHT,
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
     PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
@@ -4562,12 +4561,744 @@ async def test_console_settings_body_uses_exact_twenty_line_content_ceiling() ->
         assert body.hint.region.height == 1
 
 
-def test_console_settings_modal_sizing_uses_named_constants() -> None:
-    assert MODAL_BODY_MIN_HEIGHT == 0
-    assert MODAL_CONTROL_HEIGHT == 3
-    assert f"min-height: {MODAL_BODY_MIN_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
-    assert f"height: {MODAL_CONTROL_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
-    assert f"min-height: {MODAL_CONTROL_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
+def _one_row_settings_modal(
+    app_config, settings: ConsoleSessionSettings | None = None
+) -> ConsoleSettingsModal:
+    settings = settings or ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+        temperature=0.7,
+    )
+    providers_models = {"llama_cpp": ["model-a", "model-b"]}
+    providers_models.setdefault(settings.provider, [settings.model])
+    return ConsoleSettingsModal(
+        settings=settings,
+        app_config=app_config,
+        providers_models=providers_models,
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+
+
+def _painted_rows(screen) -> list[str]:
+    return [strip.text for strip in screen._compositor.render_strips()]
+
+
+def _content_rows(widget) -> int:
+    """Rows the widget's own text needs, before any min-height inflation."""
+    width = widget.content_region.width
+    return widget.get_content_height(widget.size, widget.app.size, width)
+
+
+def _assert_one_row_controls(screen, view: str) -> None:
+    footer = screen.query_one("#console-settings-actions")
+    controls = [
+        widget
+        for widget in screen.query("Input, Select, Button")
+        if widget.region.area and footer not in widget.ancestors
+    ]
+    assert len(controls) >= 3, f"{view}: nothing to measure"
+    for widget in controls:
+        assert widget.region.height == 1, (view, widget.id, widget.region)
+    labels = [
+        label
+        for label in screen.query(".console-settings-modal-label")
+        if label.region.area
+    ]
+    for label in labels:
+        tallest = max(
+            (
+                child.region.height
+                for child in label.parent.children
+                if child is not label and child.region.area
+            ),
+            default=0,
+        )
+        assert label.region.height <= max(tallest, _content_rows(label)), (
+            view,
+            str(label.render()),
+            label.region,
+        )
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_console_settings_modal_controls_render_one_row_tall(size) -> None:
+    """TASK-33003.2: every Chat settings control renders one row tall.
+
+    Deliberately rewritten from
+    ``test_console_settings_modal_sizing_uses_named_constants``, which pinned
+    ``MODAL_CONTROL_HEIGHT == 3``. The contract is now the rendered one: under
+    the production stylesheets every Input, Select and non-footer Button in
+    both views is one row, labels and the one-line summaries add no rows, and
+    each Context-view Select paints on its label's row. The heights come from
+    ``$ds-control-height-compact`` in app-tier sheets, not widget DEFAULT_CSS
+    (which loses to app CSS anyway, lessons-textual.md).
+    """
+    app = StyledModalHarness()
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        assert screen.query_one("#console-settings-view-tabs").region.height == 1
+        for summary_id in ("#console-settings-scope", "#console-settings-readiness"):
+            summary = screen.query_one(summary_id, Static)
+            assert summary.region.height == _content_rows(summary), (
+                summary_id,
+                summary.region,
+            )
+        _assert_one_row_controls(screen, "model")
+
+        for section in screen.query(Collapsible):
+            section.collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        _assert_one_row_controls(screen, "model expanded")
+
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        _assert_one_row_controls(screen, "context")
+        painted = _painted_rows(screen)
+        paired = 0
+        for select in screen.query("#console-settings-context-view Select"):
+            if not select.region.area:
+                continue
+            label = next(
+                child
+                for child in select.parent.children
+                if child.has_class("console-settings-modal-label")
+            )
+            assert label.region.y == select.region.y, (select.id, label.region)
+            row = painted[select.region.y]
+            assert str(label.render()).strip() in row, (select.id, row)
+            assert "▼" in row[select.region.x : select.region.right], (select.id, row)
+            paired += 1
+        assert paired >= 3
+
+    default_css = ConsoleSettingsModal.DEFAULT_CSS
+    for selector in (
+        "ConsoleSettingsModal Input",
+        "ConsoleSettingsModal .console-settings-modal-row",
+        "ConsoleSettingsModal .console-settings-modal-label",
+        "ConsoleSettingsModal #console-settings-view-tabs",
+        "ConsoleSettingsModal #console-settings-default-recovery-actions",
+        "ConsoleSettingsModal .console-context-action-row",
+    ):
+        assert selector not in default_css, selector
+    assert not hasattr(settings_modal_module, "MODAL_CONTROL_HEIGHT")
+    app_css = app_css_text()
+    for selector in (
+        "ConsoleSettingsModal Input",
+        "ConsoleSettingsModal Select",
+        "ConsoleSettingsModal Button",
+    ):
+        assert any(
+            "$ds-control-height-compact" in block
+            for block in css_blocks(app_css, selector)
+        ), selector
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_console_settings_default_recovery_actions_render_one_row_tall(size) -> None:
+    """TASK-33003.2 AC#1: the default-save recovery actions are one row too."""
+    from Tests.UI.test_console_resize_reflow import _failed_default_state
+    from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultSavePhase
+
+    app = StyledModalHarness()
+    modal = _one_row_settings_modal(app.app_config)
+    modal._default_durability_state = _failed_default_state(
+        ConsoleDefaultSavePhase.BEFORE_REPLACE
+    )
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+        actions = modal.query_one("#console-settings-default-recovery-actions")
+        assert actions.display
+        assert actions.region.height == 1, actions.region
+        shown = [button for button in actions.query(Button) if button.region.area]
+        assert len(shown) == 2
+        for button in shown:
+            assert button.region.height == 1, (button.id, button.region)
+
+
+def _style_at(strip, offset: int):
+    position = 0
+    for segment in strip:
+        if position + len(segment.text) > offset:
+            return segment.style
+        position += len(segment.text)
+    raise AssertionError(f"offset {offset} outside strip")
+
+
+@pytest.mark.asyncio
+async def test_console_settings_focused_one_row_field_paints_value_and_focus_edge() -> None:
+    """TASK-33003.2 AC#4: a focused one-row field paints its value, not an outline.
+
+    Removing a field's border box exposes it to the global ``*:focus``
+    outline (lessons-testing-evidence.md, task-17651), which reading
+    ``.value`` cannot see. Real key presses open Advanced generation, move to
+    Temperature and type; the compositor row must then show the typed value
+    behind the thick focus edge, with no outline glyphs, while the unfocused
+    field below keeps the thin rest edge and a different fill.
+    """
+    app = StyledModalHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one(
+            "#console-settings-generation-advanced CollapsibleTitle"
+        ).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        temperature = screen.query_one("#console-settings-temperature", Input)
+        assert screen.focused is temperature
+        await pilot.press("end", "backspace", "backspace", "backspace")
+        await pilot.press("0", ".", "4", "2")
+        await pilot.pause()
+        await pilot.pause()
+
+        strips = screen._compositor.render_strips()
+        focused_region = temperature.region
+        top_p = screen.query_one("#console-settings-top-p", Input)
+        rest_region = top_p.region
+        assert focused_region.height == rest_region.height == 1
+        focused = strips[focused_region.y].text[
+            focused_region.x : focused_region.right
+        ]
+        rest = strips[rest_region.y].text[rest_region.x : rest_region.right]
+        assert "0.42" in focused, focused
+        assert focused[0] == "█", focused
+        assert rest[0] == "│", rest
+        for glyph in "┌┐└┘─▔▁":
+            assert glyph not in focused, (glyph, focused)
+        value_x = focused_region.x + focused.index("0.42")
+        rest_value_x = rest_region.x + 2
+        focused_style = _style_at(strips[focused_region.y], value_x)
+        rest_style = _style_at(strips[rest_region.y], rest_value_x)
+        assert focused_style.bold
+        assert focused_style.bgcolor != rest_style.bgcolor
+
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        budget = screen.query_one("#console-context-budget-mode", Select)
+        compaction = screen.query_one("#console-context-compaction-mode", Select)
+        budget.focus()
+        await pilot.pause()
+        strips = screen._compositor.render_strips()
+        painted = strips[budget.region.y].text[budget.region.x : budget.region.right]
+        resting = strips[compaction.region.y].text[
+            compaction.region.x : compaction.region.right
+        ]
+        assert "Automatic" in painted, painted
+        assert painted[0] == "█", painted
+        assert resting[0] == "│", resting
+        for glyph in "┌┐└┘─▔▁":
+            assert glyph not in painted, (glyph, painted)
+        assert _style_at(
+            strips[budget.region.y], budget.region.x + painted.index("Automatic")
+        ).bgcolor != _style_at(
+            strips[compaction.region.y], compaction.region.x + 2
+        ).bgcolor
+
+
+def _painted_cell(screen, x: int, y: int):
+    """(glyph, fg, bg) the compositor paints at screen cell (x, y)."""
+    position = 0
+    for segment in screen._compositor.render_strips()[y]:
+        if position + len(segment.text) > x:
+            return segment.text[x - position], segment.style.color, segment.style.bgcolor
+        position += len(segment.text)
+    raise AssertionError(f"({x}, {y}) is off screen")
+
+
+def _painted_ratio(first, second) -> float:
+    from textual.color import Color
+
+    from tldw_chatbook.css.Themes.themes import _contrast_ratio
+
+    return _contrast_ratio(Color.from_rich_color(first), Color.from_rich_color(second))
+
+
+def _themed_modal_harness() -> "StyledModalHarness":
+    from tldw_chatbook.css.Themes.themes import agentic_terminal_theme
+
+    app = StyledModalHarness()
+    app.register_theme(agentic_terminal_theme)
+    return app
+
+
+@pytest.mark.parametrize("theme", ["agentic_terminal", "textual-light"])
+@pytest.mark.asyncio
+async def test_console_settings_select_highlight_is_a_readable_bar(theme) -> None:
+    """TASK-33003.6 AC#5: the highlighted option of an open Chat settings
+    Select differs from the other options by 3:1 and keeps its label
+    readable. The shared OptionList contract paints $surface over a $panel
+    overlay (1.12:1 measured), and the modal's `SelectOverlay Option` rules
+    never matched: Textual 8 options are lines, not widgets."""
+    from textual.widgets._select import SelectOverlay
+
+    app = _themed_modal_harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        budget = screen.query_one("#console-context-budget-mode", Select)
+        budget.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        overlay = budget.query_one(SelectOverlay)
+        assert overlay.display and overlay.option_count >= 2
+        box = overlay.content_region
+        highlighted = overlay.highlighted
+        other = 1 if highlighted == 0 else 0
+        top = box.y - int(overlay.scroll_offset.y)
+        _, _, bar = _painted_cell(screen, box.x, top + highlighted)
+        _, _, rest = _painted_cell(screen, box.x, top + other)
+        label = overlay.get_option_at_index(highlighted).prompt
+        row = screen._compositor.render_strips()[top + highlighted].text
+        ink_x = row.index(str(label), box.x)
+        _, ink, _ = _painted_cell(screen, ink_x, top + highlighted)
+        assert _painted_ratio(bar, rest) >= 3.0, (theme, bar, rest)
+        assert _painted_ratio(ink, bar) >= 4.5, (theme, ink, bar)
+
+
+@pytest.mark.parametrize("theme", ["textual-dark", "agentic_terminal", "textual-light"])
+@pytest.mark.asyncio
+async def test_console_settings_select_popover_edge_keeps_3_to_1(theme) -> None:
+    """cubic review of #2937: an open Select's popover edge is a
+    $tldw-boundary control edge, so it must clear 3:1 against the popover's
+    own fill. Textual tints a focused OptionList 5% toward the foreground and
+    the popover always holds focus, so the edge measured 2.71:1 in
+    textual-dark (3.05:1 on the untinted panel)."""
+    from textual.widgets._select import SelectOverlay
+
+    app = _themed_modal_harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        budget = screen.query_one("#console-context-budget-mode", Select)
+        budget.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        overlay = budget.query_one(SelectOverlay)
+        assert overlay.display and overlay.has_focus
+        x, y = overlay.region.x, overlay.region.y + 1
+        glyph, edge, _ = _painted_cell(screen, x, y)
+        _, _, fill = _painted_cell(screen, x + 1, y)
+        assert glyph == "│", (theme, glyph)
+        assert _painted_ratio(edge, fill) >= 3.0, (theme, edge, fill)
+
+
+@pytest.mark.parametrize(
+    "theme", ["agentic_terminal", "textual-light", "paradise_virtua", "earthy_nature"]
+)
+@pytest.mark.asyncio
+async def test_console_settings_focused_button_keeps_its_contrast(theme) -> None:
+    """TASK-33003.6 AC#4: focus never lowers a Chat settings button's
+    contrast against the modal. The global `Button:focus` fill (primary at
+    30%) replaced the primary Apply button's $primary, so a focused Apply
+    read as disabled; a default button must not lose contrast either. On 14
+    themes (review round 1: paradise_virtua, earthy_nature) the tint sat
+    closer to the modal than the resting fill; FOCUS_FILL_VARIABLE pins them."""
+    from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
+    app = _themed_modal_harness()
+    for registered in ALL_THEMES:
+        if registered.name == theme:
+            app.register_theme(registered)
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        for button_id in ("#console-settings-save", "#console-settings-cancel"):
+            button = screen.query_one(button_id, Button)
+            assert not button.disabled, button_id
+            panel = button.parent.background_colors[1].rich_color
+            screen.set_focus(None)
+            await pilot.pause()
+            _, _, rest = _painted_cell(screen, button.region.x + 1, button.region.y)
+            button.focus()
+            await pilot.pause()
+            _, _, focused = _painted_cell(screen, button.region.x + 1, button.region.y)
+            assert _painted_ratio(focused, panel) >= _painted_ratio(rest, panel), (
+                theme,
+                button_id,
+                rest,
+                focused,
+            )
+
+
+#: TASK-33003.3 AC#1: the numeric fields, by the ids that size them.
+_NUMERIC_FIELD_IDS = (
+    "console-settings-temperature",
+    "console-settings-top-p",
+    "console-settings-min-p",
+    "console-settings-top-k",
+    "console-settings-max-tokens",
+    "console-settings-seed",
+    "console-settings-presence-penalty",
+    "console-settings-frequency-penalty",
+    "console-settings-thinking-budget-tokens",
+    "console-context-custom-budget",
+    "console-context-trigger-percent",
+    "console-context-target-percent",
+    "console-context-summary-max",
+)
+#: AC#3: the free-text fields (search pickers type an id; the rest are text).
+_FREE_TEXT_FIELD_IDS = (
+    "console-settings-provider-picker",
+    "console-settings-base-url",
+    "console-settings-model-picker",
+    "console-settings-user-display-name",
+)
+#: A dense-form Select paints its left edge, one padding cell on each side,
+#: and the arrow with its one-cell gap around the option text.
+_SELECT_CHROME = 5
+
+
+def _shown_field_widths(screen) -> dict[str, int]:
+    from rich.cells import cell_len
+
+    for field_id in _NUMERIC_FIELD_IDS:
+        field = screen.query_one(f"#{field_id}", Input)
+        if field.region.area and field.placeholder:
+            # A cropped hint misleads ("Required" shown in Automatic mode).
+            assert cell_len(field.placeholder) <= field.content_region.width, (
+                field_id,
+                field.placeholder,
+                field.content_region,
+            )
+    return {
+        widget.id: widget.region.width
+        for widget in screen.query(
+            "Input, Select, ConsoleProviderPicker, ModelSearchPicker"
+        )
+        if widget.id and widget.region.area
+    }
+
+
+def _assert_enum_selects_fit_their_options(screen, view: str) -> int:
+    """Each shown Select is its longest option plus the arrow: no wider, no crop."""
+    from rich.cells import cell_len
+
+    checked = 0
+    for select in screen.query(Select):
+        if not select.region.area:
+            continue
+        texts = [str(prompt) for prompt, _value in select._options if prompt != ""]
+        if select._allow_blank:
+            texts.append(select.prompt)
+        longest = max(cell_len(text) for text in texts)
+        assert select.region.width <= longest + _SELECT_CHROME, (
+            view,
+            select.id,
+            select.region.width,
+            longest,
+        )
+        label = select.query_one("SelectCurrent #label")
+        assert label.region.width >= longest, (view, select.id, label.region, longest)
+        checked += 1
+    return checked
+
+
+#: Each chat shows different provider-choice Selects: llama.cpp (the default
+#: modal, which also shows every numeric and free-text field) shows Reasoning
+#: effort, OpenAI gpt-5 adds Reasoning summary and Verbosity, and Anthropic
+#: shows Thinking effort.
+_VALUE_TYPE_CHATS = {
+    "llama_cpp": (None, ("console-settings-reasoning-effort",)),
+    "openai": (
+        ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        (
+            "console-settings-reasoning-effort",
+            "console-settings-reasoning-summary",
+            "console-settings-verbosity",
+        ),
+    ),
+    "anthropic": (
+        ConsoleSessionSettings(provider="anthropic", model="claude-opus-4-8"),
+        ("console-settings-thinking-effort",),
+    ),
+}
+
+
+@pytest.mark.parametrize("chat", sorted(_VALUE_TYPE_CHATS))
+@pytest.mark.asyncio
+async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
+    """TASK-33003.3: a field is as wide as its value type, not the viewport.
+
+    Under the production stylesheets, with every section expanded: numeric
+    fields are at most 12 columns (edge included), each enum Select is its
+    longest option plus the arrow, free-text fields stay within 64 columns,
+    and no width changes between 211x44 and 235x52. Parametrized over three
+    chats so every provider-choice Select renders in at least one.
+    """
+    settings, choice_ids = _VALUE_TYPE_CHATS[chat]
+    shown_ids = choice_ids
+    if settings is None:
+        shown_ids += _NUMERIC_FIELD_IDS + _FREE_TEXT_FIELD_IDS
+    widths_by_size: dict[tuple[int, int], dict[str, int]] = {}
+    for size in ((211, 44), (235, 52)):
+        app = StyledModalHarness()
+        async with app.run_test(size=size) as pilot:
+            await app.push_screen(_one_row_settings_modal(app.app_config, settings))
+            await pilot.pause()
+            screen = app.screen
+            for section in screen.query(Collapsible):
+                section.collapsed = False
+            await pilot.pause()
+            await pilot.pause()
+            widths = _shown_field_widths(screen)
+            selects = _assert_enum_selects_fit_their_options(screen, "model")
+            screen.query_one("#console-settings-view-context", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+            widths |= _shown_field_widths(screen)
+            selects += _assert_enum_selects_fit_their_options(screen, "context")
+        assert selects >= 7, (size, selects)
+        for field_id in shown_ids:
+            assert widths.get(field_id, 0) > 0, (size, field_id)
+        for field_id in _NUMERIC_FIELD_IDS:
+            assert widths.get(field_id, 0) <= 12, (size, field_id, widths.get(field_id))
+        for field_id in _FREE_TEXT_FIELD_IDS:
+            assert widths.get(field_id, 0) <= 64, (size, field_id, widths.get(field_id))
+        widths_by_size[size] = widths
+    assert widths_by_size[(211, 44)] == widths_by_size[(235, 52)]
+
+
+def _field_paint(screen, field) -> tuple:
+    """(edge ink, field surface, surface just past the field's right end)."""
+    y = field.region.y
+    glyph, edge, _ = _painted_cell(screen, field.region.x, y)
+    assert glyph == "│", (field.id, glyph)
+    _, _, surface = _painted_cell(screen, field.region.x + 1, y)
+    _, _, beside = _painted_cell(screen, field.region.right, y)
+    return edge, surface, beside
+
+
+@pytest.mark.parametrize("theme", ["textual-dark", "agentic_terminal", "textual-light"])
+@pytest.mark.asyncio
+async def test_console_settings_disclosure_fields_read_as_sized(theme) -> None:
+    """TASK-33003.3: a number field inside Advanced generation shows its width.
+
+    The global `Collapsible > Contents` rule painted the disclosure $surface,
+    the fields' own fill, so a 12-column field read as a full row behind a
+    one-column edge. The surface past each field's right end must differ from
+    the field, its edge or fill must reach 3:1 against it, and it must be the
+    surface the Context view's fields sit on (the reference that reads right).
+    """
+    app = _themed_modal_harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        app.theme = theme
+        await app.push_screen(_one_row_settings_modal(app.app_config))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one(
+            "#console-settings-generation-advanced CollapsibleTitle"
+        ).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        body = screen.query_one("#console-settings-body")
+        fields = [
+            field
+            for field in screen.query("#console-settings-generation-advanced Input")
+            if field.region.area and body.region.contains_region(field.region)
+        ]
+        assert len(fields) >= 5, [field.id for field in fields]
+        disclosure = set()
+        for field in fields:
+            edge, surface, beside = _field_paint(screen, field)
+            assert surface != beside, (theme, field.id, surface)
+            assert max(
+                _painted_ratio(surface, beside), _painted_ratio(edge, beside)
+            ) >= 3.0, (theme, field.id, edge, surface, beside)
+            disclosure.add(beside)
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        reference = screen.query_one("#console-context-trigger-percent", Input)
+        _, _, context_surface = _field_paint(screen, reference)
+        assert disclosure == {context_surface}, (theme, disclosure, context_surface)
+
+
+_CHOICE_IDS = (
+    "console-settings-reasoning-effort",
+    "console-settings-reasoning-summary",
+    "console-settings-verbosity",
+    "console-settings-thinking-effort",
+)
+#: llama.cpp shows Reasoning effort only; a custom endpoint entry (ADR-146)
+#: has no authoritative capability data, so it shows all four choice rows.
+_CHOICE_ROW_CHATS = {
+    "llama_cpp": (None, 1),
+    "custom_endpoint": (
+        ConsoleSessionSettings(provider="custom-ep:gpu-box", model="model-a"),
+        4,
+    ),
+}
+
+
+async def _focus_in_view(pilot, screen, widget) -> None:
+    """Focus ``widget`` and wait until the body has scrolled it into view."""
+    body = screen.query_one("#console-settings-body")
+    widget.focus()
+    for _ in range(20):
+        await pilot.pause()
+        if body.region.contains_region(widget.region):
+            return
+    raise AssertionError((widget.id, widget.region, body.region))
+
+
+def _assert_choice_row_paints(screen, control_id: str, shown: str) -> None:
+    """The row paints its label and ``shown`` in the Select, no empty error edge."""
+    select = screen.query_one(f"#{control_id}", Select)
+    row = screen.query_one(f"#{control_id}-row", Horizontal)
+    validation = screen.query_one(f"#{control_id}-validation", Static)
+    label = row.query_one(".console-settings-modal-label", Static)
+    painted = _painted_rows(screen)[select.region.y]
+    assert str(label.render()).strip() in painted, (control_id, painted)
+    cell = painted[select.region.x : select.region.right]
+    assert shown in cell and "▼" in cell, (control_id, shown, painted)
+    assert "█" not in painted[select.region.right :], (control_id, painted)
+    assert validation.region.width == 0, (control_id, validation.region)
+    assert row.region.height == 1, (control_id, row.region)
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.parametrize("chat", sorted(_CHOICE_ROW_CHATS))
+@pytest.mark.asyncio
+async def test_console_settings_choice_rows_paint_their_select(chat, size) -> None:
+    """TASK-33003.8: every displayed choice row paints its Select.
+
+    The empty validation line used to stay displayed with no width, took the
+    whole row and left the Select zero wide (or, once sized, painted its thick
+    error edge and a blank margin row). Real key presses pick an option and
+    the painted row must then show it.
+    """
+    settings, expected_rows = _CHOICE_ROW_CHATS[chat]
+    app = StyledModalHarness()
+    app.app_config = _registry_app_config()
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(_one_row_settings_modal(app.app_config, settings))
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#console-settings-generation-advanced", Collapsible).collapsed = False
+        await pilot.pause()
+        shown = [
+            control_id
+            for control_id in _CHOICE_IDS
+            if screen.query_one(f"#{control_id}-row").display
+        ]
+        assert len(shown) == expected_rows, shown
+        for control_id in shown:
+            select = screen.query_one(f"#{control_id}", Select)
+            await _focus_in_view(pilot, screen, select)
+            _assert_choice_row_paints(screen, control_id, select.prompt)
+            first_option = str(select._options[1][0])
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("down", "enter")
+            await pilot.pause()
+            _assert_choice_row_paints(screen, control_id, first_option)
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_console_settings_obsolete_choice_copy_paints_beside_its_select(
+    size,
+) -> None:
+    """TASK-33003.8 AC#2: a restored obsolete value keeps its recovery copy."""
+    app = StyledModalHarness()
+    snapshot = _task_30012_suspended_modal_draft(
+        focus_control_id="console-settings-provider-picker",
+        advanced_generation=True,
+        raw_values={"console-settings-reasoning-effort": "obsolete-effort"},
+    )
+    modal = _basic_modal(
+        snapshot.settings,
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+        suspended_draft=snapshot,
+    )
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        control_id = "console-settings-reasoning-effort"
+        select = modal.query_one(f"#{control_id}", Select)
+        validation = modal.query_one(f"#{control_id}-validation", Static)
+        await _focus_in_view(pilot, modal, select)
+        painted = _painted_rows(modal)
+        row = modal.query_one(f"#{control_id}-row", Horizontal)
+        # Beside the Select and its support note, wrapping inside the row.
+        assert validation.region.x >= select.region.right, validation.region
+        assert validation.region.right <= row.region.right, (validation.region, row.region)
+        copy = "".join(
+            painted[y][validation.region.x : validation.region.right].strip() + " "
+            for y in range(validation.region.y, validation.region.bottom)
+        )
+        assert "Saved value is unavailable." in painted[select.region.y], painted[
+            select.region.y
+        ]
+        assert "Choose one of: none, minimal, low, medium, high, xhigh." in copy, copy
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        await pilot.pause()
+        _assert_choice_row_paints(modal, control_id, "None")
+
+
+@pytest.mark.asyncio
+async def test_endpoint_template_modal_keeps_its_three_row_controls() -> None:
+    """TASK-33003.2 AC#7: the one-row rules stay scoped to Chat settings."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        MODAL_CONTROL_HEIGHT as ENDPOINT_MODAL_CONTROL_HEIGHT,
+    )
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app = StyledModalHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleEndpointTemplateModal(
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+            )
+        )
+        await pilot.pause()
+        controls = [
+            widget
+            for widget in app.screen.query(
+                ".console-endpoint-template-modal-input, "
+                ".console-endpoint-template-modal-select"
+            )
+            if widget.region.area
+        ]
+        assert len(controls) == 4
+        for widget in controls:
+            assert widget.region.height == ENDPOINT_MODAL_CONTROL_HEIGHT == 3, (
+                widget.id,
+                widget.region,
+            )
 
 
 def test_pending_launch_inspector_auto_open_docstring_is_google_style() -> None:
@@ -6067,9 +6798,14 @@ async def test_console_settings_modal_saves_replaced_temperature_input() -> None
             "#console-settings-generation-advanced", Collapsible
         ).collapsed = False
         await pilot.pause()
+        # TASK-33003.8: close the focused provider picker's open list first.
+        # Otherwise the mouse-down's blur collapses it mid-click and the
+        # click lands on whatever row moved under the pointer.
+        await pilot.press("escape")
+        await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
-        body.scroll_to_widget(temperature)
+        body.scroll_to_widget(temperature, animate=False)
         await pilot.pause()
 
         await pilot.click(temperature)
@@ -6110,9 +6846,14 @@ async def test_console_settings_modal_replaces_focused_sampling_input() -> None:
             "#console-settings-generation-advanced", Collapsible
         ).collapsed = False
         await pilot.pause()
+        # TASK-33003.8: close the focused provider picker's open list first.
+        # Otherwise the mouse-down's blur collapses it mid-click and the
+        # click lands on whatever row moved under the pointer.
+        await pilot.press("escape")
+        await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
-        body.scroll_to_widget(temperature)
+        body.scroll_to_widget(temperature, animate=False)
         await pilot.pause()
 
         await pilot.click(temperature)

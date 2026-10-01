@@ -1,0 +1,44 @@
+                                                                                                                                         ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings │ F5 Research │ F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Research Workspace
+ Bounded sources, grounded answers, durable outputs.
+  Setup required
+ Research:   Workspace    Runs
+ Workspace data:    Local  |  Server
+ Processing: not configured  Sources: 0 ready
+ No Local research workspaces.                                                                                                                                                              Manage Workspaces...
+╭──────────────────────────────╮    ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮    ╭────────────────────────────────────────────────╮
+│                              │    │                                                                                                                       │    │                                                │
+│ S  Add Sources    Refresh    │    │ Grounded Chat                                                                                                         │    │ Studio                                         │
+│  No workspace selected ·     │    │                                                                                                                       │    │                                                │
+│  Local authority             │    │ Selected sources: 0 · Retrieval unavailable                                                                           │    │ 0 generated outputs · Quick Notes use the      │
+│  Quick add URL        Add    │    │                                                                                                                       │    │ selected canonical owner                       │
+│  Filter current page         │    │ Choose a workspace and attach ready sources before asking a grounded question.                                        │    │                                                │
+│   Advanced   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔  │    │                                                                                                                       │    │ │ Quick Notes        0 notes   Load    New     │
+│ Status/type filters: none ·  │    │                                                                                                                       │    │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Search     │
+│ Temporary sort off           │    │                                                                                                                       │    │ │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎    │
+│  Select all      Select      │    │                                                                                                                       │    │ │                                              │
+│   Clear  0 selected          │    │                                                                                                                       │    │ │   Previous  Page 1 · no notes       Next     │
+│ Selection unavailable until  │    │                                                                                                                       │    │ │  Title                                       │
+│ a workspace owner loads.     │    │                                                                                                                       │    │ │  Tags (comma-separated)                      │
+│         Move / Copy          │ <- │                                                                                                                       │ -- │ │                                              │
+│       Preview visible        │ -- │                                                                                                                       │ -> │ │   Capture selected sources    Capture mess   │
+│   Remove visible selected    │    │                                                                                                                       │    │ │ No captured provenance                       │
+│ Move / Copy — canonical      │    │                                                                                                                       │    │ │                                              │
+│ owner action is not exposed  │    │                                                                                                                       │    │ │ ╭────────╮  Markdown Preview                 │
+│ here                         │    │                                                                                                                       │    │ │                                              │
+│                              │    │                                                                                                                       │    │ │ ┌────────────────────────────────────────┐   │
+│ │ Folders · Device-only      │    │                                                                                                                       │    │ │ │                                        │   │
+│ │  Device-only folder nam    │    │                                                                                                                       │    │ │ │                                        │ ▇ │
+│ │           New            ▁ │    │                                                                                                                       │    │ │ │                                        │   │
+│ │          Rename            │    │                                                                                                                       │    │ │ │                                        │   │
+│ │          Focus             │    │                                                                                                                       │    │ │ │                                        │   │
+│ │      Select folder         │    │                                                                                                                       │    │ │ │                                        │   │
+│ │    Expand / collapse       │    │                                                                                                                       │    │ │ │                                        │   │
+│ │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎    │    │                                                                                                                       │    │ │ │                                        │   │
+│ │                            │    │                                                                                                                       │    │ │ └────────────────────────────────────────┘   │
+│                              │    │                                                                                                                       │    │                                                │
+╰──────────────────────────────╯    ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    ╰────────────────────────────────────────────────╯
+ Foundation ready · Local catalog ready · 0 workspaces · Foundation only
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

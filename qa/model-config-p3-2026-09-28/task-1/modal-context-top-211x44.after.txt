@@ -1,0 +1,43 @@
+
+                ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+                │                                                                                                                                                                                 │
+                │   Conversation settings                                                                                                                                                         │
+                │                                                                                                                                                                                 │
+                │                                    Context and memory                                                                                                                           │
+                │        Model and generation            · Selected                                                                                                                               │
+                │                                                                                                                                                                                 │
+                │  Use: this conversation only. Defaults: F4 Settings > Console Behavior.                                                                                                         │
+                │                                                                                                                                                                                 │
+                │                                                                                                                                                                                 │
+                │                                                                                                                                                                                 │
+                │  Model capacity                                                                                                                                                                 │
+                │  Model window        4,096 tokens                                                                                                                                               │
+                │  Max tokens          1,024 tokens                                                                                                                                               │
+                │  Safety margin       512 tokens                                                                                                                                                 │
+                │  Safe input ceiling  2,560 tokens                                                                                                                                               │
+                │  Capacity is verified for the selected model.                                                                                                                                   │
+                │                                                                                                                                                                                 │
+                │  Conversation budget                                                                                                                                                            │
+                │                          Automatic                                                                                                                     ▼                     ▁  │
+                │  Budget strategy                                                                                                                                                                │
+                │                                                                                                                                                                                 │
+                │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                       │
+                │  Conversation max tokens▊ Required in Custom mode                                                                                                       ▎                       │
+                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                       │
+                │  Effective           2,560 tokens                                                                                                                                               │
+                │  Next request        10 tokens                                                                                                                                                  │
+                │  Request overhead    unknown tokens                                                                                                                                             │
+                │                                                                                                                                                                                 │
+                │  Compaction                                                                                                                                                                     │
+                │                          Ask                                                                                                                           ▼                        │
+                │  When limit nears                                                                                                                                                               │
+                │                                                                                                                                                                                 │
+                │                          Text summary                                                                                                                  ▼                        │
+                │  Representation                                                                                                                                                                 │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │
+                │                                                                                                                                                                                 │
+                │                                                                                                                                           Cancel    Use for this conversation   │
+                │                                                                                                                                                                                 │
+                ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

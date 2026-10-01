@@ -246,8 +246,9 @@ Select:focus {
  * `&.-textual-compact { &:focus { border: tall $border; } }` reinstates a
  * border on compact-focus even with no app CSS in play, so the restated
  * `border: none` below neutralizes both. Either border alone, combined
- * with this app's unscoped `Checkbox { height: 2; }` (features/
- * _conversations.tcss), leaves zero rows for content -- so the compact
+ * with the app's former unscoped `Checkbox { height: 2; }` (features/
+ * _conversations.tcss, retired in TASK-18960), left zero rows for
+ * content -- so the compact
  * variant restates `border: none` too. Focus stays visible either way via
  * the existing `.toggle--label` recolour contract below (pinned by
  * Tests/UI/test_non_obscuring_focus_contract.py) -- untouched by this
@@ -439,9 +440,8 @@ Switch:focus {
  * The Settings-screen-only siblings (settings-input-row,
  * settings-select-row, settings-status-row, settings-compact-select,
  * settings-focus-card) stay in the monolith for the task-10 feature carve,
- * as do the scoped overrides (#settings-impact-pane .settings-detail-row,
- * #settings-web-search-panel .settings-compact-input, ...) that belong to
- * their surfaces. */
+ * as do the scoped overrides (#settings-web-search-panel
+ * .settings-compact-input, ...) that belong to their surfaces. */
 .settings-detail-row {
     width: $ds-width-full;
     min-height: $ds-control-height-compact;

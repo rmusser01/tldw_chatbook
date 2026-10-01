@@ -8,7 +8,8 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-$ds-grid-line: $surface-lighten-1;
+/* TASK-33003.6: 3:1 per theme (themes.py BOUNDARY_VARIABLE). */
+$ds-grid-line: $tldw-boundary;
 $ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
@@ -37,10 +38,11 @@ $ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
 /* task-1586 control convention: editable fields carry a one-column left
    edge at rest — presence of the edge (a structural marker), not its
-   color, distinguishes controls from prose. Muted at rest (cozy), the
-   edge flips to thick $ds-action-focus on focus. Left borders cost a
-   column, never a row, so dense one-row forms keep their height. */
-$ds-control-edge: $surface-lighten-2;
+   color, distinguishes controls from prose. Quieter than text at rest
+   (3:1, TASK-33003.6), the edge flips to thick $ds-action-focus on focus.
+   Left borders cost a column, never a row, so dense one-row forms keep
+   their height. */
+$ds-control-edge: $tldw-boundary;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;

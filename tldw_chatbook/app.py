@@ -134,7 +134,7 @@ from tldw_chatbook.Constants import (
     WIDE_VIEWPORT_COLUMNS,
 )
 from tldw_chatbook.css import build_css
-from tldw_chatbook.css.Themes.themes import ALL_THEMES
+from tldw_chatbook.css.Themes.themes import ALL_THEMES, ThemeVariableDefaultsMixin
 from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
@@ -769,10 +769,9 @@ class WideViewportTierMixin:
 
 
 class TldwCli(
-    # TextSelectionCrashGuard sits before App so its on_event wrapper is the
-    # last line of defense against Textual 8.x's text-selection MouseDown
-    # crash on a mid-recompose widget (task-14903) -- see the mixin's module
-    # docstring for the signature it (and ONLY it) drops.
+    # TextSelectionCrashGuard sits before App: its on_event wrapper is the last
+    # defense against Textual 8.x's text-selection MouseDown crash on a
+    # mid-recompose widget (task-14903; its docstring names the ONE signature).
     WideViewportTierMixin,
     TextSelectionCrashGuard,
     LibraryIngestQueueMixin,
@@ -780,6 +779,7 @@ class TldwCli(
     LifecycleMixin,
     NavigationMixin,
     FeatureGlueMixin,
+    ThemeVariableDefaultsMixin,  # TASK-33003.6 ruling 15: guard-name fallback
     App[None],
 ):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""

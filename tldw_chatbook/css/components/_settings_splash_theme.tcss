@@ -140,6 +140,7 @@
    compact layout) stacks every chip full width, as before: shares of a
    26-col card cropped "Use this theme" to 8 cells. */
 #settings-theme-card-column .settings-action-row {
+    layout: horizontal;
     height: auto;
 }
 #settings-theme-card-column .theme-action-group {

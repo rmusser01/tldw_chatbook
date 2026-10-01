@@ -1,7 +1,7 @@
 ---
 id: task-25890
 title: Settings boundary-note escapes the impact pane under production CSS
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-31'
 labels:
@@ -40,12 +40,12 @@ fixed, the strict xfail flips loudly and the mark comes off.
 
 ## Acceptance Criteria (the what)
 
-- [ ] `#settings-boundary-note` stays inside `#settings-impact-pane` at
+- [x] `#settings-boundary-note` stays inside `#settings-impact-pane` at
       140x42 under the full production stylesheet (bundle + split sheets)
-- [ ] The `xfail` mark on the settings param of
+- [x] The `xfail` mark on the settings param of
       `test_runtime_and_settings_default_states_preserve_workbench_geometry`
       is removed in the same change
-- [ ] Verified against a live capture, not only the harness — the harness
+- [x] Verified against a live capture, not only the harness — the harness
       masked this once already
 
 ## Notes
@@ -64,3 +64,21 @@ preflight caught a filename collision with dev's older
 verified free across all 72 remote branches before claiming. The xfail
 reason string in `test_destination_visual_parity_correction.py` was updated
 in the same commit.
+
+## Implementation Notes
+
+Closed by TASK-33003.7 (model-config Phase 3, branch model-config-p3,
+2026-09-29), which absorbed this task. Root cause, measured under the
+production stylesheet at 140x42: the Scope Inspector's `2fr` share left a
+25-column pane (18-cell text column), and a blank row after every inspector
+row added 7 more rows, so the Overview inspector held 40 rows of content in a
+16-row window and the note sat at y=55 (pane 5..40). At 211x44 the same blank
+rows cut the note's last line at the fold. Fix, in
+`css/features/_settings.tcss`: the scoped blank-row override is deleted,
+and the pane keeps the spec's Inspector width (36) as a `min-width` floor
+from 134 columns. A static floor starved the detail pane below that (Network
+CA path 7 editable cells at 120 columns), so `settings_screen.py` sets the
+floor class from `SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH`, next to the existing
+compact-workbench width sync. The strict xfail is removed; live captures at
+140x42, 211x44 and 235x52 are in `qa/model-config-p3-2026-09-28/task-7/`.
+Details in TASK-33003.7.
