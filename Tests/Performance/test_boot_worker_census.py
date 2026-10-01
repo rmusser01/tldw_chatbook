@@ -126,19 +126,35 @@ ALLOWED_BOOT_THREADS: frozenset[tuple[str, str, str]] = frozenset(
     {
         # ADR-126: hold native ordinary admission before any application storage
         # opens, so a requested restore cannot replace live application data.
-        ("chatbook-storage-admission", "tldw_chatbook.Backup_Recovery.storage_admission", "_Hold._run"),
+        (
+            "chatbook-storage-admission",
+            "tldw_chatbook.Backup_Recovery.storage_admission",
+            "_Hold._run",
+        ),
         # The parallel service-init pool (app startup).
         ("ThreadPoolExecutor-#_#", "concurrent.futures.thread", "_worker"),
         # asyncio's default executor: Textual thread workers land here.
         ("asyncio_#", "concurrent.futures.thread", "_worker"),
         # Whole-registry screen pre-importer (daemon; finding 22214's list).
-        ("tldw-screen-preimport", "tldw_chatbook.app", "TldwCli._preimport_heavy_screens"),
+        (
+            "tldw-screen-preimport",
+            "tldw_chatbook.app",
+            "TldwCli._preimport_heavy_screens",
+        ),
         # Stall persistence: starts only when the responsiveness monitor
         # observes a UI stall during boot -- allowlisted, never asserted.
-        ("ui-stall-persist", "tldw_chatbook.Utils.ui_responsiveness", "UIResponsivenessMonitor._drain_stalls"),
+        (
+            "ui-stall-persist",
+            "tldw_chatbook.Utils.ui_responsiveness",
+            "UIResponsivenessMonitor._drain_stalls",
+        ),
         # TASK-32920: stall attribution -- one daemon thread, started by the
         # first heartbeat, that samples the loop's stack only while it stalls.
-        ("ui-stall-watchdog", "tldw_chatbook.Utils.ui_responsiveness", "UIResponsivenessMonitor._watch_loop"),
+        (
+            "ui-stall-watchdog",
+            "tldw_chatbook.Utils.ui_responsiveness",
+            "UIResponsivenessMonitor._watch_loop",
+        ),
     }
 )
 
@@ -237,13 +253,17 @@ asyncio.run(main())
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("arrives", [True, False])
-async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch, arrives):
+async def test_census_waits_for_the_serially_delayed_required_worker(
+    monkeypatch, arrives
+):
     """Run the actual probe main with a clock and a 1.5-second queued starter."""
     now = 0.0
     required = sorted(EXPECTED_BOOT_WORKERS)
     # Delay a required sentinel; staggered FTS is only allowlisted on current dev.
     delayed = required[0]
-    records = {"workers": [dict(name=n, group=g) for n, g in required if (n, g) != delayed]}
+    records = {
+        "workers": [dict(name=n, group=g) for n, g in required if (n, g) != delayed]
+    }
 
     async def sleep(seconds):
         nonlocal now
@@ -272,15 +292,24 @@ async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch
     monkeypatch.setitem(sys.modules, "tldw_chatbook.app", app_module)
     monkeypatch.setattr(tldw_chatbook, "app", app_module, raising=False)
     probe = ast.parse(_CENSUS_SCRIPT)
-    main = next(node for node in probe.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "main")
+    main = next(
+        node
+        for node in probe.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "main"
+    )
     namespace = {
-        "asyncio": SimpleNamespace(sleep=sleep, get_running_loop=lambda: SimpleNamespace(time=lambda: now)),
+        "asyncio": SimpleNamespace(
+            sleep=sleep, get_running_loop=lambda: SimpleNamespace(time=lambda: now)
+        ),
         "json": json,
         "records": records,
         "EXPECTED_BOOT_WORKERS": EXPECTED_BOOT_WORKERS,
         "print": lambda *args, **kwargs: None,
     }
-    exec(compile(ast.Module(body=[main], type_ignores=[]), "<census-main>", "exec"), namespace)
+    exec(
+        compile(ast.Module(body=[main], type_ignores=[]), "<census-main>", "exec"),
+        namespace,
+    )
     await namespace["main"]()
     observed = {(w["name"], w["group"]) for w in records["workers"]}
     if arrives:
@@ -288,7 +317,9 @@ async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch
         assert 1.5 <= now < 2.0, "return once the required delayed starter arrives"
     else:
         assert delayed not in observed
-        assert 1.5 < now <= 10.1, "missing required work must stop at a bounded deadline"
+        assert 1.5 < now <= 10.1, (
+            "missing required work must stop at a bounded deadline"
+        )
 
 
 def _normalize_thread_name(name: str) -> str:

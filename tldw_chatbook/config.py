@@ -70,6 +70,7 @@ from tldw_chatbook.Canvas.limits import CanvasLimits
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
@@ -312,9 +313,7 @@ def _canvas_remote_access_status(
             port=port,
             access_token=credential,
             public_url=public_url,
-            allow_insecure_remote_http=(
-                web.get("allow_insecure_remote_http") is True
-            ),
+            allow_insecure_remote_http=(web.get("allow_insecure_remote_http") is True),
             trusted_proxy_addresses=tuple(str(value) for value in proxies),
             direct_tls=bool(certificate and private_key),
         )
@@ -503,7 +502,9 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
         enable_multiplexing=enable_multiplexing,
         connect_timeout_s=coerce_int_setting(
             get_cli_setting(
-                "console_ssh", "connect_timeout_s", DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+                "console_ssh",
+                "connect_timeout_s",
+                DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             ),
             DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             minimum=1,
@@ -518,6 +519,8 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
             minimum=1,
         ),
     )
+
+
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
@@ -598,7 +601,9 @@ def _default_stt_provider_for_platform() -> str:
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
-    if _config_participants.verified_companion_parent(sys.modules[__name__], config_path):
+    if _config_participants.verified_companion_parent(
+        sys.modules[__name__], config_path
+    ):
         return None
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
@@ -2113,9 +2118,7 @@ def _load_settings_uncached(
     )
     from tldw_chatbook.Utils.reasoning_config import resolve_console_reasoning_config
 
-    reasoning_resolution = resolve_console_reasoning_config(
-        final_console_settings_cli
-    )
+    reasoning_resolution = resolve_console_reasoning_config(final_console_settings_cli)
     for diagnostic in reasoning_resolution.diagnostics:
         logger.warning("Invalid Console reasoning configuration: {}", diagnostic)
     final_console_settings_cli.update(reasoning_resolution.settings.model_dump())
@@ -3354,7 +3357,10 @@ def _load_settings_uncached(
             ),
             "bing_search_api_key": _get_typed_value(
                 search_engines_section, "bing_search_api_key", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_api_key_bing", ""),
+            )
+            or _get_typed_value(
+                search_engines_section, "search_engine_api_key_bing", ""
+            ),
             "brave_search_api_key": _get_typed_value(
                 search_engines_section, "brave_search_api_key", ""
             ),
@@ -3372,7 +3378,8 @@ def _load_settings_uncached(
             ),
             "searx_search_api_url": _get_typed_value(
                 search_engines_section, "searx_search_api_url", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
+            )
+            or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
             "tavily_search_api_key": _get_typed_value(
                 search_engines_section, "tavily_search_api_key", ""
             ),
@@ -3569,7 +3576,8 @@ def _load_settings_uncached(
     from .Utils.paths import get_user_data_dir
 
     chat_dicts_folder = (
-        get_user_data_dir() if bootstrap.succeeded
+        get_user_data_dir()
+        if bootstrap.succeeded
         else profile_paths.user_data_dir(toml_config_data)
     ) / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
@@ -3580,7 +3588,11 @@ def _load_settings_uncached(
     # 0700 and hardens an existing 0775 instance in place.
     try:
         if bootstrap.succeeded:
-            with _config_participants.operation(sys.modules[__name__], route="config_chat_dicts", target=chat_dicts_folder):
+            with _config_participants.operation(
+                sys.modules[__name__],
+                route="config_chat_dicts",
+                target=chat_dicts_folder,
+            ):
                 secure_private_directory(
                     chat_dicts_folder, create=True, application_owned=True
                 )
@@ -6345,19 +6357,19 @@ def first_profile_created_this_session() -> bool:
 #: -- only genuinely dynamic-keyed sections -- so real typos elsewhere still
 #: surface. Each entry is a tuple path prefix.
 _FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
-    ("agents",),                # deliberately EMPTY in the default shape: the
-                                # authoritative defaults live in
-                                # Agents/agent_service.py (two-homes drift),
-                                # so documented overrides here would all flag
-                                # as unknown (Qodo #13, PR #2301)
+    ("agents",),  # deliberately EMPTY in the default shape: the
+    # authoritative defaults live in
+    # Agents/agent_service.py (two-homes drift),
+    # so documented overrides here would all flag
+    # as unknown (Qodo #13, PR #2301)
     ("console", "reasoning_history_overrides"),
     ("console", "reasoning_native_tool_overrides"),
-    ("api_settings",),          # provider configs incl. user-added custom providers
-    ("providers",),             # provider display sections + model lists
-    ("model_capabilities", "models"),    # arbitrary model names
+    ("api_settings",),  # provider configs incl. user-added custom providers
+    ("providers",),  # provider display sections + model lists
+    ("model_capabilities", "models"),  # arbitrary model names
     ("model_capabilities", "patterns"),  # arbitrary model-name patterns
-    ("SearchEngines",),         # per-engine configs
-    ("Prompts",),               # user prompt content
+    ("SearchEngines",),  # per-engine configs
+    ("Prompts",),  # user prompt content
     ("prompts",),
 )
 
@@ -6376,8 +6388,8 @@ _DEPRECATED_CONFIG_KEYS: Dict[str, str] = {
 class ConfigKeyFinding:
     """One advisory config-key finding."""
 
-    path: str                       # dotted path, e.g. "general.focus_mdoe"
-    kind: str                       # "unknown" | "deprecated"
+    path: str  # dotted path, e.g. "general.focus_mdoe"
+    kind: str  # "unknown" | "deprecated"
     suggestion: Optional[str] = None  # near-miss key or replacement path
 
 
@@ -6420,7 +6432,9 @@ def validate_config_keys(
             here = (*path, key)
             replacement = _deprecated_config_replacement(here)
             if replacement is not None:
-                findings.append(ConfigKeyFinding(".".join(here), "deprecated", replacement))
+                findings.append(
+                    ConfigKeyFinding(".".join(here), "deprecated", replacement)
+                )
                 continue
             if key in ref:
                 ref_value = ref[key]
@@ -6610,9 +6624,7 @@ def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         aside = source.with_name(f"{source.name}.corrupt-{stamp}")
         shutil.copy2(source, aside)
-        logger.warning(
-            f"Preserved unparseable config {source} at {aside}"
-        )
+        logger.warning(f"Preserved unparseable config {source} at {aside}")
         _LAST_PRESERVED_CORRUPT_KEY = key
         _LAST_PRESERVED_CORRUPT_ASIDE = aside
         return aside
@@ -6977,11 +6989,16 @@ def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
         locked = False
         try:
             from tldw_chatbook.Backup_Recovery import raw_participants
+
             operation = raw_participants._runtime_operation(config_path)
             while True:
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 try:
-                    portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING)
+                    portalocker.lock(
+                        stream,
+                        portalocker.LockFlags.EXCLUSIVE
+                        | portalocker.LockFlags.NON_BLOCKING,
+                    )
                     locked = True
                     break
                 except portalocker.exceptions.AlreadyLocked:
@@ -7250,7 +7267,9 @@ def _write_raw_cli_config_unlocked(
         ) from exc
     from .Backup_Recovery.config_binding import preserve_owned_binding
 
-    with preserve_owned_binding(sys.modules[__name__], config_path, serialized) as precondition:
+    with preserve_owned_binding(
+        sys.modules[__name__], config_path, serialized
+    ) as precondition:
         result = atomic_private_write_text(
             config_path,
             serialized,
@@ -7703,12 +7722,18 @@ def _write_serialized_config_artifact_unlocked(
         route, target = "config", config_path
     else:
         prefix, suffix = "config_backup_", ".toml"
-        if path.parent != config_path.parent or not path.name.startswith(prefix) or not path.name.endswith(suffix):
+        if (
+            path.parent != config_path.parent
+            or not path.name.startswith(prefix)
+            or not path.name.endswith(suffix)
+        ):
             raise ValueError("invalid_config_snapshot_target")
-        route, target = "config_snapshot", path.name[len(prefix):-len(suffix)]
+        route, target = "config_snapshot", path.name[len(prefix) : -len(suffix)]
         if _config_snapshot_path(config_path, target) != path:
             raise ValueError("invalid_config_snapshot_target")
-    with _config_participants.operation(sys.modules[__name__], route=route, target=target):
+    with _config_participants.operation(
+        sys.modules[__name__], route=route, target=target
+    ):
         application_directory = _prepare_config_parent(config_path)
         result = atomic_private_write_text(
             path,
@@ -7920,7 +7945,11 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _config_snapshot_path(config_path: Path, timestamp: str) -> Path:
     """Select one config-owned snapshot basename before any filesystem effect."""
-    if not isinstance(timestamp, str) or not timestamp or any(char in timestamp for char in ("/", "\\", "\x00")):
+    if (
+        not isinstance(timestamp, str)
+        or not timestamp
+        or any(char in timestamp for char in ("/", "\\", "\x00"))
+    ):
         raise ValueError("invalid_config_snapshot_target")
     return config_path.parent / f"config_backup_{timestamp}.toml"
 
@@ -7933,7 +7962,12 @@ def export_cli_config_snapshot(
     """Create an owner-only snapshot beside the effective config file."""
 
     snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    with _config_participants.operation(sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp), _config_file_lock():
+    with (
+        _config_participants.operation(
+            sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp
+        ),
+        _config_file_lock(),
+    ):
         config_path = get_cli_config_path()
         snapshot_path = _config_snapshot_path(config_path, snapshot_timestamp)
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
@@ -8238,7 +8272,9 @@ def _validate_literal_config_mutation_targets(
             raise TypeError("Literal configuration delete keys must be collections")
         for key in keys:
             if type(key) is not str or not key:
-                raise TypeError("Literal configuration delete keys must be non-empty strings")
+                raise TypeError(
+                    "Literal configuration delete keys must be non-empty strings"
+                )
             delete_targets.add((path, key))
 
     if set_targets.intersection(delete_targets):
@@ -8402,9 +8438,7 @@ def _apply_literal_settings_transaction_locked(
                     "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
 
         try:
             effective_values = _atomic_config_values_from_raw(config_data)
@@ -8428,8 +8462,7 @@ def _apply_literal_settings_transaction_locked(
                 _validate_literal_config_mutation_targets(mutation)
             logged_sets, logged_deletes = _literal_mutation_log_shape(mutation)
             logger.info(
-                "Attempting to apply literal settings mutation: "
-                "sets={}, deletes={}",
+                "Attempting to apply literal settings mutation: sets={}, deletes={}",
                 logged_sets,
                 logged_deletes,
             )
@@ -8482,9 +8515,7 @@ def _apply_literal_settings_transaction_locked(
                     config_path,
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
             logger.success(f"Successfully replaced settings file at {config_path}")
         else:
             _invalidate_config_caches()
@@ -9003,7 +9034,9 @@ def apply_console_capture_settings(
         if pii_redaction_enabled is None
         else pii_redaction_enabled
     )
-    resolved_viewer = current.viewer_profile if viewer_profile is None else viewer_profile
+    resolved_viewer = (
+        current.viewer_profile if viewer_profile is None else viewer_profile
+    )
 
     def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
         return snapshot.generation == expected_generation
@@ -9042,10 +9075,7 @@ def apply_console_capture_settings(
 
     more_revealing = (
         (enabled and not current.enabled)
-        or (
-            detail is CaptureDetail.FULL
-            and current.detail is CaptureDetail.SAFE
-        )
+        or (detail is CaptureDetail.FULL and current.detail is CaptureDetail.SAFE)
         or (not resolved_pii and current.pii_redaction_enabled)
         or (resolved_viewer == "full" and current.viewer_profile == "safe")
     )
@@ -9720,7 +9750,9 @@ def _default_data_root_lock() -> Iterator[None]:
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 try:
                     portalocker.lock(
-                        stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING
+                        stream,
+                        portalocker.LockFlags.EXCLUSIVE
+                        | portalocker.LockFlags.NON_BLOCKING,
                     )
                     break
                 except portalocker.exceptions.AlreadyLocked:
@@ -9900,7 +9932,9 @@ def get_user_data_dir() -> Path:
             if configured_data_dir:
                 verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
             return secure_private_directory(
-                user_dir, create=True, application_owned=True,
+                user_dir,
+                create=True,
+                application_owned=True,
             ).lexical_path
 
 
@@ -9950,10 +9984,9 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    return (
-        _get_custom_database_path("chachanotes_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    )
+    return _get_custom_database_path(
+        "chachanotes_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -10114,10 +10147,9 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    return (
-        _get_custom_database_path("prompts_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    )
+    return _get_custom_database_path(
+        "prompts_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -10136,16 +10168,16 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    return (
-        _get_custom_database_path("media_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    )
+    return _get_custom_database_path(
+        "media_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
 
 
 def get_library_collections_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_collections_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_collections_db_path")
+    return _get_custom_database_path(
+        "library_collections_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_collections_db_path"
     )
 
 
@@ -10158,54 +10190,49 @@ def get_dreams_db_path() -> Path:
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_ingest_jobs_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_ingest_jobs_db_path")
+    return _get_custom_database_path(
+        "library_ingest_jobs_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_ingest_jobs_db_path"
     )
 
 
 def get_workspaces_db_path() -> Path:
-    return (
-        _get_custom_database_path("workspaces_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
-    )
+    return _get_custom_database_path(
+        "workspaces_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
 
 
 def get_subscriptions_db_path() -> Path:
-    return (
-        _get_custom_database_path("subscriptions_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
-    )
+    return _get_custom_database_path(
+        "subscriptions_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return (
-        _get_custom_database_path("evals_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
-    )
+    return _get_custom_database_path(
+        "evals_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return (
-        _get_custom_database_path("rag_indexing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
-    )
+    return _get_custom_database_path(
+        "rag_indexing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
 
 
 def get_notifications_db_path() -> Path:
-    return (
-        _get_custom_database_path("notifications_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
-    )
+    return _get_custom_database_path(
+        "notifications_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
 
 
 def get_research_db_path() -> Path:
-    return (
-        _get_custom_database_path("research_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
-    )
+    return _get_custom_database_path(
+        "research_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
 
 
 def get_workflows_db_path() -> Path:
@@ -10217,20 +10244,16 @@ def get_workflows_db_path() -> Path:
 
 
 def get_writing_db_path() -> Path:
-    return (
-        _get_custom_database_path("writing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
-    )
+    return _get_custom_database_path(
+        "writing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return (
-        _get_custom_database_path(
-            "scheduled_tasks_db_path",
-            expand_before_validation=False,
-        )
-        or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
-    )
+    return _get_custom_database_path(
+        "scheduled_tasks_db_path",
+        expand_before_validation=False,
+    ) or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
 
 
 def get_cli_log_file_path() -> Path:
@@ -10300,7 +10323,9 @@ def get_model_cache_dir() -> Path:
     # an explicitly configured custom directory stays under the user's
     # ownership policy, so only the creation mode is pinned there.
     try:
-        with _config_participants.operation(sys.modules[__name__], route="config_models", target=cache_path):
+        with _config_participants.operation(
+            sys.modules[__name__], route="config_models", target=cache_path
+        ):
             if custom_cache_dir and custom_cache_dir != default_cache_dir:
                 cache_path.mkdir(parents=True, exist_ok=True, mode=0o700)
             else:
