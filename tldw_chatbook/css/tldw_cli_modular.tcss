@@ -5449,6 +5449,7 @@ StatCard:hover {
 }
 
 #settings-theme-card-column .settings-action-row {
+    layout: horizontal;
     height: auto;
 }
 #settings-theme-card-column .theme-action-group {

@@ -968,7 +968,12 @@ Button.settings-category-group-toggle:focus {
     outline: none;
 }
 
-.settings-workbench-compact #settings-overview-primary .settings-action-row {
+/* A Horizontal never wraps, so while the detail pane is narrower than its
+   widest action row its rows stack (SettingsRegion sets settings-stacked-actions
+   below SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH; this replaced the compact-only
+   Overview rule). The theme card keeps its own width switch
+   (components/_settings_splash_theme.tcss). */
+.settings-stacked-actions .settings-action-row {
     layout: vertical;
     height: auto;
 }

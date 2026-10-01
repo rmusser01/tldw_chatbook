@@ -898,6 +898,11 @@ SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
 # label plus a 20-cell field (test_settings_compact_fields). Rail and
 # gutters take 42.
 SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + 56 + 36
+# cubic review of #2937: the detail pane width that fits the widest action row
+# (Library > RAG's built-in profile row, 83 cells). Narrower, the rows stack:
+# at 140 columns the floor above leaves the pane 62, which cut "Open Advanced
+# Config" to "Open Adva" (test_settings_action_rows_keep_every_button_whole).
+SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH = 84
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
@@ -2787,19 +2792,39 @@ class SettingsRegion(Vertical):
     matching (Textual type selectors match base classes too).
     """
 
-    def __init__(self, builder: Callable[[], ComposeResult], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        builder: Callable[[], ComposeResult],
+        *,
+        stack_actions_below: int = 0,
+        **kwargs: Any,
+    ) -> None:
         """Store the screen-side builder for this region's children.
 
         Args:
             builder: Zero-argument callable yielding the region's children.
+            stack_actions_below: Below this own width the region carries
+                ``settings-stacked-actions``, which stacks its action rows
+                (0: never).
             **kwargs: Forwarded to ``Vertical`` (id, classes, ...).
         """
         super().__init__(**kwargs)
         self._builder = builder
+        self._stack_actions_below = stack_actions_below
 
     def compose(self) -> ComposeResult:
         """Yield this region's children from the screen's builder."""
         yield from self._builder()
+
+    def on_resize(self, event: Resize) -> None:
+        """Stack the action rows while one cannot fit (a Horizontal never wraps).
+
+        Args:
+            event: The resize event carrying this region's new size.
+        """
+        self.set_class(
+            event.size.width < self._stack_actions_below, "settings-stacked-actions"
+        )
 
 
 @contextmanager
@@ -23354,6 +23379,7 @@ class SettingsScreen(BaseAppScreen):
                 # which read the category's content).
                 detail_pane = SettingsRegion(
                     self._compose_detail_pane_region,
+                    stack_actions_below=SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH,
                     id="settings-detail-pane",
                     classes="destination-workbench-pane" + pane_class_suffix,
                 )

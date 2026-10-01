@@ -2535,6 +2535,39 @@ async def test_settings_inspector_rows_stay_reachable_in_every_category(size):
             await pilot.pause()
 
 
+@pytest.mark.parametrize("size", [(120, 42), (140, 42), (211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_settings_action_rows_keep_every_button_whole(size):
+    """cubic review of #2937: a Horizontal action row never wraps, so a
+    button past the detail pane's edge is cut mid-label ("Open Adva"). The
+    TASK-33003.7 inspector floor left the detail pane 56 columns at 140x42,
+    which clipped Privacy's recovery actions, Speech's presets and the RAG
+    profile row (red before the fix). Full-screen sizes must not stack."""
+    app = _build_test_app()
+    host = _ProductionDestinationHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-impact-pane-body")
+        await host.workers.wait_for_complete()
+        detail = screen.query_one("#settings-detail-pane")
+        if size[0] >= 211:
+            assert not detail.has_class("settings-stacked-actions"), size
+        clipped = []
+        for summary in screen._category_summaries():
+            screen._select_category(summary.category.value)
+            await pilot.pause()
+            await pilot.pause()
+            for row in screen.query(".settings-action-row"):
+                if not row.display or not row.region.width:
+                    continue
+                clipped += [
+                    (summary.category.value, str(button.label))
+                    for button in row.query(Button)
+                    if button.display and button.region.right > row.region.right
+                ]
+        assert not clipped, (size, clipped)
+
+
 @pytest.mark.asyncio
 async def test_settings_dirty_category_status_has_visual_marker_class():
     app = _build_test_app()
