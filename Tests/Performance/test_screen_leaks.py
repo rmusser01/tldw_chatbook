@@ -186,11 +186,15 @@ APP_SIGNALS = frozenset(
         "mode_change_signal",
     }
 )
+#: Functions returning an App-owned signal, e.g. ``launch_default_signal(app)``
+#: (``css/Themes/theme_catalog.py``). Subscribing through one leaks the same way.
+APP_SIGNAL_FACTORIES = frozenset({"launch_default_signal"})
 _UNMOUNT_HANDLERS = frozenset({"on_unmount", "_on_unmount"})
 
 
 def _signal_call(node: ast.AST, method: str) -> str | None:
-    """``<expr>.<app signal>.<method>(...)`` -> the signal name, else None.
+    """``<expr>.<app signal>.<method>(...)`` or ``<factory>(...).<method>(...)``
+    -> the signal (or factory) name, else None.
 
     ``self.<signal>`` is the App touching its own signal and is ignored.
     """
@@ -198,14 +202,25 @@ def _signal_call(node: ast.AST, method: str) -> str | None:
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == method
-        and isinstance(node.func.value, ast.Attribute)
-        and node.func.value.attr in APP_SIGNALS
     ):
         return None
-    owner = node.func.value.value
+    target = node.func.value
+    if isinstance(target, ast.Call):
+        factory = target.func
+        name = (
+            factory.id
+            if isinstance(factory, ast.Name)
+            else factory.attr
+            if isinstance(factory, ast.Attribute)
+            else None
+        )
+        return name if name in APP_SIGNAL_FACTORIES else None
+    if not (isinstance(target, ast.Attribute) and target.attr in APP_SIGNALS):
+        return None
+    owner = target.value
     if isinstance(owner, ast.Name) and owner.id == "self":
         return None
-    return node.func.value.attr
+    return target.attr
 
 
 def _unpaired_app_signal_subscriptions(source: str, filename: str) -> list[str]:
@@ -246,7 +261,7 @@ def test_app_signal_subscribers_unsubscribe_on_unmount() -> None:
     findings = []
     for path in sorted((REPO_ROOT / "tldw_chatbook").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if "_signal.subscribe(" in source:
+        if "_signal" in source and ".subscribe(" in source:
             findings += _unpaired_app_signal_subscriptions(
                 source, str(path.relative_to(REPO_ROOT))
             )
@@ -266,6 +281,20 @@ def test_signal_guard_flags_a_subscription_without_unsubscribe() -> None:
     )
     assert _unpaired_app_signal_subscriptions(leaky, "w.py")
     assert not _unpaired_app_signal_subscriptions(paired, "w.py")
+
+    # The factory form, which the first version of this scanner missed (Qodo,
+    # #2897): ThemePicker leaked through exactly this after a rebase.
+    factory_leaky = (
+        "class W:\n"
+        "    def on_mount(self):\n"
+        "        launch_default_signal(self.app).subscribe(self, self.f)\n"
+    )
+    factory_paired = factory_leaky + (
+        "    def on_unmount(self):\n"
+        "        launch_default_signal(self.app).unsubscribe(self)\n"
+    )
+    assert _unpaired_app_signal_subscriptions(factory_leaky, "w.py")
+    assert not _unpaired_app_signal_subscriptions(factory_paired, "w.py")
 
 
 def test_fresh_context_executor_jobs_do_not_share_context() -> None:
