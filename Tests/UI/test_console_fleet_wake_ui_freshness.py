@@ -58,6 +58,10 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
     """Run the app loop until ``predicate()`` is true (or time out)."""
