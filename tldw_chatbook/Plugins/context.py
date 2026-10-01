@@ -15,7 +15,13 @@ SEND_BYTES = 32 * 1024
 
 
 def instruction_block(
-    installation_id: str, component_id: str, revision: str, body: str, args: str = ""
+    installation_id: str,
+    component_id: str,
+    revision: str,
+    body: str,
+    args: str = "",
+    *,
+    allowed_tools: tuple[str, ...] | None = None,
 ) -> str:
     """Keep package instructions and literal invocation arguments attributed."""
     block = (
@@ -39,7 +45,11 @@ def instruction_block(
         block,
         (
             PluginContextOrigin(
-                installation_id, component_id, revision, len(block.encode("utf-8"))
+                installation_id,
+                component_id,
+                revision,
+                len(block.encode("utf-8")),
+                allowed_tools,
             ),
         ),
     )

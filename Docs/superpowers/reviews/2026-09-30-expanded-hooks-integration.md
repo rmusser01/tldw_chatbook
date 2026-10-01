@@ -683,3 +683,46 @@ and repository-controlled stdio/loopback HTTP peers. No external vendor host,
 real OS keychain/OAuth, GUI, full-suite or cross-platform qualification. Native
 managed application composition remains I1; no parallel permission/runtime,
 implicit connection or grant bypass was added.
+
+
+## I1 — TASK-32686 native capabilities
+
+Selected manual commands, always/manual rules, agent presets, owned hooks and MCP
+now join the existing immutable skill/run snapshot. Review captures exact host
+builtin/owned-MCP and model references without granting permission. Typed live
+context keeps package text in the user lane and applies EMPTY constraints to
+actual inline/fork/child paths. Normal tool discovery, approval, provider routes,
+source currentness and dependency checkpoints remain the owners. Native hooks
+reserve actual F2 process/root custody before H2 launch and retain it on revocation
+until real process/pipe settlement.
+
+Behavioral RED caught actual EMPTY-child MCP execution, impossible approval prompts,
+wrong MCP-source resolution when native mappings sort first, missing reviewed
+references and incomplete embedded namespaces. Corrected harness failures are not
+behavioral RED: a stale combined review, wrong hook envelope, an unavailable runtime
+accessor, the Console's user-role tool results, omitted progressive tool discovery,
+and a readiness assertion that accidentally selected an unrelated fixture skill.
+
+The final covering command ran the native component, native skill flow, Console
+substitution, owned MCP and admission files plus the older agent-service file:
+`/private/tmp/hooks-i1-final.xml`. All **164 integration cases** passed; the combined
+agent cases hit source-selection recovery refusal after private-profile binding.
+The older file now selects its own existing bootstrap profile for every test. Its
+stale cancellation control requested cancellation before dispatch while expecting
+an in-flight tool-specific error; it now uses actual start/release/finish events.
+Separate fresh final runs returned **138 passed in 77.98s** for agent service
+(`/private/tmp/hooks-i1-agent-final.xml`), **85 passed in 65.08s** for command/hooks
+and Console lifecycle (`/private/tmp/hooks-i1-final-hook.xml`), and **3 passed in
+12.66s** for latest mapped readiness, missing DATA and EMPTY-child approval controls
+(`/private/tmp/hooks-i1-final-readiness.xml`). No platform/coroutine skips.
+
+Authored files pass Ruff lint/format. All changed Python parses; shared files add no
+Ruff diagnostics versus HEAD and whitespace checks pass. Final formatting cleanup
+was verified to preserve the entire Python AST and comment sequence.
+
+Qualification uses real private SQLite/APFS authority, bounded native child commands,
+real controlled MCP stdio peers and actual Console/AgentService flows. Provider
+responses and protected marker storage are controlled test owners. This does not
+certify OS Keychain, OAuth, arbitrary remote isolation, original vendor hosts, full
+GUI behavior, Windows/Linux, a full test suite, or distribution packaging. Skill model
+overrides remain explicitly unsupported; agent model mappings retain the parent route.

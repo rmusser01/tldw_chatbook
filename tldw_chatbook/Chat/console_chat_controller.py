@@ -16774,6 +16774,16 @@ class ConsoleChatController:
             persona_policy_provider=lambda: policy,
             maximum_tool_ids=configuration.mcp_tool_maximum,
             maximum_definition_hashes=configuration.mcp_definition_maximum,
+            **(
+                {"plugin_maximum": configuration.skill_context_maximum}
+                if any(
+                    row.get("plugin_owned")
+                    for row in configuration.skill_context_maximum.get(
+                        "available_skills", ()
+                    )
+                )
+                else {}
+            ),
         )
         if not current():
             raise PermissionError("hook admission changed")
@@ -16797,6 +16807,7 @@ class ConsoleChatController:
         persona_policy_provider: Callable[[], PersonaToolPolicy | None] | None = None,
         maximum_tool_ids: frozenset[str] | None = None,
         maximum_definition_hashes: Mapping[str, str] | None = None,
+        plugin_maximum: Mapping | None = None,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
@@ -16907,6 +16918,54 @@ class ConsoleChatController:
             )
             publish(None, None)
             return None
+        providers = [provider]
+        if plugin_maximum is not None:
+            from tldw_chatbook.MCP.connection_ownership import ConnectionOwnership
+            from tldw_chatbook.Plugins.mcp_provider import (
+                MCPProviderGroup,
+                PluginMCPProvider,
+            )
+
+            local = getattr(self._skills_service, "local_service", None)
+            plugins = getattr(local, "plugin_service", None)
+            if plugins is None:
+                raise PermissionError("plugin_mcp_authority_unavailable")
+            snapshots = await plugins.component_snapshots(plugin_maximum)
+            local_mcp = service.local_service
+            ownership = local_mcp.connection_ownership
+            if ownership is None:
+                ownership = ConnectionOwnership(
+                    plugin_service=plugins, local_service=local_mcp
+                )
+            if ownership.plugins is not plugins:
+                raise PermissionError("plugin_mcp_owner_changed")
+            for snapshot in snapshots:
+                if not any(
+                    snapshot.inspection.inventory[key].kind == "mcp"
+                    for key in snapshot.selection
+                ):
+                    continue
+                owned = PluginMCPProvider(
+                    plugin_service=plugins,
+                    ownership=ownership,
+                    snapshot=snapshot,
+                    service=service,
+                    main_loop=asyncio.get_running_loop(),
+                    approval_callback=bound_request_approvals,
+                    builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+                    profile_id_provider=profile_id_provider,
+                    persona_policy_provider=persona_policy_provider,
+                    runtime_source_provider=(
+                        None
+                        if session_id is None
+                        else functools.partial(self._session_runtime_source, session_id)
+                    ),
+                    maximum_tool_ids=maximum_tool_ids,
+                    maximum_definition_hashes=maximum_definition_hashes,
+                )
+                await owned.compose_catalog()
+                providers.append(owned)
+            provider = MCPProviderGroup(providers)
         catalog = provider.list_catalog()
         if not catalog:
             publish(None, None)
@@ -16967,6 +17026,17 @@ class ConsoleChatController:
                 mcp_profile_kwargs["persona_policy_provider"] = lambda: (
                     parsed_persona_policy
                 )
+        if (
+            turn_context is not None
+            and turn_context.skill_context_maximum.get("plugin_run_id")
+            and any(
+                row.get("plugin_owned")
+                for row in turn_context.skill_context_maximum.get(
+                    "available_skills", ()
+                )
+            )
+        ):
+            mcp_profile_kwargs["plugin_maximum"] = turn_context.skill_context_maximum
         mcp_provider = await self._compose_mcp_provider(
             session_id,
             publish_counts=publish_mcp_counts,
@@ -23680,7 +23750,54 @@ class ConsoleChatController:
             return
         self.store.consume_session_one_shot_prefill(session_id, used_revision)
 
-    async def _apply_skill_substitution(
+    async def _apply_skill_substitution(self, provider_messages, turn_context=None):
+        """Apply manual material, then whole active rules in the untrusted lane."""
+        result = await self._substitute_skills(provider_messages, turn_context)
+        messages, refuse, notes, bindings, bundle = result
+        if refuse or turn_context is None:
+            return result
+        maximum = turn_context.skill_context_maximum
+        rules = [
+            row
+            for row in maximum.get("available_skills", ())
+            if row.get("plugin_kind") == "rule"
+            and row.get("plugin_rule_mode") == "always"
+        ]
+        if not rules:
+            return result
+        local = getattr(self._skills_service, "local_service", None)
+        plugins = getattr(local, "plugin_service", None)
+        try:
+            if plugins is None:
+                raise PermissionError("plugin_owner_unavailable")
+            admitted = await plugins.admit(maximum, maximum["plugin_run_id"])
+            blocks = await plugins.render_rules(admitted["available_skills"])
+            index = next(
+                (
+                    i
+                    for i in range(len(messages) - 1, -1, -1)
+                    if messages[i].get("role") == "user"
+                ),
+                None,
+            )
+            if index is None:
+                raise PermissionError("plugin_input_owner_unavailable")
+            messages = [*messages[:index], *blocks, *messages[index:]]
+            from tldw_chatbook.Agents.agent_models import check_host_context
+
+            check_host_context(messages, strip=False)
+            await plugins.check_entries(admitted["available_skills"])
+        except (PermissionError, ValueError):
+            return (
+                provider_messages,
+                "Plugin instructions are unavailable or too large; review selected components.",
+                (),
+                (),
+                "",
+            )
+        return messages, None, notes, bindings, bundle
+
+    async def _substitute_skills(
         self,
         provider_messages: list[dict[str, Any]],
         turn_context: ConsoleTurnExecutionContext | None = None,
@@ -23860,6 +23977,7 @@ class ConsoleChatController:
                     reason_code="skill_definition_changed",
                     trust_status="quarantined_modified",
                 )
+
         context = (
             frozen_context
             if frozen_context.get("backend") == "local"
@@ -23893,7 +24011,12 @@ class ConsoleChatController:
             if name:
                 resolution = resolve_skill_command(name, rest, detection_candidates)
                 if resolution.kind == "resolved":
-                    args = cap_skill_args(rest)
+                    args = (
+                        rest
+                        if plugin_entries.get(resolution.name, {}).get("plugin_kind")
+                        == "command"
+                        else cap_skill_args(rest)
+                    )
                     try:
                         ensure_frozen_definition(resolution.name)
                         result = await self._skills_service.execute_skill(

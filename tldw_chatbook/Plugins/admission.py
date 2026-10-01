@@ -332,18 +332,17 @@ class PluginAdmission:
             unavailable = set()
             if owned_mappings:
                 from tldw_chatbook.MCP.credential_bindings import CredentialError
-                from tldw_chatbook.MCP.local_control_service import (
-                    LocalMCPControlService,
-                )
-
-                owner = self.coordinator.mcp_mapping_owner
-                if not isinstance(owner, LocalMCPControlService):
-                    raise PluginUnavailable("plugin_mapping_owner_unavailable")
                 for mapping in owned_mappings:
                     try:
-                        owner.validate_connection_mapping(mapping, inspection)
+                        self.coordinator.validate_mapping(
+                            mapping, inspection, owned_mappings
+                        )
                     except (ValueError, PermissionError, CredentialError):
                         unavailable.add(mapping["component_id"])
+
+            from .data_cleanup import applicable_roots
+
+            roots = applicable_roots(authority, installation_id, workspace_id)
 
             def ready(component_id: str, visiting: frozenset[str]) -> bool:
                 component = inspection.inventory.get(component_id)
@@ -355,11 +354,38 @@ class PluginAdmission:
                 ):
                     return False
                 if (
-                    component.kind not in {"skill", "mcp"}
+                    component.kind
+                    not in {"skill", "mcp", "command", "rule", "agent", "hook"}
                     or component.support not in {"supported", "adapted"}
-                    or component.activation_blockers
+                    or set(component.activation_blockers)
+                    - {
+                        "model_mapping_required",
+                        "tool_mapping_required",
+                        "skill_tools_mapping_required",
+                    }
                 ):
                     return False
+                if component.kind in {"agent", "skill"}:
+                    from .host_references import mapped_model, mapped_tools
+
+                    try:
+                        mapped_tools(installation_id, component, owned_mappings)
+                        mapped_model(component, owned_mappings)
+                    except (PermissionError, ValueError):
+                        return False
+                if component.kind == "hook":
+                    from .hooks import project_hook_definition
+
+                    try:
+                        project_hook_definition(
+                            inspection,
+                            installation_id,
+                            component_id,
+                            roots,
+                            owned_mappings,
+                        )
+                    except (PermissionError, ValueError):
+                        return False
                 if component.kind == "mcp":
                     if (
                         sum(
@@ -370,7 +396,7 @@ class PluginAdmission:
                         != 1
                     ):
                         return False
-                else:
+                elif component.kind == "skill":
                     from .skill_provider import skill_summary
 
                     if skill_summary(installation_id, inspection, component_id, alias)[
@@ -449,9 +475,6 @@ class PluginAdmission:
                     and row["component_id"] in eligible
                 ]
             )
-            from .data_cleanup import applicable_roots
-
-            roots = applicable_roots(authority, installation_id, workspace_id)
             with self.fences.live_lock:
                 root_epochs = tuple(
                     (row["root_id"], self.fences.root_epochs.get(row["root_id"], 0))

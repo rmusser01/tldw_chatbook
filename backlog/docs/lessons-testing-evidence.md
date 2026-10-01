@@ -17459,3 +17459,15 @@ Native custody fixtures also separate their configured budget plus existing
 settlement wait from observer bounds; cancelling an observer is not completion.
 Evidence: `hooks-h6-live-boundaries.xml`, `hooks-h6-custody-final.xml` and
 `hooks-h6-final-boundaries.xml` in the 2026-09-30 integration review.
+
+
+## Native integration exposed an agent test profile switch
+
+**TASK-32686, 2026-10-01.** A combined native-plugin/agent run passed 164 integration
+cases but the older agent file switched its raw config source after native authority
+had bound the private profile. Recovery correctly refused it. Selecting the existing
+`bootstrap_profile` marker for every real-config case in that file cleared those
+failures. A separate stale cancellation test had always requested cancellation before
+dispatch while asserting an in-flight message; actual start/release/finish events now
+exercise the intended behavior. Keep profile selection explicit and test ordering out
+of authority expectations; do not weaken production recovery checks to quiet tests.

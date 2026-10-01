@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
@@ -74,6 +75,8 @@ class PluginService:
         self._ready = Future()
         self._catalog = {}
         self._details = ()
+        self._published_revisions = {}
+        self._published_generations = {}
         self._snapshots = {}
         self._admitted = {}
         self._admission_keys = {}
@@ -82,6 +85,7 @@ class PluginService:
         self._root_runs = {}
         self._bound_runs = {}
         self._terminal_runs = set()
+        self._actor_components = {}
         self._live_runs = self.fences.runs
         self._revision_refresh_tasks: set[asyncio.Task] = set()
 
@@ -384,12 +388,22 @@ class PluginService:
         return await self._call(lambda: self._coordinator.review_trust(installation_id))
 
     async def review_configuration(
-        self, installation_id: str, *, connections, tools=None
+        self,
+        installation_id: str,
+        *,
+        connections=None,
+        tools=None,
+        tool_references=None,
+        models=None,
     ) -> PluginReview:
         """Capture current MCP references on the existing plugin storage worker."""
         return await self._call(
             lambda: self._coordinator.review_configuration(
-                installation_id, connections=connections, tools=tools
+                installation_id,
+                connections=connections,
+                tools=tools,
+                tool_references=tool_references,
+                models=models,
             )
         )
 
@@ -411,7 +425,38 @@ class PluginService:
             )
         )
 
+    def check_effect_actor(
+        self, snapshot, component_id: str, *, run_id: str | None = None
+    ) -> None:
+        """Empty host child ceilings cannot inherit a parent's owned provider."""
+        from tldw_chatbook.Agents.run_context import current_run_actor
+
+        actor = current_run_actor()
+        run_id = run_id or (actor.run_id if actor else "")
+        if not run_id:
+            return
+        identity = (
+            snapshot.installation_id,
+            snapshot.revision_digest,
+            snapshot.workspace_id,
+            component_id,
+        )
+        with self._lock:
+            if run_id in self._terminal_runs:
+                raise PluginUnavailable("plugin_actor_terminal")
+            ceiling = self._actor_components.get(run_id)
+            if ceiling is not None and identity not in ceiling:
+                raise PluginUnavailable("plugin_actor_ceiling_unavailable")
+            if (
+                ceiling is None
+                and actor is not None
+                and actor.run_id == run_id
+                and actor.kind == "subagent"
+            ):
+                raise PluginUnavailable("plugin_actor_unbound")
+
     async def check_mcp_snapshot(self, snapshot, component_id: str) -> None:
+        self.check_effect_actor(snapshot, component_id)
         self.fences.check_snapshot(snapshot)
         await self._call(lambda: self._admission.check(snapshot, component_id))
 
@@ -446,26 +491,47 @@ class PluginService:
 
     def _refresh(self):
         """Publish metadata eligibility, never package bodies or a runtime grant."""
+        from .components import component_summary
         from .recovery import retained_inspections
-        from .skill_provider import skill_summary
 
         catalog, details = {}, []
+        revisions, generations = {}, {}
         try:
             authority = self._coordinator.published_snapshot()
+            revisions = {
+                row["installation_id"]: row["revision_digest"]
+                for row in authority["installations"]
+            }
+            generations = {
+                (row["installation_id"], row["scope_kind"], row["workspace_id"]): row[
+                    "generation"
+                ]
+                for row in authority["authority_generations"]
+            }
             inspections = retained_inspections(authority)
             for installation in authority["installations"]:
                 identity = installation["installation_id"]
                 inspection = inspections[(identity, installation["revision_digest"])]
+                selected = {
+                    row["component_id"]
+                    for row in authority["selections"]
+                    if row["installation_id"] == identity
+                    and row["revision_digest"] == installation["revision_digest"]
+                    and row["selected"]
+                }
                 for component in inspection.inventory.values():
-                    if component.kind == "skill":
-                        details.append(
-                            skill_summary(
-                                identity,
-                                inspection,
-                                component.component_id,
-                                installation.get("alias") or identity,
-                            )
-                        )
+                    row = component_summary(
+                        identity,
+                        inspection,
+                        component.component_id,
+                        installation.get("alias") or identity,
+                    )
+                    row.update(
+                        plugin_selected=component.component_id in selected,
+                        plugin_support=component.support,
+                        plugin_dependencies=component.dependencies,
+                    )
+                    details.append(row)
                 scopes = {None} | {
                     row["workspace_id"]
                     for row in authority["activation"]
@@ -480,10 +546,12 @@ class PluginService:
                         token = uuid4().hex
                         self._snapshots[token] = snapshot
                         for component_id in snapshot.selection:
-                            if inspection.inventory[component_id].kind != "skill":
-                                continue
-                            row = skill_summary(
-                                identity, inspection, component_id, snapshot.alias
+                            row = component_summary(
+                                identity,
+                                inspection,
+                                component_id,
+                                snapshot.alias,
+                                json.loads(snapshot.mappings_json),
                             )
                             row.update(
                                 plugin_ceiling=token,
@@ -496,9 +564,12 @@ class PluginService:
                     catalog[(identity, workspace)] = tuple(rows)
         except (ValueError, OSError, PermissionError):
             catalog, details = {}, []
+            revisions, generations = {}, {}
         with self._lock:
             self._catalog = catalog
             self._details = tuple(details)
+            self._published_revisions = revisions
+            self._published_generations = generations
 
     def capture_maximum(self, workspace_id: str | None) -> dict:
         """Read the worker-published immutable metadata ceiling without IO."""
@@ -532,9 +603,54 @@ class PluginService:
             "context_text": "",
         }
 
+    def published_current(self, snapshot) -> bool:
+        """Check worker-published authority generations without effect-lane IO."""
+        with self._lock:
+            self.fences.check_snapshot(snapshot)
+            return self._published_revisions.get(
+                snapshot.installation_id
+            ) == snapshot.revision_digest and all(
+                self._published_generations.get(
+                    (snapshot.installation_id, kind, workspace), 0
+                )
+                == generation
+                for kind, workspace, generation in snapshot.generations
+            )
+
+    def list_components(self, workspace_id: str | None = None) -> list[dict]:
+        """Expose disabled/dependent metadata without reading instruction bodies."""
+        maximum = self.capture_maximum(workspace_id)
+        eligible = {
+            (row["plugin_installation_id"], row["plugin_component_id"])
+            for row in maximum["available_skills"]
+        }
+        with self._lock:
+            rows = [deepcopy(row) for row in self._details]
+        for row in rows:
+            installation = row["plugin_installation_id"]
+            row["plugin_available"] = (
+                installation,
+                row["plugin_component_id"],
+            ) in eligible
+            if row["plugin_available"]:
+                row[
+                    "plugin_blockers"
+                ] = []  # Current admission resolved these requirements.
+            elif row["plugin_selected"]:
+                row["plugin_blockers"] += [
+                    "dependency_unavailable:" + key
+                    for key in row["plugin_dependencies"]
+                    if (installation, key) not in eligible
+                ]
+                if not row["plugin_blockers"]:
+                    row["plugin_blockers"] = ["plugin_requirements_unavailable"]
+        return rows
+
     def list_skills(self) -> list[dict]:
         with self._lock:
-            return [deepcopy(row) for row in self._details]
+            return [
+                deepcopy(row) for row in self._details if row["plugin_kind"] == "skill"
+            ]
 
     def owns(self, name: str) -> bool:
         from .skill_provider import owned_identifier
@@ -691,14 +807,15 @@ class PluginService:
                             token = uuid4().hex
                             self._admission_keys[key] = token
                             self._admitted[token] = snapshot
-                    from .skill_provider import skill_summary
+                    from .components import component_summary
 
                     row = dict(
-                        skill_summary(
+                        component_summary(
                             snapshot.installation_id,
                             snapshot.inspection,
                             row["plugin_component_id"],
                             snapshot.alias,
+                            json.loads(snapshot.mappings_json),
                         ),
                         plugin_ceiling=entry["plugin_ceiling"],
                         plugin_workspace_id=workspace,
@@ -727,7 +844,7 @@ class PluginService:
         return await self._call(operation)
 
     def _checked(self, name: str, token: str, *, binding: bool = False):
-        from .skill_provider import skill_summary
+        from .components import component_summary
 
         snapshot = self._admitted.get(token)
         if snapshot is None:
@@ -742,11 +859,12 @@ class PluginService:
             ):
                 raise PluginUnavailable("plugin_turn_retired")
         for component_id in snapshot.selection:
-            row = skill_summary(
+            row = component_summary(
                 snapshot.installation_id,
                 snapshot.inspection,
                 component_id,
                 snapshot.alias,
+                json.loads(snapshot.mappings_json),
             )
             if name in {row["name"], row["tool_name"], row["record_id"]}:
                 if actor_id and not binding:
@@ -765,9 +883,9 @@ class PluginService:
         """Explicit detail reads remain owned and never imply standalone trust."""
 
         def operation():
+            from .components import component_summary
             from .package_files import capture_package
             from .recovery import retained_inspections
-            from .skill_provider import skill_summary
 
             authority = self._coordinator.published_snapshot()
             inspections = retained_inspections(authority)
@@ -777,7 +895,7 @@ class PluginService:
                 for component in inspection.inventory.values():
                     if component.kind != "skill":
                         continue
-                    row = skill_summary(
+                    row = component_summary(
                         identity,
                         inspection,
                         component.component_id,
@@ -806,9 +924,134 @@ class PluginService:
             from .skill_provider import render_skill
 
             snapshot, component_id, row = self._checked(name, admission_token)
-            result = render_skill(snapshot, component_id, row, args or "")
+            kind = snapshot.inspection.inventory[component_id].kind
+            if kind == "skill":
+                result = render_skill(snapshot, component_id, row, args or "")
+            elif kind in {"command", "rule"}:
+                from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+                from .commands import command_arguments, render_command
+                from .components import component_body
+                from .context import instruction_block
+
+                if kind == "command":
+                    blocks = render_command(
+                        snapshot, component_id, command_arguments(args or "")
+                    )
+                    bodies = [block["content"] for block in blocks]
+                    rendered = carry_plugin_context("\n\n".join(bodies), *bodies)
+                else:
+                    if row["plugin_rule_mode"] != "manual":
+                        raise PluginUnavailable("plugin_rule_manual_required")
+                    rendered = instruction_block(
+                        snapshot.installation_id,
+                        component_id,
+                        snapshot.revision_digest,
+                        component_body(snapshot, component_id),
+                        args or "",
+                    )
+                result = {
+                    "rendered_prompt": rendered,
+                    "execution_mode": "inline",
+                    "plugin_owned": True,
+                    "allowed_tools": [],
+                    "skill_name": name,
+                }
+            else:
+                raise PluginUnavailable("plugin_manual_component_unavailable")
             self._admission.check(snapshot, component_id)
             return result
+
+        return await self._call(operation)
+
+    async def render_rules(self, entries) -> tuple[dict, ...]:
+        """Read complete active rules under the exact admitted component ceiling."""
+
+        def operation():
+            from .components import component_body
+            from .context import instruction_block
+
+            result = []
+            for row in sorted(
+                entries,
+                key=lambda item: (
+                    item.get("plugin_installation_id", ""),
+                    item.get("plugin_component_id", ""),
+                ),
+            ):
+                if (
+                    row.get("plugin_kind") != "rule"
+                    or row.get("plugin_rule_mode") != "always"
+                ):
+                    continue
+                snapshot, component_id, _summary = self._checked(
+                    row["name"], row["plugin_admission"]
+                )
+                body = instruction_block(
+                    snapshot.installation_id,
+                    component_id,
+                    snapshot.revision_digest,
+                    component_body(snapshot, component_id),
+                )
+                self._admission.check(snapshot, component_id)
+                result.append({"role": "user", "content": body})
+            return tuple(result)
+
+        return await self._call(operation)
+
+    async def component_snapshots(self, maximum):
+        """Resolve already admitted selections through the actual immutable ceiling."""
+        admitted = await self.admit(maximum, maximum["plugin_run_id"])
+        entries = tuple(
+            row for row in admitted["available_skills"] if row.get("plugin_owned")
+        )
+
+        def operation():
+            snapshots = {}
+            for entry in entries:
+                snapshot, _component, _row = self._checked(
+                    entry["name"], entry["plugin_admission"], binding=True
+                )
+                snapshots[snapshot.installation_id] = snapshot
+            return tuple(snapshots[key] for key in sorted(snapshots))
+
+        return await self._call(operation)
+
+    async def hook_configuration(self, maximum):
+        """Pin owned handlers from the same captured Console component ceiling."""
+        from .hooks import NativeHooks
+
+        snapshots = await self.component_snapshots(maximum)
+        return await self._call(lambda: NativeHooks(self, snapshots))
+
+    async def agent_presets(
+        self, entries, eligible: frozenset[str], *, parent_provider: str = ""
+    ) -> tuple:
+        """Project admitted ephemeral presets before ordinary child planning."""
+
+        def operation():
+            from .agent_presets import agent_definition
+
+            result = []
+            for row in entries:
+                if row.get("plugin_kind") == "agent":
+                    snapshot, component_id, _summary = self._checked(
+                        row["name"], row["plugin_admission"], binding=True
+                    )
+                    try:
+                        result.append(
+                            agent_definition(
+                                snapshot,
+                                component_id,
+                                eligible,
+                                parent_provider=parent_provider,
+                            )
+                        )
+                    except PluginUnavailable as error:
+                        if str(error) != "plugin_model_parent_mismatch":
+                            raise
+                    self._admission.check(snapshot, component_id)
+            return tuple(result)
 
         return await self._call(operation)
 
@@ -990,6 +1233,35 @@ class PluginService:
             raise PluginUnavailable("plugin_run_identity_required")
 
         def operation():
+            ceiling = frozenset(
+                (
+                    row["plugin_installation_id"],
+                    row["plugin_revision"],
+                    row["plugin_workspace_id"],
+                    row["plugin_component_id"],
+                )
+                for row in entries
+                if row.get("plugin_owned")
+                and (
+                    component_ceiling is None
+                    or row["plugin_component_id"]
+                    in component_ceiling.get(row["plugin_installation_id"], ())
+                )
+            )
+
+            def check_ceiling():
+                if run_id in self._terminal_runs:
+                    raise PluginUnavailable("plugin_run_terminal")
+                if parent_run_id is not None:
+                    parent = self._actor_components.get(parent_run_id)
+                    if parent is None or not ceiling <= parent:
+                        raise PluginUnavailable("plugin_parent_ceiling_unavailable")
+                prior = self._actor_components.get(run_id)
+                if prior is not None and prior != ceiling:
+                    raise PluginUnavailable("plugin_actor_identity_reused")
+
+            with self._lock:
+                check_ceiling()
             for row in entries:
                 if not row.get("plugin_owned"):
                     continue
@@ -1077,6 +1349,10 @@ class PluginService:
                     # this run, so this unused reservation has no live writers.
                     owner.settle_process(token, True)
                     raise
+
+            with self._lock:
+                check_ceiling()
+                self._actor_components[run_id] = ceiling
 
         self._call_from_agent(operation)
 

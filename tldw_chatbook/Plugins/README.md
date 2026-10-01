@@ -396,9 +396,10 @@ allowed-tools: ""                  # explicitly no child tools
 
 Malformed recognized metadata blocks execution. Unknown metadata is inert.
 Manual-only skills remain explicitly invocable but are absent from model tool
-catalogs. Empty allowed-tools never inherits the parent's tools. Unsupported
-nonempty portable tool restrictions and dependencies whose runtime owner is not
-yet available remain blockers. No package scripts or other source code execute.
+catalogs. Empty allowed-tools never inherits the parent's tools. Nonempty tool restrictions require reviewed host references. Skill model overrides
+remain explicitly unsupported; agent model mappings retain the actual parent
+provider/endpoint floor. Package code runs only through selected owned hooks
+and the existing command/MCP runtime owners.
 
 Console freezes a metadata-only maximum at capture, with its actual workspace and
 fresh pending turn identity. That cache is eligibility only. `admit` revalidates
@@ -641,3 +642,37 @@ registration supplies them. Teardown cannot connect, prompt or create context;
 Interrupt and SessionEnd keep their original one/three-second deadlines.
 Cancellation retains the original request/validator and source/root custody
 until actual terminal evidence, even after the visible waiter returns.
+
+
+## Selected native capabilities (I1)
+
+`list_components(workspace_id)` returns metadata for selected, excluded and
+unavailable components. `capture_maximum`/`admit` freeze the same dependency-complete
+selection for skills, commands, rules, agent presets, hooks and MCP. Missing
+requirements refuse their dependent component without blocking unrelated material;
+new selection or enablement takes effect on a later run.
+
+Manual commands and rules use `alias:command:id` and `alias:rule:id`. Commands
+accept a strict JSON object containing exactly their declared named string arguments.
+Arguments remain separate literal user context; nested mentions are never expanded.
+Always rules have stable installation/component ordering. Complete instruction
+blocks remain attributed untrusted user context, with the existing 8/32 KiB limits.
+
+`review_configuration` also accepts `tool_references={component_id: {label:
+"builtin:calculator"}}` and `models={component_id: "provider::model"}`. Owned MCP
+references use an already reviewed exact `local:profile::tool` mapping and require
+the MCP component in that material's dependency closure. Commit remains the existing
+protected review owner; these references grant no tool permission. Native skill
+constraints narrow the actual inline/fork catalog. Agent tools inherit only when
+explicitly declared `inherit`; an empty list remains empty, including through the
+actual host child, owned MCP invocation and approval paths. Declared models must
+exist in the host catalog and match the actual parent's provider route.
+
+Owned hook definitions use the same immutable snapshot and scheduler. `${PLUGIN_ROOT}`
+resolves to retained bytes, `${PLUGIN_DATA}` to a bound shared data root, and declared
+nonsecret defaults expand once. Unresolved values remain unavailable. F2 reserves
+actual command/root custody before spawning; revocation retains it until the process
+and pipes settle. Hook dependencies are checked for the actual tool definition and
+live attributed material, so an unrelated ordinary tool does not inherit another
+component's failed initialization requirement. Owned MCP composition delegates to the
+existing connection, permission, discovery, source and result-currentness owners.

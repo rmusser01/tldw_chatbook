@@ -526,3 +526,12 @@ H6 Fix1 binds a private read-only currentness callback to the exact captured res
 The normal provider may add its existing approval provenance to the captured result. Its single internal projection helper transfers the witness only from that exact captured object to the helper's approval-only dataclass replacement, under the capture lock. Unanswered metadata remains unanswered. Arbitrary replacements, late owned refusals, repeated capture or closed scopes cannot inherit the witness; result currentness still uses the original call authority. This fixes the six approved/session projection paths without changing permission or wire-result ownership.
 
 The Console's hook currentness probe compares live workspace roots, project authority, permission profile and persona rules without rebuilding unrelated catalogs. The normal MCP provider reuses the service's exact live catalog resolver at hook dispatch and result acceptance; a vanished, stale, disconnected or changed definition refuses. Permission and kill-switch reads remain fresh at their normal boundaries. Custom host configuration providers retain their snapshot contract. This removes repeated catalog I/O from lifecycle polling without caching permission, restoring authority or extending the one/three-second notification deadlines.
+
+
+I1 integrates selected owned hooks into the actual next-run configuration without
+replacing the standalone scheduler. The native adapter reserves F2 command/root
+custody before launch, publishes actual H2 process evidence, and releases only after
+real terminal settlement. The existing checkpoint validates dependencies of the
+actual tool definition and live typed material; unavailable graph nodes refuse the
+affected operation while unrelated tools remain eligible. Manual preparation retains
+an unchanged native configuration; changing workspace requires fresh configuration.

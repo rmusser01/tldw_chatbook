@@ -462,8 +462,10 @@ class PluginCoordinator:
         self,
         installation_id: str,
         *,
-        connections: dict[str, str],
+        connections: dict[str, str] | None = None,
         tools: dict[str, tuple[str, ...]] | None = None,
+        tool_references: dict[str, dict[str, str]] | None = None,
+        models: dict[str, str] | None = None,
     ) -> PluginReview:
         """Review complete current owner references; never accept caller-made grants."""
         from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
@@ -472,8 +474,9 @@ class PluginCoordinator:
 
         self._require_worker()
         owner = self.mcp_mapping_owner
-        if not isinstance(owner, LocalMCPControlService):
+        if connections and not isinstance(owner, LocalMCPControlService):
             raise PermissionError("plugin_mapping_owner_unavailable")
+        connections = connections or {}
         snapshot = self.published_snapshot()
         installed = next(
             row
@@ -491,8 +494,8 @@ class PluginCoordinator:
             and row["selected"]
         }
         if (
-            not connections
-            or len(connections) > 512
+            not (connections or tool_references or models)
+            or len(connections) + len(tool_references or {}) + len(models or {}) > 512
             or set(tools or {}) - connections.keys()
         ):
             raise ValueError("plugin_mapping_invalid")
@@ -510,9 +513,52 @@ class PluginCoordinator:
             mappings.append(mapping)
             for name in sorted(set((tools or {}).get(component_id, ()))):
                 mappings.append(owner.capture_tool_mapping(mapping, inspection, name))
+        from .host_references import capture_reference
+
+        for component_id, references in sorted((tool_references or {}).items()):
+            if component_id not in selection:
+                raise PermissionError("plugin_component_not_selected")
+            for label, target in sorted(references.items()):
+                mappings.append(
+                    capture_reference(
+                        installation_id,
+                        inspection,
+                        component_id,
+                        "tool",
+                        target,
+                        label=label,
+                        mappings=mappings,
+                    )
+                )
+        for component_id, target in sorted((models or {}).items()):
+            if component_id not in selection:
+                raise PermissionError("plugin_component_not_selected")
+            mappings.append(
+                capture_reference(
+                    installation_id,
+                    inspection,
+                    component_id,
+                    "model",
+                    target,
+                    mappings=mappings,
+                )
+            )
         return self._review_existing(
             installation_id, kind="configure", mappings_json=canonical_json(mappings)
         )
+
+    def validate_mapping(self, mapping, inspection, mappings) -> None:
+        """Route each reviewed reference to its existing authority source."""
+        if mapping["mapping_id"].startswith("native-"):
+            from .host_references import validate_reference
+
+            validate_reference(mapping, inspection, mappings)
+        else:
+            from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+            if not isinstance(self.mcp_mapping_owner, LocalMCPControlService):
+                raise PermissionError("plugin_mapping_owner_unavailable")
+            self.mcp_mapping_owner.validate_connection_mapping(mapping, inspection)
 
     async def retain_revisions(self, installation_id: str) -> OperationReceipt:
         """Compact references and reconcile retained authenticated cleanup custody."""
@@ -607,7 +653,7 @@ class PluginCoordinator:
         if review.kind == "configure":
             mappings = json.loads(review.mappings_json)
             for mapping in mappings:
-                self.mcp_mapping_owner.validate_connection_mapping(mapping, retained)
+                self.validate_mapping(mapping, retained, mappings)
             cursor.execute(
                 "DELETE FROM mappings WHERE installation_id=?",
                 (review.installation_id,),

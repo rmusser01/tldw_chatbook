@@ -213,6 +213,7 @@ class ToolHookRun:
         resolve_definition,
         should_cancel=lambda: False,
         required_handler_ids=lambda: (),
+        definition_requirements=None,
         render_context=None,
         parent_run_id=None,
         workspace_id=None,
@@ -232,6 +233,7 @@ class ToolHookRun:
         self.resolve_definition = resolve_definition
         self.should_cancel = should_cancel
         self.required_handler_ids = required_handler_ids
+        self.definition_requirements = definition_requirements
         self.render_context = render_context or self._render_user_context
         self.context_owner = context_owner
         self.containing_hook = containing_hook
@@ -407,10 +409,28 @@ class ToolHookRun:
             definition,
         )
 
+    def requirements_for(self, definition=None):
+        legacy = self.required_handler_ids()
+        mapped = (
+            self.definition_requirements(definition)
+            if self.definition_requirements is not None
+            else ()
+        )
+        return (
+            None
+            if legacy is None or mapped is None
+            else tuple(sorted(set(legacy) | set(mapped)))
+        )
+
     def prepare_call(self, call):
         from dataclasses import replace
 
         definition = self.resolve_definition(call)
+        self.checkpoints.wait(
+            self.run_id,
+            required_handler_ids=self.requirements_for(definition),
+            should_cancel=self.should_cancel,
+        )
         event = self._event(
             "PreToolUse",
             definition,
@@ -495,6 +515,11 @@ class ToolHookRun:
         ):
             raise HookPreparationError("reviewed tool identity changed")
         validate_candidate(call.args, prepared.definition)
+        self.checkpoints.wait(
+            self.run_id,
+            required_handler_ids=self.requirements_for(prepared.definition),
+            should_cancel=self.should_cancel,
+        )
         # The runtime calls this acceptance seam after final legacy guards,
         # before permission review; dispatch revalidation never repeats effects.
         if accept_context and prepared.event.event_id not in self._preaccepted:
@@ -510,7 +535,8 @@ class ToolHookRun:
             self.checkpoints.accept(token, prepared.outcome)
             self._preaccepted.add(prepared.event.event_id)
             self.checkpoints.assert_next_input_allowed(
-                self.run_id, required_handler_ids=self.required_handler_ids()
+                self.run_id,
+                required_handler_ids=self.requirements_for(prepared.definition),
             )
         return prepared.definition
 
@@ -625,7 +651,7 @@ class ToolHookRun:
         from .checkpoints import HookCheckpointError
 
         try:
-            selected = self.required_handler_ids()
+            selected = self.requirements_for()
         except Exception as error:
             raise HookCheckpointError("hook dependency mapping unknown") from error
         self.checkpoints.wait(

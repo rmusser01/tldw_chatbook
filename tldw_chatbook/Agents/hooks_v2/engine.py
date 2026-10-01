@@ -165,6 +165,7 @@ class HookEngine:
         enabled: bool = True,
         launch_guard: Callable | None = None,
         effect_authority_check: Callable | None = None,
+        event_projector: Callable | None = None,
     ):
         if len(definitions) > 256 or len({h.id for h in definitions}) != len(
             definitions
@@ -184,6 +185,7 @@ class HookEngine:
         self.invalid_admissions = tuple(invalid_admissions)
         self._environment = environment
         self._host_environment = host_environment
+        self._event_projector = event_projector
         self._dependency_required = dependency_required or (lambda *_: False)
         self._lock = RLock()
         self._scope_issuer = object()
@@ -608,6 +610,12 @@ class HookEngine:
                     acquire.cancel()
                 cancelled.cancel()
                 await asyncio.gather(acquire, cancelled, return_exceptions=True)
+            if failure is None and self._event_projector is not None:
+                try:
+                    event = self._event_projector(handler, event)
+                    value = _envelope(event)
+                except (ValueError, PermissionError):
+                    failure = "owner_projection_refused"
             if failure is None:
                 authorized, callback_failure = await self._authority_status(
                     handler, event, "admission"

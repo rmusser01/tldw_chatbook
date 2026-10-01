@@ -126,6 +126,10 @@ class MCPHookContext:
             provider = owner[1]
             # Existing Console collision wrapper delegates to this exact owner.
             provider = getattr(provider, "_provider", provider)
+            from tldw_chatbook.Plugins.mcp_provider import MCPProviderGroup
+
+            if isinstance(provider, MCPProviderGroup):
+                provider = provider.provider_for(entry.name)
             if (
                 isinstance(provider, MCPToolProvider)
                 and provider.hook_target(handler.server, handler.tool) == entry.name

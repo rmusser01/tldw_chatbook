@@ -441,6 +441,28 @@ class PluginContextOrigin:
     component_id: str
     revision: str
     byte_count: int
+    allowed_tools: tuple[str, ...] | None = None
+
+
+def plugin_tool_ceiling(
+    messages: list[dict], eligible: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Live package constraints only narrow the actual host catalog."""
+    allowed = set(eligible)
+    for row in messages:
+        content = row.get("content")
+        parts = (
+            [content]
+            if not isinstance(content, list)
+            else [part.get("text") for part in content if isinstance(part, dict)]
+        )
+        for text in parts:
+            if not isinstance(text, PluginContextText):
+                continue
+            for origin in text.checked_origins():
+                if origin.allowed_tools is not None:
+                    allowed.intersection_update(origin.allowed_tools)
+    return tuple(name for name in eligible if name in allowed)
 
 
 @dataclass(frozen=True)
@@ -934,6 +956,23 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
                 )
     errors.extend(validate_sampling_params(params_to_dict(defn.params)))
     return errors
+
+
+def compose_agent_instructions(
+    definition: AgentDefinition,
+    system_prompt: str,
+    allowed_tools: tuple[str, ...],
+) -> tuple[str, tuple[str, ...], tuple[dict, ...]]:
+    """Keep managed material in its attributed user lane; narrow tools only."""
+    owned = isinstance(definition.instructions, PluginContextText)
+    if definition.tool_allowlist or owned:
+        wanted = frozenset(definition.tool_allowlist)
+        allowed_tools = tuple(name for name in allowed_tools if name in wanted)
+    if owned:
+        rows = ({"role": "user", "content": definition.instructions},)
+        check_host_context(list(rows), strip=False)
+        return system_prompt, allowed_tools, rows
+    return system_prompt + "\n\n" + definition.instructions, allowed_tools, ()
 
 
 def definition_fingerprint(defn: AgentDefinition) -> str:

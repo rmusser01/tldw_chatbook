@@ -2106,6 +2106,7 @@ class AgentService:
         hooks_v2_required_handler_ids: (
             Callable[[str], tuple[str, ...] | None] | None
         ) = None,
+        hooks_v2_definition_requirements: Callable | None = None,
         hooks_v2_render_context: Callable | None = None,
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
@@ -2256,6 +2257,7 @@ class AgentService:
         self._hooks_v2_session_id = hooks_v2_session_id
         self._hooks_v2_turn_id = hooks_v2_turn_id
         self._hooks_v2_required_handler_ids = hooks_v2_required_handler_ids
+        self._hooks_v2_definition_requirements = hooks_v2_definition_requirements
         self._hooks_v2_render_context = hooks_v2_render_context
         #: TASK-26010: observational post-completion seam -- (call, result,
         #: duration_seconds, run_id) after EVERY tool call completes, whatever
@@ -6247,21 +6249,15 @@ class AgentService:
             # override lives INSIDE resolve_spawn_target, so a preset model
             # with no provider keeps its same-endpoint behavior there.
             child_model = target.model or config.model
+            plugin_instructions = ()
             if resolved is not None:
-                # IDENTITY CONTRACT: console_agent_bridge._is_subagent
-                # prefix-matches the base prompt -- instructions APPEND,
-                # never prepend (fleet spec §4 composition rule).
-                child_system_prompt = (
-                    child_system_prompt + "\n\n" + resolved.instructions
-                )
-                if resolved.tool_allowlist:
-                    # Intersection, never union (spec §3 invariant 1): the
-                    # definition narrows the inherited set; unknown names
-                    # drop out here and can never grant.
-                    wanted = set(resolved.tool_allowlist)
-                    child_allowed_tools = tuple(
-                        n for n in child_allowed_tools if n in wanted
+                from .agent_models import compose_agent_instructions
+
+                child_system_prompt, child_allowed_tools, plugin_instructions = (
+                    compose_agent_instructions(
+                        resolved, child_system_prompt, child_allowed_tools
                     )
+                )
             child_config = AgentConfig(
                 model=child_model,
                 # Children report provider-level faults against the same
@@ -6313,7 +6309,10 @@ class AgentService:
             # as belt-and-braces for the inline path.
             child_kwargs = dict(
                 conversation_id=conversation_id,
-                messages=[{"role": "user", "content": spawn_task}],
+                messages=[
+                    *plugin_instructions,
+                    {"role": "user", "content": spawn_task},
+                ],
                 config=child_config,
                 api_endpoint=target.provider,
                 # ADR-147 snapshot (schema v21): the resolved target frozen
@@ -6324,9 +6323,7 @@ class AgentService:
                 resolved_model=child_model,
                 resolved_base_url=target.base_url,
                 resolved_params_json=(
-                    json.dumps(params_to_dict(target.params))
-                    if target.params
-                    else None
+                    json.dumps(params_to_dict(target.params)) if target.params else None
                 ),
                 agent_kind=AGENT_KIND_SUBAGENT,
                 task=spawn_task,
@@ -6981,20 +6978,17 @@ class AgentService:
                 child_model = config.model
                 child_base_url = None
                 child_sampling_params = ()
+            plugin_instructions = ()
             if resolved is not None:
-                # IDENTITY CONTRACT: instructions APPEND, never prepend
-                # (fleet spec SS4; console_agent_bridge._is_subagent
-                # prefix-matches the base prompt).
-                child_system_prompt = (
-                    child_system_prompt + "\n\n" + resolved.instructions
+                from .agent_models import compose_agent_instructions
+
+                child_system_prompt, child_allowed_tools, plugin_instructions = (
+                    compose_agent_instructions(
+                        resolved, child_system_prompt, child_allowed_tools
+                    )
                 )
                 if snapshot is None and resolved.model:
                     child_model = resolved.model
-                if resolved.tool_allowlist:
-                    wanted = set(resolved.tool_allowlist)
-                    child_allowed_tools = tuple(
-                        n for n in child_allowed_tools if n in wanted
-                    )
             child_config = AgentConfig(
                 model=child_model,
                 # Children report provider-level faults against the same
@@ -7016,7 +7010,7 @@ class AgentService:
                 base_url=child_base_url,
                 sampling_params=child_sampling_params,
             )
-            seed = [dict(m) for m in retained.messages]
+            seed = [*plugin_instructions, *(dict(m) for m in retained.messages)]
             retained_steering = retained.steering_with_causes or tuple(
                 (source, text, None) for source, text in retained.steering
             )
@@ -8346,6 +8340,13 @@ class AgentService:
                     if self._hooks_v2_required_handler_ids is not None
                     else lambda: ()
                 ),
+                definition_requirements=(
+                    lambda definition: self._hooks_v2_definition_requirements(
+                        definition, messages
+                    )
+                )
+                if self._hooks_v2_definition_requirements is not None
+                else None,
                 render_context=self._hooks_v2_render_context,
                 parent_run_id=parent_run_id,
                 lifecycle=self._hooks_v2_lifecycle,
@@ -8368,11 +8369,7 @@ class AgentService:
                         session_id=self._hooks_v2_session_id,
                         allowed_names=frozenset(config.allowed_tools),
                         current=lambda: not should_cancel(),
-                        required_handler_ids=lambda _definition: (
-                            self._hooks_v2_required_handler_ids(run_id)
-                            if self._hooks_v2_required_handler_ids is not None
-                            else ()
-                        ),
+                        required_handler_ids=hook_run.requirements_for,
                         turn_id=self._hooks_v2_turn_id,
                         parent_run_id=parent_run_id,
                         input_scope=run_id,

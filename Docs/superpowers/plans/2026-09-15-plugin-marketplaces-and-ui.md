@@ -80,7 +80,7 @@ the decomposition; no unrelated broad refactoring is part of these plans.
 - Modify: `tldw_chatbook/Chat/console_agent_bridge.py`
 - Modify: `tldw_chatbook/Agents/tool_catalog.py`
 - Test: `Tests/Plugins/test_native_components.py`
-- Test: `Tests/Plugins/test_plugin_context.py`
+- Test: `Tests/Plugins/test_native_skill_flow.py`
 - Test: `Tests/Chat/test_console_skill_substitution.py`
 
 **Interfaces**
@@ -88,7 +88,7 @@ the decomposition; no unrelated broad refactoring is part of these plans.
 - Consumes: F5 owned skill/context admission, M4 plugin tools and H6 complete hook runtime.
 - Produces: PluginComponents.project(snapshot: RunPluginSnapshot) -> tuple[ComponentRecord, ...]. render_command(component: ComponentRecord, arguments: dict[str, str]) -> tuple[dict, ...] returns separately attributed instruction and argument blocks. resolve_agent_tools(value: str | tuple[str, ...], eligible: frozenset[str]) -> frozenset[str] preserves inherit versus empty. register_hook_definitions(snapshot: RunPluginSnapshot) -> tuple[HookHandler, ...] supplies owned definitions and current-authority validation.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_empty_agent_tool_list_never_inherits():
@@ -98,9 +98,9 @@ def test_empty_agent_tool_list_never_inherits():
     assert resolve_agent_tools("inherit", eligible) == eligible
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_native_components.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_native_components.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def resolve_agent_tools(value, eligible: frozenset[str]) -> frozenset[str]:
@@ -112,20 +112,20 @@ def resolve_agent_tools(value, eligible: frozenset[str]) -> frozenset[str]:
     return requested
 ```
 
-  - [ ] 3.1. Normalize command/rule/agent definitions already inventoried by F1 into existing composer/context/AgentDefinition seams. Give aliases stable installation identity; no display-name tool lookup or recursive command expansion.
-  - [ ] 3.2. Keep rule order stable by installation/component ID, support only always/manual activation and require explicit manual adaptation for file/model-selected modes. Reject oversized required blocks whole.
-  - [ ] 3.3. Preserve skill manual-only, inline/fork, explicit tool restrictions and model mapping semantics through final provider input; plugin prose never enters an internal system-authority lane.
-  - [ ] 3.4. Supply owned v2 hook sets and dependency requirements at the next run snapshot; report partial readiness per component and never auto-select newly supported items. Bind the H2 HookProcessOwner port to F2 before any plugin command launch, preserving pending-launch provenance and root usage.
+  - [x] 3.1. Normalize command/rule/agent definitions already inventoried by F1 into existing composer/context/AgentDefinition seams. Give aliases stable installation identity; no display-name tool lookup or recursive command expansion.
+  - [x] 3.2. Keep rule order stable by installation/component ID, support only always/manual activation and require explicit manual adaptation for file/model-selected modes. Reject oversized required blocks whole.
+  - [x] 3.3. Preserve skill manual-only, inline/fork, explicit tool restrictions and model mapping semantics through final provider input; plugin prose never enters an internal system-authority lane.
+  - [x] 3.4. Supply owned v2 hook sets and dependency requirements at the next run snapshot; report partial readiness per component and never auto-select newly supported items. Bind the H2 HookProcessOwner port to F2 before any plugin command launch, preserving pending-launch provenance and root usage.
 
 **Failure and successful-control matrix:** Empty/inherit/unmapped tools, mapped/unknown model, arguments containing command syntax, namespace collisions, forked context authority, whole-block overflow, mid-run enablement, disabled required hook and successful unrelated component.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
-python -m pytest Tests/Plugins/test_native_components.py Tests/Plugins/test_plugin_context.py Tests/Chat/test_console_skill_substitution.py -q
+python -m pytest Tests/Plugins/test_native_components.py Tests/Plugins/test_native_skill_flow.py Tests/Chat/test_console_skill_substitution.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32686 --plain

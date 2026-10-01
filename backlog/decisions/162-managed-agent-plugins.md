@@ -439,3 +439,21 @@ Portable MCP expansion recognizes only ${PLUGIN_ROOT} and ${PLUGIN_DATA} in args
 
 
 H6 integration note: native MCP hook effects consume original typed wire evidence through request-local capture inside the ordinary provider, with final object identity binding. No separate raw invoker or hook permission is added. M4 owned request/root records remain the resource owners; bridge cancellation alone cannot release hook lifetime counters. Private prospective Console integration currently composes independently eligible standalone MCP. I1 must publish native managed graph requirements and compose the existing owned provider in the application; unknown declarations remain unavailable, and this handoff does not claim that later integration.
+
+
+### I1 native capability integration
+
+Selected commands, rules, agent presets, skills, MCP and hooks share the existing
+immutable admission. Reviewed host tool/model references reuse authenticated Mapping
+records and current catalog/routing owners; they never create permission. Explicit
+EMPTY constraints reach actual inline/fork/child catalogs and owned MCP approval and
+dispatch. Skill model overrides remain unsupported. Agent models retain the actual
+parent provider/endpoint floor. Live-only typed context carries tool restrictions;
+historical opaque prose cannot acquire authority. Component-local readiness retains
+unavailable metadata without automatically selecting prerequisites.
+
+Native hook command/root custody adapts F2 to the existing H2 process owner. Real
+Console MCP composition uses M4's connection owner and ordinary tool discovery.
+Exact per-definition and live-material dependency requirements reuse H3 checkpoints;
+ordinary unrelated tools do not acquire another component's dependency. Qualification
+and limits are recorded in the current-dev integration report for TASK-32686.

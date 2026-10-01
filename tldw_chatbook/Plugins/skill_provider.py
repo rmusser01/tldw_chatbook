@@ -71,7 +71,8 @@ def skill_summary(
         "definition_digest": inspection.effective_digest,
         "trust_blocked": True,
         "trust_status": "plugin_managed",
-        "plugin_blockers": [] if valid else ["plugin_skill_metadata_invalid"],
+        "plugin_blockers": ([] if valid else ["plugin_skill_metadata_invalid"])
+        + (["plugin_skill_model_unsupported"] if "model" in metadata else []),
         "backend": "local",
     }
 
@@ -108,7 +109,12 @@ def render_skill(
         "plugin_component_id": component_id,
         "plugin_revision": snapshot.revision_digest,
         "rendered_prompt": instruction_block(
-            snapshot.installation_id, component_id, snapshot.revision_digest, body, args
+            snapshot.installation_id,
+            component_id,
+            snapshot.revision_digest,
+            body,
+            args,
+            allowed_tools=summary["allowed_tools"],
         ),
         "allowed_tools": summary["allowed_tools"],
         "execution_mode": summary["context"],

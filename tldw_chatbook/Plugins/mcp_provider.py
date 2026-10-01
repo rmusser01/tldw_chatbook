@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+from collections.abc import Sequence
+from contextlib import ExitStack
 from contextvars import ContextVar
+from typing import Any
 
-from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolResult
+from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.MCP.connection_ownership import OwnedMCPInvocation, owned_invocation
 
@@ -27,7 +29,9 @@ class PluginMCPProvider(MCPToolProvider):
         mappings = [
             row
             for row in json.loads(snapshot.mappings_json)
-            if row["kind"] == "tool" and row["component_id"] in snapshot.selection
+            if row["kind"] == "tool"
+            and row["component_id"] in snapshot.selection
+            and snapshot.inspection.inventory[row["component_id"]].kind == "mcp"
         ]
         self._tool_mappings = {row["target_reference"]: row for row in mappings}
         ceiling = kwargs.pop("maximum_tool_ids", None)
@@ -99,17 +103,10 @@ class PluginMCPProvider(MCPToolProvider):
             renamed, catalog = {}, []
             for tool, state in self._entry_by_llm_name.values():
                 mapping = self._tool_mappings[tool.tool_id]
-                name = (
-                    "plugin_mcp_"
-                    + hashlib.sha256(
-                        (
-                            self.snapshot.installation_id
-                            + ":"
-                            + mapping["component_id"]
-                            + ":"
-                            + tool.name
-                        ).encode()
-                    ).hexdigest()[:48]
+                from .host_references import owned_mcp_tool_name
+
+                name = owned_mcp_tool_name(
+                    self.snapshot.installation_id, mapping["component_id"], tool.name
                 )
                 renamed[name] = (tool, state)
                 catalog.append(
@@ -130,8 +127,24 @@ class PluginMCPProvider(MCPToolProvider):
             self._not_connected_count = 0
             raise PermissionError("plugin_catalog_authority_unavailable") from None
 
+    def _check_actor(self, tool) -> None:
+        mapping = self._tool_mappings.get(tool.tool_id)
+        if mapping is None:
+            raise PermissionError("plugin_tool_not_reviewed")
+        self.plugins.check_effect_actor(self.snapshot, mapping["component_id"])
+
+    def pending_gate_for(
+        self, llm_name: str, args: dict, call_id: str = "", rationale: str = ""
+    ) -> Any:
+        try:
+            self._check_actor(self._entry_by_llm_name[llm_name][0])
+        except Exception:  # noqa: BLE001
+            return None
+        return super().pending_gate_for(llm_name, args, call_id, rationale)
+
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         try:
+            self._check_actor(self._entry_by_llm_name[tool_id][0])
             profile = self._profile_kwargs()
         except Exception:  # noqa: BLE001
             return ToolResult(
@@ -146,6 +159,7 @@ class PluginMCPProvider(MCPToolProvider):
             _permission_profile.reset(token)
 
     def _check_permission(self, tool, args, decision=None):
+        self._check_actor(tool)
         if (
             self._kill_switch_engaged()
             or self._profile_kwargs() != _permission_profile.get()
@@ -268,3 +282,72 @@ class PluginMCPProvider(MCPToolProvider):
             )
         finally:
             owned_invocation.reset(token)
+
+
+class MCPProviderGroup:
+    """Route catalogs/review to their actual owners; retain each owner's stamps."""
+
+    def __init__(self, providers: Sequence[MCPToolProvider]) -> None:
+        self.providers = tuple(providers)
+        self.owners = {}
+        for provider in self.providers:
+            for entry in provider.list_catalog():
+                if entry.name in self.owners:
+                    raise PermissionError("plugin_mcp_namespace_collision")
+                self.owners[entry.name] = provider
+
+    def provider_for(self, name: str) -> MCPToolProvider | None:
+        return self.owners.get(name)
+
+    @property
+    def not_connected_count(self) -> int:
+        return sum(provider.not_connected_count for provider in self.providers)
+
+    def list_catalog(self) -> list[ToolCatalogEntry]:
+        return [
+            entry for provider in self.providers for entry in provider.list_catalog()
+        ]
+
+    def load_schema(self, tool_id: str) -> ToolSchema:
+        return self.owners[tool_id].load_schema(tool_id)
+
+    def invoke(self, tool_id: str, args: dict) -> ToolResult:
+        owner = self.owners.get(tool_id)
+        return (
+            owner.invoke(tool_id, args)
+            if owner is not None
+            else ToolResult(
+                ok=False,
+                error="plugin_mcp_tool_unavailable",
+                dispatch_state="not_started",
+            )
+        )
+
+    def pending_gate_for(self, name: str, args: dict, **kwargs: Any) -> Any:
+        owner = self.owners.get(name)
+        return None if owner is None else owner.pending_gate_for(name, args, **kwargs)
+
+    def apply_batch_decisions(self, run_id: str, decisions: dict[str, str]) -> None:
+        # Preserve the original per-call unanswered provenance, never dict-filter it.
+        for provider in self.providers:
+            provider.apply_batch_decisions(run_id, decisions)
+
+    def record_user_denial(self, name: str) -> None:
+        owner = self.owners.get(name)
+        if owner is not None:
+            owner.record_user_denial(name)
+
+    def record_hook_refusal(self, name: str, *, timed_out: bool) -> None:
+        owner = self.owners.get(name)
+        if owner is not None:
+            owner.record_hook_refusal(name, timed_out=timed_out)
+
+    def stamp_scope(self, run_id: str) -> ExitStack:
+        stack = ExitStack()
+        try:
+            for provider in self.providers:
+                stack.enter_context(provider.stamp_scope(run_id))
+        except BaseException:
+            stack.close()
+            raise
+        return stack

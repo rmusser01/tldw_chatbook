@@ -4419,7 +4419,9 @@ def _compose_prospective_hook_context(
     def requirements(definition):
         owner = registry.resolve_owner_for_name(definition.name)
         provider = getattr(owner[1], "_provider", owner[1]) if owner else None
-        # Managed graph declarations are owned by I1; absence is unknown.
+        native = getattr(lifecycle.engine, "native_plugins", None)
+        if native is not None:
+            return native.definition_requirements(definition, registry)
         return () if type(provider) is MCPToolProvider else None
 
     return MCPHookContext(
@@ -4950,6 +4952,9 @@ def build_console_first_request_plan(
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
     )
+    from tldw_chatbook.Agents.agent_models import plugin_tool_ceiling
+
+    allowed_tools = plugin_tool_ceiling(agent_messages, allowed_tools)
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
@@ -5126,7 +5131,9 @@ class _BridgeSkillRunner:
         skill_file_bindings: SkillFileBindings | None = None,
         definition_digests: Mapping[str, str] | None = None,
         plugin_entries: Sequence[Mapping[str, Any]] = (),
+        owned_mcp_names: tuple[str, ...] = (),
     ) -> None:
+        self._owned_mcp_names = owned_mcp_names
         self._plugin_entries = {str(row["tool_name"]): row for row in plugin_entries}
         self._skills_service = skills_service
         self._skill_names = skill_names
@@ -5203,7 +5210,10 @@ class _BridgeSkillRunner:
         # builtin + local set through, matching how native spawn_subagent
         # children already inherit local tools.
         allowed_tools = intersect_skill_tools(
-            declared_allowed_tools, self._builtin_names + self._local_names
+            declared_allowed_tools,
+            self._builtin_names
+            + self._local_names
+            + (self._owned_mcp_names if name in self._plugin_entries else ()),
         )
         # task-4 (skills-fork-reachability): grant the spawned skill's own
         # name skill_file authorization BEFORE spawn -- so the child's very
@@ -6120,6 +6130,38 @@ class ConsoleAgentBridge:
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
+        if plugin_entries and not run_is_ephemeral:
+            eligible = frozenset(
+                row.name
+                for provider in (
+                    self._registry,
+                    mcp_provider,
+                    local_provider,
+                    virtual_cli_provider,
+                    raw_shell_provider,
+                    library_provider,
+                    profile_provider,
+                    canvas_provider,
+                )
+                if provider is not None
+                for row in provider.list_catalog()
+            )
+            managed = asyncio.run(
+                plugin_service.agent_presets(
+                    plugin_entries,
+                    eligible,
+                    parent_provider=str(
+                        getattr(resolution, "selected_provider", "")
+                        or getattr(resolution, "execution_key", "")
+                        or getattr(resolution, "provider", "")
+                    ),
+                )
+            )
+            if {item.name for item in managed} & {
+                item.name for item in runtime_definitions
+            }:
+                raise PermissionError("plugin_agent_namespace_collision")
+            runtime_definitions = (*runtime_definitions, *managed)
         # Build the exact outbound user payload before schema planning. Both
         # automatic riders can change whether direct catalog disclosure still
         # leaves the configured response reserve, so the planner and live run
@@ -6369,6 +6411,12 @@ class ConsoleAgentBridge:
                 skill_names=first_request_plan.skill_names,
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
+                owned_mcp_names=tuple(
+                    entry.name
+                    for entry in registry.list_catalog()
+                    if entry.source == "plugin_mcp"
+                    and entry.name in first_request_plan.config.allowed_tools
+                ),
                 skill_file_bindings=skill_file_bindings,
                 definition_digests={
                     name: digest
@@ -7524,6 +7572,7 @@ class ConsoleAgentBridge:
                 ),
             )
 
+        hooks_v2_engine = self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
         service = AgentService(
             self._db,
             registry,
@@ -7545,13 +7594,21 @@ class ConsoleAgentBridge:
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             guard_tool_calls=guard_tool_calls,
-            hooks_v2_engine=(
-                self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
-            ),
+            hooks_v2_engine=hooks_v2_engine,
             hooks_v2_session_id=session_id,
             hooks_v2_turn_id=assistant_message_id,
             # Standalone work has no plugin dependency graph.
             hooks_v2_required_handler_ids=lambda _run_id: (),
+            hooks_v2_definition_requirements=(
+                lambda definition, messages: (
+                    hooks_v2_engine.native_plugins.requirements_for(
+                        definition, registry, messages
+                    )
+                )
+            )
+            if hooks_v2_engine is not None
+            and getattr(hooks_v2_engine, "native_plugins", None) is not None
+            else None,
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
@@ -8423,6 +8480,7 @@ class ConsoleAgentBridge:
                     retained.remove(waiter)
                 if not retained:
                     self._fleet_terminal_waiters.pop(conversation_id, None)
+
     def on_fleet_child_settled(
         self, name: str, consumer: Callable[[FleetChildSettled], None]
     ) -> None:

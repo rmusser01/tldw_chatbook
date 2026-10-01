@@ -1547,3 +1547,22 @@ Retained MCP launch/request tasks acquire their own recovery admission through t
 For an exact host-qualified request-independent stdio session with another attached owner, a request deadline/cancel retains its original native producer/source admission until its original validated terminal reply or actual child exit. It never replays or terminates the shared peer to settle one request. Ordinary/separate/last-owner cleanup retains native kill-and-reap custody. Revoked scopes still refuse late results.
 
 Portable MCP expansion recognizes only ${PLUGIN_ROOT} and ${PLUGIN_DATA} in args, env values and cwd, once. Unknown placeholder text remains literal. Stdio configuration requires an explicitly created persistent plugin data-root binding before publication/launch; saving configuration never creates a root or launches a peer.
+
+
+### I1 implemented native owner contract
+
+The actual Console composes selected commands, always/manual rules, ephemeral agent
+presets, owned MCP and v2 hook sets from the same admitted snapshot. Host tool/model
+references are captured by `review_configuration` and published by existing commit;
+owned MCP labels require their reviewed source in the dependency closure. Inline and
+fork tool constraints retain EMPTY through live typed context, and actual host child
+ceilings refuse impossible approvals before invocation. Agent model mappings stay
+within the actual parent provider/endpoint route; skill model overrides remain
+explicitly unsupported. No historical string can recreate this live witness.
+
+Selected hook variables/paths are projected before per-component readiness. Existing
+F2/H2 owners retain actual process/root custody until settlement, including revocation.
+Per-definition and live-material graph requirements use existing H3 checkpoints.
+See `tldw_chatbook/Plugins/README.md` for the exact supported API and current-dev
+integration evidence for TASK-32686; no original-host or cross-platform certification
+is implied.
