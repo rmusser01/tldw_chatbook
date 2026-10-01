@@ -47,6 +47,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     ProviderChoiceList,
     ProviderStep,
     SetupWizardContainer,
+    _provider_group_option_id,
     _SettlingGuardedConfirmationDialog,
 )
 
@@ -1052,11 +1053,13 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
     """The finding's repro, fresh profile: Enter, Down x4, Back, Next, then on.
 
     Pre-fix the fourth Down (the first Cloud row) blanked the step, and
-    re-entering it quit the app. TASK-33510 made that row ownable, so after
-    Back, Next and a keyless Next the walk goes on to the last row: the
-    pre-fix list still carried Custom Hosted under Local. Runs in a private
-    profile because Next from Welcome writes the setup checkpoint to that
-    profile's config file.
+    re-entering it quit the app. The walk targets the first row under the
+    Cloud heading, read off the list, so a resized Popular group cannot aim
+    it at a different row while every assertion still holds. TASK-33510
+    made that row ownable, so after Back, Next and a keyless Next the walk
+    goes on to the last row: the pre-fix list still carried Custom Hosted
+    under Local. Runs in a private profile because Next from Welcome writes
+    the setup checkpoint to that profile's config file.
     """
     wizard = _fresh_wizard()
     app = _WizardHost(wizard)
@@ -1069,11 +1072,19 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         assert app.focused is choices
         listed = _listed_provider_keys(step)
 
-        for _ in range(4):  # OpenAI -> Anthropic -> Ollama -> llama.cpp -> Cloud
+        # The row the finding crashed on is the first one under the Cloud
+        # heading. Read it off the list, so a resized Popular group still
+        # aims the walk there (four presses on the shipped list).
+        cloud_heading = choices.get_option_index(_provider_group_option_id("Cloud"))
+        assert choices.get_option_at_index(cloud_heading).provider_key is None
+        first_cloud = choices.get_option_at_index(cloud_heading + 1).provider_key
+        assert first_cloud is not None
+        assert choices.highlighted is not None and choices.highlighted < cloud_heading
+        start = listed.index(choices.highlighted_option.provider_key)
+        for _ in range(listed.index(first_cloud) - start):
             await pilot.press("down")
             await pilot.pause()
-        first_cloud = choices.highlighted_option.provider_key
-        assert first_cloud not in {"openai", "anthropic", "ollama", "llama_cpp"}
+        assert choices.highlighted == cloud_heading + 1
         assert step.selected_provider_key == first_cloud
         _assert_step_is_live(app, wizard, step)
         assert _pinned_error(wizard) == ""
@@ -1095,8 +1106,8 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         # Then on through every remaining row, one press per row.
         choices.focus()
         await pilot.pause()
-        assert choices.highlighted_option.provider_key == listed[4] == first_cloud
-        for expected in listed[5:]:
+        assert choices.highlighted_option.provider_key == first_cloud
+        for expected in listed[listed.index(first_cloud) + 1 :]:
             await pilot.press("down")
             await pilot.pause()
             assert step.selected_provider_key == expected
