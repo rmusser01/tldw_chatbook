@@ -155,6 +155,8 @@ class HookEngine:
         invalid_admissions: tuple = (),
         dependency_required: Callable | None = None,
         enabled: bool = True,
+        launch_guard: Callable | None = None,
+        effect_authority_check: Callable | None = None,
     ):
         if len(definitions) > 256 or len({h.id for h in definitions}) != len(
             definitions
@@ -165,9 +167,12 @@ class HookEngine:
         self.notification_omissions = 0
         self.notification_failures: Counter[str] = Counter()
         self.authority_check = authority_check
+        self._effect_authority_check = effect_authority_check or authority_check
         self.budget_owner = budget_owner
         self.loop = budget_owner.loop
-        self.processes = CommandExecutor(process_owner or HostProcessOwner())
+        self.processes = CommandExecutor(
+            process_owner or HostProcessOwner(), launch_guard=launch_guard
+        )
         self.invalid_admissions = tuple(invalid_admissions)
         self._environment = environment
         self._host_environment = host_environment
@@ -649,7 +654,7 @@ class HookEngine:
         try:
             return all(
                 handler_id in by_id
-                and self.authority_check(by_id[handler_id], event, "accept")
+                and self._effect_authority_check(by_id[handler_id], event, "accept")
                 for handler_id, _result in outcome.accepted
             )
         except Exception:  # noqa: BLE001 -- host callback failure retains requirements

@@ -166,8 +166,10 @@ SessionStart.reason (startup/resume/configuration_changed), UserPromptSubmit.pro
 PreToolUse tool_name/tool_args/tool_id/provider/operation/definition_hash/
 original_arguments/candidate_arguments, PostToolUse and PostToolUseFailure the
 corresponding dispatch identity/status/failure code/result fields,
-ApprovalRequested calls/session_active, SubagentStop child_run_id/status, and
-Stop.status. Other event data is initially empty. Future producers must amend
+ApprovalRequested calls/session_active, SubagentStart child_task/tool_ids/
+budget_caps/model/provider, SubagentStop child_run_id/status, PreCompact
+candidate/reason, PostCompact reason/memory_id/summarized_prefix_digest, and
+Stop.status. Other event data is empty. Future producers must amend
 this projection before exposing further keys or template paths. Tool argument
 and result objects are bounded untrusted JSON, never host identity.
 
@@ -1054,3 +1056,123 @@ declaration cannot satisfy a base install. These floors match the qualified
 installed APIs; no missing-validator fallback or schema retrieval is permitted.
 Offline wheel import qualification may reuse controlled existing dependency files;
 it does not claim fresh full dependency resolution or broader platform support.
+
+
+## Current-dev integration: standalone v2 consent (TASK-32679)
+
+The Console next-Send review and canonical F9 Hooks settings include standalone
+`hooks.handler` v2 definitions as well as legacy `hooks.hook` entries. V2 consent
+uses the existing app-owned HookPermissions store and grant epochs; its fingerprint
+covers the complete normalized closed-schema definition, including event, effects,
+arguments, environment, matcher, required policy and timeout. Legacy fingerprints
+and grants remain unchanged. A rejected v2 batch stays visible and cannot be
+approved or partially activated. V2 definitions have the schema's master switch,
+without inventing a per-handler enable field.
+
+Runtime admission reads the canonical saved configuration, rather than an app's
+possibly stale dictionary. Configured v2 engines capture exact grants. The existing
+permission owner serializes actual subprocess creation against config/consent
+changes; revocation and changed definitions fence staged effects and queued work.
+Host-injected engines retain their explicit authority resolver and never become
+standalone config grants. Lifecycle session replacement remains idle-only.
+
+
+### H4 session and pre-run checkpoint ownership
+
+The live Console hook session owns one checkpoint coordinator shared with its
+provisional turn/operation and actual agent-run scopes. Host-assigned scope
+identity is separate from optional actual run_id; manual operations do not create
+fake agent runs. Applicable ancestor requirements, event currentness, effect
+publication and input admission share the same coordination, with no external
+await under its lock. Automatic compaction gates its same pending turn before
+the later AgentService run is constructed. Manual summary commits install a
+session-owned PostCompact checkpoint before completion publication, preserving
+committed memory on failure. Manual execution may initialize a hook session after
+real authority and capacity admission; previews/focus/planning cannot do so and
+manual execution never emits a root chat Stop. A local visual projection without
+a compactor model call or memory commit does not fabricate a PostCompact event.
+
+H4 extends the closed data projection with actual producer fields:
+SubagentStart child_task/tool_ids/budget_caps/model/provider; PreCompact candidate
+(the actual auxiliary message array) and reason (manual/automatic); PostCompact
+reason/memory_id/summarized_prefix_digest from the committed memory record.
+Inherited model/provider are descriptive, not replacement authority. Child caps
+use the existing closed nine-name numeric contract. Typed present fields and
+unknown keys remain strictly validated within the existing raw envelope limits;
+actual producers never substitute fabricated identities for unavailable fields.
+
+
+### H4 delivered host API and operation behavior
+
+`HookSessionLifecycle.reserve/initialize/publish/cancel` owns provisional
+SessionStart. `open_scope`, `fire`, `install`, `wait`, `close_scope`, and `seal`
+compose lifecycle work with the injected H3 `HookCheckpointStore`; `install`
+is synchronous and publishes its pending requirement before scheduling external
+execution. Fixed parent scopes carry ancestor requirements; tool events retain
+H3's own exact-definition currentness callback. The ledger and checkpoint store
+use the same reentrant condition lock. Synchronous currentness probes and effect
+publication occur under that lock; external execution and waits for it do not.
+
+`ConsoleRuntime.prepare_hooks_v2` is reached after actual Console validation and
+an atomic reversible capacity reservation. Configuration/workspace/binding
+changes replace the immutable live session only at idle admission. SessionStart
+runtime contributions are untrusted user-role `PluginContextText` with genuine
+`HookContextOrigin`, revalidated and emitted once per receiving model owner.
+`SessionEnd` seals those owners before H2's retained cleanup join, including
+viewless disposal. Existing H2 processes, deadlines and cleanup custody are not
+replaced by a lifecycle-specific process supervisor.
+
+SubagentStart receives the already restricted child draft before inline or fleet
+admission. Tool identifiers narrow catalog and runtime tools. Budget caps
+intersect inherited limits, preserving the existing zero-as-unlimited dimensions;
+model/provider cannot be replaced. SubagentStop is installed after durable child
+settlement and before parent completion publication. A retired parent receives no
+new turn context; the host retains fixed late-context diagnostics and may still
+schedule optional observations.
+
+`CompactionHooks.before` appends required PreCompact material only to the actual
+auxiliary candidate, including each actual focused-plan fallback candidate, then
+checks attribution and prepared capacity. A failed hook aborts without compactor
+or hook replay. The existing per-conversation operation serialization lock is
+separate from the checkpoint lock and the actual memory commit critical section.
+`committed` installs PostCompact immediately after a successful memory commit;
+`finish` joins its execution. Automatic compaction fences the same turn's provider
+admission. Manual compaction retains one handoff for the exact active memory
+identity/revision/digest, branch, workspace and hook session; acceptance claims it
+once after durable owner publication. Cancelled, stale or revoked effects cannot
+attach to another turn. A required post failure preserves the memory and its
+session fence. Hook contributions never become durable summary text.
+
+Lifecycle data is closed and bounded by the existing H1 raw envelope limit.
+Compaction `reason` is required and is `manual` or `automatic`. Present candidate
+values must be arrays of message objects; present memory identifiers and prefix
+digests are nonempty strings bounded to the existing record limits (200 and 256
+characters). Child tool arrays are unique nonempty identifiers, and cap objects
+accept only the nine existing cap names and numeric/zero semantics. Child task,
+model and provider are strings when present. The live producers supply their
+actual candidate/record/draft fields; optional absent model/provider and host
+run IDs stay absent rather than becoming empty invented identities.
+
+
+H4 closed scope IDs remain as identifier-only anti-rebind tombstones for their
+hook-session owner's lifetime. Context bodies, delivery maps, parent/currentness
+mappings and settled checkpoint state retire with their scope; pending cleanup
+retains its original bounded custody. The tombstones do not cross sessions and
+are never a durable or global registry. Their metadata grows with the number of
+closed scopes in a long-lived session; this is not a constant-memory guarantee.
+This preserves rejection of stale string-ID reuse without introducing a second
+owner-handle protocol. Review actual lifecycle disposal and retention alongside
+that tradeoff.
+
+
+Current-dev H4 integration publishes the transaction's exact USER parent and
+assistant parent with both live accepted/recovery owners. This fixes missing
+ancestry at its common publication boundary and preserves the current batched
+version projection; compaction does not restore per-message database reads on
+every dispatch. Configured v2 lifecycle execution uses the ADR-197 exact grant
+owner described above. Worker-refreshed source/epoch checks precede execution and
+result parsing; checkpoint effect publication uses the same owner's cached
+fences without disk I/O or config locks on the app loop. Process creation remains
+inside the existing owner transaction on a worker, with transport custody on the
+app loop. V2 settings reuse the existing Advanced Config editor and review modal;
+no parallel guided schema or per-handler enable switch is introduced.

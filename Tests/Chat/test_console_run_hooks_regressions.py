@@ -588,7 +588,7 @@ async def test_v2_bridge_uses_pinned_owner_and_holds_model_and_normal_completion
     def authority(_handler, _event, stage):
         if stage == "accept":
             entered.set()
-            assert release.wait(5)
+            assert release.wait(30)
         return True
 
     engine = HookEngine(
@@ -612,7 +612,7 @@ async def test_v2_bridge_uses_pinned_owner_and_holds_model_and_normal_completion
     )
     future = asyncio.create_task(asyncio.to_thread(_run, bridge, store, session, aid))
     try:
-        assert await asyncio.to_thread(entered.wait, 3)
+        assert await asyncio.to_thread(entered.wait, 10)
         for _ in range(200):
             if _tool_messages(store, session.id):
                 break

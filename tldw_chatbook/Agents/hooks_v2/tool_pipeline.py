@@ -216,6 +216,8 @@ class ToolHookRun:
         render_context=None,
         parent_run_id=None,
         workspace_id=None,
+        lifecycle=None,
+        parent_scope=None,
     ):
         from .checkpoints import HookCheckpointStore
 
@@ -238,11 +240,17 @@ class ToolHookRun:
         self._accepted_rows = []
         self._pending = set()
         self._definitions = definition_digest(engine)
-        self.checkpoints = HookCheckpointStore(
-            current=self._current,
-            accept_current=self.engine.effects_current,
-            stage_context=self._stage_context,
+        self.lifecycle = lifecycle
+        self.checkpoints = (
+            lifecycle.checkpoints
+            if lifecycle
+            else HookCheckpointStore(
+                current=self._current,
+                accept_current=self.engine.effects_current,
+                stage_context=self._stage_context,
+            )
         )
+        self.checkpoints.bind_owner(run_id, parent_scope if lifecycle else None)
 
     def _current(self, event):
         from ..agent_models import ToolCall
@@ -450,6 +458,9 @@ class ToolHookRun:
                 prepared.event,
                 prepared.requirements,
                 dependency_requirements=prepared.dependency_requirements,
+                owner_id=self.run_id,
+                current=self._current,
+                stage_context=self._stage_context,
             )
             self.checkpoints.accept(token, prepared.outcome)
             self._preaccepted.add(prepared.event.event_id)
@@ -516,7 +527,12 @@ class ToolHookRun:
                 and record.event in {None, event.event}
             )
             token = self.checkpoints.begin(
-                event, required, dependency_requirements=dependent
+                event,
+                required,
+                dependency_requirements=dependent,
+                owner_id=self.run_id,
+                current=self._current,
+                stage_context=self._stage_context,
             )
             planned.append((event, scope, plans, token))
         if input_failure:
@@ -571,7 +587,11 @@ class ToolHookRun:
             self.run_id, required_handler_ids=selected, should_cancel=self.should_cancel
         )
         rows = []
+        if self.lifecycle is not None:
+            rows.extend(self.lifecycle.context.blocks(self.run_id, "model"))
         for event, outcome in self.checkpoints.drain_context(self.run_id):
+            if event.event not in {"PreToolUse", "PostToolUse", "PostToolUseFailure"}:
+                continue
             if not self.engine.effects_current(event, outcome) or not self._current(
                 event
             ):
@@ -589,7 +609,10 @@ class ToolHookRun:
             for _call, prepared in self._prepared.values():
                 if prepared.pending_scope is not None:
                     prepared.pending_scope.close()
-            self.checkpoints.close_owner(self.run_id)
+            if self.lifecycle is not None:
+                self.lifecycle.close_scope(self.run_id)
+            else:
+                self.checkpoints.close_owner(self.run_id)
             if self.should_cancel():
                 for future in tuple(self._pending):
                     future.cancel()

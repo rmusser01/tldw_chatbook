@@ -273,6 +273,11 @@ EVENT_DATA_KEYS = {
         }
     ),
     "ApprovalRequested": frozenset({"calls", "session_active"}),
+    "SubagentStart": frozenset(
+        {"child_task", "tool_ids", "budget_caps", "model", "provider"}
+    ),
+    "PreCompact": frozenset({"candidate", "reason"}),
+    "PostCompact": frozenset({"reason", "memory_id", "summarized_prefix_digest"}),
     "SubagentStop": frozenset({"child_run_id", "status"}),
     "Stop": frozenset({"status"}),
 }
@@ -695,9 +700,36 @@ def parse_event(value: object) -> HookEvent:
         "status",
         "reason",
         "child_run_id",
+        "child_task",
+        "model",
+        "memory_id",
+        "summarized_prefix_digest",
     }
     if any(type(item) is not str for key, item in data.items() if key in string_fields):
         _fail("invalid documented event string")
+    if raw["event"] in {"PreCompact", "PostCompact"} and data.get("reason") not in {
+        "manual",
+        "automatic",
+    }:
+        _fail("invalid compaction reason")
+    if "candidate" in data and (
+        not isinstance(data["candidate"], list)
+        or any(not isinstance(row, dict) for row in data["candidate"])
+    ):
+        _fail("compaction candidate must be a message array")
+    if "tool_ids" in data or "budget_caps" in data:
+        _child_limits(
+            {key: data[key] for key in ("tool_ids", "budget_caps") if key in data}
+        )
+    if "memory_id" in data and (
+        not data["memory_id"].strip() or len(data["memory_id"]) > 200
+    ):
+        _fail("invalid committed memory identity")
+    if "summarized_prefix_digest" in data and (
+        not data["summarized_prefix_digest"].strip()
+        or len(data["summarized_prefix_digest"]) > 256
+    ):
+        _fail("invalid committed memory digest")
     for key in ("tool_args", "original_arguments", "candidate_arguments", "result"):
         if key in data and not isinstance(data[key], dict):
             _fail("tool arguments/results must be JSON objects")

@@ -108,8 +108,11 @@ class CommandExecutor:
     exceptions are reduced to fixed codes: exception messages can contain secrets.
     """
 
-    def __init__(self, process_owner: HookProcessOwner) -> None:
+    def __init__(
+        self, process_owner: HookProcessOwner, *, launch_guard: Callable | None = None
+    ) -> None:
         self.owner = process_owner
+        self._launch_guard = launch_guard
         self.records: dict[str, CommandJob] = {}
 
     def start(
@@ -183,16 +186,35 @@ class CommandExecutor:
                 terminal = True
                 return outcome
             try:
-                transport, _ = await asyncio.get_running_loop().subprocess_exec(
-                    lambda: capture,
-                    *handler.argv,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=handler.cwd,
-                    env=env,
-                    start_new_session=os.name != "nt",
-                )
+                loop = asyncio.get_running_loop()
+
+                async def launch():
+                    return await loop.subprocess_exec(
+                        lambda: capture,
+                        *handler.argv,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=handler.cwd,
+                        env=env,
+                        start_new_session=os.name != "nt",
+                    )
+
+                if self._launch_guard is None:
+                    transport, _ = await launch()
+                else:
+                    # Same consent transaction as legacy Popen. The worker owns
+                    # its thread-affine locks; the retained job owns any late
+                    # transport publication through cancellation/teardown.
+                    def guarded_launch():
+                        with self._launch_guard(handler, event):
+                            if job.cancel.is_set() or time.monotonic() >= deadline:
+                                raise ValueError("launch cancelled")
+                            return asyncio.run_coroutine_threadsafe(
+                                launch(), loop
+                            ).result()
+
+                    transport, _ = await asyncio.to_thread(guarded_launch)
                 launched = True
             except (OSError, ValueError):
                 # subprocess_exec has positively reported no child; a transport

@@ -98,7 +98,7 @@ class HookTarget:
     config_scope: str
     key: str
     fingerprint: str
-    spec: HookSpec = field(repr=False)
+    spec: HookSpec | HookHandler = field(repr=False)
     approval_token: str | None
 
 
@@ -213,9 +213,10 @@ class HookInventoryRow:
 
     index: int
     key: str
-    spec: HookSpec | None
+    spec: HookSpec | HookHandler | None
     enabled: bool | None
     error: str | None
+    source: str = "hook"
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +226,12 @@ class HookInventory:
     master_enabled: bool | None
     container_error: str | None
     rows: tuple[HookInventoryRow, ...] = ()
+    v2_rows: tuple[HookInventoryRow, ...] = ()
+
+    @property
+    def review_rows(self) -> tuple[HookInventoryRow, ...]:
+        """Both schemas share consent while legacy editor indices stay stable."""
+        return self.rows + self.v2_rows
 
     @property
     def requires_authority(self) -> bool:
@@ -232,11 +239,12 @@ class HookInventory:
         if self.master_enabled is False:
             return False
         return bool(
-            self.container_error or any(row.enabled is not False for row in self.rows)
+            self.container_error
+            or any(row.enabled is not False for row in self.review_rows)
         )
 
 
-def fingerprint_hook(spec: HookSpec) -> str:
+def fingerprint_hook(spec: HookSpec | HookHandler) -> str:
     """Hash an exact normalized execution definition, without enable switches.
 
     Args:
@@ -245,14 +253,19 @@ def fingerprint_hook(spec: HookSpec) -> str:
     Returns:
         Versioned SHA-256 identity of the execution definition.
     """
-    encoded = json.dumps(
+    definition = (
         {
             "version": 1,
             "event": spec.event,
             "command": list(spec.command),
             "matcher": spec.matcher,
             "timeout_s": float(spec.timeout_s),
-        },
+        }
+        if isinstance(spec, HookSpec)
+        else {"version": 2, **spec.model_dump(mode="json")}
+    )
+    encoded = json.dumps(
+        definition,
         ensure_ascii=True,
         sort_keys=True,
         separators=(",", ":"),
@@ -367,7 +380,47 @@ def inspect_hooks_config(config: Mapping[str, object]) -> HookInventory:
             occurrences[fingerprint] = occurrence + 1
             key = f"legacy:{fingerprint}:{occurrence}"
         rows.append(HookInventoryRow(index, key, spec, enabled, error))
-    return HookInventory(master, container_error, tuple(rows))
+    raw_v2 = section.get("handler", [])
+    v2_rows = ()
+    if raw_v2 or not isinstance(raw_v2, list):
+        from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+        try:
+            handlers = parse_handlers(raw_v2)
+        except ValueError:
+            # The schema rejects the whole batch. Never approve a valid-looking
+            # prefix or retain an unbounded malformed body in review metadata.
+            indices = range(min(len(raw_v2), 256)) if isinstance(raw_v2, list) else (0,)
+            v2_rows = tuple(
+                HookInventoryRow(
+                    index,
+                    f"v2:invalid:{index}",
+                    None,
+                    True,
+                    "Invalid v2 handler batch; repair in Advanced Config.",
+                    "handler",
+                )
+                for index in indices
+            )
+            if not v2_rows:
+                v2_rows = (
+                    HookInventoryRow(
+                        0,
+                        "v2:invalid:0",
+                        None,
+                        True,
+                        "Invalid v2 handler batch; repair in Advanced Config.",
+                        "handler",
+                    ),
+                )
+        else:
+            v2_rows = tuple(
+                HookInventoryRow(
+                    index, "v2:id:" + handler.id, handler, True, None, "handler"
+                )
+                for index, handler in enumerate(handlers)
+            )
+    return HookInventory(master, container_error, tuple(rows), v2_rows)
 
 
 def load_hooks_config(config: Mapping) -> RunHooksConfig:

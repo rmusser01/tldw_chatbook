@@ -1678,9 +1678,20 @@ def run_agent_loop(
         if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
             return _exhausted("token")
         if deps.await_hook_checkpoints is not None:
+            hook_rows = deps.await_hook_checkpoints()
+            from .agent_models import PluginContextText
+
+            existing_hook_blocks = {
+                (str(row.get("content")), row["content"].checked_hook_origins())
+                for row in messages
+                if isinstance(row.get("content"), PluginContextText)
+            }
             messages.extend(
                 {**row, EPHEMERAL_ORIGIN_KEY: "hooks_v2"}
-                for row in deps.await_hook_checkpoints()
+                for row in hook_rows
+                if not isinstance(row.get("content"), PluginContextText)
+                or (str(row["content"]), row["content"].checked_hook_origins())
+                not in existing_hook_blocks
             )
             if deps.should_cancel():
                 return _outcome(RUN_CANCELLED)

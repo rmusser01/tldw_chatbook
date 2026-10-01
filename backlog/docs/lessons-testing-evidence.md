@@ -17225,3 +17225,16 @@ that depends on when a task first runs (task identity, ordering between a
 caller and the task it starts) needs a test under the eager factory too:
 `loop.set_task_factory(asyncio.eager_task_factory)` around the test (the
 `_task_factory` helper in the freeze test file), restored in `finally`.
+
+## TASK-32679: close the actual worker owner before tuning GC
+
+The combined lifecycle/child/compaction run passed 404 cases but grew over 200
+file descriptors. Per-test GC still grew 209. A per-case census identified the
+new runtime fixtures and direct AgentService calls: closing hooks left runtime
+resources alive, and closing AgentRunsDB on the UI thread did not close worker
+thread caches. Reusing runtime.dispose and the production worker_guard in those
+fixtures made the final 404-case run pass without a descriptor warning.
+
+Use the owner's shutdown and native worker wrapper at a proven settlement
+boundary. GC and a larger leak threshold cannot retire strongly retained native
+leases, and foreign-thread forced close would violate borrower ownership.

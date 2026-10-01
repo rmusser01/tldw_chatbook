@@ -981,3 +981,33 @@ async def test_phase_plan_stable_dependency_and_closed_foreign_scopes(required):
         scope.close()
         await engine.close()
         await other.close()
+
+
+@pytest.mark.asyncio
+async def test_guarded_transport_cancellation_retains_uncertain_launch(monkeypatch):
+    from contextlib import nullcontext
+
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    budget = HookBudgetOwner()
+    engine = HookEngine(
+        (command(effects=["deny"]),),
+        lambda *_: True,
+        budget,
+        launch_guard=lambda *_: nullcontext(),
+    )
+
+    async def cancelled_creation(*_args, **_kwargs):
+        # Cancellation has no positive no-child evidence; the owner must keep
+        # custody just as it does for direct app-loop subprocess cancellation.
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(budget.loop, "subprocess_exec", cancelled_creation)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await engine.fire_async(event())
+        assert len(engine.processes.records) == 1
+        assert budget.snapshot()["tickets"] == 1
+    finally:
+        await engine.close()

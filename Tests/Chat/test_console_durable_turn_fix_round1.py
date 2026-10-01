@@ -53,6 +53,8 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 
 class _DbNoneWrapper:
     """Delegate a real adapter while reporting no raw DB handle."""

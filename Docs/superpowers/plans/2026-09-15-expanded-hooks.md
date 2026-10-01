@@ -297,7 +297,7 @@ git diff --check
 - Consumes: H3 checkpoints/effect batches and the actual Console admission, child-draft and ContextCompactionService.compact boundaries.
 - Produces: HookSessionLifecycle.reserve(event: HookEvent) -> str; async initialize(token: str) -> HookEventOutcome; publish(token: str) -> None; cancel(token: str) -> None. ContextLedger.accept(event: HookEvent, result: HookEventOutcome) -> None; blocks(owner_id: str, boundary: str) -> tuple[dict, ...]; close(owner_id: str) -> None. Context records use host-assigned origin and runtime/turn/child lifetime, with no promotion to system authority.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 import pytest
@@ -314,9 +314,9 @@ async def test_failed_initialization_never_publishes_a_root_turn(session_case):
     assert case.admitted_turn_count() == 1
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Chat/test_hooks_v2_lifecycle.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Chat/test_hooks_v2_lifecycle.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def narrow_tools(parent: frozenset[str], proposal: frozenset[str]) -> frozenset[str]:
@@ -325,20 +325,20 @@ def narrow_tools(parent: frozenset[str], proposal: frozenset[str]) -> frozenset[
     return proposal
 ```
 
-  - [ ] 3.1. Define session_case around the real Console submit/controller/runtime using controlled command hooks; count actual accepted turns and root Stop events. Use base input validation and a provisional run-capacity reservation before SessionStart.
-  - [ ] 3.2. Publish a live session only after controlling initialization succeeds; dependency-only failure leaves independent capabilities eligible. Replace immutable hook sets only at an idle boundary; tab focus and archived history never fire initialization.
-  - [ ] 3.3. Place SubagentStart after inherited restrictions and before child admission, and SubagentStop before the active parent next-input checkpoint can release. Narrow tools/budgets; late parentless context is diagnosed and discarded.
-  - [ ] 3.4. Add PreCompact to real candidate input, PostCompact after successful commit and before next input. Keep runtime context separately owned through compaction; failed required PreCompact aborts without deleting history, and failed PostCompact never rolls back a committed summary.
+  - [x] 3.1. Define session_case around the real Console submit/controller/runtime using controlled command hooks; count actual accepted turns and root Stop events. Use base input validation and a provisional run-capacity reservation before SessionStart.
+  - [x] 3.2. Publish a live session only after controlling initialization succeeds; dependency-only failure leaves independent capabilities eligible. Replace immutable hook sets only at an idle boundary; tab focus and archived history never fire initialization.
+  - [x] 3.3. Place SubagentStart after inherited restrictions and before child admission, and SubagentStop before the active parent next-input checkpoint can release. Narrow tools/budgets; late parentless context is diagnosed and discarded.
+  - [x] 3.4. Add PreCompact to real candidate input, PostCompact after successful commit and before next input. Keep runtime context separately owned through compaction; failed required PreCompact aborts without deleting history, and failed PostCompact never rolls back a committed summary.
 
 **Failure and successful-control matrix:** Manual versus scheduled submission, explicit required versus dependency-only failure, master-off, cancelled initialization, session replacement, child tool/model restrictions, late child settlement, real compaction with positive context and no duplicate summary blocks.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Chat/test_hooks_v2_lifecycle.py Tests/Agents/test_hooks_v2_child_events.py Tests/Chat/test_hooks_v2_compaction.py Tests/Chat/test_console_context_compaction.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32679 --plain

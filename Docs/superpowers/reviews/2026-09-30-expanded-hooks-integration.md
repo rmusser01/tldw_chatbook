@@ -106,6 +106,69 @@ pinned sessions; H4 creates lifecycle producers. Existing ADR163/162/197 apply;
 all four ACs self-reviewed. No full suite, live provider, graphical UI, Windows/
 Linux execution or fresh complete dependency resolution is claimed.
 
+## TASK-32679 — lifecycle boundaries and standalone v2 consent
+
+Reused reviewed H4 checkpoint `32e336fe90`. Session initialization reserves a
+reversible Console slot and publishes effects only after controlling requirements
+succeed. Child admission narrows inherited tools/budgets; child settlement and
+committed compaction feed the same checkpoint/context owner. Configuration and
+workspace replacement occur at idle admission. Retired operation captures release
+without reopening required failure gates; sealing respects the map/checkpoint
+lock order.
+
+Current-dev integration extends the existing HookPermissions owner to exact v2
+identities, persistent grants, launch serialization and cached effect fences.
+Legacy fingerprints/editor indices remain intact. Console review and canonical
+Settings expose v2 definitions through the existing Advanced Config editor.
+Malformed saved sources cannot masquerade as absence. Exact durable parent IDs
+are published in the common store hydration path, preserving current batched
+version reads and recovery behavior without extra per-message database reads.
+
+RED: lifecycle admission **1 failed, 1 passed**; v2 consent **2 failed, 1 passed**;
+exact-parent normal/recovery publication **2 failed** against immutable pre-H3
+source. Malformed-source absence control also failed before its admission fix.
+
+Final core covering command:
+
+```sh
+.venv/bin/python -m pytest Tests/Agents/test_hooks_v2_post_checkpoints.py Tests/Agents/test_hooks_v2_tool_pipeline.py Tests/Agents/test_hooks_v2_child_events.py Tests/Chat/test_hooks_v2_lifecycle.py Tests/Chat/test_hooks_v2_compaction.py Tests/Chat/test_console_context_compaction.py Tests/Agents/test_hooks_v2_validation.py Tests/Agents/test_hook_permissions.py::test_backup_recognizes_but_never_imports_hook_permission_authority Tests/Chat/test_console_run_hooks_regressions.py -q --tb=short --show-capture=no --basetemp=/private/tmp/expanded-hooks-h4-final-owned --junitxml=/private/tmp/expanded-hooks-h4-final-owned.xml
+```
+
+**404 passed in 105.02s**, no skips/warnings. Consent/command/Settings/Console UI:
+**150 passed in 134.16s**, no skips/warnings (overlapping tests counted separately).
+A frozen exact H4 production export passed the existing real-SQLite **1,000-turn**
+cleanup stress test: **1 passed in 536.17s**, with a realistic bounded timeout.
+The last ownership-fixture change also passes H4's three feature files:
+**36 passed in 45.77s**, separately recorded and overlapping.
+
+Broader durable/runtime/design-token neighbors returned **172 passed, 3 failed,
+1 deselected** (the 1,000-turn case ran separately). The bridge startup failure
+is fixed and included in the final 404-case pass. The two unchanged round-1
+recovery tests fail identically against immutable pre-H3 source: issued-generation
+rollback and provider-entry recovery. They are recorded baseline defects, not
+passing qualification or silently deselected successes. Continuation work must
+assess their uncertain-dispatch implications. Profile-switch failures were
+reproduced against the baseline and repaired with the existing selected private
+profile fixture. Native backup classification may report unsupported metadata;
+its restrictive nonportable status must not import device-local hook grants.
+
+Combined runs exposed descriptor growth, which per-test GC did not remove.
+The new fixtures now dispose their runtime and direct agent calls use the existing
+production worker guard to close newly owned worker-thread SQLite caches. No
+production recovery/cleanup policy or warning threshold changed. Tiny artificial
+startup windows are replaced with actual-entry barriers and bounded cold-start
+allowances. The final combined run emits no descriptor warning.
+
+Twenty-two authored/owned Python files pass full Ruff and formatting; all changed
+Python parses and whitespace passes. Shared Ruff counts/codes are unchanged:
+agent runtime/service 20/51; Controller/Store 205/118; Compaction/ConsoleRuntime
+12/30; existing compaction/acceptance/round1/round2 tests 2/3/2/1. Design-token
+neighbors execute successfully. ADR163/197 and the specification document the
+current-dev integration; all five ACs self-reviewed. No new dependency, permission
+store/schema, full sweep, live provider, graphical browser or Linux/Windows
+execution qualification is claimed. Plugin-dependent initialization remains
+qualified with its foundation/MCP tasks.
+
 ## TASK-32668 — native package inspection prerequisite
 
 Reused reviewed F1 checkpoint `9dbc6ceb50`, including the subsequently reviewed
@@ -132,7 +195,6 @@ provenance. Existing ADR162/163 apply; all four ACs self-reviewed.
 
 ## Remaining requested order
 
-- TASK-32679: session/child/compaction events.
 - TASK-32669 through TASK-32675: required plugin registry, authority and drain foundations.
 - TASK-32680: Stop continuations and teardown, including native plugin drain qualification.
 - TASK-32685: MCP hooks, including required MCP/plugin prerequisites.

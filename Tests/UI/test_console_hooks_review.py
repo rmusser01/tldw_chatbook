@@ -60,11 +60,30 @@ async def test_hooks_action_is_reachable_and_returns_focus(size, hook_file):
         assert host.screen is console and console.focused is button
 
 
-async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file):
+@pytest.mark.parametrize("v2", [False, True])
+async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file, v2):
     from tldw_chatbook.UI.Console_Modules.prompt_queue import (
         ConsolePromptDispatchResult,
         ConsolePromptDispatchStatus,
     )
+
+    if v2:
+        import toml
+
+        raw = toml.loads(hook_file.read_text())
+        legacy = raw["hooks"]["hook"][0]
+        raw["hooks"] = {
+            "handler": [
+                {
+                    "id": "next-send-v2",
+                    "event": "PostToolUse",
+                    "type": "command",
+                    "effects": [],
+                    "argv": legacy["command"],
+                }
+            ]
+        }
+        hook_file.write_text(toml.dumps(raw))
 
     app = _build_test_app()
     _configure_native_ready_console(app)

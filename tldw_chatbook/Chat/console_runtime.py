@@ -1097,6 +1097,8 @@ class ConsoleRuntime:
         # V2 sessions share the app loop and budgets, including viewless work.
         self._hooks_v2_budget_owner: Any = None
         self._hooks_v2_engines: dict[str, Any] = {}
+        self._hooks_v2_lifecycles: dict[str, Any] = {}
+        self._hooks_v2_configured: dict[str, Any] = {}
         self._hooks_v2_cleanup_task: asyncio.Task[Any] | None = None
         #: The view (a `ChatScreen`) currently attached, or `None` while the
         #: runtime is VIEWLESS -- which is now a real, supported state, not
@@ -1735,6 +1737,8 @@ class ConsoleRuntime:
     def set_chat_controller(self, value: Any) -> None:
         """Replace the chat-controller handle."""
         self._chat_controller = value
+        if value is not None:
+            value._hooks_v2_runtime = self
         if value is not None and self._app is not None:
             value.app = self._app
         if value is not None:
@@ -2956,6 +2960,135 @@ class ConsoleRuntime:
             self._hooks_v2_engines[session_id] = engine
             return engine
 
+    def _hooks_v2_context_key(self, session_id: str):
+        """Capture host workspace/binding authority, without prompt bodies."""
+        store = self._chat_store
+        controller = self._chat_controller
+        if store is None or controller is None:
+            return None
+        session = next(row for row in store.sessions() if row.id == session_id)
+        configuration = controller.resolve_turn_configuration_snapshot(session_id)
+        return (
+            session.workspace_id,
+            configuration.workspace_roots,
+            configuration.project_authority,
+        )
+
+    async def prepare_hooks_v2(
+        self, session_id: str, *, reason="startup", initiator="manual"
+    ):
+        """Initialize only at validated execution admission, never at view access."""
+        from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+        from tldw_chatbook.Agents.run_hooks import load_hooks_config
+
+        self._raise_if_disposed_or_session_fenced(session_id)
+        permissions = self.ensure_hook_permissions()
+        review, targets = await asyncio.to_thread(permissions.v2_configuration)
+        configured = load_hooks_config(
+            {"hooks": review.config.section} if review.config.section_present else {}
+        )
+        signature = (configured, targets)
+        engine = self.get_hooks_v2(session_id)
+        previous = self._hooks_v2_configured.get(session_id)
+        context_key = self._hooks_v2_context_key(session_id)
+        owner = self._hooks_v2_lifecycles.get(session_id)
+        context_changed = owner is not None and owner.context_key != context_key
+        if (previous is not None and previous != signature) or context_changed:
+            # The controller owns a reversible validation slot at this point.
+            owner = self._hooks_v2_lifecycles.get(session_id)
+            if owner is not None and getattr(owner, "turn_scope", None) is not None:
+                raise RuntimeError("hook replacement requires idle session")
+            await self.close_hooks_v2(session_id)
+            self._hooks_v2_lifecycles.pop(session_id, None)
+            if context_changed and previous is None and engine is not None:
+                # Host-injected definitions retain their authority resolver.
+                engine = self.ensure_hooks_v2(
+                    session_id,
+                    engine.definitions,
+                    engine.authority_check,
+                    enabled=engine.enabled,
+                    invalid_admissions=engine.invalid_admissions,
+                )
+            else:
+                engine = None
+            reason = "configuration_changed"
+        if engine is None:
+            if not review.ready:
+                raise RuntimeError("Review enabled hooks before execution.")
+            if not configured.v2_handlers and not configured.v2_invalid_admissions:
+                return None
+            captured = {target.spec.id: target for target in targets}
+
+            def authority(handler, _event, _stage):
+                target = captured.get(handler.id)
+                return bool(
+                    target is not None and not self._disposed
+                    and permissions.target_current(target)
+                )
+
+            def effects_current(handler, _event, _stage):
+                target = captured.get(handler.id)
+                return bool(
+                    target is not None and not self._disposed
+                    and permissions.configuration_current(review)
+                    and permissions.target_current(target, refresh=False)
+                )
+
+            engine = self.ensure_hooks_v2(
+                session_id,
+                configured.v2_handlers,
+                authority,
+                launch_guard=lambda handler, _event: permissions.launch_guard(
+                    captured[handler.id], tool_name=None
+                ),
+                effect_authority_check=effects_current,
+                enabled=configured.enabled,
+                invalid_admissions=configured.v2_invalid_admissions,
+            )
+            self._hooks_v2_configured[session_id] = signature
+        lifecycle = self._hooks_v2_lifecycles.get(session_id)
+        if lifecycle is None:
+
+            def current():
+                try:
+                    return (
+                        not self._disposed
+                        and self.get_hooks_v2(session_id) is engine
+                        and self._hooks_v2_context_key(session_id) == context_key
+                        and (
+                            session_id not in self._hooks_v2_configured
+                            or permissions.configuration_current(review)
+                            and all(
+                                permissions.target_current(target, refresh=False)
+                                for target in targets
+                            )
+                        )
+                    )
+                except Exception:  # noqa: BLE001 -- hook boundary
+                    return False
+
+            lifecycle = HookSessionLifecycle(engine, session_id, current=current)
+            lifecycle.context_key = context_key
+            self._hooks_v2_lifecycles[session_id] = lifecycle
+            engine.lifecycle_owner = lifecycle
+        if not lifecycle.live:
+            token = lifecycle.reserve(
+                lifecycle.event(
+                    "SessionStart",
+                    data={"reason": reason},
+                    initiator=initiator,
+                )
+            )
+            try:
+                await lifecycle.initialize(token)
+                lifecycle.publish(token)
+            except BaseException:
+                lifecycle.cancel(token)
+                # A failed provisional initialization has no live session effects.
+                self._hooks_v2_lifecycles.pop(session_id, None)
+                raise
+        return lifecycle
+
     def get_hooks_v2(self, session_id: str) -> Any:
         """Return the exact pinned snapshot, including disabled/closed requirements."""
         with self._run_hooks_lock:
@@ -2968,9 +3101,17 @@ class ConsoleRuntime:
                 if session_id is None
                 else (self._hooks_v2_engines.get(session_id),)
             )
-            for engine in engines:
-                if engine is not None:
-                    engine.begin_close()
+        # Currentness reads take the map lock from the checkpoint condition.
+        # Never enter checkpoints while holding the map lock. Seal ordinary
+        # engine admission before any checkpoint wait or teardown publication.
+        for engine in engines:
+            if engine is not None:
+                engine.begin_close()
+        for engine in engines:
+            if engine is not None:
+                owner = getattr(engine, "lifecycle_owner", None)
+                if owner is not None:
+                    owner.seal()
 
     @property
     def hooks_v2_cleanup_pending(self) -> bool:

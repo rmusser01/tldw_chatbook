@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+
 from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -55,6 +56,8 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TransactionContextManager
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
 class _AcceptedCancellationGateway:
@@ -708,3 +711,23 @@ async def test_reasonless_accepted_cancellation_settles_failed_with_receipt(
     assert ConversationLocalMarksService(db).list_console_unseen_marks() == (
         (session.persisted_conversation_id, metadata.terminal_receipt_id),
     )
+
+
+@pytest.mark.parametrize(
+    "publication", ["publish_durable_turn_owners", "publish_durable_recovery_owner"]
+)
+def test_durable_publication_preserves_committed_parent_metadata(tmp_path, publication):
+    db, _service, store, preparation, acceptance = _ready_store(tmp_path)
+    try:
+        commit = store.commit_durable_turn(acceptance)
+        user, assistant = getattr(store, publication)(preparation.session_id, commit)
+        assert (
+            db.get_message_by_id_without_blob(assistant.persisted_message_id)[
+                "parent_message_id"
+            ]
+            == user.persisted_message_id
+        )
+        assert user.parent_message_id == acceptance.parent_message_id
+        assert assistant.parent_message_id == user.persisted_message_id
+    finally:
+        db.close_connection()

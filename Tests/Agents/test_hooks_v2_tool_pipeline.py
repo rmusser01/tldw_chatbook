@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 
 from Tests.Agents.test_agent_runtime import CALC, CFG, make_deps
+from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.Agents.agent_models import ModelTurn, ToolCall, ToolResult
 from tldw_chatbook.Agents.agent_runtime import run_agent_loop
 
@@ -329,7 +330,7 @@ async def test_service_result_publication_and_terminal_join_use_real_hook_owner(
     )
     future = asyncio.create_task(
         asyncio.to_thread(
-            service.run_turn,
+            worker_guard(service)(service.run_turn),
             conversation_id="c",
             messages=[{"role": "user", "content": "go"}],
             config=CFG,
@@ -410,7 +411,7 @@ async def test_final_failed_tool_joins_post_requirements_before_terminal_persist
     )
     future = asyncio.create_task(
         asyncio.to_thread(
-            service.run_turn,
+            worker_guard(service)(service.run_turn),
             conversation_id="c",
             messages=[{"role": "user", "content": "go"}],
             config=replace(CFG, allowed_tools=("probe",)),
@@ -653,7 +654,7 @@ async def test_authenticated_canvas_transform_keeps_covered_exemption(tmp_path):
     )
     try:
         _run_id, outcome = await asyncio.to_thread(
-            service.run_turn,
+            worker_guard(service)(service.run_turn),
             conversation_id=SCOPE.conversation_id,
             requested_run_id=SCOPE.run_id,
             messages=[{"role": "user", "content": "go"}],
@@ -713,7 +714,7 @@ async def test_settled_fleet_child_result_does_not_overtake_parent_post_gate(tmp
     service._hooks_v2_turn_id = "turn"
     task = asyncio.create_task(
         asyncio.to_thread(
-            service.run_turn,
+            worker_guard(service)(service.run_turn),
             conversation_id="c",
             messages=[{"role": "user", "content": "go"}],
             config=FLEET_CFG,

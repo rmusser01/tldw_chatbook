@@ -9926,6 +9926,22 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
             )
         finally:
+            hook_owner = getattr(self, "_hooks_v2_submissions", {}).pop(
+                active_task, None
+            )
+            if hook_owner is not None:
+                lifecycle, scope, session_key = hook_owner
+                if lifecycle is not None:
+                    lifecycle.close_scope(scope)
+                    lifecycle.turn_scope = None
+                if (
+                    self.run_state_for(session_key).status
+                    is ConsoleRunStatus.VALIDATING
+                ):
+                    self._set_run_state(
+                        ConsoleRunState(ConsoleRunStatus.STOPPED, "Preparation ended."),
+                        session_id=session_key,
+                    )
             self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
@@ -10337,6 +10353,53 @@ class ConsoleChatController:
             return self._block(
                 session.id, turn_selection.workspace_context.recovery_copy
             )
+        hook_runtime = getattr(self, "_hooks_v2_runtime", None)
+        if hook_runtime is not None:
+            # Recheck after awaited reference expansion; reserve without an await.
+            busy = self._live_busy_session_ids()
+            if session.id in busy or len(busy) >= self.max_parallel_runs:
+                return ConsoleSubmitResult(False, False, "A run is already preparing.")
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
+                session_id=session.id,
+            )
+            submissions = getattr(self, "_hooks_v2_submissions", None)
+            if submissions is None:
+                submissions = self._hooks_v2_submissions = {}
+            submissions[asyncio.current_task()] = (None, None, session.id)
+            try:
+                lifecycle = await hook_runtime.prepare_hooks_v2(
+                    session.id,
+                    reason="resume" if session.persisted_conversation_id else "startup",
+                    initiator=(
+                        "manual"
+                        if origin is ConsoleSubmissionOrigin.MANUAL
+                        else "scheduled"
+                    ),
+                )
+                if lifecycle is not None:
+                    scope = lifecycle.open_scope()
+                    lifecycle.turn_scope = scope
+                    submissions[asyncio.current_task()] = (lifecycle, scope, session.id)
+                    await lifecycle.wait(scope)
+            except asyncio.CancelledError:
+                self._set_run_state(
+                    ConsoleRunState(
+                        ConsoleRunStatus.STOPPED, "Initialization cancelled."
+                    ),
+                    session_id=session.id,
+                )
+                raise
+            except Exception:  # noqa: BLE001 -- hook boundary
+                self._set_run_state(
+                    ConsoleRunState(
+                        ConsoleRunStatus.BLOCKED, "Required hook initialization failed."
+                    ),
+                    session_id=session.id,
+                )
+                return ConsoleSubmitResult(
+                    False, False, "Required hook initialization failed."
+                )
         library_authority = (
             resumed_preparation.execution_context.library_authority
             if resumed_preparation is not None
@@ -11112,6 +11175,32 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
+        hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
+            asyncio.current_task()
+        )
+        if hook_owner is not None and hook_owner[0] is not None:
+            lifecycle, scope, _session_key = hook_owner
+            try:
+                if origin is ConsoleSubmissionOrigin.MANUAL:
+                    await lifecycle.fire(
+                        lifecycle.event(
+                            "UserPromptSubmit",
+                            data={"prompt": clean_draft},
+                        ),
+                        scope,
+                    )
+                await lifecycle.wait(scope)
+                provider_messages = [
+                    *provider_messages,
+                    *lifecycle.context.blocks(scope, "model"),
+                ]
+                from tldw_chatbook.Agents.agent_models import check_host_context
+
+                check_host_context(provider_messages, strip=False)
+            except Exception:  # noqa: BLE001 -- hook boundary
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                return self._block(session.id, "Required hook input failed.")
         # This await remains before acceptance. A refusal or cancellation must
         # release the exact optimistic echo and preparation, preserving custody.
         hook_context = ""
@@ -11361,6 +11450,12 @@ class ConsoleChatController:
                     )
             if custody_acceptance_hook is not None:
                 custody_acceptance_hook()
+            if hook_owner is not None and hook_owner[0] is not None:
+                lifecycle, scope, _session_key = hook_owner
+                provider_messages = [
+                    *provider_messages,
+                    *lifecycle.claim_handoff(scope),
+                ]
             self._notify_submission_accepted(
                 session_id=session.id,
                 preserve_composer=preserve_composer,
@@ -12607,6 +12702,14 @@ class ConsoleChatController:
                 raise RuntimeError("Workspace projection remains pending.")
 
         def accepted_hook() -> None:
+            hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
+                asyncio.current_task()
+            )
+            if hook_owner is not None and hook_owner[0] is not None:
+                lifecycle, hook_scope, _session_key = hook_owner
+                continuation.provider_messages.extend(
+                    lifecycle.claim_handoff(hook_scope)
+                )
             if (
                 continuation.origin is ConsoleSubmissionOrigin.MANUAL
                 and not (continuation.prepared and continuation.prepared.preserve_composer)
@@ -20545,6 +20648,68 @@ class ConsoleChatController:
             planning.plan_result.plan, from_here=from_here
         )
 
+    async def _hooks_for_compaction(self, session_id, resolution, *, reason, current):
+        """Resolve a real context operation under the runtime's one hook owner."""
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        if runtime is None:
+            return None
+        from tldw_chatbook.Agents.hooks_v2.lifecycle import CompactionHooks
+
+        captured = getattr(self, "_hooks_v2_submissions", {}).get(
+            asyncio.current_task()
+        )
+        if captured is not None and captured[0] is not None:
+            lifecycle, scope, _session = captured
+        else:
+            lifecycle = await runtime.prepare_hooks_v2(session_id, reason="resume")
+            if lifecycle is None:
+                return None
+            scope = lifecycle.open_scope()
+            reason = "manual"
+        session = next(row for row in self.store.sessions() if row.id == session_id)
+        workspace_id = session.workspace_id
+
+        def memory_current(memory):
+            if not lifecycle.current():
+                return False
+            session_now = next(
+                (row for row in self.store.sessions() if row.id == session_id), None
+            )
+            if session_now is None or session_now.workspace_id != workspace_id:
+                return False
+            snapshots = self._durable_context_snapshots(session_id)
+            if not snapshots:
+                return False
+            effective = self._select_session_effective_memory(
+                session_id,
+                memory.conversation_id,
+                snapshots,
+            )
+            selected = effective.memory
+            return bool(
+                selected is not None
+                and selected.memory_id == memory.memory_id
+                and selected.revision == memory.revision
+                and selected.active
+                and selected.summarized_prefix_digest == memory.summarized_prefix_digest
+            )
+
+        def prepare(messages, cap):
+            return self.provider_gateway.prepare_chat_request(
+                replace(resolution, streaming=False, max_tokens=cap),
+                list(messages),
+                apply_safety_window=False,
+            )
+
+        return CompactionHooks(
+            lifecycle,
+            scope,
+            reason=reason,
+            prepare=prepare,
+            current=current,
+            memory_current=memory_current,
+        )
+
     async def _summarize_manual(
         self, message_id: str, *, from_here: bool, focus: str = ""
     ) -> ConsoleSubmitResult:
@@ -20602,11 +20767,21 @@ class ConsoleChatController:
                 return None
             return admission if current_fence == runtime_fence else None
 
+        busy = self._live_busy_session_ids()
+        if session_id in busy or len(busy) >= self.max_parallel_runs:
+            return self._summarize_block(session_id, "A run is already preparing.")
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
             session_id=session_id,
         )
+        hooks = None
         try:
+            hooks = await self._hooks_for_compaction(
+                session_id,
+                resolution,
+                reason="manual",
+                current=lambda: current_admission() is not None,
+            )
             transaction = await service.summarize_manual(
                 plan=plan_result.plan,
                 admission=admission,
@@ -20614,7 +20789,10 @@ class ConsoleChatController:
                 prompt=prompt,
                 current_admission=current_admission,
                 prepare_projection=prepare_projection,
+                hooks=hooks,
             )
+            if hooks is not None:
+                await hooks.finish()
         except asyncio.CancelledError:
             visible_copy = "Summarization was cancelled."
             self._set_run_state(
@@ -20622,6 +20800,14 @@ class ConsoleChatController:
                 session_id=session_id,
             )
             return ConsoleSubmitResult(False, False, visible_copy)
+        except Exception:  # noqa: BLE001 -- hook boundary
+            return self._summarize_block(session_id, "Required compaction hook failed.")
+        finally:
+            if hooks is not None and (
+                hooks.lifecycle._handoff is None
+                or hooks.lifecycle._handoff[0] != hooks.owner
+            ):
+                hooks.lifecycle.close_scope(hooks.owner)
         if transaction.terminal is CompactionTerminal.SUCCEEDED:
             turns = len(plan_result.plan.selected_units)
             visible_copy = (
@@ -25889,6 +26075,17 @@ class ConsoleChatController:
             for index, snapshot in enumerate(snapshots)
             if snapshot.message_id == planned.plan.boundary_message_id
         )
+        hooks = await self._hooks_for_compaction(
+            session_id,
+            resolution,
+            reason="automatic",
+            current=lambda: self._compaction_admission(
+                session_id=session_id,
+                resolution=resolution,
+                prompt=prompt,
+            )
+            == admission,
+        )
         transaction = await service.compact(
             admission=admission,
             branch_commit=branch_commit,
@@ -25907,7 +26104,22 @@ class ConsoleChatController:
                 active_request=not manual_action,
             ),
             honor_failure_latch=micro_compaction or not manual_action,
+            hooks=hooks,
         )
+        if hooks is not None:
+            try:
+                await hooks.finish()
+                await hooks.lifecycle.wait(hooks.owner)
+            except Exception:  # noqa: BLE001 -- hook boundary
+                return provider_messages, blocked(
+                    "Required compaction hook failed; committed memory is retained."
+                )
+            finally:
+                if hooks.reason == "manual" and (
+                    hooks.lifecycle._handoff is None
+                    or hooks.lifecycle._handoff[0] != hooks.owner
+                ):
+                    hooks.lifecycle.close_scope(hooks.owner)
         if transaction.terminal is CompactionTerminal.SUCCEEDED:
             memory_rows_after: tuple[Mapping[str, Any], ...] = (
                 tagged_memory_message(transaction.memory.summary_text),
@@ -26248,6 +26460,20 @@ class ConsoleChatController:
                     provider_messages,
                     character_emote_snapshot,
                 )
+        from tldw_chatbook.Agents.agent_models import (
+            PluginContextText,
+            check_host_context,
+        )
+
+        retained_hook_rows = [
+            row
+            for row in provider_messages
+            if isinstance(row.get("content"), PluginContextText)
+            and row["content"].checked_hook_origins()
+        ]
+        provider_messages = [
+            row for row in provider_messages if row not in retained_hook_rows
+        ]
         if isinstance(resolution, ConsoleProviderResolution):
             (
                 provider_messages,
@@ -26270,6 +26496,15 @@ class ConsoleChatController:
             )
             if context_block is not None:
                 return context_block
+        hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
+            asyncio.current_task()
+        )
+        if hook_owner is not None and hook_owner[0] is not None:
+            lifecycle, hook_scope, _session_key = hook_owner
+            await lifecycle.wait(hook_scope)
+            retained_hook_rows.extend(lifecycle.context.blocks(hook_scope, "model"))
+        provider_messages = [*provider_messages, *retained_hook_rows]
+        check_host_context(provider_messages, strip=False)
         # TASK-14811.2: the real gateway now owns exact capacity resolution,
         # whole-unit windowing, provider serialization, accounting, and
         # dispatch as one immutable artifact. Do not pre-trim production

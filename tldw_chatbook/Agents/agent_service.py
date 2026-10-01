@@ -2238,6 +2238,17 @@ class AgentService:
         self.review_tool_calls = review_tool_calls
         self.guard_tool_calls = guard_tool_calls
         self._hooks_v2_engine = hooks_v2_engine
+        self._hooks_v2_lifecycle = getattr(hooks_v2_engine, "lifecycle_owner", None)
+        if hooks_v2_engine is not None and self._hooks_v2_lifecycle is None:
+            from .hooks_v2.lifecycle import HookSessionLifecycle
+
+            self._hooks_v2_lifecycle = HookSessionLifecycle(
+                hooks_v2_engine,
+                hooks_v2_session_id or "agent-session",
+            )
+        self._hooks_v2_parent_scope = getattr(
+            self._hooks_v2_lifecycle, "turn_scope", None
+        )
         self._hooks_v2_session_id = hooks_v2_session_id
         self._hooks_v2_turn_id = hooks_v2_turn_id
         self._hooks_v2_required_handler_ids = hooks_v2_required_handler_ids
@@ -4905,6 +4916,7 @@ class AgentService:
         precreated_run_id: str | None = None,
         lifecycle_owner_seq_start: int | None = None,
         on_run_id: Callable[[str], None] | None = None,
+        hook_tool_ids: frozenset[str] | None = None,
         # PR3b Task 1 (fleet steering): the per-child mailbox drain, built
         # by spawn's fleet branch as a closure over THIS child's own
         # coordinator mailbox (`fleet.drain_steering(handle_id)`) and
@@ -4916,9 +4928,7 @@ class AgentService:
         drain_mailbox_with_causes: (
             Callable[[], list[tuple[str, str, str | None]]] | None
         ) = None,
-        seeded_steering_with_causes: (
-            tuple[tuple[str, str, str | None], ...]
-        ) = (),
+        seeded_steering_with_causes: tuple[tuple[str, str, str | None], ...] = (),
         progress_sender_factory: Callable[[], MessageSender | None] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         continuation_owner_message_id: str | None = None,
@@ -5808,6 +5818,19 @@ class AgentService:
                         # settle-cancel already finished this handle, this
                         # whole call -- transcript included -- is ignored, so
                         # a user-cancelled child is never retained.
+                        settled_id = child_owner.run_id
+                        if hook_run is not None and settled_id:
+                            self._set_terminal_status(settled_id, status)
+                            self._hooks_v2_lifecycle.install(
+                                self._hooks_v2_lifecycle.event(
+                                    "SubagentStop",
+                                    run_id=run_id,
+                                    data={"child_run_id": settled_id, "status": status},
+                                    initiator="child",
+                                ),
+                                run_id,
+                                current=lambda: not should_cancel(),
+                            )
                         fleet.finish(
                             handle.handle_id,
                             status,
@@ -6333,6 +6356,82 @@ class AgentService:
                         f"{refusal.message}"
                     ),
                 )
+            if hook_run is not None:
+                from .hooks_v2.lifecycle import narrow_child
+                from .hooks_v2.validation import CAPS
+                from .tool_catalog import ToolDefinitionSnapshot
+
+                child_plan = build_first_request_schema_plan(
+                    self.registry,
+                    child_config.allowed_tools,
+                    child_config,
+                    api_endpoint,
+                    child_kwargs["messages"],
+                    skill_file_enabled=bool(
+                        self.skill_file_bindings is not None
+                        and self.skill_file_bindings.authorized
+                    ),
+                    install_skill_enabled=False,
+                    run_skill_script_enabled=self._run_skill_script_tool is not None,
+                    run_log_active=False,
+                    agent_kind=AGENT_KIND_SUBAGENT,
+                    reporting_available=bool(fleet is not None and not inline),
+                )
+                tool_ids = {
+                    name: self.registry.snapshot_for_hook(name).tool_id
+                    for name in child_config.allowed_tools
+                }
+                tool_ids.update(
+                    {
+                        schema.name: ToolDefinitionSnapshot.from_schema(
+                            schema, "runtime", 0, id(schema)
+                        ).tool_id
+                        for schema in child_plan.runtime_schemas
+                    }
+                )
+                child_scope = self._hooks_v2_lifecycle.open_scope(parent=run_id)
+                event = self._hooks_v2_lifecycle.event(
+                    "SubagentStart",
+                    run_id=run_id,
+                    turn_id=self._hooks_v2_turn_id,
+                    data={
+                        "child_task": spawn_task,
+                        "tool_ids": list(tool_ids.values()),
+                        "budget_caps": {
+                            key: getattr(child_config.budget, key) for key in CAPS
+                        },
+                        **({"model": child_config.model} if child_config.model else {}),
+                        **(
+                            {"provider": child_config.provider}
+                            if child_config.provider
+                            else {}
+                        ),
+                    },
+                    initiator="child",
+                )
+                try:
+                    result = self._hooks_v2_engine._sync(
+                        self._hooks_v2_lifecycle.fire(
+                            event, child_scope, current=lambda: not should_cancel()
+                        )
+                    )
+                    child_config, selected_ids = narrow_child(
+                        child_config, result, tool_ids
+                    )
+                    child_kwargs["config"] = child_config
+                    child_kwargs["hook_tool_ids"] = selected_ids
+                    child_kwargs["messages"] += list(
+                        self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
+                    )
+                except Exception:  # noqa: BLE001 -- hook boundary
+                    sub_agent_spawns -= 1
+                    return ToolResult(
+                        ok=False,
+                        error="sub-agent initialization refused",
+                        dispatch_state="settled",
+                    )
+                finally:
+                    self._hooks_v2_lifecycle.close_scope(child_scope)
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
@@ -6391,6 +6490,20 @@ class AgentService:
                             )
                     finally:
                         child_owner.finish_root()
+                if hook_run is not None:
+                    self._hooks_v2_lifecycle.install(
+                        self._hooks_v2_lifecycle.event(
+                            "SubagentStop",
+                            run_id=run_id,
+                            data={
+                                "child_run_id": _child_id,
+                                "status": child_outcome.status,
+                            },
+                            initiator="child",
+                        ),
+                        run_id,
+                        current=lambda: not should_cancel(),
+                    )
                 text = child_outcome.final_text
                 cap = config.budget.max_subagent_result_chars
                 if len(text) > cap:
@@ -7814,6 +7927,17 @@ class AgentService:
                 staged_delivery["receipt"] = result.delivery_receipt
             return result
 
+        if hook_tool_ids is not None:
+            from .tool_catalog import ToolDefinitionSnapshot
+
+            runtime_schemas[:] = [
+                schema
+                for schema in runtime_schemas
+                if ToolDefinitionSnapshot.from_schema(
+                    schema, "runtime", 0, id(schema)
+                ).tool_id
+                in hook_tool_ids
+            ]
         context_callback_ref: dict[str, Callable[[tuple[str, ...]], None]] = {}
         context_steps_ref: dict[str, AgentStep] = {}
         call_model = self._make_call_model(
@@ -8099,6 +8223,13 @@ class AgentService:
             )
 
         hook_run = None
+        if self._hooks_v2_engine is not None and self._hooks_v2_lifecycle is None:
+            from .hooks_v2.lifecycle import HookSessionLifecycle
+
+            self._hooks_v2_lifecycle = HookSessionLifecycle(
+                self._hooks_v2_engine,
+                self._hooks_v2_session_id or "agent-session",
+            )
         if self._hooks_v2_engine is not None:
             from .hooks_v2.tool_pipeline import ToolHookRun
             from .tool_catalog import ToolDefinitionSnapshot
@@ -8116,6 +8247,24 @@ class AgentService:
                     and call.name not in config.allowed_tools
                 ):
                     raise ValueError("spawn not permitted")
+                if hook_tool_ids is not None:
+                    runtime_candidate = next(
+                        (
+                            schema
+                            for schema in runtime_schemas
+                            if schema.name == call.name
+                        ),
+                        None,
+                    )
+                    candidate_id = (
+                        ToolDefinitionSnapshot.from_schema(
+                            runtime_candidate, "runtime", 0, id(runtime_candidate)
+                        ).tool_id
+                        if runtime_candidate is not None
+                        else self.registry.snapshot_for_hook(call.name).tool_id
+                    )
+                    if candidate_id not in hook_tool_ids:
+                        raise ValueError("child hook tool restriction")
                 runtime_schema = next(
                     (schema for schema in runtime_schemas if schema.name == call.name),
                     None,
@@ -8145,6 +8294,12 @@ class AgentService:
                 ),
                 render_context=self._hooks_v2_render_context,
                 parent_run_id=parent_run_id,
+                lifecycle=self._hooks_v2_lifecycle,
+                parent_scope=(
+                    self._hooks_v2_parent_scope
+                    if parent_run_id is None and self._hooks_v2_parent_scope
+                    else self._hooks_v2_lifecycle.scope_id
+                ),
             )
 
         deps = LoopDeps(

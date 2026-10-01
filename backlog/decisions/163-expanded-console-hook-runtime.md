@@ -234,3 +234,76 @@ extras cannot supply a production validation boundary implicitly. The dev-only
 duplicate is removed; unrelated pins/extras stay unchanged. Built-wheel metadata
 and isolated offline imports qualify packaging against available dependency files;
 fresh complete dependency resolution remains I7 distribution qualification.
+
+
+## Current-dev integration: standalone v2 consent (TASK-32679)
+
+The Console next-Send review and canonical F9 Hooks settings include standalone
+`hooks.handler` v2 definitions as well as legacy `hooks.hook` entries. V2 consent
+uses the existing app-owned HookPermissions store and grant epochs; its fingerprint
+covers the complete normalized closed-schema definition, including event, effects,
+arguments, environment, matcher, required policy and timeout. Legacy fingerprints
+and grants remain unchanged. A rejected v2 batch stays visible and cannot be
+approved or partially activated. V2 definitions have the schema's master switch,
+without inventing a per-handler enable field.
+
+Runtime admission reads the canonical saved configuration, rather than an app's
+possibly stale dictionary. Configured v2 engines capture exact grants. The existing
+permission owner serializes actual subprocess creation against config/consent
+changes; revocation and changed definitions fence staged effects and queued work.
+Host-injected engines retain their explicit authority resolver and never become
+standalone config grants. Lifecycle session replacement remains idle-only.
+
+
+### H4 clarification: session, provisional and manual owners
+
+Automatic compaction precedes AgentService run construction, while explicit
+manual summarization has no root agent run. One runtime-session checkpoint
+coordinator therefore carries explicit host-owned subordinate scopes and is
+shared with the tool pipeline. This preserves atomic currentness/context/input
+admission without inventing durable runs or a competing gate. Manual operations
+may lazily initialize the session only after actual validation, authority and
+capacity admission; previews/focus do not, and manual operations never arm root
+Stop. Required PostCompact is installed at actual successful memory commit and
+fences relevant next input while preserving that commit.
+
+Manual PostCompact context uses one bounded exact-memory handoff owned by the
+still-live session: accept before manual completion, bind and consume once at
+the first matching accepted turn, then apply turn lifetime. Capture session,
+workspace, immutable hook set, branch and committed memory identity/revision.
+Invalid submissions, stale/late output, cancellation or ownership changes cannot
+consume or retarget it. Required failures remain fences; dropped material never
+counts as delivered. The alternative of putting synthetic AgentRuns IDs on
+manual actions misrepresents the existing runtime, while independent session and
+run gates would lose atomic effect acceptance. A general cross-run context queue
+is not introduced.
+
+Actual H4 producers also extend the closed event projection with inherited child
+task/tool IDs/budget caps/model/provider, pending auxiliary compaction
+candidate/reason, and committed memory ID/prefix digest/reason. These are bounded
+descriptive data, not permission or model-replacement effects. Local visual
+projection alone has no committed-memory PostCompact boundary.
+
+
+H4 closed scope IDs remain as identifier-only anti-rebind tombstones for their
+hook-session owner's lifetime. Context bodies, delivery maps, parent/currentness
+mappings and settled checkpoint state retire with their scope; pending cleanup
+retains its original bounded custody. The tombstones do not cross sessions and
+are never a durable or global registry. Their metadata grows with the number of
+closed scopes in a long-lived session; this is not a constant-memory guarantee.
+This preserves rejection of stale string-ID reuse without introducing a second
+owner-handle protocol. Review actual lifecycle disposal and retention alongside
+that tradeoff.
+
+
+Current-dev H4 integration publishes the transaction's exact USER parent and
+assistant parent with both live accepted/recovery owners. This fixes missing
+ancestry at its common publication boundary and preserves the current batched
+version projection; compaction does not restore per-message database reads on
+every dispatch. Configured v2 lifecycle execution uses the ADR-197 exact grant
+owner described above. Worker-refreshed source/epoch checks precede execution and
+result parsing; checkpoint effect publication uses the same owner's cached
+fences without disk I/O or config locks on the app loop. Process creation remains
+inside the existing owner transaction on a worker, with transport custody on the
+app loop. V2 settings reuse the existing Advanced Config editor and review modal;
+no parallel guided schema or per-handler enable switch is introduced.
