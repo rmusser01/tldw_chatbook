@@ -144,6 +144,7 @@ def _failure_site(error: BaseException) -> str:
         return "unknown"
     return raised if chatbook in (None, raised) else f"{raised} via {chatbook}"
 
+
 _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
     "Captured where Console hands the request to the provider adapter, not "
     "at the raw HTTP layer -- provider-internal framing and injected "
