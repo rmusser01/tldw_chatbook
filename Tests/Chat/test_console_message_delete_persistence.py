@@ -398,3 +398,50 @@ def test_undo_accounts_for_every_per_message_registry_delete_purges():
     )
     assert not set(_NOT_RESTORED_BY_UNDO) - purged, "stale exemption"
     assert not set(_NOT_RESTORED_BY_UNDO) & handled, "exempt yet restored"
+
+
+def test_a_delete_refused_after_its_tombstone_write_rolls_back(monkeypatch):
+    """The refusal leaves no committed tombstone, so there is nothing to release.
+
+    PR #2941 review claimed ``store.delete_message`` can commit the subtree's
+    tombstones and THEN raise (a pending-dispatch cursor refusal), dropping
+    the held recovered-media ids. The refusal raises inside the store's
+    ``_dispatch_branch_mutation`` transaction, so the tombstones roll back
+    with it: the held ids name live messages, and releasing their references
+    (the suggested fix) would orphan media those messages still show.
+    """
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+    from tldw_chatbook.DB.ChaChaNotes_DB import InputError
+
+    db = CharactersRAGDB(":memory:", "delete-undo")
+    conversation_id = _seed(db, _CHAIN)
+    store, session_id, native = _open_store(db, conversation_id)
+    written: list[list[dict]] = []
+    real_delete = store.persistence.delete_message_subtree
+
+    def delete_then_record(**kwargs):
+        rows = real_delete(**kwargs)
+        written.append(rows)
+        return rows
+
+    def refuse(*_args, **_kwargs):
+        raise InputError("pending dispatch owns the cursor")
+
+    monkeypatch.setattr(store.persistence, "delete_message_subtree", delete_then_record)
+    monkeypatch.setattr(db, "set_conversation_active_leaf", refuse)
+
+    with pytest.raises(ValueError, match="pending dispatch"):
+        delete_subtree_for_undo(store, native["c2"])
+
+    # The tombstone write ran (the claim's precondition) ...
+    assert {row["message_id"] for row in written[0]} == {"c2", "c3"}
+    # ... and rolled back with the refusal: nothing is deleted.
+    assert _deleted(db, ["c2", "c3"]) == [0, 0]
+    assert not db.get_message_tombstones(["c2", "c3"])
+    assert not store.persistence.recovered_media_cleanup_pending
+    assert [m.persisted_message_id for m in store.messages_for_session(session_id)] == [
+        "c0",
+        "c1",
+        "c2",
+        "c3",
+    ]
