@@ -229,7 +229,12 @@ def test_windows_ordinary_and_sqlite_files_keep_exact_byte_hashes(
 def test_windows_instance_lock_keeps_native_drift_refusal(
     tmp_path, monkeypatch, reviewed_instance_lock, change
 ):
-    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore, recheck_targets
+    from tldw_chatbook.Backup_Recovery.restore_plan import (
+        _fingerprint,
+        _paths,
+        plan_restore,
+        recheck_targets,
+    )
 
     case = reviewed_instance_lock
     plan = plan_restore(
@@ -251,22 +256,32 @@ def test_windows_instance_lock_keeps_native_drift_refusal(
         os.link(case.lock, case.lock.with_name("alias"))
     elif change == "mode":
         original_stat = case.facade.stat
+        original_fstat = case.facade.fstat
+        info = original_stat(case.lock, follow_symlinks=False)
 
-        def changed_mode(path, **kwargs):
+        def changed_mode(value):
+            return os.stat_result(
+                (value.st_mode ^ 0o040, *value[1:]),
+                {
+                    name: getattr(value, name)
+                    for name in ("st_atime_ns", "st_mtime_ns", "st_ctime_ns")
+                },
+            )
+
+        def changed_stat(path, **kwargs):
             value = original_stat(path, **kwargs)
+            return changed_mode(value) if Path(path) == case.lock else value
+
+        def changed_fstat(fd):
+            value = original_fstat(fd)
             return (
-                os.stat_result(
-                    (value.st_mode ^ 0o040, *value[1:]),
-                    {
-                        name: getattr(value, name)
-                        for name in ("st_atime_ns", "st_mtime_ns", "st_ctime_ns")
-                    },
-                )
-                if Path(path) == case.lock
+                changed_mode(value)
+                if (value.st_dev, value.st_ino) == (info.st_dev, info.st_ino)
                 else value
             )
 
-        monkeypatch.setattr(case.facade, "stat", changed_mode)
+        monkeypatch.setattr(case.facade, "stat", changed_stat)
+        monkeypatch.setattr(case.facade, "fstat", changed_fstat)
     elif change == "mtime":
         os.utime(case.lock, ns=(1_234_000_000, 1_234_000_000))
     else:
@@ -281,6 +296,8 @@ def test_windows_instance_lock_keeps_native_drift_refusal(
             )
 
         monkeypatch.setattr(case.facade, "stat", changed_ancestor)
+    if change == "mode":
+        assert _fingerprint(_paths(plan), plan.target) != plan.target_fingerprint
     with pytest.raises(ValueError, match="^target_changed$"):
         recheck_targets(plan)
 

@@ -111,6 +111,65 @@ def _native_index_scopes(count: int = 24) -> list[ServerCredentialScope]:
     ]
 
 
+@pytest.mark.parametrize("operation", ["absent_server", "absent_origin", "empty_all"])
+def test_bulk_clear_without_indexed_matches_skips_index_publication(operation):
+    fake = MetadataCountingKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    if operation == "empty_all":
+        fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")] = "[]"
+    else:
+        store.set_secret("indexed-server", SERVER_CREDENTIAL_API_KEY, "disposable")
+    previous = fake.values.copy()
+    fake.fail_root = True
+    fake.root_writes = 0
+
+    if operation == "empty_all":
+        store.clear_all()
+    elif operation == "absent_origin":
+        store.clear_server("indexed-server", normalized_origin="absent-origin")
+    else:
+        store.clear_server("absent-server")
+
+    assert fake.values == previous
+    assert fake.root_writes == 0
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_unindexed_legacy_clear_skips_index_publication(failure):
+    class FailingLegacyKeyring(MetadataCountingKeyring):
+        def delete_password(self, service_name, username):
+            if failure and username == "unindexed-server:api_key":
+                raise RuntimeError("credential_delete_failed")
+            super().delete_password(service_name, username)
+
+    fake = FailingLegacyKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    store.set_secret("indexed-server", SERVER_CREDENTIAL_API_KEY, "disposable")
+    expected = fake.values.copy()
+    for purpose in (SERVER_CREDENTIAL_ACCESS_TOKEN, SERVER_CREDENTIAL_API_KEY):
+        fake.values[(DEFAULT_KEYRING_SERVICE_NAME, f"unindexed-server:{purpose}")] = (
+            "legacy-disposable"
+        )
+        assert store.get_secret("unindexed-server", purpose) == "legacy-disposable"
+    fake.fail_root = True
+    fake.root_writes = 0
+
+    if failure:
+        with pytest.raises(RuntimeError, match="credential_delete_failed") as caught:
+            store.clear_server("unindexed-server")
+        assert caught.value.__cause__ is None
+        expected[(DEFAULT_KEYRING_SERVICE_NAME, "unindexed-server:api_key")] = (
+            "legacy-disposable"
+        )
+    else:
+        store.clear_server("unindexed-server")
+        assert store.get_secret("unindexed-server", SERVER_CREDENTIAL_API_KEY) is None
+
+    assert store.get_secret("unindexed-server", SERVER_CREDENTIAL_ACCESS_TOKEN) is None
+    assert fake.values == expected
+    assert fake.root_writes == 0
+
+
 @pytest.mark.parametrize("operation", ["clear_all", "clear_server"])
 @pytest.mark.parametrize("count", [16, 32])
 def test_bulk_clear_metadata_work_is_linear(operation, count):

@@ -743,8 +743,9 @@ class KeyringServerCredentialStore:
             for scope in dict.fromkeys(selected):
                 try:
                     self._delete_scoped_value(scope)
-                    remaining.discard(scope)
-                    completed = True
+                    if scope in remaining:
+                        remaining.remove(scope)
+                        completed = True
                 finally:
                     self._drop_cached_reads()
         except Exception as error:
@@ -755,7 +756,8 @@ class KeyringServerCredentialStore:
                 except Exception as publication_error:
                     raise error from publication_error
             raise
-        self._save_index(list(remaining))
+        if completed:
+            self._save_index(list(remaining))
 
     def clear_server(
         self, server_id: str, *, normalized_origin: str | None = None
