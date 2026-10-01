@@ -22,6 +22,8 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 if TYPE_CHECKING:
+    from textual.await_complete import AwaitComplete
+
     from tldw_chatbook.Agents.hook_permissions import (
         HookPermissions,
         HookReviewSnapshot,
@@ -67,6 +69,30 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self._selected: set[str] = set()
         self._busy = False
         self._generation = 0
+        self._answer: asyncio.Future[HookReviewResult] | None = None
+
+    def answer(self) -> asyncio.Future[HookReviewResult]:
+        """This review's result, settled by the modal itself.
+
+        TASK-33621.28: not a ``push_screen`` result callback. Textual runs
+        that through the requester pump's ``call_next``, and a requester that
+        awaits the answer is that very pump, blocked -- the callback never
+        ran and the Console's Send never settled. ``dismiss`` settles this
+        future synchronously instead, and leaving the DOM without a dismissal
+        settles it as a cancel, so a waiting caller always resumes.
+        """
+        if self._answer is None:
+            self._answer = asyncio.get_running_loop().create_future()
+        return self._answer
+
+    def _settle(self, result: HookReviewResult) -> None:
+        answer = self.answer()
+        if not answer.done():
+            answer.set_result(result)
+
+    def dismiss(self, result: HookReviewResult | None = None) -> AwaitComplete:
+        self._settle(result or HookReviewResult("cancel"))
+        return super().dismiss(result)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-hooks-review"):
@@ -408,6 +434,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self._generation += 1
         if not self._safe_dismiss_committed:
             self._cancel()
+        self._settle(HookReviewResult("cancel"))
 
 
 async def request_hook_review(
@@ -417,13 +444,15 @@ async def request_hook_review(
     waiting: bool,
     on_cancel: Callable[[], None],
 ) -> HookReviewResult:
-    """Present the shared modal without requiring a Textual worker caller."""
-    answer = asyncio.get_running_loop().create_future()
+    """Present the shared modal and wait for the modal's own answer.
 
-    def completed(result: HookReviewResult | None) -> None:
-        if not answer.done():
-            answer.set_result(result or HookReviewResult("cancel"))
-
+    Await this from a worker. The answer does not depend on any pump's
+    ``call_next`` (see ``ConsoleHooksReviewModal.answer``), but the APP pump
+    delivers every key and click the modal needs, so awaiting it on the app
+    pump -- a handler or an ``app.call_later`` callback -- still freezes the
+    whole app (TASK-33621.28). ``ConsoleHooksController.dispatch`` hands a
+    non-worker Send's review to a worker for exactly this reason.
+    """
     modal = ConsoleHooksReviewModal(
         snapshot=snapshot,
         waiting_for_send=waiting,
@@ -434,7 +463,8 @@ async def request_hook_review(
         reset=lambda saved: asyncio.to_thread(owner.reset_invalid_state, saved),
         on_cancel=on_cancel,
     )
-    screen.app.push_screen(modal, callback=completed)
+    answer = modal.answer()
+    screen.app.push_screen(modal)
     try:
         result = await answer
     except asyncio.CancelledError:

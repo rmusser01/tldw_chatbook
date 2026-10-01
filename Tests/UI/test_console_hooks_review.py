@@ -19,6 +19,16 @@ pytestmark = pytest.mark.bootstrap_profile
 hook_file = _hook_file
 
 
+def _send_in_worker(console, draft):
+    """Send the way a worker caller does (spoken "Console, send."), which
+    waits for the review and returns the settled outcome. A caller outside a
+    worker gets AWAITING_REVIEW at once and the review runs in a worker of its
+    own (TASK-33621.28), so it cannot observe these outcomes."""
+    return console.run_worker(
+        console._dispatch_console_draft_send(draft), group="test-hook-send"
+    )
+
+
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
 async def test_hooks_action_is_reachable_and_returns_focus(size, hook_file):
     app = _build_test_app()
@@ -74,18 +84,14 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file):
             )
 
         console._prompt_queue.dispatch = dispatch
-        first = asyncio.create_task(
-            console._dispatch_console_draft_send("retained draft")
-        )
+        first = _send_in_worker(console, "retained draft")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
         await pilot.press("escape")
-        assert not await first
+        assert not await first.wait()
         assert composer.draft_text() == "retained draft" and calls == []
-        second = asyncio.create_task(
-            console._dispatch_console_draft_send("retained draft")
-        )
+        second = _send_in_worker(console, "retained draft")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
@@ -97,7 +103,7 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file):
         detail = str(modal.query_one(".hook-review-detail", Static).render())
         assert '"-c"' in detail and '"pass"' in detail
         await pilot.click("#console-hooks-allow-all")
-        assert await second
+        assert await second.wait()
         assert calls == ["retained draft"]
         third = await console._dispatch_console_draft_send("retained draft")
         assert third and calls == ["retained draft", "retained draft"]
@@ -129,9 +135,7 @@ async def test_escape_during_approval_keeps_send_cancelled(hook_file):
             )
 
         console._prompt_queue.dispatch = dispatch
-        send = asyncio.create_task(
-            console._dispatch_console_draft_send("keep while saving")
-        )
+        send = _send_in_worker(console, "keep while saving")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
@@ -151,7 +155,7 @@ async def test_escape_during_approval_keeps_send_cancelled(hook_file):
         await pilot.click("#console-hooks-allow-all")
         await asyncio.wait_for(saved.wait(), 5)
         await pilot.press("escape")
-        assert not await send
+        assert not await send.wait()
         release.set()
         await pilot.pause()
         assert host.screen is console and calls == []
@@ -184,9 +188,7 @@ async def test_partial_approval_keeps_review_open_and_settings_cancels_send(hook
             return original_post(message)
 
         console.post_message = post
-        send = asyncio.create_task(
-            console._dispatch_console_draft_send("keep for settings")
-        )
+        send = _send_in_worker(console, "keep for settings")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
@@ -197,9 +199,9 @@ async def test_partial_approval_keeps_review_open_and_settings_cancels_send(hook
         async with asyncio.timeout(5):
             while modal.snapshot.pending_count != 1 or modal._busy:
                 await pilot.pause(0.01)
-        assert host.screen is modal and not send.done()
+        assert host.screen is modal and not send.is_finished
         assert await pilot.click("#console-hooks-settings")
-        assert not await asyncio.wait_for(send, 5)
+        assert not await asyncio.wait_for(send.wait(), 5)
         await pilot.pause()
         assert composer.draft_text() == "keep for settings"
         assert posted

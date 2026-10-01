@@ -132,10 +132,7 @@ from ..Console_Modules.agent import (
     CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,
 )
-from ..Console_Modules.prompt_queue import (
-    ConsolePromptDispatchStatus,
-    ConsolePromptQueueRegion,
-)
+from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import (
@@ -19174,7 +19171,7 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
             diagnostic.outcome = result.status.value
-            return result.status is not ConsolePromptDispatchStatus.REFUSED
+            return result.accepted
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).

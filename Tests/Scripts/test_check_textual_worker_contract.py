@@ -1130,7 +1130,8 @@ def test_w003_a_name_defined_twice_resolves_to_its_last_definition(scope, live_w
     assert _w003(source) == expected
 
 
-# `push_screen_wait` by hand -- PR #2922's request_hook_review.
+# `push_screen_wait` by hand -- PR #2922's request_hook_review until
+# TASK-33621.28 made it await the modal's own answer.
 _HAND_ROLLED = """
 async def request_review(screen):
     answer = asyncio.get_running_loop().create_future()
@@ -1406,20 +1407,16 @@ def _with_inline_push(tree: ast.Module, cls: str, method: str) -> ast.Module:
         ),
     ],
 )
-def test_a_new_push_in_a_censused_console_dispatcher_is_flagged_on_the_real_tree(
+def test_a_new_push_in_a_console_send_dispatcher_is_flagged_on_the_real_tree(
     real_tree, method, new_key
 ):
     """The reviewer's reproduction, on the real tree against the real census:
-    every one of these entry points already has a (noted) row, and a new
-    push in it must still fail W003."""
+    a new push in one of the Console's Send entry points must fail W003.
+    Until TASK-33621.28 each of them also had a census row of its own (the
+    hook-review Send freeze), which must not have hidden the new one."""
     known = _mod._read_census(_mod.WAIT_PUSH_CENSUS)
     clean = _mod._WaitGraph(list(real_tree.values())).roots()
     assert _mod._added(known, _mod._tally(clean)) == [], "real tree drifted"
-    root = new_key.partition(" => ")[0]
-    assert any(key.startswith(f"{root} => ") for key in known), (
-        f"precondition: {root} has a census row. True until TASK-33621.28 "
-        "fixes the Send freeze -- then delete this assert, not the test."
-    )
 
     mutated = dict(real_tree)
     tree = _with_inline_push(_parse_file(_mod.REPO_ROOT / _CHAT), "ChatScreen", method)
@@ -1464,33 +1461,6 @@ def test_a_new_mixin_action_reaching_its_host_pane_push_is_flagged_on_the_real_t
     assert _mod._added(known, _mod._tally(rows)) == [
         f"{_SPEECH_MIXIN}::SpeechSettingsMixin.action_probe_leave => "
         f"{_SPEECH_PANE}::SpeechSettingsPane._ask_leave_choice"
-    ]
-
-
-def test_w003_sees_the_hook_review_send_freeze_at_its_real_push_site(real_tree):
-    """TASK-33621.28's three freezes stay visible to W003, keyed to
-    ``request_hook_review`` -- the hand-rolled wait itself -- not to a
-    name-collision push in BuddyManagementModal. The fix for TASK-33621.28
-    removes these rows; it retires this test together with the strict
-    xfails in Tests/UI/test_console_hook_review_send_freeze.py."""
-    rows = set(_mod._WaitGraph(list(real_tree.values())).roots())
-    site = "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py::request_hook_review"
-    roots = {
-        f"{_CHAT}::{root}"
-        for root in (
-            "ChatScreen.on_button_pressed",
-            "ChatScreen.on_console_workbench_action_requested",
-            "ChatScreen.on_key->_send_console_message_from_visible_action",
-        )
-    }
-    for root in roots:
-        assert f"{root} => {site}" in rows
-    # Scoped to these roots: BuddyManagementModal's OWN handlers reaching its
-    # own `_review` would be a legitimate row, not the collision.
-    assert not [
-        row
-        for row in rows
-        if row.partition(" => ")[0] in roots and "BuddyManagementModal" in row
     ]
 
 

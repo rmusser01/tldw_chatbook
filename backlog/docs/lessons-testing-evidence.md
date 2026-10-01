@@ -17170,3 +17170,22 @@ session's pytest that used the same flags.
 `while IFS= read -r` loop and refuse an empty list (`[ ${#files[@]} -gt 0 ] ||
 exit 2`) before calling pytest. Stop your own background runs by task id or
 PID, never by a command-line pattern: several sessions share this machine.
+
+## 2026-09-30 — A harness Ctrl+Q test proves the pump, not the app's quit (TASK-33621.28)
+
+**Incident.** The hook-review Send freeze fix added a test that opens the
+review from Enter and presses Ctrl+Q; it passed in `ConsoleHarness`. In the
+live app (APP_WT fix build, `EXTRA_TOML` with one unconsented hook) the same
+Ctrl+Q with the review open did nothing: no `Application quit initiated` in
+the log, while Escape still dismissed the review. The harness is a stock
+Textual `App`, whose `ctrl+q` is a **priority** binding. `TldwCli.BINDINGS`
+declares its own non-priority `ctrl+q`, and `DOMNode._merge_bindings` lets a
+subclass's list for a key *replace* the base's. Non-priority bindings are
+resolved through `Screen._modal_binding_chain`, which stops at the topmost
+`ModalScreen`. So in the real app Ctrl+Q is ignored under **every** modal:
+the Ctrl+K session switcher on the same build ignored it too.
+
+**What to do.** A Ctrl+Q (or any app-binding) assertion made under a
+harness app says the app pump is alive, nothing more. Before claiming "Ctrl+Q
+works while X is open", check the real `TldwCli` binding's `priority` or
+drive the live app. Name such a harness test for what it proves.
