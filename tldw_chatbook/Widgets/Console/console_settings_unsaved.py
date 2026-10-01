@@ -27,6 +27,7 @@ module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from types import MappingProxyType
 from typing import Any
 
 from textual import events
@@ -223,6 +224,16 @@ QUIT_COMPACTION_COPY = (
     "Compaction is still running. Quitting abandons it; provider work may "
     "still be billed."
 )
+#: The prompt's words when only those side-effect guards apply. Quitting
+#: KEEPS a reset and nothing the user typed is lost, so the default "Discard
+#: changes and quit?" / "Discard and quit" would read as undoing the reset.
+QUIT_SIDE_EFFECT_PROMPT: Mapping[str, str] = MappingProxyType(
+    {
+        "title": "Quit now?",
+        "confirm_label": "Quit anyway",
+        "cancel_label": "Stay",
+    }
+)
 
 
 class ConsoleSettingsUnsavedGuardMixin:
@@ -297,12 +308,16 @@ class ConsoleSettingsUnsavedGuardMixin:
         except (NoMatches, QueryError):
             return ()
 
-    def _quit_loss_copy(self) -> str | None:
+    def _quit_loss_copy(self) -> tuple[str, bool] | None:
         """Name what Ctrl+Q would lose that the close guard stops at, if any.
 
         The same three guards as ``_request_settings_close``, in its order
         (memory reset, compaction, unsaved edits), but every one that applies:
         quitting meets them all at once.
+
+        Returns:
+            ``(message, discards_edits)``, or ``None`` when no guard applies.
+            ``discards_edits`` is whether unapplied edits are among them.
         """
         losses = []
         if self._memory_reset_token is not None:
@@ -312,7 +327,9 @@ class ConsoleSettingsUnsavedGuardMixin:
         labels = self._unsaved_field_labels()
         if labels:
             losses.append(unsaved_summary_copy(labels))
-        return "\n".join(losses) or None
+        if not losses:
+            return None
+        return "\n".join(losses), bool(labels)
 
     async def confirm_quit(self) -> bool:
         """Ask before Ctrl+Q quits past this modal's close guard (TASK-33622.10).
@@ -320,19 +337,22 @@ class ConsoleSettingsUnsavedGuardMixin:
         The quit flow consults the open modal first, and quitting must not
         skip what Esc honours: an undoable memory reset, a running compaction
         or unapplied edits each ask here, through the quit flow's shared
-        prompt.
+        prompt. Only edits are discarded; when only a reset or a compaction
+        applies, the prompt is worded neutrally (``QUIT_SIDE_EFFECT_PROMPT``).
 
         Returns:
             True to let the quit proceed; False to stay in Settings.
         """
-        message = self._quit_loss_copy()
-        if message is None:
+        loss = self._quit_loss_copy()
+        if loss is None:
             return True
+        message, discards_edits = loss
         from tldw_chatbook.Widgets.confirmation_dialog import (
             confirm_quit_discarding_edits,
         )
 
-        return await confirm_quit_discarding_edits(self, message)
+        copy = {} if discards_edits else QUIT_SIDE_EFFECT_PROMPT
+        return await confirm_quit_discarding_edits(self, message, **copy)
 
     def _ask_before_discarding(self, retry: Callable[[], object]) -> bool:
         """Show the unsaved prompt instead of closing, if anything is edited.

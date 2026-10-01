@@ -362,7 +362,14 @@ def _finish_interrupted_closes(app: Any) -> int:
     return finished
 
 
-async def confirm_quit_discarding_edits(screen: Screen, message: str) -> bool:
+async def confirm_quit_discarding_edits(
+    screen: Screen,
+    message: str,
+    *,
+    title: str = "Discard changes and quit?",
+    confirm_label: str = "Discard and quit",
+    cancel_label: str = "Keep editing",
+) -> bool:
     """Ask whether quitting may discard a modal's unsaved edits (TASK-33622.10).
 
     Ctrl+Q is a priority binding, so the app's quit flow can start while a
@@ -371,24 +378,32 @@ async def confirm_quit_discarding_edits(screen: Screen, message: str) -> bool:
     with this, so quitting asks the same question instead of dropping the
     edits silently.
 
+    The default words fit unsaved edits. A modal whose close guard protects
+    something else -- a generated video, an interview held only in memory, a
+    side effect that quitting keeps -- passes its own, so the prompt never
+    claims a discard that is not one.
+
     It waits on the pushed dialog through ``await_quit_prompt``, so it must
     run inside a worker; the app's quit flow is one.
 
     Args:
         screen: The modal holding the edits.
         message: What would be lost, in that modal's own words.
+        title: The prompt's title.
+        confirm_label: The button that lets the quit proceed.
+        cancel_label: The button (and Escape) that stays in the modal.
 
     Returns:
-        True when the user chose Discard and quit; False to keep editing,
-        including when the prompt vanished before it was answered.
+        True when the user chose to quit; False to stay, including when the
+        prompt vanished before it was answered.
     """
     choice = await await_quit_prompt(
         screen.app,
         ConfirmationDialog(
-            title="Discard changes and quit?",
+            title=title,
             message=message,
-            confirm_label="Discard and quit",
-            cancel_label="Keep editing",
+            confirm_label=confirm_label,
+            cancel_label=cancel_label,
         ),
         no_answer=False,
     )

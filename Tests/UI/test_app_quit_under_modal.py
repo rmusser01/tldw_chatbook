@@ -14,9 +14,10 @@ the quit flow's own "Quit Chatbook?" confirmation appears -- that dialog is the
 observable proof the quit flow started, and choosing Stay keeps the app alive
 without running the irreversible shutdown in the test process.
 
-The next two tests pin the review follow-ups: a dirty modal's own discard
-guard (a ReminderForm) asks before quitting, and the walk reaches unsaved work
-on the destination BENEATH a hook-less modal (Settings' theme editor).
+The next tests pin the review follow-ups: a modal's own discard guard asks
+before quitting -- a dirty ReminderForm, the generated-video choice and a
+memory-only profile interview -- and the walk reaches unsaved work on the
+destination BENEATH a hook-less modal (Settings' theme editor).
 
 The last group pins the orphaned-prompt hazard Ctrl+Q-under-a-modal exposes.
 ``Screen.dismiss()`` pops the app's TOP screen, whoever calls it, and
@@ -243,6 +244,154 @@ async def test_ctrl_q_under_a_dirty_form_asks_before_discarding_its_edits(
             lambda: cleanups == [True],
             "Discard and quit to reach the approved shutdown",
             timeout=5.0,
+        )
+
+
+async def _ask_stay_then_quit(app, pilot, modal, title: str, cleanups, kept) -> None:
+    """Ctrl+Q over ``modal`` asks ``title``; Stay keeps it; the confirm quits.
+
+    Args:
+        app: The running app.
+        pilot: Its pilot.
+        modal: The open modal whose own close guard Ctrl+Q must honour.
+        title: The quit prompt that modal must raise.
+        cleanups: Filled by the stand-in for the irreversible shutdown.
+        kept: Asserts what the modal holds is intact after Stay.
+    """
+    await pilot.press("ctrl+q")
+    await _until(
+        pilot,
+        lambda: bool(_dialogs_titled(app, title)) or bool(cleanups),
+        f"Ctrl+Q over {type(modal).__name__} to ask {title!r}",
+        timeout=5.0,
+    )
+    assert cleanups == [], f"quit straight past {type(modal).__name__}"
+    assert app.screen is _dialogs_titled(app, title)[0]
+    assert modal in app.screen_stack
+
+    # Stay: nothing quits and nothing is lost.
+    await pilot.press("escape")
+    await _until(pilot, lambda: app.screen is modal, "Stay to restore the modal")
+    await _until(
+        pilot,
+        lambda: app._quit_in_progress is False,
+        "the quit guard to clear after Stay",
+    )
+    assert cleanups == []
+    assert app._shutting_down is False
+    assert app.is_running
+    kept()
+
+    # The confirm: the user chose to lose it, so the quit runs.
+    await pilot.press("ctrl+q")
+    await _until(
+        pilot,
+        lambda: bool(_dialogs_titled(app, title)),
+        "the second Ctrl+Q to ask again",
+        timeout=5.0,
+    )
+    await pilot.click("#confirm-button")
+    await _until(
+        pilot,
+        lambda: cleanups == [True],
+        "the confirm to reach the approved shutdown",
+        timeout=5.0,
+    )
+
+
+async def test_ctrl_q_over_the_generated_video_choice_asks_before_discarding_it(
+    monkeypatch,
+):
+    """Review follow-up (TASK-33622.10): the video choice guards its close.
+
+    Escape on ConsoleVideoCapacityModal asks "Discard generated video?" -- the
+    result "cannot be recovered". Once Ctrl+Q reached the quit flow under
+    modals, it quit straight past that guard. Now the choice asks first.
+    """
+    from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
+        ConsoleVideoCapacityModal,
+    )
+
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups: list[bool] = []
+
+    async def _record_cleanup() -> None:
+        cleanups.append(True)
+
+    monkeypatch.setattr(app, "_run_approved_quit_cleanup", _record_cleanup)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        results: list[object] = []
+        modal = ConsoleVideoCapacityModal(
+            reason="over_capacity",
+            size_bytes=300 * 1024 * 1024,
+            max_bytes=256 * 1024 * 1024,
+        )
+        await app.push_screen(modal, callback=results.append)
+        await _until(pilot, lambda: app.screen is modal, "the video choice")
+
+        def _kept() -> None:
+            assert results == [], "Stay must not decide the video's fate"
+
+        await _ask_stay_then_quit(
+            app, pilot, modal, "Discard generated video and quit?", cleanups, _kept
+        )
+
+
+async def test_ctrl_q_over_a_memory_only_interview_asks_before_discarding_it(
+    monkeypatch,
+):
+    """Review follow-up (TASK-33622.10): a memory-only interview is lost on quit.
+
+    Its own Leave prompt says the interview "exists only in memory" and
+    offers only Continue or Discard. Ctrl+Q now asks before discarding it;
+    Continue interview keeps the screen, the typed answer and the session.
+    """
+    from dataclasses import replace
+
+    from Tests.UI.test_profile_interview_screen import _Coordinator, _session_base
+    from tldw_chatbook.UI.Screens.profile_interview_screen import (
+        ProfileInterviewScreen,
+    )
+
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups: list[bool] = []
+
+    async def _record_cleanup() -> None:
+        cleanups.append(True)
+
+    monkeypatch.setattr(app, "_run_approved_quit_cleanup", _record_cleanup)
+    coordinator = _Coordinator(replace(_session_base(), draft_is_memory_only=True))
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        results: list[object] = []
+        screen = ProfileInterviewScreen(
+            coordinator, kind="personal", scope_id="scope-global", mode="fixed"
+        )
+        await app.push_screen(screen, callback=results.append)
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is screen
+                and screen._session is not None
+                and not screen._busy
+            ),
+            "the interview to load",
+        )
+        answer = screen.query_one("#profile-interview-answer", Input)
+        answer.focus()
+        await pilot.press(*"Kim")
+        await _until(pilot, lambda: answer.value == "Kim", "the typed answer")
+
+        def _kept() -> None:
+            assert answer.value == "Kim"
+            assert results == []
+            assert not [call for call in coordinator.calls if call[0] == "discard"]
+
+        await _ask_stay_then_quit(
+            app, pilot, screen, "Discard interview and quit?", cleanups, _kept
         )
 
 
