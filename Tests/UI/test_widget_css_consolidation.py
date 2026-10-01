@@ -34,6 +34,9 @@ from textual.css.tokenize import tokenize_values
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.css import build_css, widget_css
 
+# The UI fixture imports the app under its collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PACKAGE_ROOT = _REPO_ROOT / "tldw_chatbook"
 _CSS_ROOT = _PACKAGE_ROOT / "css"
@@ -1211,7 +1214,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("Widgets/Media/media_list_panel.py", "MediaListPanel", "DEFAULT_CSS"),
     ("Widgets/Media/media_navigation_panel.py", "MediaNavigationPanel", "DEFAULT_CSS"),
     ("Widgets/Media/media_search_panel.py", "MediaSearchPanel", "DEFAULT_CSS"),
-    ("Widgets/Media/media_viewer_panel.py", "DeleteConfirmDialog", "DEFAULT_CSS"),
     ("Widgets/Media/media_viewer_panel.py", "MediaViewerPanel", "DEFAULT_CSS"),
     ("Widgets/model_search_picker.py", "ModelSearchPicker", "DEFAULT_CSS"),
     ("Widgets/ModelArtifacts/activation_controls.py", "ModelActivationControls", "DEFAULT_CSS"),

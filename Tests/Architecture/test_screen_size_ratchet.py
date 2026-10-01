@@ -87,7 +87,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured on top of dev (dev had grown the file to 25375 lines
     #: against its own 25363 row): the combined tree measures 25218/759,
     #: still under dev's 25363/762, so nothing rises.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25218, 759),
+    # 2026-09-29, task-25907.23: mechanical moves and dead-code removal
+    # tighten lines and preserve the original method ceiling.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25198, 759),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -902,7 +904,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: between decomposition moves. Re-set to the exact measurement (never
     #: above it); decomposition tracked in TASK-32809.3. 33204/1276 ->
     #: 35793/1330.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35855, 1330),
+    # 2026-09-29, task-25907.23: mechanical moves and dead-code removal
+    # tighten lines and preserve the original method ceiling.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35805, 1330),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

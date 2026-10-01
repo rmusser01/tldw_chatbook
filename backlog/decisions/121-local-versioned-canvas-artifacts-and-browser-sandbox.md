@@ -530,6 +530,23 @@ validated proxy/keyring posture. Independent review approved commits
 `69405e7c8d`, `e69141538f`, and `ff8a45fb65`. Quota measurements and complete
 rollout verification remain in TASK-31232's subsequent steps.
 
+### Disposable Personal Context budget preview (TASK-33165)
+
+Next Send inspection reserves the same Canvas schemas, runtime-profile guidance
+and direct/discovery policy as live first-request planning. It uses immutable
+profile and catalog metadata from the existing Canvas owner, never an executable provider, run
+registration, staging record or registration authority. The live registry's
+exact-provider authentication and mutation classification remain unchanged.
+
+Load schemas incrementally inside the shared guarded probe, after persona
+narrowing; unreadable or oversized catalogs use the same discovery fallback.
+Reuse interactive-owner capture/validation plus exact session identity through
+final snapshot publication and the Inspector's later async validation. Closure,
+disable, durable/temporary replacement, promotion or branch changes discard
+the result and buffered diagnostic sidecar. Schema-only planning cannot change Canvas selection or grant
+permission. This corrects the existing preview boundary under ADR-202; it does
+not activate memory capture or forgetting.
+
 ### Runtime quota qualification record
 
 Task 7.2 lowered V1 ceilings to 1,800 DOM nodes, 900 CSS rules, and 500

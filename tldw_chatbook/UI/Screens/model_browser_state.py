@@ -568,3 +568,16 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
             return "The download was interrupted. Retry Install to resume."
         return "The download failed and cannot be retried automatically."
     return f"{model_label} install failed. See the application log for details."
+
+
+def _insufficient_space_recovery(report: object) -> str | None:
+    """Return byte-exact bounded recovery for one ungrantable real plan."""
+
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+
+    if type(report) is not PreflightReport or report.sufficient_space:
+        return None
+    return (
+        f"Insufficient space — {report.required_bytes:,} bytes required; "
+        f"{report.free_bytes:,} bytes free. Free space, then select Retry install."
+    )

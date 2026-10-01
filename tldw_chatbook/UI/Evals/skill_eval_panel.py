@@ -124,8 +124,8 @@ class SkillEvalPanel(Widget):
     control; the owning screen persists it onto the bench config.
     """
 
-    DEFAULT_CSS = """
-    SkillEvalPanel { padding: 1; }
+    BUNDLED_CSS = """
+    SkillEvalPanel { padding: $ds-space-inset; }
     """
 
     class RunRequested(Message, namespace="skill_eval_panel"):

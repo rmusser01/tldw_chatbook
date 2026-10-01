@@ -491,9 +491,8 @@ class _StdioJSONRPCConnection:
         """
         from pydantic import ValidationError
 
-        from tldw_chatbook.Utils.input_validation import MCPToolResultInput
-
         from tldw_chatbook.Agents.tool_output import current_tool_output_sink
+        from tldw_chatbook.Utils.input_validation import MCPToolResultInput
 
         sink = current_tool_output_sink()
         params = {"name": tool_name, "arguments": arguments}

@@ -1,9 +1,11 @@
 import threading
 from dataclasses import fields, replace
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
 from tldw_chatbook.Chat.provider_setup_persistence import (
@@ -1909,8 +1911,9 @@ def test_guarded_provider_setup_holds_identity_lease_through_atomic_writer(
     ],
     ids=["moonshot-region", "huggingface-router", "custom-endpoint"],
 )
+@private_profile_test
 def test_guarded_setup_rejects_completed_relevant_config_write(
-    tmp_path,
+    request,
     monkeypatch,
     provider,
     endpoint,
@@ -1922,7 +1925,7 @@ def test_guarded_setup_rejects_completed_relevant_config_write(
 
     import toml
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(config_module.get_cli_config_path())
     config_path.write_text(
         toml.dumps({"api_settings": {provider: initial_settings}}),
         encoding="utf-8",
@@ -1947,8 +1950,9 @@ def test_guarded_setup_rejects_completed_relevant_config_write(
     assert saved.get("chat_defaults", {}).get("model") != "selected-model"
 
 
+@private_profile_test
 def test_guarded_setup_rejects_completed_stored_credential_replacement(
-    tmp_path,
+    request,
     monkeypatch,
 ):
     import tomllib
@@ -1958,7 +1962,7 @@ def test_guarded_setup_rejects_completed_stored_credential_replacement(
 
     first_secret = "locked-stored-credential-a"
     second_secret = "locked-stored-credential-b"
-    config_path = tmp_path / "config.toml"
+    config_path = Path(config_module.get_cli_config_path())
     config_path.write_text(
         toml.dumps(
             {
@@ -2006,15 +2010,16 @@ def test_guarded_setup_rejects_completed_stored_credential_replacement(
     assert saved.get("chat_defaults", {}).get("model") != "selected-model"
 
 
+@private_profile_test
 def test_guarded_setup_allows_unrelated_generation_advance(
-    tmp_path,
+    request,
     monkeypatch,
 ):
     import tomllib
 
     import toml
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(config_module.get_cli_config_path())
     config_path.write_text(
         toml.dumps(
             {

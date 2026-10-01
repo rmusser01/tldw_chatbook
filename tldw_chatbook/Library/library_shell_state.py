@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from rich.cells import cell_len
 
@@ -806,3 +808,22 @@ def build_library_shell_state(
         canvas_target=canvas_target,
         canvas_empty_copy=canvas_empty_copy,
     )
+
+
+def _copy_library_continue_receipt(
+    receipt: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Detach the small primitive returning-Library receipt."""
+
+    if receipt is None:
+        return None
+    scope = dict(receipt["scope"])
+    deselected = scope.get("scope_deselected")
+    if isinstance(deselected, list):
+        scope["scope_deselected"] = list(deselected)
+    return {
+        "version": receipt["version"],
+        "row_id": receipt["row_id"],
+        "scope": scope,
+        "source_list_adjusted": receipt["source_list_adjusted"],
+    }

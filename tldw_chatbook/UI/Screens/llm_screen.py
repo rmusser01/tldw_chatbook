@@ -135,7 +135,7 @@ from ..Navigation.vllm_handoff import (
 )
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
-from .model_browser_state import install_failure_message
+from .model_browser_state import install_failure_message, _insufficient_space_recovery
 from .model_curated_view import CuratedView
 from .model_external_view import ExternalModelView
 from .model_installed_view import InstalledView
@@ -230,19 +230,6 @@ class _VllmProfileDeleteConfirmationDialog(ConfirmationDialog):
         for button in self.query(Button):
             button.disabled = True
         return super().dismiss(result)
-
-
-def _insufficient_space_recovery(report: object) -> str | None:
-    """Return byte-exact bounded recovery for one ungrantable real plan."""
-
-    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
-
-    if type(report) is not PreflightReport or report.sufficient_space:
-        return None
-    return (
-        f"Insufficient space — {report.required_bytes:,} bytes required; "
-        f"{report.free_bytes:,} bytes free. Free space, then select Retry install."
-    )
 
 
 #: (section title, ((view key, label), ...)) in rail order. The view keys are

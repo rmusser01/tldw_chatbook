@@ -106,15 +106,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: 556 -> 557 on 2026-09-30 after the rebase onto dev 75c06af39a: #2922's
 #: ``settings_screen`` imports ``settings_hooks`` at module level (owner
 #: approved; TASK-33642 makes it lazy again).
-MAX_PASS_ADDED_MODULES = 557
+# TASK-25907.23 integration keeps stricter feature pins; ledger rows above
+# describe incoming upstream exceptions, not local qualifications.
+MAX_PASS_ADDED_MODULES = 500
 
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
-MAX_PASS_ADDED_LOC = 425_347
+MAX_PASS_ADDED_LOC = 378_740
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
-MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
+# TASK-25907.23: native Library105452 + ADR-097 standard10000 slack.
+MAX_SINGLE_ROUTE_ADDED_LOC = 115_452
 
 _CENSUS_SCRIPT = """
 import json

@@ -27,6 +27,9 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def _select_test_log_run(controller, target):
     """Give focused log lifecycle tests a UI selection and matching metadata seam."""
     controller._capture_run_log_selection = lambda bridge: ("test-conversation", target(), (None, None))
@@ -432,6 +435,9 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot(
                     status="running",
@@ -474,6 +480,9 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot()  # idle -- simulates a fresh process
 
@@ -518,6 +527,9 @@ async def test_agent_section_prefers_live_snapshot_over_historical_when_present(
         calls = []
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot(status="running", step=2)
 
@@ -601,6 +613,9 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def __init__(self):
                 self.active_conversation_id = "conv-A"
 
@@ -667,6 +682,9 @@ async def test_drilldown_render_path_rejects_record_from_other_conversation():
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def subagent_run(self, run_id):
                 return {
                     "id": run_id,
@@ -723,6 +741,9 @@ async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def subagent_run(self, run_id):
                 return {
                     "id": run_id,
@@ -1135,6 +1156,9 @@ async def test_console_agent_fleet_token_total_sums_live_handles():
         )
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def fleet_snapshot(self, conversation_id):
                 return list(handles) if conversation_id == "conv-A" else []
 
@@ -1175,6 +1199,9 @@ async def test_cancel_console_agent_fleet_row_delegates_to_the_bridge():
         calls = []
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def cancel_subagent(self, conversation_id, handle_id):
                 calls.append((conversation_id, handle_id))
                 return True
@@ -1240,6 +1267,9 @@ async def test_drilldown_shows_a_live_childs_steps_before_they_reach_the_db():
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def subagent_run(self, run_id):
                 # Row exists from `create_run`; steps land only at the end.
                 return {
@@ -1294,6 +1324,9 @@ async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                return {}
+
             def subagent_run(self, run_id):
                 return {
                     "id": run_id,
@@ -1613,7 +1646,9 @@ async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
         assert not published
         target[0] = "A"
         assert not controller._console_agent_full_log_available()
-        await host.workers.wait_for_complete()
+        replacement_worker = controller._console_agent_full_log_probe_worker
+        assert replacement_worker is not None
+        await replacement_worker.wait()
         assert calls == ["A", "A"]
         assert published == [True]
 
@@ -1830,10 +1865,18 @@ async def test_modal_log_predicate_uses_turn_token_without_metadata_reads():
         console._sync_console_agent_section = lambda: None
         controller._open_console_agent_run_log_viewer()
         await settled(
-            pilot, lambda: isinstance(host.screen_stack[-1], ConsoleRunLogModal)
+            pilot,
+            lambda: (
+                isinstance(host.screen_stack[-1], ConsoleRunLogModal)
+                and host.screen_stack[-1].is_mounted
+                and host.screen_stack[-1]
+                .query_one("#console-run-log-next")
+                .region.width
+                > 0
+            ),
         )
         modal = host.screen_stack[-1]
-        await pilot.click("#console-run-log-next")
+        assert await pilot.click("#console-run-log-next")
         await settled(pilot, lambda: "SECOND" in modal.query_one(TextArea).text)
         assert len(metadata_reads) == 1
         assert len(page_reads) == 2 and all(

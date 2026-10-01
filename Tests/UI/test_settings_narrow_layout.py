@@ -27,6 +27,9 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 
+# Real config getters retain the private source selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
 
 class _SettingsCssHarness(DestinationHarness):

@@ -365,6 +365,9 @@ from ..Persona_Modules.personas_conversations_controller import (
 )
 from ..Persona_Modules.personas_preview_coordinator import (
     get_personas_preview_coordinator,
+    _DrainedTaskResult,
+    _drain_async,
+    _drain_to_thread,
 )
 from ...Character_Chat.character_generation import CharacterGenerationError
 from ...Character_Chat.world_book_import import format_imported_lorebook_note
@@ -829,123 +832,6 @@ class _ActorPackCreateSession:
     editor_generation: int
     editor_session_token: int
     portrait_choices: tuple[_ActorPackPortraitChoice, ...] = ()
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _DrainedTaskResult:
-    """One task result observed after every outer cancellation is drained."""
-
-    completed: bool = False
-    value: Any = None
-    error: Exception | None = None
-    cancellation: asyncio.CancelledError | None = None
-
-
-async def _drain_async(
-    awaitable: Coroutine[Any, Any, Any], *, task_name: str
-) -> _DrainedTaskResult:
-    """Shield one critical task and report cancellation after it settles."""
-
-    task = asyncio.create_task(awaitable, name=task_name)
-    cancellation: asyncio.CancelledError | None = None
-    while True:
-        try:
-            return _DrainedTaskResult(
-                completed=True,
-                value=await asyncio.shield(task),
-                cancellation=cancellation,
-            )
-        except asyncio.CancelledError as exc:
-            if task.done() and task.cancelled():
-                try:
-                    task.result()
-                except asyncio.CancelledError as child_cancellation:
-                    return _DrainedTaskResult(
-                        cancellation=cancellation or child_cancellation
-                    )
-            if cancellation is None:
-                cancellation = exc
-        except Exception as exc:
-            return _DrainedTaskResult(error=exc, cancellation=cancellation)
-
-
-async def _drain_to_thread(
-    function: Callable[..., Any],
-    /,
-    *args: Any,
-    task_name: str,
-    **kwargs: Any,
-) -> _DrainedTaskResult:
-    """Observe the actual native callback, independently of Task cancellation.
-
-    This is lifetime bookkeeping only; callbacks acquire their own source admission.
-    A cancelled executor Future cannot retire an already-running native callback.
-    """
-
-    loop = asyncio.get_running_loop()
-    completion = loop.create_future()
-    lock = threading.Lock()
-    status = "queued"
-
-    def complete(outcome: _DrainedTaskResult) -> None:
-        if not completion.done():
-            completion.set_result(outcome)
-
-    def work() -> None:
-        nonlocal status
-        with lock:
-            if status != "queued":
-                return
-            status = "running"
-        try:
-            outcome = _DrainedTaskResult(completed=True, value=function(*args, **kwargs))
-        except asyncio.CancelledError as error:
-            outcome = _DrainedTaskResult(cancellation=error)
-        except BaseException as error:
-            outcome = _DrainedTaskResult(error=error)
-        with lock:
-            status = "finished"
-        loop.call_soon_threadsafe(complete, outcome)
-
-    executor = loop.run_in_executor(None, work)
-
-    def executor_done(future) -> None:
-        nonlocal status
-        error = None if future.cancelled() else future.exception()
-        if not future.cancelled() and error is None:
-            return
-        with lock:
-            if status != "queued":
-                return
-            status = "cancelled"
-        complete(_DrainedTaskResult(error=error, cancellation=asyncio.CancelledError()))
-
-    executor.add_done_callback(executor_done)
-
-    async def observed() -> _DrainedTaskResult:
-        return await asyncio.shield(completion)
-
-    task = asyncio.create_task(observed(), name=task_name)
-    cancellation: asyncio.CancelledError | None = None
-    waiting = task
-    while True:
-        try:
-            outcome = await asyncio.shield(waiting)
-            return dataclasses.replace(
-                outcome, cancellation=cancellation or outcome.cancellation
-            )
-        except asyncio.CancelledError as error:
-            cancellation = cancellation or error
-            with lock:
-                queued = status == "queued"
-                if queued:
-                    status = "cancelled"
-            if queued:
-                executor.cancel()
-                complete(_DrainedTaskResult(cancellation=cancellation))
-            # An independently cancelled named waiter is only an awaiter. The
-            # private completion is signalled by the actual callback after IO.
-            waiting = completion
 
 
 def _actor_pack_portrait_name(data: bytes) -> str:

@@ -602,3 +602,20 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
             is_blank = event.value is Select.BLANK or event.value is Select.NULL
             ref = None if is_blank else str(event.value)
             self.post_message(self.ScopeChanged(self.scope_value, ref))
+
+
+def _target_id_from_server_key(key: str | None) -> str | None:
+    """Parse a server-target id out of a `"server:<id>"` or
+    `"server:<id>/<sub>"` key (a target row directly, or an external-record
+    row beneath it), or `None` for anything else (a `local:`/`builtin:` key,
+    an empty string, or `None` itself).
+
+    Shared by `MCPWorkbench._selected_target_id()` (parses the workbench's
+    OWN rail/table selection) and `_refresh_server_discovery()` (New Minor
+    2, MCP Hub Phase 6 finale -- parses an arbitrary triggering event's
+    `server_key`, which need not match whatever is currently selected).
+    """
+    if not key or not key.startswith("server:"):
+        return None
+    remainder = key.split(":", 1)[1]
+    return remainder.split("/", 1)[0] if remainder else None

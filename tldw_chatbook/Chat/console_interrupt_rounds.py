@@ -37,10 +37,13 @@ from __future__ import annotations
 import threading
 import time
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from . import console_chat_controller as owner
 
 from loguru import logger
 
@@ -856,3 +859,53 @@ class InterruptRoundHost:
                 logger.opt(exception=True).debug(
                     f"Failed to marshal {kind} remount during teardown"
                 )
+
+
+def _sibling_approval_refusals(
+    rows: Sequence[owner.MCPPendingCall],
+    decision_for: Callable[[owner.MCPPendingCall], str | None],
+    decisions: Mapping[str, str],
+    allowing_for: Callable[[owner.MCPPendingCall], tuple[str, ...]],
+    record_refusal: Callable[[owner.MCPPendingCall, bool], None],
+) -> dict[str, owner.ToolReviewValue]:
+    """Refuse rows that would run only on a same-name sibling's approval.
+
+    TASK-33082. A tool's stamp is name-keyed and keeps the broadest approval
+    any row of that name received, so it cannot say "this call, not that
+    one". A row whose own answer is missing, ``"timeout"`` or unknown would
+    then run on its approved sibling's stamp. Each such row is refused here,
+    by its own key, and audited through ``record_refusal``, because the
+    runtime never dispatches it to the owner that would otherwise record the
+    outcome. A row with no approved sibling is left alone: its name's stamp
+    is not an approval, so the owner refuses and audits it at dispatch, as
+    before.
+
+    Args:
+        rows: The batch's pending approval rows.
+        decision_for: Resolves one row's own answer (call id first, then name).
+        decisions: The approval round's answers, for the review fact.
+        allowing_for: The answers that approve a given row's owner.
+        record_refusal: Audits one refused row; the flag is whether its own
+            answer was ``"timeout"``.
+
+    Returns:
+        Refusal verdicts keyed by call id, or by name for an id-less row.
+    """
+    from . import console_chat_controller as owner
+
+    approved = {row.llm_name for row in rows if decision_for(row) in allowing_for(row)}
+    refusals: dict[str, owner.ToolReviewValue] = {}
+    for row in rows:
+        decision = decision_for(row)
+        if row.llm_name not in approved or decision == "deny":
+            continue
+        if decision in allowing_for(row):
+            continue
+        timed_out = decision == "timeout"
+        refusals[row.call_id or row.llm_name] = owner._review_decision(
+            row,
+            decisions,
+            owner.TIMEOUT_REFUSAL if timed_out else owner.UNRESOLVED_REFUSAL,
+        )
+        record_refusal(row, timed_out)
+    return refusals

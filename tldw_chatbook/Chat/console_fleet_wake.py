@@ -862,6 +862,29 @@ class ConsoleFleetWakeCoordinator:
         except Exception:  # noqa: BLE001 - bookkeeping and UI fail closed
             await self._pause(cid, chain_id, "completion_unrecorded", review=True)
 
+    async def _seed_owned_history(self) -> int:
+        """Seed one captured ledger, retire its worker, and request live retry."""
+        try:
+            database_getter = getattr(self, "_runs_db", None)
+            if not callable(database_getter):
+                seeded = await asyncio.to_thread(self.seed_from_marks)
+            else:
+                database = database_getter()
+                if database is None:
+                    return 0
+                seeded = await run_owned_db_call(
+                    database, self.seed_from_marks, database=database
+                )
+            if seeded:
+                self.retry_soon()
+            return seeded
+        except Exception as exc:  # noqa: BLE001 - UI seed failure is reported and deferred
+            logger.warning(
+                "console fleet history seed failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return 0
+
     def seed_from_marks(self, *, database=None) -> int:
         """Discover pending results from durable history, independently of badges.
 

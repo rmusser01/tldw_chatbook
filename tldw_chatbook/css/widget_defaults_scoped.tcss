@@ -2081,6 +2081,10 @@
     ConsoleConversationInspector #console-inspector-next-send-loading.loading { display: block; }
     ConsoleConversationInspector #console-inspector-next-send-tabs { height: 1fr; }
     ConsoleConversationInspector #console-inspector-next-send-actions { height: auto; }
+    ConsoleConversationInspector .inspector-selection-body { max-height: 8; }
+    ConsoleConversationInspector .console-inspector-selection-row {
+        width: 100%; height: auto; text-wrap: wrap;
+    }
 
 /* ===== WIDGET: ConsoleEditThinkingModal (Widgets/Console/console_edit_message_modal.py) ===== */
 

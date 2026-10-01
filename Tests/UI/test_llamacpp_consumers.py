@@ -5,6 +5,8 @@ import tomllib
 import pytest
 from textual.widgets import Button, Input
 
+from Tests.private_profile import private_profile_test
+
 from Tests.UI.test_console_provider_apply_defaults_flow import (
     _console_app,
     _ConsoleFlowHarness,
@@ -88,7 +90,8 @@ async def test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved
 
 
 @pytest.mark.asyncio
-async def test_console_adopts_verified_llamacpp_for_active_session_only():
+@private_profile_test
+async def test_console_adopts_verified_llamacpp_for_active_session_only(request):
     app = _console_app()
     _, target = _ready_target(app)
     app.pending_handoffs.stage(
@@ -171,7 +174,8 @@ async def test_llamacpp_default_persists_only_after_settings_save():
 
 
 @pytest.mark.asyncio
-async def test_stale_llamacpp_target_cannot_change_console_or_settings():
+@private_profile_test
+async def test_stale_llamacpp_target_cannot_change_console_or_settings(request):
     app = _console_app()
     owner, target = _ready_target(app)
     app.pending_handoffs.stage(
@@ -228,7 +232,9 @@ async def test_llamacpp_settings_late_owner_expiry_compensates_before_ack(monkey
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_llamacpp_console_adoption_failure_restores_session_and_requeues(
+    request,
     monkeypatch,
 ):
     app = _console_app()

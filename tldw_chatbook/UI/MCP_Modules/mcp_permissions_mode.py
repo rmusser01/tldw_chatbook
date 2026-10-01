@@ -1256,3 +1256,17 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
                 profile_context=self._profile_context,
             )
         )
+
+
+def _cycled_ui_label(state: str | None) -> str:
+    """The mutation-echo word for a just-cycled TOOL-row state (Task 3, MCP
+    Hub Phase 6) -- `"Inherit"` for `None` (`cycle_ui_state()`'s own Inherit
+    rung), otherwise the same `EffectiveToolState.ui_label` word every other
+    state-word surface in this module uses (`"Allow"|"Ask"|"Off"`). A plain
+    `EffectiveToolState` can't represent Inherit at all (its `state` field
+    is a bare `str`, not `str | None`), so that one case is spelled out
+    directly rather than routed through it.
+    """
+    if state is None:
+        return "Inherit"
+    return EffectiveToolState(state=state, origin="tool_override").ui_label

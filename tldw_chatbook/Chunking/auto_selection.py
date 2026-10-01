@@ -44,11 +44,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import Any, Literal
 
-from .engine.auto_planner import AutoChunkingDecision, plan_auto_chunking
-from .engine.templates import TemplateClassifier
-from .template_runtime import resolve_template
+if _TYPE_CHECKING:
+    from .engine.auto_planner import AutoChunkingDecision
+
 
 __all__ = [
     "AUTO_SENTINEL",
@@ -260,6 +261,8 @@ def resolve_auto(
     Returns:
         The :class:`AutoDecision` for the item.
     """
+    from .auto_selection import resolve_template
+
     reasons: list[str] = []
     winner = _select_template(
         db, media_type=media_type, title=title, filename=filename, url=url, reasons=reasons
@@ -312,6 +315,8 @@ def _select_template(
         ``(score, priority, name)`` of the winner, or ``None`` when no
         candidate qualifies (declines appended to ``reasons``).
     """
+    from .auto_selection import TemplateClassifier
+
     if db is None:
         reasons.append("template_store_unavailable")
         return None
@@ -406,6 +411,8 @@ def _plan_or_plain(
     ``SEMANTIC_AVAILABLE_DEFAULT`` above. Template-status args stay unset —
     no template reached the planner.
     """
+    from .auto_selection import plan_auto_chunking
+
     try:
         decision: AutoChunkingDecision = plan_auto_chunking(
             perform_chunking=True,
@@ -449,3 +456,28 @@ def _plan_or_plain(
         rationale=rationale,
         fallback_reasons=reasons,
     )
+
+
+_LAZY_EXPORTS = {
+    "AutoChunkingDecision": (".engine.auto_planner", "AutoChunkingDecision"),
+    "plan_auto_chunking": (".engine.auto_planner", "plan_auto_chunking"),
+    "TemplateClassifier": (".engine.templates", "TemplateClassifier"),
+    "resolve_template": (".template_runtime", "resolve_template"),
+}
+
+
+def __getattr__(name: str):
+    """Keep planner/template aliases available without executing them on import."""
+    from importlib import import_module
+
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module, attribute = target
+    value = getattr(import_module(module, __package__), attribute)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))

@@ -73,6 +73,14 @@ def _assert_rule_pinned_in_bundle_source_and_bundle(
     component file (`_agentic_terminal.tcss`) and the generated bundle
     (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
     source edit."""
+    from Tests.UI.test_css_build_integrity import _rule_body
+    from tldw_chatbook.css.build_css import design_token_preamble
+    from tldw_chatbook.css.widget_css import (
+        isolate_local_variables,
+        resolve_variable_definitions,
+    )
+
+    tokens = resolve_variable_definitions(design_token_preamble(_CSS_ROOT))
     agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
     bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
@@ -80,12 +88,14 @@ def _assert_rule_pinned_in_bundle_source_and_bundle(
         (agentic_terminal, "_agentic_terminal.tcss"),
         (bundled_stylesheet, "tldw_cli_modular.tcss"),
     ):
-        start = text.find(selector)
-        assert start != -1, f"{label} is missing {selector!r}"
-        end = text.find("}", start)
-        block = text[start:end]
+        block = _rule_body(
+            isolate_local_variables(text, variables=tokens), selector.rstrip(" {")
+        )
+        declarations = {
+            "".join(value.split()) for value in block.split(";") if value.strip()
+        }
         for declaration in expected_declarations:
-            assert declaration in block, (
+            assert "".join(declaration.rstrip(";").split()) in declarations, (
                 f"{label}'s {selector!r} block is missing {declaration!r}"
             )
 
@@ -1365,11 +1375,11 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
         ):
             projection_task = timer._task
             break
-    assert projection_task is not None
-
-    # The one-shot timer queues its projection with call_next; queue an event
-    # behind it so completion means the production projection itself has run.
-    await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
+    # Wait for a retained timer's enqueue before the call_next barrier.
+    # An absent entry means no timer is retained, not proof of completion.
+    # Keep the queued projection barrier and readiness assertions in either case.
+    if projection_task is not None:
+        await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
     projection_drained = asyncio.Event()
     screen.call_next(projection_drained.set)
     await asyncio.wait_for(projection_drained.wait(), timeout=10.0)
@@ -1431,6 +1441,7 @@ class _ControllerCardsHarness(ConsolidatedCSSApp):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
     """A controller-marshaled local descriptor reaches the real card unchanged."""
@@ -1491,6 +1502,7 @@ async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp
         assert await pending == {call.llm_name: "deny"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("crash_after_release", [False, True], ids=("success", "crash"))
 @pytest.mark.asyncio
 async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
@@ -1759,6 +1771,7 @@ def test_run_terminal_sweeps_approved_undispatched_row_after_base_exception(
     assert controller._parked_approval_payloads == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_path):
     """Two approved local mutations remain independently addressable."""
     from tldw_chatbook.Agents.agent_models import ToolCall
@@ -1863,6 +1876,7 @@ def test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id():
     assert retained["calls"] == [sibling]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
     """Finishing is status, not a pending decision or disabled focus target."""
@@ -1917,6 +1931,7 @@ def test_console_binds_alt_a_to_review_pending_approval():
     assert ("Alt+A", "approval") in CONSOLE_WORKBENCH_SHORTCUTS
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_a_focuses_the_pending_approval_decision_select():
     """With a batch pending, Alt+A lands focus on the row's decision
@@ -1944,6 +1959,7 @@ async def test_alt_a_focuses_the_pending_approval_decision_select():
         assert "approval-row-decision" in app.focused.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_a_notifies_when_nothing_is_pending():
     """With nothing pending, Alt+A notifies rather than focusing anything --
@@ -1964,6 +1980,7 @@ async def test_alt_a_notifies_when_nothing_is_pending():
         assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
     """AC#3: the route works at 80 columns with the inspector closed."""
@@ -1995,6 +2012,7 @@ async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
         assert "approval-row-decision" in app.focused.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
     """Without an explicit width, `_conversations.tcss`'s bare `Select {
@@ -2087,7 +2105,12 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             # its controls, and the `config_changed` row in
             # `_sample_calls` gained the reason line that used to be a
             # header tooltip.
-            assert row.size.height <= 8, (
+            details = row.query_one(".deny-reason")
+            assert details.collapsed
+            assert details.size.height == 1
+            assert tuple(details.styles.margin) == (0, 0, 0, 0)
+            # TASK-18920 adds one compact disclosure; retain the original content bound.
+            assert row.size.height - details.size.height <= 8, (
                 f"approval row ballooned to height {row.size.height} under "
                 "bundled CSS -- height: auto; min-height: 1; is not winning"
             )
@@ -2123,6 +2146,7 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
     """task-1234 review round 1: the sibling multi-row geometry test above
@@ -2171,7 +2195,12 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
         # made it two lines -- headline + full-width arguments -- so the
         # bound moves 4 -> 6; task-32278's scope line makes it 7. A row
         # that lost `height: auto` is 15.
-        assert row.size.height <= 7, (
+        details = row.query_one(".deny-reason")
+        assert details.collapsed
+        assert details.size.height == 1
+        assert tuple(details.styles.margin) == (0, 0, 0, 0)
+        # TASK-18920 adds one compact disclosure; retain the original content bound.
+        assert row.size.height - details.size.height <= 7, (
             f"single-row approval row ballooned to height {row.size.height} "
             "under bundled CSS"
         )
@@ -3895,13 +3924,15 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     )
 
     refusal = verdicts.get("call-1")
-    assert refusal and refusal != "proceed", (
+    assert refusal and refusal.verdict != "proceed", (
         "the refusal of secrets.md never reached the runtime, so the "
         f"name-keyed approval of spec.md let it through: {verdicts}"
     )
-    assert verdicts.get("call-2", "proceed") == "proceed", (
+    assert verdicts["call-2"].verdict == "proceed", (
         f"approving spec.md must still let it run: {verdicts}"
     )
+    assert refusal.approval_decision == "denied"
+    assert verdicts["call-2"].approval_decision == "approved"
     assert ("read_file", "deny") not in stamped, (
         "a refusal must not be stamped against the NAME -- that would also "
         f"stop the call the user approved: {stamped}"
@@ -4336,7 +4367,11 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
     """
     import tldw_chatbook.config as config_module
     import tldw_chatbook.Tools.file_operation_tools as fot
-    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.agent_models import (
+        ToolCall,
+        ToolReviewValue,
+        normalize_tool_review,
+    )
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
@@ -4373,7 +4408,7 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
     args = {"file_path": "owned.txt", "content": "written by a cancelled child"}
     target = tmp_path / "owned.txt"
 
-    verdicts: dict[str, str] = {}
+    verdicts: dict[str, ToolReviewValue] = {}
 
     def _review() -> None:
         with use_run_id(RUN_A):
@@ -4383,13 +4418,20 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
 
     worker = threading.Thread(target=_review)
     worker.start()
-    time.sleep(0.2)
-    assert mounted and mounted[-1] is not None, "precondition: the card is on screen"
-    round_a = mounted[-1]["round_id"]
+    try:
+        deadline = time.monotonic() + 3.0
+        while (not mounted or mounted[-1] is None) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert mounted and mounted[-1] is not None, (
+            "precondition: the card is on screen"
+        )
+        round_a = mounted[-1]["round_id"]
 
-    # The fleet cancels/abandons this child while its card is still up.
-    assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
-    worker.join(timeout=3.0)
+        # The fleet cancels/abandons this child while its card is still up.
+        assert controller.revoke_approval_rounds_for_run(RUN_A) == 1
+    finally:
+        controller.revoke_approval_rounds_for_run(RUN_A)
+        worker.join(timeout=3.0)
     assert not worker.is_alive()
 
     # ... and the user presses Approve anyway.
@@ -4400,9 +4442,11 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
     with use_run_id(RUN_A):
         result = provider.invoke("builtin:write_file", args)
 
-    assert verdicts["call-1"] != "proceed", (
+    decision = normalize_tool_review(verdicts["call-1"])
+    assert decision.verdict != "proceed", (
         f"the revoked call was cleared for dispatch: {verdicts}"
     )
+    assert decision.approval_decision is None
     assert result.ok is False
     assert not target.exists(), (
         "a revoked approval executed the tool for real -- the file was written"
@@ -4662,7 +4706,9 @@ def test_request_mcp_approvals_marks_human_input_wait_while_round_armed():
         # wrapper's vantage point -- the mark must be process state, not
         # worker-thread-local), then resolve the round.
         deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and not received:
+        while time.monotonic() < deadline and not (
+            received and human_input_wait_active("run-approval-wait")
+        ):
             time.sleep(0.01)
         assert received, "round never armed"
         result["marked_while_armed"] = human_input_wait_active("run-approval-wait")
@@ -4850,8 +4896,14 @@ def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
         [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
     )
 
-    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+    assert verdicts["call-1"].verdict == USER_DENIED_REFUSAL.format(
+        name="mcp__srv__tool"
+    )
+    assert verdicts["call-1"].approval_decision is None
     assert denials == [], "a headless fail-closed deny was audited as the user's"
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_approval_route_reaches_a_pending_skill_install_card():
     """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
@@ -4909,6 +4961,7 @@ async def test_the_approval_route_reaches_a_pending_skill_install_card():
             assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") not in notifications
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_route_with_nothing_pending_can_decline_to_warn():
     """Qodo #5: a ◆ tab whose card is already gone must fall back to the
@@ -5117,6 +5170,7 @@ def test_revoke_before_result_snapshot_returns_deny(monkeypatch):
     assert result.unresolved_keys == frozenset({"mcp__probe__tool"})
 
 
+@pytest.mark.bootstrap_profile
 def test_local_provider_refuses_write_after_revoke_then_arm(tmp_path):
     ctrl, sid = _revocation_controller()
     mounted = _revocation_auto_answer(ctrl, "approval")
@@ -5192,7 +5246,9 @@ def test_revocation_cannot_split_a_batch_snapshot(monkeypatch):
 
     revoker = threading.Thread(target=revoke, name="snapshot-revoker", daemon=True)
 
-    class ReadGap(dict):
+    from tldw_chatbook.Agents.approval_provenance import ApprovalDecisions
+
+    class ReadGap(ApprovalDecisions):
         fired = False
 
         def get(self, key, default=None):

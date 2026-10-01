@@ -10604,6 +10604,7 @@ async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
         assert app.focused is container.query_one("#setup-exit-chat", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_down_space_selects_provider_with_no_tab_presses():
     """Round-2 regression pin (live-confirmed by the controller): Down then
@@ -11890,6 +11891,7 @@ class TestThemePickerShortlist:
             assert str(app.theme) == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_list_grouped_popular_first_with_pinned_discovery():
     """TASK-1498: section headers, popular-first order, banner above list."""
@@ -11981,6 +11983,7 @@ async def test_key_hints_footer_and_test_button_probe():
         assert probe.await_count >= 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_reentry_with_visible_discovery_button_focuses_list():
     """Review finding: after discovery unhides the pinned button, re-entering
@@ -12014,6 +12017,8 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
         assert app.focused is choices, f"focus stole by {app.focused!r}"
 
 
+# The simple host keeps the disposable config selected before Wizard imports.
+@pytest.mark.bootstrap_profile
 class TestComposeCrashPolicy:
     """Required compose failures recover in place; optional failures skip."""
 

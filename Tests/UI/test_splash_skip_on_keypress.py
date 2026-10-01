@@ -24,7 +24,7 @@ from textual.binding import Binding
 from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 class _SplashHost(App):

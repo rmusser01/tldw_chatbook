@@ -3260,7 +3260,19 @@ class ConsoleRuntime:
         def provider_active() -> bool:
             controller = self._chat_controller
             tasks = getattr(controller, "_active_stream_tasks", None)
-            return bool(tasks)
+            submits = getattr(controller, "_submit_tasks_snapshot", None)
+            store = getattr(controller, "store", None)
+            return bool(
+                tasks
+                or (submits() if callable(submits) else ())
+                or (
+                    store is not None
+                    and any(
+                        store.preparation_for_session(session.id) is not None
+                        for session in store.sessions()
+                    )
+                )
+            )
 
         async def run() -> None:
             while not self._disposed and not getattr(self._app, "_ui_ready", True):
@@ -3340,25 +3352,48 @@ class ConsoleRuntime:
                             "trace_maintenance_idle_seconds",
                             None,
                         )
-                        collector = TraceGarbageCollector(database)
-                        current_epoch = await run_owned_db_call(database,
-                            collector.current_graph_epoch
-                        )
-                        if pending_gc_result is None:
-                            if current_epoch == last_collected_epoch:
-                                await asyncio.sleep(1.0)
+                        pause()
+                        cancel_requested = False
+                        try:
+                            if provider_active():
                                 continue
-                            pending_gc_result = await run_owned_db_call(database,
-                                collector.collect,
-                                request_id=f"auto-{new_opaque_id()}",
-                            )
-                            last_collected_epoch = int(
-                                getattr(
-                                    pending_gc_result,
-                                    "marked_epoch",
-                                    current_epoch,
+                            collector = TraceGarbageCollector(database)
+
+                            async def collect_graph() -> tuple[Any, int | None]:
+                                current_epoch = await run_owned_db_call(
+                                    database, collector.current_graph_epoch
                                 )
-                            )
+                                result = pending_gc_result
+                                epoch = last_collected_epoch
+                                if result is None and current_epoch != epoch:
+                                    result = await run_owned_db_call(
+                                        database,
+                                        collector.collect,
+                                        request_id=f"auto-{new_opaque_id()}",
+                                    )
+                                    epoch = int(
+                                        getattr(result, "marked_epoch", current_epoch)
+                                    )
+                                return result, epoch
+
+                            gc_task = asyncio.create_task(collect_graph())
+                            while True:
+                                try:
+                                    pending_gc_result, last_collected_epoch = (
+                                        await asyncio.shield(gc_task)
+                                    )
+                                    break
+                                except asyncio.CancelledError:
+                                    if gc_task.done() and gc_task.cancelled():
+                                        raise
+                                    cancel_requested = True
+                        finally:
+                            resume()
+                            if cancel_requested:
+                                raise asyncio.CancelledError
+                        if pending_gc_result is None:
+                            await asyncio.sleep(1.0)
+                            continue
                         compactor = PhysicalTraceCompactor(
                             database,
                             policy=resolve_trace_compaction_policy(console_config),

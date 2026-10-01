@@ -140,3 +140,72 @@ class ConsoleHooksController:
         return ConsolePromptDispatchResult(
             ConsolePromptDispatchStatus.REFUSED, session_id, detail
         )
+
+
+async def _request_console_hooks_review(self, snapshot, waiting, cancel):
+    from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+        request_hook_review,
+    )
+
+    return await request_hook_review(
+        self,
+        self._console_runtime().ensure_hook_permissions(),
+        snapshot,
+        waiting,
+        cancel,
+    )
+
+
+async def _open_console_hooks_review(self) -> None:
+    await self._hooks.review_current()
+
+
+async def _refresh_console_hooks(self) -> None:
+    # ADR-097: indicator disk reads and hook imports start after first paint.
+    while not getattr(self.app, "_ui_ready", True):
+        await asyncio.sleep(0.1)
+    await self._hooks.refresh()
+
+
+def _apply_console_hooks_state(self, snapshot) -> None:
+    from ..Screens import chat_screen as owner
+
+    self._console_hook_review_snapshot = snapshot
+    self._sync_console_control_bar()
+    try:
+        self.query_one("#console-control-hooks", owner.Button).set_class(
+            snapshot.pending_count > 0, "hooks-attention"
+        )
+    except owner.QueryError:
+        pass
+
+
+async def _dispatch_console_draft_send(
+    self,
+    draft: str,
+    stash: ConsoleDraftStash | None = None,
+    *,
+    session_id: str | None = None,
+) -> bool:
+    """Compatibility delegate for the one typed queue-aware dispatcher."""
+
+    from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+
+    async with send_diagnostic_scope(
+        "ui_dispatch", self._ui_responsiveness_monitor()
+    ) as diagnostic:
+        if session_id is None:
+            session_id = self._console_visible_send_session_id()
+        if stash is None:
+            composer = self._console_composer_or_none()
+            stash = composer.capture_draft_for_send() if composer else None
+        result = await self._hooks.dispatch(
+            draft,
+            session_id=session_id,
+            stash=stash,
+            dispatch=lambda: self._prompt_queue.dispatch(
+                draft, session_id=session_id, stash=stash
+            ),
+        )
+        diagnostic.outcome = result.status.value
+        return result.status is not ConsolePromptDispatchStatus.REFUSED

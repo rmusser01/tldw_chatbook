@@ -3025,8 +3025,10 @@ async def test_console_mounts_native_transcript_region():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_console_sync_replaces_effective_memory_banner_without_stacking(
     monkeypatch,
+    request,
 ):
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -4219,6 +4221,8 @@ def test_console_transcript_missing_or_duplicate_anchor_plans_no_banner(anchor: 
     assert "Earlier turns summarized" not in transcript.to_plain_text(width=80)
 
 
+# This simple App reads the collection-bound disposable config without changing it.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_summary_banner_mounts_and_clears():
     app = MutableTranscriptHarness()

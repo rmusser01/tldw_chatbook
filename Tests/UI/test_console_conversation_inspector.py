@@ -11,7 +11,9 @@ one replaced -- both retired outright in task-10).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -19,10 +21,13 @@ from typing import ClassVar
 import pytest
 from loguru import logger
 from textual.app import ComposeResult
+from textual.containers import VerticalScroll
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Collapsible,
     ContentSwitcher,
+    Label,
     Static,
 )
 from textual.widgets._collapsible import CollapsibleTitle
@@ -50,6 +55,10 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Personal_Context.context_service import (
+    ProfileContextSelectionExplanation,
+    ProfileContextSelectionRow,
+)
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
     CapturePolicyBindings,
@@ -61,6 +70,9 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     TAB_NEXT_SEND,
     ConsoleConversationInspector,
     InspectorTurn,
+)
+from tldw_chatbook.Widgets.Console.console_next_send_selection import (
+    ConsoleNextSendSelectionResult,
 )
 
 
@@ -719,3 +731,422 @@ async def test_usage_entry_does_not_prepare_hidden_context():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert calls == []
+
+
+_SELECTION_PANEL = ".console-inspector-personal-context-selection"
+
+
+def _has_selection_panel(modal: ConsoleConversationInspector) -> bool:
+    return bool(list(modal.query(_SELECTION_PANEL)))
+
+
+def _selection_result(
+    explanation: ProfileContextSelectionExplanation | None, *, call: int = 1
+) -> ConsoleNextSendSelectionResult:
+    async def current() -> bool:
+        return True
+
+    return ConsoleNextSendSelectionResult(
+        ConsoleContextSnapshot(
+            current_messages=[],
+            next_send_payload={"model": "test-model", "messages": [], "call": call},
+        ),
+        explanation,
+        current,
+    )
+
+
+@pytest.mark.asyncio
+async def test_selection_panel_is_collapsed_literal_bounded_and_export_free() -> None:
+    long_id = "[not markup]\n" + "x" * 200 + "END_CANARY"
+    explanation = ProfileContextSelectionExplanation(
+        state="available",
+        rows=(
+            ProfileContextSelectionRow("selected-id", "selected", 0),
+            ProfileContextSelectionRow("overridden-id", "workspace_override", None),
+            ProfileContextSelectionRow(long_id, "byte_budget", 3),
+            ProfileContextSelectionRow("token-id", "token_budget", 4),
+        ),
+    )
+
+    async def snapshot_factory():
+        return _selection_result(explanation)
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(60, 30)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        panel = modal.query_one(_SELECTION_PANEL, Collapsible)
+        assert panel.collapsed
+        assert _rendered_title(panel) == "Personal Context selection"
+        panel.query_one(CollapsibleTitle).focus()
+        await pilot.press("enter")
+        assert not panel.collapsed
+        payload_scroll = modal.query_one(
+            "#console-inspector-selection-body", VerticalScroll
+        )
+        payload_scroll.focus()
+        await pilot.press("pagedown")
+        assert payload_scroll.scroll_offset.y > 0
+        rendered = " ".join(str(label.renderable) for label in panel.query(Label))
+        for expected in (
+            "selected-id",
+            "Workspace correction or constraint",
+            "overridden-id",
+            "Workspace override",
+            "Byte budget",
+            "token-id",
+            "Token budget",
+            "\\n",
+        ):
+            assert expected in rendered
+        assert "END_CANARY" not in rendered
+        assert "selected-id" not in modal._format_next_send_text()
+        assert "selected-id" not in modal._format_export_text()
+        assert "selected-id" not in repr(modal)
+        assert "selected-id" not in repr(_selection_result(explanation))
+        modal.raw_json = True
+        await pilot.pause()
+        assert _has_selection_panel(modal)
+        assert "selected-id" not in modal._format_next_send_text()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "copy"),
+    [
+        ("empty", "No eligible Personal Context records"),
+        ("insufficient_budget", "Insufficient budget"),
+        ("disabled", "disabled"),
+        ("locked", "locked"),
+        ("unavailable", "unavailable"),
+    ],
+)
+async def test_selection_panel_content_free_states(state: str, copy: str) -> None:
+    async def snapshot_factory():
+        return _selection_result(ProfileContextSelectionExplanation(state=state))
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(60, 30)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        rendered = " ".join(
+            str(label.renderable)
+            for label in modal.query_one(_SELECTION_PANEL, Collapsible).query(Label)
+        )
+        assert copy in rendered
+        if state in {"locked", "disabled", "unavailable"}:
+            assert "record" not in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_selection_refresh_clears_rows_before_replacement() -> None:
+    gate = asyncio.Event()
+    calls = 0
+
+    async def snapshot_factory():
+        nonlocal calls
+        calls += 1
+        call = calls
+        if call == 2:
+            await gate.wait()
+        return _selection_result(
+            ProfileContextSelectionExplanation(
+                state="available",
+                rows=(ProfileContextSelectionRow(f"id-{call}", "selected", 2),),
+            ),
+            call=call,
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        await pilot.click("#console-inspector-next-send-refresh")
+        await _wait_until(pilot, lambda: calls == 2)
+        await _wait_until(pilot, lambda: not _has_selection_panel(modal))
+        gate.set()
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        rendered = " ".join(
+            str(label.renderable)
+            for label in modal.query_one(_SELECTION_PANEL, Collapsible).query(Label)
+        )
+        assert "id-2" in rendered
+        assert "id-1" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_selection_suspend_rejects_late_result() -> None:
+    gate = asyncio.Event()
+
+    async def snapshot_factory():
+        await gate.wait()
+        return _selection_result(
+            ProfileContextSelectionExplanation(
+                state="available",
+                rows=(ProfileContextSelectionRow("late-id", "selected", 2),),
+            )
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: modal.next_send_loading)
+        app.push_screen(ModalScreen())
+        await pilot.pause()
+        gate.set()
+        await pilot.pause()
+        assert not _has_selection_panel(modal)
+
+
+@pytest.mark.asyncio
+async def test_selection_expiry_clears_without_revision_change(monkeypatch) -> None:
+    now = [datetime.now(UTC)]
+    monkeypatch.setattr(inspector_module, "_selection_now", lambda: now[0])
+    explanation = ProfileContextSelectionExplanation(
+        state="available",
+        rows=(ProfileContextSelectionRow("expiring-id", "selected", 3),),
+        valid_until=now[0] + timedelta(milliseconds=200),
+    )
+
+    async def snapshot_factory():
+        return _selection_result(explanation)
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        now[0] += timedelta(seconds=1)
+        await asyncio.sleep(0.25)
+        await _wait_until(
+            pilot,
+            lambda: (
+                "expiring-id"
+                not in " ".join(str(label.renderable) for label in modal.query(Label))
+            ),
+        )
+        assert "expiring-id" not in modal._format_export_text()
+
+
+@pytest.mark.asyncio
+async def test_selection_late_refresh_cannot_replace_newer_result() -> None:
+    gate = asyncio.Event()
+    calls = 0
+
+    async def snapshot_factory():
+        nonlocal calls
+        calls += 1
+        call = calls
+        if call == 2:
+            await gate.wait()
+        return _selection_result(
+            ProfileContextSelectionExplanation(
+                state="available",
+                rows=(ProfileContextSelectionRow(f"id-{call}", "selected", 2),),
+            ),
+            call=call,
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        old_load = asyncio.create_task(modal._load_snapshot())
+        await _wait_until(pilot, lambda: calls == 2)
+        newer_load = asyncio.create_task(modal._load_snapshot())
+        await _wait_until(pilot, lambda: calls == 3)
+        gate.set()
+        await old_load
+        await newer_load
+        await _wait_until(
+            pilot,
+            lambda: (
+                "id-3"
+                in " ".join(str(label.renderable) for label in modal.query(Label))
+            ),
+        )
+        rendered = " ".join(str(label.renderable) for label in modal.query(Label))
+        assert "id-2" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_selection_dismissal_clears_in_flight_result() -> None:
+    gate = asyncio.Event()
+    calls = 0
+
+    async def snapshot_factory():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            await gate.wait()
+        return _selection_result(
+            ProfileContextSelectionExplanation(
+                state="available",
+                rows=(ProfileContextSelectionRow("private-id", "selected", 2),),
+            ),
+            call=calls,
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        await pilot.click("#console-inspector-next-send-refresh")
+        await _wait_until(pilot, lambda: calls == 2)
+        await modal.action_dismiss()
+        gate.set()
+        await pilot.pause()
+        assert modal._selection_explanation is None
+        assert app.screen is not modal
+
+
+@pytest.mark.asyncio
+async def test_selection_dismissal_clears_visible_rows() -> None:
+    async def snapshot_factory():
+        return _selection_result(
+            ProfileContextSelectionExplanation(
+                state="available",
+                rows=(ProfileContextSelectionRow("private-id", "selected", 2),),
+            )
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_NEXT_SEND)
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        assert modal._selection_explanation is not None
+        await modal.action_dismiss()
+        await pilot.pause()
+        assert app.screen is not modal
+        assert modal._selection_explanation is None
+
+
+@pytest.mark.asyncio
+async def test_selection_rechecks_owner_after_other_preview_work() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    current = [True]
+    explanation = ProfileContextSelectionExplanation(
+        state="available",
+        rows=(ProfileContextSelectionRow("stale-id", "selected", 2),),
+    )
+
+    async def selection_current():
+        return current[0]
+
+    async def snapshot_factory():
+        result = _selection_result(explanation)
+        return ConsoleNextSendSelectionResult(
+            result.snapshot, explanation, selection_current
+        )
+
+    async def project_state_factory():
+        entered.set()
+        await release.wait()
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            snapshot_factory=snapshot_factory,
+            project_instruction_state_factory=project_state_factory,
+            initial_tab=TAB_NEXT_SEND,
+        )
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: entered.is_set())
+        current[0] = False
+        release.set()
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        rendered = " ".join(
+            str(label.renderable)
+            for label in modal.query_one(_SELECTION_PANEL, Collapsible).query(Label)
+        )
+        assert "unavailable" in rendered
+        assert "stale-id" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_selection_refresh_publishes_current_project_instruction_state() -> None:
+    from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
+
+    before = ConsoleProjectInstructionState("disabled", False, "before", "match")
+    after = ConsoleProjectInstructionState("disabled", False, "after", "match")
+
+    async def project_state_factory():
+        return after
+
+    async def snapshot_factory():
+        return _selection_result(ProfileContextSelectionExplanation(state="empty"))
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            initial_tab=TAB_NEXT_SEND,
+            snapshot_factory=snapshot_factory,
+            project_instruction_state=before,
+            project_instruction_state_factory=project_state_factory,
+        )
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: modal._snapshot_ready)
+        assert modal._project_instruction_state == after
+        await _wait_until(
+            pilot,
+            lambda: any(
+                "Binding: after" in str(widget.renderable)
+                for widget in modal.query(
+                    "#console-context-project-instructions Static"
+                )
+            ),
+        )
+        assert _has_selection_panel(modal)
+
+
+@pytest.mark.asyncio
+async def test_target_invalidation_removes_selection_and_keeps_snapshot_fences() -> (
+    None
+):
+    current = [True]
+
+    async def snapshot_factory():
+        return _selection_result(
+            ProfileContextSelectionExplanation(
+                state="available",
+                rows=(ProfileContextSelectionRow("target-id", "selected", 2),),
+            )
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            initial_tab=TAB_NEXT_SEND,
+            snapshot_factory=snapshot_factory,
+            target_is_current=lambda: current[0],
+        )
+    )
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        await _wait_until(pilot, lambda: _has_selection_panel(modal))
+        generation = modal._snapshot_generation
+        current[0] = False
+        assert not modal._target_authority_is_current()
+        await _wait_until(pilot, lambda: not _has_selection_panel(modal))
+        assert modal._selection_explanation is None
+        assert modal._snapshot_generation > generation
+        assert not modal._snapshot_ready
+        assert modal.snapshot.next_send_payload == {}

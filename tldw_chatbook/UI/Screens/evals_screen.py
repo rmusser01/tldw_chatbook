@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from importlib import import_module as _import_module
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from loguru import logger
@@ -48,11 +49,6 @@ from ...config import get_user_data_dir
 from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.character_probe.cards import snapshot_cards
 from ...Evals.character_probe.models import CharacterProbeConfig
-from ...Evals.character_probe.runner import (
-    CancelToken as CharacterCancelToken,
-    ChatCallable,
-    CharacterProbeRunner,
-)
 from ...Evals.character_probe.storage import (
     create_probe_run_group,
     is_probe_set,
@@ -76,39 +72,27 @@ from ...Evals.skill_eval.storage import (
     save_report,
     save_skill_eval_bench,
 )
-from ...Evals.skill_eval.subject import (
-    SubjectError,
-    subject_from_directory,
-    subject_from_store,
-)
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.models import Target as WordBenchTarget
-from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
 from ...Evals.word_bench.storage import _unique_name, duplicate_bench
 from ...Skills_Interop.local_skills_service import (
     LocalSkillsService,
     default_local_skills_store_dir,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.character_bench_editor import CharacterBenchEditor, ProbeSetDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
-from ..Evals.inspector import CharacterBenchEstimate, EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
 from ..Evals.results_grid import ResultsGrid
 from ..Evals.skill_eval_detail import SkillEvalDetail
-from ..Evals.skill_eval_launch import (
-    builtin_tool_names,
-    make_skill_eval_chat,
-    reserved_names_for,
-    store_skill_names,
-)
 from ..Evals.skill_eval_panel import SkillEvalPanel
 from ..Evals.snippet_editor import SnippetEditor
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Lab_Modules.lab_rail_layout import LabRailLayout
 from .lab_frame import LabScreen
+
+_screen = _import_module(__name__)
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -168,7 +152,7 @@ def _extract_chat_reply_text(response: Any) -> str:
     )
 
 
-def _default_character_probe_chat_factory(_config: CharacterProbeConfig) -> ChatCallable:
+def _default_character_probe_chat_factory(_config: CharacterProbeConfig) -> _screen.ChatCallable:
     """Production ``ChatCallable``: a real call through the app's normal
     chat path (``Chat_Functions.chat_api_call``), per the design spec's own
     "Execution" section ("multi-turn messages in, text out, real sampler,
@@ -296,7 +280,7 @@ class EvalsScreen(LabScreen):
         #: ``WordBenchRunner``'s own client_factory parameter. ``None`` in
         #: production.
         self._sample_bench_client_factory: Optional[
-            Callable[[WordBenchTarget], CaptureClientLike]
+            Callable[[WordBenchTarget], _screen.CaptureClientLike]
         ] = None
         #: True for the duration of one create-and-run flow. Guards against
         #: a second click starting a second worker once a run is genuinely
@@ -319,7 +303,7 @@ class EvalsScreen(LabScreen):
         #: accepts one and a future PR wiring an actual Cancel button (PR
         #: 3c, per this program's own PR numbering) should not need a
         #: second plumbing pass to reach it.
-        self._sample_bench_cancel_token: Optional[CancelToken] = None
+        self._sample_bench_cancel_token: Optional[_screen.CancelToken] = None
         #: The selection snapshotted in ``_on_sample_bench_requested`` at
         #: PRESS time, before ``run_worker`` is even called -- same
         #: capture-outside-the-worker rationale as ``_bench_run_task_id``
@@ -347,7 +331,7 @@ class EvalsScreen(LabScreen):
         #: no-current-caller status as ``_sample_bench_cancel_token`` above
         #: (no Cancel affordance exists in this screen yet): kept as a
         #: real, threaded seam rather than a decorative parameter.
-        self._bench_run_cancel_token: Optional[CancelToken] = None
+        self._bench_run_cancel_token: Optional[_screen.CancelToken] = None
         #: task-1482 Task 7 fix round 1 (reviewer-found reentrancy): True
         #: from the moment ``_on_delete_bench_pressed`` dispatches
         #: ``_delete_bench_flow`` until ``_apply_bench_deletion`` finishes
@@ -385,7 +369,7 @@ class EvalsScreen(LabScreen):
         #: further turns/conversations but cannot abort a turn already
         #: in flight, since every provider call is dispatched through
         #: ``asyncio.to_thread``, which survives Task cancellation.
-        self._character_bench_run_cancel_token: Optional[CharacterCancelToken] = None
+        self._character_bench_run_cancel_token: Optional[_screen.CharacterCancelToken] = None
         #: DI seam for tests only -- overrides the production chat callable
         #: (``_default_character_probe_chat_factory``, a plain synchronous
         #: ``def`` dispatched to a real llama.cpp endpoint via
@@ -401,7 +385,7 @@ class EvalsScreen(LabScreen):
         #: means every target a character bench can ever run against is
         #: implicitly llama.cpp today. ``None`` in production.
         self._character_probe_chat_factory: Optional[
-            Callable[[CharacterProbeConfig], ChatCallable]
+            Callable[[CharacterProbeConfig], _screen.ChatCallable]
         ] = None
         #: True for the duration of one skill-eval run flow -- the fourth
         #: member of the same cross-worker guard family as
@@ -1033,7 +1017,7 @@ class EvalsScreen(LabScreen):
         # extra sort needed.
         probe_set = probe_sets[0]
         app_config = self._current_app_config()
-        target = sample_bench.resolve_unsteered_llama_cpp_target(
+        target = _screen.sample_bench.resolve_unsteered_llama_cpp_target(
             self._view_model, app_config, create=True
         )
         target_ids = (target["id"],) if target is not None else ()
@@ -1204,7 +1188,7 @@ class EvalsScreen(LabScreen):
         if db is None:
             return
         app_config = self._current_app_config()
-        if sample_bench.configured_llama_cpp_url(app_config) is None:
+        if _screen.sample_bench.configured_llama_cpp_url(app_config) is None:
             self.app_instance.notify(
                 "No llama.cpp server is configured; set one in Settings "
                 "first.",
@@ -1212,9 +1196,9 @@ class EvalsScreen(LabScreen):
                 markup=False,
             )
             return
-        model_id = sample_bench.configured_llama_cpp_model_id(app_config) or "default"
+        model_id = _screen.sample_bench.configured_llama_cpp_model_id(app_config) or "default"
         typed_name = event.name.strip() if event.name else ""
-        name = event.name if typed_name else _unique_name(sample_bench.BENCH_EDITOR_TARGET_NAME)
+        name = event.name if typed_name else _unique_name(_screen.sample_bench.BENCH_EDITOR_TARGET_NAME)
         config: dict[str, str] = {}
         if event.prefix:
             config["prefix"] = event.prefix
@@ -1331,13 +1315,13 @@ class EvalsScreen(LabScreen):
         form (task-1482 Task 2's own motivation).
         """
         app_config = self._current_app_config()
-        cancel_token = CancelToken()
+        cancel_token = _screen.CancelToken()
         self._sample_bench_running = True
         self._sample_bench_cancel_token = cancel_token
         self._set_sample_bench_running_ui()
         result = None
         try:
-            result = await sample_bench.create_and_run_sample_bench(
+            result = await _screen.sample_bench.create_and_run_sample_bench(
                 self._view_model,
                 app_config,
                 client_factory=self._sample_bench_client_factory,
@@ -1456,7 +1440,7 @@ class EvalsScreen(LabScreen):
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches _footer_status's own local import
 
         try:
-            inspector = self.query_one(EvalsCellInspector)
+            inspector = self.query_one(_screen.EvalsCellInspector)
         except QueryError:
             return
         inspector.show_cell(event)
@@ -1541,13 +1525,13 @@ class EvalsScreen(LabScreen):
         """
         app_config = self._current_app_config()
         task_id = self._bench_run_task_id
-        cancel_token = CancelToken()
+        cancel_token = _screen.CancelToken()
         self._bench_run_running = True
         self._bench_run_cancel_token = cancel_token
         self._set_bench_run_running_ui()
         result = None
         try:
-            result = await sample_bench.run_existing_bench(
+            result = await _screen.sample_bench.run_existing_bench(
                 self._view_model,
                 app_config,
                 task_id,
@@ -1784,7 +1768,7 @@ class EvalsScreen(LabScreen):
         swallowed.
         """
         task_id = self._character_bench_run_task_id
-        cancel_token = CharacterCancelToken()
+        cancel_token = _screen.CharacterCancelToken()
         self._character_bench_run_running = True
         self._character_bench_run_cancel_token = cancel_token
         self._set_bench_run_running_ui()
@@ -1844,7 +1828,7 @@ class EvalsScreen(LabScreen):
                 or _default_character_probe_chat_factory
             )
             chat_fn = factory(config)
-            runner = CharacterProbeRunner(chat_fn, cancel_token)
+            runner = _screen.CharacterProbeRunner(chat_fn, cancel_token)
             conversations = await runner.run(
                 cards,
                 probe_set,
@@ -2328,7 +2312,7 @@ class EvalsScreen(LabScreen):
         feed, so the next mount re-feeds its own panel.
         """
         try:
-            summaries, _names = await store_skill_names(
+            summaries, _names = await _screen.store_skill_names(
                 self._current_app_config()
             )
         except Exception:
@@ -2403,7 +2387,7 @@ class EvalsScreen(LabScreen):
         screen recompose (task-15475).
         """
         try:
-            summaries, _names = await store_skill_names(
+            summaries, _names = await _screen.store_skill_names(
                 self._current_app_config()
             )
         except Exception:
@@ -2561,7 +2545,7 @@ class EvalsScreen(LabScreen):
             # comes from the stored bench.
             config = replace(config, depth=self._skill_eval_depth)
             if config.subject_kind == "directory":
-                subject = subject_from_directory(config.subject_ref)
+                subject = _screen.subject_from_directory(config.subject_ref)
             else:
                 # The same store-dir resolution app.py's own local skills
                 # stack uses (app.py:8635 precedent, copied verbatim --
@@ -2569,7 +2553,7 @@ class EvalsScreen(LabScreen):
                 service = LocalSkillsService(
                     store_dir=default_local_skills_store_dir(get_user_data_dir())
                 )
-                subject = await subject_from_store(service, config.subject_ref)
+                subject = await _screen.subject_from_store(service, config.subject_ref)
             generator = self._skill_eval_target(
                 db, self._skill_eval_generator_target_id
             )
@@ -2579,7 +2563,7 @@ class EvalsScreen(LabScreen):
                 db, bench_id, config, subject, generator, judge, estimate
             )
             app_config = self._current_app_config()
-            chat, problems = make_skill_eval_chat(app_config, generator, judge)
+            chat, problems = _screen.make_skill_eval_chat(app_config, generator, judge)
             if problems:
                 db.update_run(
                     run_id,
@@ -2594,8 +2578,8 @@ class EvalsScreen(LabScreen):
                     markup=False,
                 )
                 return
-            skill_summaries, skill_names = await store_skill_names(app_config)
-            builtin = builtin_tool_names()
+            skill_summaries, skill_names = await _screen.store_skill_names(app_config)
+            builtin = _screen.builtin_tool_names()
             runner = SkillEvalRunner(chat, cancel_token)
             report = await runner.run(
                 subject,
@@ -2607,7 +2591,7 @@ class EvalsScreen(LabScreen):
                 # Final-review Critical 2: the subject's own name must NOT
                 # be in the reserved set -- every store-sourced subject
                 # otherwise flags its own NAME_COLLISION (−5%).
-                reserved_names=reserved_names_for(
+                reserved_names=_screen.reserved_names_for(
                     subject.name, skill_names, builtin
                 ),
                 progress=self._on_skill_eval_progress,
@@ -3444,7 +3428,7 @@ class EvalsScreen(LabScreen):
                 self._view_model.bench_by_id(selection.id) if selection.id else None
             )
             if bench is not None:
-                yield EvalsInspector(
+                yield _screen.EvalsInspector(
                     self._view_model,
                     selection.id,
                     preflight,
@@ -3477,7 +3461,7 @@ class EvalsScreen(LabScreen):
                 else None
             )
             if character_bench_row is not None:
-                yield CharacterBenchEstimate(
+                yield _screen.CharacterBenchEstimate(
                     self._view_model,
                     selection.id,
                     id="evals-inspector-character-bench",
@@ -3546,7 +3530,7 @@ class EvalsScreen(LabScreen):
                 # type that carries none. Excluded for a SKILL-EVAL run
                 # group for the identical reason (`SkillEvalDetail`
                 # mounts, not the grid).
-                yield EvalsCellInspector(id="evals-cell-inspector")
+                yield _screen.EvalsCellInspector(id="evals-cell-inspector")
 
         label, disabled, tooltip = self._primary_action_state()
         if disabled and tooltip:
@@ -3931,3 +3915,41 @@ class EvalsScreen(LabScreen):
     def restore_state(self, state):
         """Restore evals screen state."""
         super().restore_state(state)
+
+
+_LAZY_EXPORTS = {
+    "SubjectError": ("...Evals.skill_eval.subject", "SubjectError"),
+    "subject_from_directory": ("...Evals.skill_eval.subject", "subject_from_directory"),
+    "subject_from_store": ("...Evals.skill_eval.subject", "subject_from_store"),
+    "CharacterCancelToken": ("...Evals.character_probe.runner", "CancelToken"),
+    "ChatCallable": ("...Evals.character_probe.runner", "ChatCallable"),
+    "CharacterProbeRunner": ("...Evals.character_probe.runner", "CharacterProbeRunner"),
+    "CancelToken": ("...Evals.word_bench.runner", "CancelToken"),
+    "CaptureClientLike": ("...Evals.word_bench.runner", "CaptureClientLike"),
+    "sample_bench": ("..Evals.sample_bench", None),
+    "CharacterBenchEstimate": ("..Evals.inspector", "CharacterBenchEstimate"),
+    "EvalsCellInspector": ("..Evals.inspector", "EvalsCellInspector"),
+    "EvalsInspector": ("..Evals.inspector", "EvalsInspector"),
+    "builtin_tool_names": ("..Evals.skill_eval_launch", "builtin_tool_names"),
+    "make_skill_eval_chat": ("..Evals.skill_eval_launch", "make_skill_eval_chat"),
+    "reserved_names_for": ("..Evals.skill_eval_launch", "reserved_names_for"),
+    "store_skill_names": ("..Evals.skill_eval_launch", "store_skill_names"),
+}
+
+
+def __getattr__(name: str):
+    """Resolve original execution or inspector aliases at their use sites."""
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module, attribute = _LAZY_EXPORTS[name]
+    owner = _import_module(module, __package__)
+    value = getattr(owner, attribute) if attribute else owner
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
+
+__all__ = [name for name in __dir__() if not name.startswith("_")]

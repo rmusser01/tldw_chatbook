@@ -88,6 +88,10 @@ NON_SETTING_CONTROLS: frozenset[tuple[str, str]] = frozenset(
         # settings-provider-search above -- it filters content, it is not
         # itself a persisted setting.
         ("theme", "settings-theme-filter"),
+        # Selects which indexed color field a one-shot preset fills.
+        ("theme", "settings-theme-preset-target"),
+        # Selects the backend editor; web-search-default owns the saved choice.
+        ("web-search", "web-search-backend"),
     }
 )
 
@@ -312,7 +316,7 @@ def test_speech_provider_form_fields_match_the_panel_source():
     The Speech panel composes only the default provider's configure form,
     so SPEECH_TTS_PROVIDER_FORM_FIELDS (which the index derives its rows
     from) is compared against the panel's _compose_provider_form source:
-    every self._input/_select/_switch(provider_id, "key", "Label") call
+    every self._input/_select/_switch/_path(provider_id, "key", "Label") call
     must have a matching table row and vice versa.
     """
     import re
@@ -331,7 +335,7 @@ def test_speech_provider_form_fields_match_the_panel_source():
         branch = re.search(r'provider_id == "([a-z_0-9]+)"', line)
         if branch:
             provider = branch.group(1)
-        if re.search(r"self\._(input|select|switch)\(", line):
+        if re.search(r"self\._(input|select|switch|path)\(", line):
             chunk = "\n".join(body_lines[i : i + 6])
             args = re.search(
                 r'provider_id,\s*\n?\s*"([a-z_0-9]+)",\s*\n?\s*"([^"]+)"', chunk

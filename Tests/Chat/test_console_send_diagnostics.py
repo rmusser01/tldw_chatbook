@@ -18,6 +18,8 @@ from tldw_chatbook.UI.Logs_Window import LogRecord, LogsWindow
 from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilter
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def sinks(tmp_path):

@@ -802,6 +802,32 @@ def test_settings_category_rules_have_source_and_bundle_integrity(request) -> No
         assert "margin: $ds-space-0;" in group_title
 
 
+@private_profile_test
+def test_profile_panel_styles_wait_for_settings_but_recovery_is_boot_styled(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Opening Settings preserves profile rules without paying them at boot."""
+    source = (_CSS_ROOT / "components/_settings_personal_context.tcss").read_text()
+    bundle = _BUNDLED_STYLESHEET.read_text()
+    settings = (_CSS_ROOT / "screen_agentic_settings.tcss").read_text()
+    for selector in (
+        ".personal-context-provenance",
+        ".personal-context-provenance CollapsibleTitle:focus",
+        "#personal-context-deleted-metadata",
+        "#personal-context-settings-panel",
+        ".personal-context-toolbar",
+    ):
+        assert selector not in bundle
+        assert _declarations(settings, selector) == _declarations(source, selector)
+    for selector in (
+        "RecoveryPassphraseDialog",
+        "#personal-context-recovery-dialog",
+        "#personal-context-recovery-dialog Input",
+        "#personal-context-recovery-dialog .button-container",
+    ):
+        assert _declarations(bundle, selector) == _declarations(source, selector)
+
+
 # --- TASK-25812 split unit contracts (Qodo #2281 #3); ADR-161 task 10 keeps
 # --- them on a locally-built spec: the production agentic-derived splits no
 # --- longer include a console owner (dissolved into the bundle).

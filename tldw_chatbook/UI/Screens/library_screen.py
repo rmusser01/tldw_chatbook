@@ -230,9 +230,6 @@ from ...Library.library_note_import_state import (
     LibraryNoteImportSnapshot,
     NoteImportPhase,
 )
-from ...Library.library_notes_lasting_sync_state import (
-    LibraryNotesLastingSyncSnapshot,
-)
 from ...Library.library_notes_tree_paging import (
     LIBRARY_NOTES_TREE_PAGE_SIZE,
     NotesBranchKey,
@@ -279,9 +276,6 @@ from ...Library.library_prompts_state import (
     build_prompt_browse_list_state,
     coerce_prompt_editor_mode,
 )
-from ...Prompt_Management.prompt_batch_models import (
-    PromptBatchTarget,
-)
 from ...Library.library_skills_state import (
     SkillBrowseResult,
     SkillBrowseScope,
@@ -294,18 +288,11 @@ from ...Prompt_Management.prompt_variables import (
     PromptVariableApplication,
     compile_prompt_variables,
 )
-from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
-from ...Widgets.Prompts.prompt_block_editor_state import (
-    PromptBlockEditorState,
-)
 from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
-from ...Widgets.Library.prompt_delete_confirmation_modal import (
-    PromptDeleteDecision,
-)
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
@@ -317,6 +304,7 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
 )
 from ...Library.library_rag_state import (
+    _trailing_index as _library_trailing_index,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
@@ -334,6 +322,7 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    _copy_library_continue_receipt as _library_copy_continue_receipt,
     LIBRARY_CANVAS_LANDING_COPY,
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
@@ -487,9 +476,6 @@ from ...Widgets.Library.library_note_folder_dialog import (
 )
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
-from ...Widgets.Library.library_notes_canvas import (
-    LibraryNotePresentationState,
-)
 from ...Widgets.Library.library_note_import_canvas import LibraryNoteImportCanvas
 from ...Widgets.Library.library_notes_add_from_files_canvas import (
     LibraryNotesAddFromFilesCanvas,
@@ -515,34 +501,14 @@ from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
     _retry_failure_reason,
 )
-from ..Library_Modules.library_media_trash_browse_controller import (
-    LibraryMediaTrashBrowseController,
-    MediaTrashMutationClaim,
-)
-from ..Library_Modules.library_collections_capture_controller import (
-    LibraryCollectionsCaptureController,
-)
-from ..Library_Modules.library_collections_state import LibraryCollectionsState
 from ..Library_Modules.library_conversations_controller import (
     LibraryConversationsController,
 )
-from ..Library_Modules.library_conversations_state import LibraryConversationsState
 from ..Library_Modules.library_export_controller import LibraryExportController
-from ..Library_Modules.library_export_state import LibraryExportState
-from ..Library_Modules.library_ingest_state import LibraryIngestState
-from ..Library_Modules.library_media_state import (
-    LibraryMediaState,
-)
-from ..Library_Modules.library_notes_state import (
-    LibraryNotesState,
-)
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
 )
-from ..Library_Modules.library_prompts_state import LibraryPromptsState
-from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
-from ..Library_Modules.library_skills_state import LibrarySkillsState
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
@@ -569,16 +535,36 @@ from .study_scope_models import (
 )
 
 if TYPE_CHECKING:
+    from ...Library.library_notes_lasting_sync_state import (
+        LibraryNotesLastingSyncSnapshot,
+    )
+
     # Type-only: the shared modal owns the runtime acquisition-plan import.
     from ...Library.review_set_state import ReviewProgress
     from ...Model_Artifacts.acquisition import PreflightReport
     from ...Notes.note_import_executor import NoteImportExecutor
     from ...Notes.note_import_receipts import NoteImportReceiptRepository
+    from ...Prompt_Management.prompt_batch_models import (
+        PromptBatchTarget,
+    )
     from ...Widgets.Library.library_file_notes_workspace import (
         LibraryFileNotesWorkspace,
     )
+    from ...Widgets.Library.library_notes_canvas import (
+        LibraryNotePresentationState,
+    )
+    from ...Widgets.Library.prompt_delete_confirmation_modal import (
+        PromptDeleteDecision,
+    )
+    from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+    from ...Widgets.Prompts.prompt_block_editor_state import (
+        PromptBlockEditorState,
+    )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Library_Modules.library_inspection_admission import PreparedLibraryInspection
+    from ..Library_Modules.library_media_trash_browse_controller import (
+        MediaTrashMutationClaim,
+    )
     from ..Library_Modules.library_unavailable_navigation import (
         _LibraryCharacterNavigationAdmission,
     )
@@ -592,6 +578,39 @@ else:
         )
 
         return Workspace(*args, **kwargs)
+
+
+def __getattr__(name: str) -> Any:
+    """Preserve historical Library type exports without importing them at startup."""
+    from importlib import import_module
+
+    modules = {
+        "LibraryCollectionsCaptureController": "..Library_Modules.library_collections_capture_controller",
+        "LibraryCollectionsState": "..Library_Modules.library_collections_state",
+        "LibraryConversationsState": "..Library_Modules.library_conversations_state",
+        "LibraryExportState": "..Library_Modules.library_export_state",
+        "LibraryIngestState": "..Library_Modules.library_ingest_state",
+        "LibraryMediaState": "..Library_Modules.library_media_state",
+        "LibraryMediaTrashBrowseController": "..Library_Modules.library_media_trash_browse_controller",
+        "LibraryNotePresentationState": "...Widgets.Library.library_notes_canvas",
+        "LibraryNotesLastingSyncSnapshot": "...Library.library_notes_lasting_sync_state",
+        "LibraryNotesState": "..Library_Modules.library_notes_state",
+        "LibraryPromptsState": "..Library_Modules.library_prompts_state",
+        "LibraryRagSearchState": "..Library_Modules.library_rag_search_state",
+        "LibrarySkillsState": "..Library_Modules.library_skills_state",
+        "MediaTrashMutationClaim": "..Library_Modules.library_media_trash_browse_controller",
+        "PromptBatchTarget": "...Prompt_Management.prompt_batch_models",
+        "PromptBlockEditor": "...Widgets.Prompts.prompt_block_editor",
+        "PromptBlockEditorState": "...Widgets.Prompts.prompt_block_editor_state",
+        "PromptDeleteDecision": "...Widgets.Library.prompt_delete_confirmation_modal",
+        "_LibraryDatabaseNoteSessionPort": "..Library_Modules.note_session_port",
+    }
+    module = modules.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module, __package__), name)
+    globals()[name] = value
+    return value
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -838,7 +857,6 @@ from ..Library_Modules.screen_support_types import (
     _LibraryNotesDeletedFolderReceipt,
     _ParakeetV2NoPendingReportError,
 )
-from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
 from ..Library_Modules.canvas_sync import (
     _move_library_list_row_focus,
     _patch_library_disabled_marker_label,
@@ -846,6 +864,9 @@ from ..Library_Modules.canvas_sync import (
     _sync_library_canvas,
 )
 from ..Library_Modules.screen_helpers import (
+    _assign_library_reader_preferences_attribute,
+    _library_note_editor_exit_veto_message,
+    _review_footer_entries as _library_review_footer_entries,
     _library_screen_is_current,
     library_note_persisted_title,
     _ingestible_file_filters,
@@ -861,74 +882,6 @@ from ..Library_Modules.screen_helpers import (
     _collection_scoped_conflicts,
     _canonical_shortcut_key,
 )
-
-
-def _assign_library_reader_preferences_attribute(
-    owner: Any, attribute: str, value: Any
-) -> None:
-    """Write through a possibly-dotted attribute path off ``owner``.
-
-    Task 9 (Conversations cleanup) support: ``_replace_library_reader_preference``
-    and ``_persist_library_reader_preference`` dispatch across every reader
-    destination (media, collections, conversations, notes, notes_files,
-    prompts, skills) through a ``{destination: attribute_name}`` dict, read
-    with plain ``getattr``/``operator.attrgetter`` and written with plain
-    ``setattr``. Every destination except conversations and collections still
-    keeps its reader-preferences object as a flat screen attribute, so a bare
-    attribute-name string has always been enough. Conversations' own
-    ``reader_preferences`` field moved to ``self._conversations_state.reader_preferences``
-    (Task 6/9) -- one extra hop the generic dispatch's plain ``setattr``
-    cannot express. This resolves the last (dotted) segment's owner via
-    ``operator.attrgetter`` and assigns onto it, and is a no-op passthrough
-    (``setattr(owner, attribute, value)``) for every other, undotted,
-    destination -- so the five not-yet-extracted subsystems are unaffected.
-    Future subsystem extractions hit this exact same shape; this helper is
-    meant to keep serving them, not to be re-derived per subsystem.
-
-    Second use, added by Task 4 (Export cleanup): ``_close_open_library_
-    choice_strip`` dispatches across a DIFFERENT dict-of-name-strings
-    (media/prompts/skills/export choice-strip visibility, built by
-    ``_library_open_choice_strip``) with the identical possibly-dotted-path
-    shape -- Export's own visibility field moved to ``self._export_state.
-    quality_choices_visible`` (Task 2/4), while media/prompts/skills keep
-    flat screen attributes, so the same generic dotted-vs-flat passthrough
-    this docstring already describes serves that dispatcher too, without a
-    second near-identical helper.
-
-    Third use, added by Task 7 (Collections cleanup): the same two dicts'
-    ``"collections"`` entry moved from the flat ``_library_collections_
-    reader_preferences`` name to ``self._collections_state.reader_preferences``
-    (Task 5/7) -- exactly the same dotted-vs-flat shape Conversations already
-    established, requiring no change to this helper's own logic.
-    """
-    head, _, tail = attribute.rpartition(".")
-    target = operator.attrgetter(head)(owner) if head else owner
-    setattr(target, tail, value)
-
-
-def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
-    """The user-facing "why" and "what to do" for one flush-veto kind.
-
-    task-32133 AC#1 / fix round 1 Important 2: the mandated copy ("fix the
-    title or press Discard new note") is specific to VALIDATION_VETO; the
-    other four kinds each name their own real state and next step instead
-    of reusing that sentence verbatim. ``NoteFlushOutcome.message`` already
-    carries an accurate-but-technical string for these (meant for the
-    status line, e.g. "A destructive action is in progress."); this is the
-    same information reworded for a one-shot toast.
-    """
-    if kind is NoteFlushOutcomeKind.VALIDATION_VETO:
-        return "Can't leave yet — fix the title or press Discard new note."
-    if kind is NoteFlushOutcomeKind.FAILED:
-        return "Can't leave yet — the save failed; press Save to retry or Discard."
-    if kind is NoteFlushOutcomeKind.CONFLICTED:
-        return (
-            "Can't leave yet — this note changed elsewhere; "
-            "choose Overwrite or Reload."
-        )
-    if kind is NoteFlushOutcomeKind.BLOCKED:
-        return "Can't leave yet — another action is already in progress; wait for it to finish."
-    return "Can't leave yet — the note changed while saving; try again."  # STALE
 
 
 def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
@@ -2311,38 +2264,60 @@ class LibraryScreen(BaseAppScreen):
             resolve_root_collision,
         )
         from ...Notes.note_import_receipts import NoteImportReceiptRepository
+        from ..Library_Modules.library_collections_capture_controller import (
+            LibraryCollectionsCaptureController,
+        )
         from ..Library_Modules.library_collections_controller import (
             LibraryCollectionsController,
         )
+        from ..Library_Modules.library_collections_state import LibraryCollectionsState
         from ..Library_Modules.library_conversation_reader_controller import (
             LibraryConversationReaderController,
         )
+        from ..Library_Modules.library_conversations_state import (
+            LibraryConversationsState,
+        )
+        from ..Library_Modules.library_export_state import LibraryExportState
         from ..Library_Modules.library_ingest_controller import (
             LibraryIngestController,
         )
+        from ..Library_Modules.library_ingest_state import LibraryIngestState
         from ..Library_Modules.library_media_controller import (
             LibraryMediaController,
         )
+        from ..Library_Modules.library_media_state import (
+            LibraryMediaState,
+        )
+        from ..Library_Modules.library_media_trash_browse_controller import (
+            LibraryMediaTrashBrowseController,
+        )
         from ..Library_Modules.library_note_import_controller import (
             LibraryNoteImportController,
+        )
+        from ..Library_Modules.library_notes_controller import (
+            LibraryNotesController,
+        )
+        from ..Library_Modules.library_notes_state import (
+            LibraryNotesState,
         )
         from ..Library_Modules.library_notes_sync_controller import (
             InertLastingSyncRuntime,
             LibraryNotesSyncController,
         )
-        from ..Library_Modules.library_notes_controller import (
-            LibraryNotesController,
-        )
         from ..Library_Modules.library_prompts_controller import (
             LibraryPromptsController,
         )
+        from ..Library_Modules.library_prompts_state import LibraryPromptsState
         from ..Library_Modules.library_rag_search_controller import (
             LibraryRagSearchController,
         )
+        from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
         from ..Library_Modules.library_skill_import_controller import (
             ensure_library_skill_import_coordinator,
         )
         from ..Library_Modules.library_skills_controller import LibrarySkillsController
+        from ..Library_Modules.library_skills_state import LibrarySkillsState
+        from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
 
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)
@@ -4658,48 +4633,7 @@ class LibraryScreen(BaseAppScreen):
             return tier + (("enter", enter_label),)
         return tier
 
-    @staticmethod
-    def _review_footer_entries(
-        progress: str, *, at_last: bool = False
-    ) -> tuple[tuple[str, str], ...]:
-        """The Reader footer's review-set segment for one progress line.
-
-        task-31225 (re-critique P2): on a COMPLETE set the final ``]`` is an
-        idempotent no-op, so advertising it violates the honest-footer rule
-        (task-28005). Completion keeps ``m`` (un-marking resumes the walk)
-        and names ``R`` as the next step. The completion check reads the
-        canonical ``format_review_progress`` "All N reviewed" form.
-
-        task-31271 seam (c): on the LAST live item a forward ``]`` marks
-        that item done in place rather than walking anywhere
-        (``plan_walk``'s completion gesture), so "next in set" promised an
-        item that does not exist (critique #4, B cap_50).
-
-        Args:
-            progress: The formatted live progress line.
-            at_last: Whether the cursor sits on the last live item, so the
-                next ``]`` completes the set instead of advancing.
-
-        Returns:
-            ``(key, label)`` entries for the footer.
-        """
-        if progress.startswith("All "):
-            return (
-                ("m", "toggle reviewed"),
-                ("R", "finish review"),
-                ("", progress),
-            )
-        return (
-            # task-31635 (critique #5 item 9, ruling): a forward step marks
-            # the item you leave done, and "next in set" hid that -- users
-            # read the mark as an accident. The behaviour stays (it is the
-            # set's contract since task-31233); the chip stops being coy.
-            ("]", "finish review" if at_last else "next (marks reviewed)"),
-            ("[", "prev in set"),
-            ("m", "toggle reviewed"),
-            ("R", "exit review"),
-            ("", progress),
-        )
+    _review_footer_entries = staticmethod(_library_review_footer_entries)
 
     def _library_footer_shortcuts_for_current_state(
         self,
@@ -9882,24 +9816,7 @@ class LibraryScreen(BaseAppScreen):
         state["library_export_last_bytes"] = self._export_state.last_bytes
         return state
 
-    @staticmethod
-    def _copy_library_continue_receipt(
-        receipt: Mapping[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        """Detach the small primitive returning-Library receipt."""
-
-        if receipt is None:
-            return None
-        scope = dict(receipt["scope"])
-        deselected = scope.get("scope_deselected")
-        if isinstance(deselected, list):
-            scope["scope_deselected"] = list(deselected)
-        return {
-            "version": receipt["version"],
-            "row_id": receipt["row_id"],
-            "scope": scope,
-            "source_list_adjusted": receipt["source_list_adjusted"],
-        }
+    _copy_library_continue_receipt = staticmethod(_library_copy_continue_receipt)
 
     def _library_continue_receipt_for_current_route(self) -> dict[str, Any] | None:
         """Return an authoritative, content-free receipt for the active source."""
@@ -13560,11 +13477,6 @@ class LibraryScreen(BaseAppScreen):
         return (
             f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZES[source_type]}): {count}"
         )
-
-    def _hub_source_count_label(self, source_type: str, label: str) -> str:
-        count = self._local_source_counts[source_type]
-        suffix = "" if self._local_source_total_known[source_type] else "+"
-        return f"{label}: {count}{suffix}"
 
     def _source_sample_titles(self, source_type: str) -> list[str]:
         return [
@@ -34419,16 +34331,7 @@ class LibraryScreen(BaseAppScreen):
     async def rerun_library_search_from_history(self, event: Button.Pressed) -> None:
         return await self._rag_search_controller.rerun_library_search_from_history(event)
 
-    @staticmethod
-    def _trailing_index(button_id: str | None) -> int | None:
-        """Parse the trailing `-{index}` integer from a button id, or None."""
-        if not button_id:
-            return None
-        try:
-            index = int(button_id.rsplit("-", 1)[-1])
-        except ValueError:
-            return None
-        return index if index >= 0 else None
+    _trailing_index = staticmethod(_library_trailing_index)
 
     async def _start_library_rag_query(self) -> None:
         return await self._rag_search_controller._start_library_rag_query()

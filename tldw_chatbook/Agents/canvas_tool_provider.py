@@ -8,7 +8,7 @@ import weakref
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
 from tldw_chatbook.Canvas.guide import (
@@ -49,6 +49,9 @@ from .agent_models import (
     ToolSchema,
 )
 from .run_context import current_run_id, current_tool_call_id
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.profiles import ProfileSnapshot
 
 CANVAS_SOURCE = "canvas"
 _CANVAS_TOOL_ORDER = (
@@ -394,6 +397,50 @@ def build_canvas_runtime_guidance(
     return " ".join(sections)
 
 
+def _schema_with_authoring_profile(
+    schema: ToolSchema, snapshot: ProfileSnapshot | None
+) -> ToolSchema:
+    from tldw_chatbook.Canvas.authoring import canvas_authoring_guide
+    from tldw_chatbook.Canvas.profiles import ProfileSnapshot, resolve_profile
+
+    if schema.name == "canvas_guide" or not isinstance(snapshot, ProfileSnapshot):
+        return schema
+    creation = resolve_profile(
+        snapshot, operation="create", parent_profile=None, has_diagrams=True
+    )
+    profiles = {record.profile_id for record in snapshot.profiles}
+    profiles.add(creation.profile_id)
+    return _CanvasAuthoringSchema(
+        schema.id,
+        schema.name,
+        schema.description,
+        schema.parameters,
+        tuple(
+            (profile, canvas_authoring_guide(snapshot, profile))
+            for profile in sorted(profiles)
+        ),
+        creation.profile_id,
+    )
+
+
+def build_canvas_tool_catalog() -> tuple[ToolCatalogEntry, ...]:
+    """Return ordered Canvas metadata without reading guides or granting authority."""
+    return tuple(
+        ToolCatalogEntry(schema.id, name, _DESCRIPTIONS[name], CANVAS_SOURCE)
+        for name, schema in _SCHEMAS.items()
+    )
+
+
+def load_canvas_tool_schema(tool_id: str, snapshot: ProfileSnapshot | None) -> ToolSchema:
+    """Read one Canvas schema using the existing immutable runtime profile."""
+    name = _name_from_id(tool_id)
+    try:
+        schema = _SCHEMAS[name]
+    except KeyError:
+        raise KeyError(f"Unknown Canvas tool id: {tool_id}") from None
+    return _schema_with_authoring_profile(schema, snapshot)
+
+
 class CanvasToolProvider:
     """Expose Canvas artifact and guide tools bound to one server-owned scope.
 
@@ -528,45 +575,13 @@ class CanvasToolProvider:
     def list_catalog(self) -> list[ToolCatalogEntry]:
         if not self.scope_is_current():
             return []
-        return [
-            ToolCatalogEntry(
-                id=schema.id,
-                name=name,
-                one_line_description=_DESCRIPTIONS[name],
-                source=CANVAS_SOURCE,
-            )
-            for name, schema in _SCHEMAS.items()
-        ]
+        return list(build_canvas_tool_catalog())
 
     def load_schema(self, tool_id: str) -> ToolSchema:
-        name = _name_from_id(tool_id)
-        try:
-            schema = _SCHEMAS[name]
-        except KeyError:
-            raise KeyError(f"Unknown Canvas tool id: {tool_id}") from None
-        if name == "canvas_guide":
-            return schema
-        from tldw_chatbook.Canvas.authoring import canvas_authoring_guide
-        from tldw_chatbook.Canvas.profiles import ProfileSnapshot, resolve_profile
-
-        snapshot = getattr(self._coordinator, "profile_snapshot", None)
-        if not isinstance(snapshot, ProfileSnapshot):
-            return schema
-        creation = resolve_profile(
-            snapshot, operation="create", parent_profile=None, has_diagrams=True
-        )
-        profiles = {record.profile_id for record in snapshot.profiles}
-        profiles.add(creation.profile_id)
-        return _CanvasAuthoringSchema(
-            schema.id,
-            schema.name,
-            schema.description,
-            schema.parameters,
-            tuple(
-                (profile, canvas_authoring_guide(snapshot, profile))
-                for profile in sorted(profiles)
-            ),
-            creation.profile_id,
+        if _name_from_id(tool_id) == "canvas_guide":
+            return _SCHEMAS["canvas_guide"]
+        return load_canvas_tool_schema(
+            tool_id, getattr(self._coordinator, "profile_snapshot", None)
         )
 
     def approval_classification_for(
@@ -1278,4 +1293,6 @@ __all__ = [
     "CanvasToolProvider",
     "CanvasToolRegistrationAuthority",
     "build_canvas_runtime_guidance",
+    "build_canvas_tool_catalog",
+    "load_canvas_tool_schema",
 ]

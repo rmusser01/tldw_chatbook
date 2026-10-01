@@ -131,6 +131,14 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-185](185-network-chat-ircv3-and-tldw-pydle-boundary.md) | Accepted; ADR-186 amendments proposed | Preserve the approved Network Chat ownership and separately maintained Codeberg pydle fork boundary. |
 | [ADR-186](186-network-chat-handoff-reliability-amendments.md) | Proposed | Clarify bounded callback/transport delivery, late-reply isolation, current screen lifecycle and truthful release completion for the PTO handoff. |
 
+| [ADR-182](182-personal-context-memory-evolution.md) | Accepted | Evolve memory through existing owners, starting with an offline baseline, truthful provenance and selection inspection, and measured local retrieval. |
+| [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md) | Accepted (design only) | Bind future V2 Personal Context evidence to exact source authority/version/span and distinguish support, approval and temporal claim changes. |
+| [ADR-202](202-dependency-aware-personal-context-forgetting.md) | Accepted (design only) | Fence future forgetting across existing owners with source suppression, durable recovery and honest peer acknowledgements. |
+| [ADR-203](203-personal-context-provider-disclosure-authority.md) | Accepted (design only) | Separate restrictive model audiences from Sync and agent authority using qualified destination/purpose-bound local grants. |
+| [ADR-188](188-opt-in-proposal-only-memory-consolidation.md) | Accepted (design only) | Bound opt-in new-source consolidation to canonical proposals, exact foreground review and native disclosure/budget/recovery owners. |
+| [ADR-189](189-reviewed-memory-feedback-and-repair-ownership.md) | Accepted (design only) | Route explicit corrections and repair through canonical profiles and foreground Notes/lessons, with bounded non-authorizing guidance. |
+| [ADR-192](192-personal-context-v2-canonical-data-contract.md) | Accepted (design only) | Freeze inactive V2 aggregates, complete digest/attribution rules and restrictive disclosure without enabling native consumers. |
+| [ADR-193](193-native-v2-profile-compatibility-and-admission.md) | Accepted (design only) | Require current profile-wide consumer qualification and exact native atomic admission before V2 use. |
 | [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
 | [ADR-197](197-console-hook-configuration-review.md) | Accepted | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
 | [ADR-162](162-managed-agent-plugins.md) | Accepted | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |

@@ -25,6 +25,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -154,3 +156,137 @@ def test_engine_version_pin_is_chunking_free_and_single_sourced(
         f"stderr={result.stderr[-4000:]}"
     )
     assert "ENGINE_VERSION_PIN_OK:parity-1@385afa95" in result.stdout
+
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "tldw_chatbook.Chunking.lab_models",
+        "tldw_chatbook.Library.library_rechunk_service",
+        "tldw_chatbook.Chunking.lab_preflight",
+        "tldw_chatbook.Chunking.auto_selection",
+        "tldw_chatbook.UI.Screens.chunking_lab_screen",
+    ],
+)
+def test_chunking_preimport_owners_defer_engine_until_use(
+    tmp_path: Path, module: str
+) -> None:
+    """Each real pre-import entry point must independently avoid the engine."""
+    result = _run_isolated_python(
+        tmp_path,
+        f"""
+import importlib
+import sys
+owner = importlib.import_module({module!r})
+assert owner.__file__
+resident = sorted(name for name in sys.modules if
+    name.startswith("tldw_chatbook.Chunking.engine") or
+    name == "tldw_chatbook.Chunking.Chunk_Lib")
+assert not resident, resident
+print("DEFERRED_OK")
+""",
+    )
+    assert result.returncode == 0, (module, result.stdout, result.stderr[-4000:])
+    assert "DEFERRED_OK" in result.stdout
+
+
+def test_chunking_lazy_exports_preserve_real_objects_and_star_import(
+    tmp_path: Path,
+) -> None:
+    """Package exports stay discoverable and resolve to their original owners."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import importlib
+import sys
+import tldw_chatbook.Chunking as package
+expected = {
+    "Chunk_Lib": ["Chunker", "improved_chunking_process", "chunk_for_embedding",
+        "process_document_with_metadata", "DEFAULT_CHUNK_OPTIONS", "ENGINE_VERSION",
+        "ChunkingError", "InvalidChunkingMethodError", "InvalidInputError",
+        "LanguageDetectionError"],
+    "language_chunkers": ["LanguageChunkerFactory", "ChineseChunker",
+        "JapaneseChunker", "DefaultChunker"],
+    "token_chunker": ["TokenBasedChunker", "create_token_chunker"],
+}
+names = {name for members in expected.values() for name in members}
+assert set(package.__all__) == names
+assert names <= set(dir(package))
+assert "tldw_chatbook.Chunking.Chunk_Lib" not in sys.modules
+try:
+    package.not_an_export
+except AttributeError:
+    pass
+else:
+    raise AssertionError("unknown name must raise AttributeError")
+namespace = {}
+exec("from tldw_chatbook.Chunking import *", namespace)
+assert set(namespace) - {"__builtins__"} == names
+for owner, members in expected.items():
+    module = importlib.import_module("tldw_chatbook.Chunking." + owner)
+    assert getattr(package, owner) is module
+    for name in members:
+        assert getattr(package, name) is getattr(module, name) is namespace[name]
+        direct = {}
+        exec("from tldw_chatbook.Chunking import " + name, direct)
+        assert direct[name] is namespace[name]
+chunks = package.improved_chunking_process("one two three four", {
+    "method": "words", "max_size": 2, "overlap": 0,
+    "language": "en", "preserve_sentences": False,
+})
+assert [chunk["text"] for chunk in chunks] == ["one two", "three four"]
+print("EXPORTS_AND_USE_OK")
+""",
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr[-4000:])
+    assert "EXPORTS_AND_USE_OK" in result.stdout
+
+
+def test_chunking_deferred_aliases_preserve_annotations_and_patch_seams(
+    tmp_path: Path,
+) -> None:
+    """Original object aliases, annotations and real caller patch points remain usable."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import asyncio
+import importlib
+import inspect
+from typing import get_type_hints
+from unittest.mock import Mock
+from tldw_chatbook.Chunking import auto_selection, lab_preflight
+from tldw_chatbook.Library import library_rechunk_service as service
+for module in (auto_selection, lab_preflight, service):
+    for name, value in list(vars(module).items()):
+        if inspect.isfunction(value) and value.__module__ == module.__name__:
+            get_type_hints(value)
+    for name, (path, attribute) in module._LAZY_EXPORTS.items():
+        assert name in dir(module)
+        owner = importlib.import_module(path, module.__package__)
+        assert getattr(module, name) is getattr(owner, attribute)
+    exported = {}
+    exec("from " + module.__name__ + " import *", exported)
+    assert set(exported) - {"__builtins__"} == set(module.__all__)
+    assert all(exported[name] is getattr(module, name) for name in module.__all__)
+
+pattern_check = Mock(return_value=None)
+lab_preflight.check_pattern = pattern_check
+lab_preflight._pattern("abc", "test")
+pattern_check.assert_called_once_with("abc", max_len=256)
+resolved = {"name": "chosen"}
+resolver = Mock(return_value=resolved)
+chunker = Mock(side_effect=ValueError("test-patched-chunker"))
+service.resolve_template = resolver
+service.improved_chunking_process = chunker
+outcome = asyncio.run(service.rechunk_one_item(None,
+    {"id": 1, "content": "one two"}, spec={"template": "chosen"}))
+assert outcome["status"] == "failed", outcome
+assert "test-patched-chunker" in str(outcome), outcome
+resolver.assert_called_once_with(None, "chosen")
+chunker.assert_called_once_with("one two", {}, template=resolved)
+print("ALIASES_ANNOTATIONS_PATCHES_OK")
+""",
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr[-4000:])
+    assert "ALIASES_ANNOTATIONS_PATCHES_OK" in result.stdout

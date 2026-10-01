@@ -4,25 +4,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Callable, Iterator
 
+from pydantic import ValidationError
 from tldw_profile_core import (
     AgentVisibility,
     ProfileGetRequest,
     ProfilePromoteRequest,
     ProfileProposeRequest,
     ProfileSearchRequest,
-    ProfileUpdateRequest,
     ProfileToolResult,
+    ProfileUpdateRequest,
     RecordState,
+    SyncMode,
     ToolOperation,
     ToolResultStatus,
 )
-from pydantic import ValidationError
 
+from tldw_chatbook.Personal_Context.lexical_match import compile_query, match_record
 from tldw_chatbook.Personal_Context.proposal_service import (
     PrivateDuplicateReviewRequired,
     ProfileProposalQuota,
@@ -163,7 +165,7 @@ class ProfileToolProvider:
                     else None
                 )
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - unreadable live authority fails closed.
             return None
         if (
             manifest.profile_id != scope.profile_id
@@ -211,7 +213,7 @@ class ProfileToolProvider:
                 scope.scope_id == scope_id and scope.kind.value == "workspace"
                 for scope in self._service.list_scopes()
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - unavailable workspace fails closed.
             return False
 
     def load_schema(self, tool_id: str) -> ToolSchema:
@@ -308,7 +310,7 @@ class ProfileToolProvider:
                 if exc.reason_code == "record_ineligible"
                 else ToolResultStatus.PERMISSION_DENIED
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - tool failures return a content-free refusal.
             return self._failure(ToolResultStatus.REVIEW_REQUIRED)
 
     @staticmethod
@@ -347,17 +349,27 @@ class ProfileToolProvider:
             if record.state is RecordState.ACTIVE
             and (record.expires_at is None or record.expires_at > now)
             and record.controls.agent_visibility is AgentVisibility.AGENT_VISIBLE
+            and record.controls.sync_mode is SyncMode.SYNCABLE
             and record.record_id not in conflicted
         )
 
     def _search(self, request: ProfileSearchRequest) -> ToolResult:
-        query = request.query.casefold()
-        matches = [
-            record
-            for record in self._eligible_records()
-            if query
-            in json.dumps(record.model_dump(mode="json"), sort_keys=True).casefold()
-        ][: request.limit]
+        query = compile_query(request.query)
+        ranked = []
+        for record in self._eligible_records():
+            match = match_record(record, query)
+            if match is not None:
+                ranked.append((match, record))
+        ranked.sort(
+            key=lambda item: (
+                -item[0].distinct_terms,
+                -item[0].subject_terms,
+                -int(item[0].phrase),
+                item[1].record_id,
+                item[1].version_id,
+            )
+        )
+        matches = [record for _match, record in ranked[: request.limit]]
         return self._success(
             ToolOperation.SEARCH,
             ToolResultStatus.APPLIED,

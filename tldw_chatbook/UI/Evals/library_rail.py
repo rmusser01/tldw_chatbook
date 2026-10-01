@@ -70,6 +70,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
+from importlib import import_module as _import_module
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -94,7 +95,6 @@ from ...Evals.word_bench.storage import _unique_name, save_bench
 from ...Third_Party.textual_fspicker import FileOpen, Filters
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.main_navigation import NavigateToScreen
-from . import sample_bench
 from .evals_state import EvalsSelection, EvalsViewModel
 from .notify_mixin import NotifyMixin
 from .snippet_editor import (
@@ -103,6 +103,8 @@ from .snippet_editor import (
     parse_json_snippets,
     parse_plain_text_snippets,
 )
+
+_rail = _import_module(__name__)
 
 EVALS_RAIL_SECTION_TOGGLE_PREFIX = "evals-rail-toggle-"
 EVALS_RAIL_ROW_PREFIX = "evals-rail-row-"
@@ -823,7 +825,7 @@ class LibraryRail(NotifyMixin, Vertical):
         # Read once, shared by both the non-empty and empty branches below
         # (TASK-1478 needs it in both -- the sample-bench button is no
         # longer offered only when the section is empty).
-        provider_ready = sample_bench.provider_is_configured(
+        provider_ready = _rail.sample_bench.provider_is_configured(
             self.view_model, self.app_config
         )
         if benches:
@@ -1278,3 +1280,24 @@ class LibraryRail(NotifyMixin, Vertical):
         self.post_message(
             self.EvalsSelectionChanged(EvalsSelection(kind="dataset", id=dataset_id))
         )
+
+
+_LAZY_EXPORTS = {"sample_bench": (".sample_bench", None)}
+
+
+def __getattr__(name: str):
+    """Resolve original execution or inspector aliases at their use sites."""
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module, attribute = _LAZY_EXPORTS[name]
+    owner = _import_module(module, __package__)
+    value = getattr(owner, attribute) if attribute else owner
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
+
+__all__ = [name for name in __dir__() if not name.startswith("_")]

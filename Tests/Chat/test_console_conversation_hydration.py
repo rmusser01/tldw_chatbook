@@ -412,6 +412,7 @@ async def test_hydration_keeps_scalar_only_cursor_reader_compatibility() -> None
     assert store.active_leaf(session.id) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_the_screen_tree_walk_still_flattens_every_branch(tmp_path):
     """Characterization: the screen seam eight test files call by name.
 
@@ -455,6 +456,7 @@ def test_the_screen_tree_walk_still_flattens_every_branch(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
     """The equivalence pin: both callers, one fixture, identical sessions.
 

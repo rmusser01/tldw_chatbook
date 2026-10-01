@@ -1,0 +1,53 @@
+{
+  "fixture_version": 1,
+  "model": "ProfileManifestV2",
+  "valid": false,
+  "structurally_valid": true,
+  "data": {
+    "schema_version": 2,
+    "profile_id": "p1",
+    "revision": 0,
+    "purge_generation": 0,
+    "created_at": "2026-09-26T15:00:00.000Z",
+    "updated_at": "2026-09-26T17:00:00.000Z",
+    "current_version_id": "mv1",
+    "required_object_schemas": [
+      {
+        "object_kind": "manifest",
+        "versions": [
+          2
+        ]
+      },
+      {
+        "object_kind": "proposal",
+        "versions": [
+          1,
+          2
+        ]
+      },
+      {
+        "object_kind": "record",
+        "versions": [
+          1,
+          2
+        ]
+      },
+      {
+        "object_kind": "scope",
+        "versions": [
+          1
+        ]
+      }
+    ],
+    "required_context_semantics": [
+      "approval-v3",
+      "disclosure-ceiling-v2",
+      "evidence-binding-v1",
+      "metadata-retirement-v2",
+      "profile-relations-v2",
+      "temporal-validity-v2",
+      "typed-claim-v2"
+    ],
+    "evidence_retirement_epoch": 0
+  }
+}

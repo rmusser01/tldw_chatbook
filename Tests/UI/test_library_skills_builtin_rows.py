@@ -15,13 +15,15 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Markdown, Switch
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import, see docstring
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Library.library_skills_state import build_skills_list_state
 from tldw_chatbook.UI.Library_Modules import library_skills_builtin_controller as lsbc
 from tldw_chatbook.UI.Library_Modules import library_skills_controller as lsc
@@ -193,6 +195,8 @@ def test_enabled_switch_updates_memory_and_persists(monkeypatch):
 
 
 class _PaneApp(App):
+    CSS_PATH: ClassVar[list[str]] = [str(path) for path in APP_STYLESHEETS]
+
     def compose(self) -> ComposeResult:
         yield LibrarySkillWorkPane(
             mode="preview",
@@ -212,6 +216,9 @@ def test_preview_pane_is_read_only_markdown_with_customize_and_switch():
             await pilot.pause()
             preview = app.query_one("#library-skill-builtin-preview")
             assert preview.query(Markdown)
+            label = preview.query_one("Static.w-auto")
+            assert label.styles.width.is_auto
+            assert label.region.width == len(" Enabled ")
             assert isinstance(
                 app.query_one("#library-skill-builtin-customize"), Button
             )

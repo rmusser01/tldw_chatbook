@@ -29,6 +29,9 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.bootstrap_profile
+
+from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
@@ -166,7 +169,7 @@ def test_console_session_close_cancels_raw_invocations_before_store_removal() ->
         cancel_raw_cli_session=cancel_raw_cli_session,
     )
 
-    controller.close_session(session.id)
+    close_controller_session(controller, session.id)
 
     assert observations == [(session.id, True)]
     assert store.sessions() == []
@@ -384,7 +387,7 @@ async def test_unhealthy_recovery_owner_still_blocks_submission_and_a_queued_tur
     coordinator = controller.prompt_queue_coordinator
     registry = coordinator.registry
     begun = registry.begin_chain(session_id, context_epoch=0, expected_revision=0)
-    entry = registry.admit(
+    entry = await controller.queue_prompt(
         session_id,
         text="queued retry",
         expected_revision=begun.snapshot.revision,

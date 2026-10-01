@@ -43,6 +43,9 @@ from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
 LONG_RESULT = (
     "The traditional rollback procedure requires draining every in-flight "
     "request before the schema migration begins, otherwise a half-applied "

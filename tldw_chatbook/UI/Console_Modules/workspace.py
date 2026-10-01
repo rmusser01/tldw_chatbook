@@ -33,7 +33,7 @@ from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.css.query import NoMatches
 
-from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
 
 from ...Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
@@ -5761,8 +5761,8 @@ class ConsoleWorkspaceController:
         db = getattr(registry_service, "db", None)
         if getattr(db, "is_memory_db", False):
             return registry_service.get_workspace_scope(workspace_id)
-        return await asyncio.to_thread(
-            registry_service.get_workspace_scope, workspace_id
+        return await run_owned_db_call(
+            db, registry_service.get_workspace_scope, workspace_id
         )
 
     @staticmethod
@@ -5776,8 +5776,8 @@ class ConsoleWorkspaceController:
         if getattr(db, "is_memory_db", False):
             registry_service.set_workspace_scope(workspace_id, scope)
         else:
-            await asyncio.to_thread(
-                registry_service.set_workspace_scope, workspace_id, scope
+            await run_owned_db_call(
+                db, registry_service.set_workspace_scope, workspace_id, scope
             )
 
     # -- Resuming a persisted conversation ------------------------------------

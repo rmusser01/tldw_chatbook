@@ -118,6 +118,9 @@ RAG_FIELD_RENDERED_LABELS: dict[str, str] = {
 #: ``_field_dom_id``).
 SPEECH_TTS_PROVIDER_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "audio_cpp": (
+        ("guided_binary_path", "audiocpp_server binary path"),
+        ("managed_binary_path", "audiocpp_server binary path"),
+        ("managed_server_json_path", "server.json path"),
         ("mode", "Server mode"),
         ("base_url", "Server URL (HTTP/HTTPS origin only)"),
         ("managed_setup_source", "Managed setup source"),
@@ -154,6 +157,8 @@ SPEECH_TTS_PROVIDER_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("speaker_boost", "Speaker boost"),
     ),
     "kokoro": (
+        ("onnx_model_path", "ONNX model file"),
+        ("voices_json_path", "Voices JSON file"),
         ("device", "Device"),
         ("use_onnx", "Use ONNX"),
         ("max_tokens", "Max tokens"),
@@ -161,6 +166,7 @@ SPEECH_TTS_PROVIDER_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("track_performance", "Performance tracking"),
     ),
     "chatterbox": (
+        ("voice_resource_directory", "Voice resource directory"),
         ("device", "Device"),
         ("temperature", "Temperature"),
         ("chunk_size", "Chunk size"),
@@ -177,6 +183,8 @@ SPEECH_TTS_PROVIDER_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("crossfade_ms", "Crossfade duration (ms)"),
     ),
     "higgs": (
+        ("model_path", "Model path"),
+        ("voice_resource_directory", "Voice resource directory"),
         ("device", "Device"),
         ("enable_flash_attention", "Enable flash attention"),
         ("dtype", "Data type"),
@@ -302,6 +310,9 @@ def build_field_search_index() -> None:
     FIELD_SEARCH_INDEX.clear()
     FIELD_SEARCH_INDEX.update(
         {
+            SettingsCategoryId.WEB_SEARCH: (
+                ("web-search-default", "Default search backend"),
+            ),
             SettingsCategoryId.HOOKS: (
                 ("settings-hooks-enabled", "Enable Console hooks"),
                 ("settings-hooks-list", "Hook definitions and permissions"),
@@ -313,6 +324,12 @@ def build_field_search_index() -> None:
                 ("settings-hooks-review", "Review saved hook permissions"),
             ),
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
+                ("settings-console-reasoning-history", "Local reasoning history"),
+                ("settings-console-reasoning-override", "Reasoning replay override"),
+                ("settings-console-reasoning-native-tools", "Native tool support"),
+                ("settings-permission-summary-mode", "Summary mode"),
+                ("settings-permission-summary-provider", "Provider"),
+                ("settings-permission-summary-model", "Model"),
                 (
                     "settings-console-show-model-thinking",
                     "Show model thinking",
@@ -413,11 +430,11 @@ def build_field_search_index() -> None:
                 ("settings-console-agent-max-total-tokens", "Token budget (per run)"),
                 (
                     "settings-console-agent-max-wall-seconds",
-                    "Wall-clock limit (seconds)",
+                    "Wall-clock (seconds)",
                 ),
                 (
                     "settings-console-agent-max-tool-call-seconds",
-                    "Per-tool-call limit (seconds)",
+                    "Per-tool-call (seconds)",
                 ),
                 ("settings-console-agent-max-model-turns", "Model turns (backstop)"),
                 ("settings-console-agent-max-steps", "Steps (backstop)"),
@@ -521,6 +538,8 @@ def build_field_search_index() -> None:
                 ),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
+                ("settings-snapshot-enabled", "Enable snapshots"),
+                ("settings-snapshot-keep", "Keep count (1–1000, across all models)"),
                 ("settings-provider-value", "Provider"),
                 ("settings-provider-api-mode", "API mode"),
                 (
@@ -576,6 +595,19 @@ def build_field_search_index() -> None:
                 ("settings-model-profile-streaming", "Streaming"),
             ),
             SettingsCategoryId.SPEECH_TTS: (
+                (
+                    "settings-speech-pipeline-response-eagerness-ms",
+                    "Response eagerness (ms)",
+                ),
+                ("settings-speech-pipeline-aec-enabled", "Echo cancellation"),
+                (
+                    "settings-speech-handsfree-send-delay",
+                    "Send delay (seconds, pipeline engine)",
+                ),
+                (
+                    "settings-speech-handsfree-acoustic-barge-in",
+                    "Acoustic barge-in (headphones)",
+                ),
                 ("settings-speech-default-provider", "Default TTS Provider"),
                 ("settings-speech-model-value", "TTS model"),
                 ("settings-speech-model-value", "Model value"),
@@ -626,6 +658,14 @@ def build_field_search_index() -> None:
                 for name, label in _labels.items()
             ),
             SettingsCategoryId.PRIVACY_SECURITY: (
+                (
+                    "settings-canvas-enabled",
+                    "Enable Canvas tools, actions, and browser delivery",
+                ),
+                (
+                    "settings-canvas-auto-open",
+                    "Open Canvas automatically after a successful create",
+                ),
                 ("settings-raw-cli-permitted", "Allow raw CLI host access"),
             ),
             SettingsCategoryId.NETWORK: (

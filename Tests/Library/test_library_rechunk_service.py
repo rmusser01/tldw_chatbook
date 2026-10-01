@@ -20,6 +20,9 @@ from pathlib import Path
 
 import pytest
 
+# The real engine reads the profile admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.Chunking.Chunk_Lib import ENGINE_VERSION
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB

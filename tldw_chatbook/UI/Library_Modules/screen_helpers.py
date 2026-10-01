@@ -28,6 +28,7 @@ the same class of problem. See PR 0a's task report for the full trace.
 """
 from __future__ import annotations
 
+import operator
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ from tldw_chatbook.Utils.input_validation import escape_markup
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...STT.transcribe_cpp_config import is_gguf_file
 from ...Third_Party.textual_fspicker import Filters
+from ...Library.library_notes_session import NoteFlushOutcomeKind
 from .screen_constants import (
     LIBRARY_NOTE_BLANK_SEED_TITLE,
     LIBRARY_STUDY_HANDOFF_TITLES_CAP,
@@ -296,3 +298,114 @@ def _canonical_shortcut_key(key: str) -> str:
     """
     lowered = key.strip().casefold()
     return "esc" if lowered == "escape" else lowered
+
+
+def _assign_library_reader_preferences_attribute(
+    owner: Any, attribute: str, value: Any
+) -> None:
+    """Write through a possibly-dotted attribute path off ``owner``.
+
+    Task 9 (Conversations cleanup) support: ``_replace_library_reader_preference``
+    and ``_persist_library_reader_preference`` dispatch across every reader
+    destination (media, collections, conversations, notes, notes_files,
+    prompts, skills) through a ``{destination: attribute_name}`` dict, read
+    with plain ``getattr``/``operator.attrgetter`` and written with plain
+    ``setattr``. Every destination except conversations and collections still
+    keeps its reader-preferences object as a flat screen attribute, so a bare
+    attribute-name string has always been enough. Conversations' own
+    ``reader_preferences`` field moved to ``self._conversations_state.reader_preferences``
+    (Task 6/9) -- one extra hop the generic dispatch's plain ``setattr``
+    cannot express. This resolves the last (dotted) segment's owner via
+    ``operator.attrgetter`` and assigns onto it, and is a no-op passthrough
+    (``setattr(owner, attribute, value)``) for every other, undotted,
+    destination -- so the five not-yet-extracted subsystems are unaffected.
+    Future subsystem extractions hit this exact same shape; this helper is
+    meant to keep serving them, not to be re-derived per subsystem.
+
+    Second use, added by Task 4 (Export cleanup): ``_close_open_library_
+    choice_strip`` dispatches across a DIFFERENT dict-of-name-strings
+    (media/prompts/skills/export choice-strip visibility, built by
+    ``_library_open_choice_strip``) with the identical possibly-dotted-path
+    shape -- Export's own visibility field moved to ``self._export_state.
+    quality_choices_visible`` (Task 2/4), while media/prompts/skills keep
+    flat screen attributes, so the same generic dotted-vs-flat passthrough
+    this docstring already describes serves that dispatcher too, without a
+    second near-identical helper.
+
+    Third use, added by Task 7 (Collections cleanup): the same two dicts'
+    ``"collections"`` entry moved from the flat ``_library_collections_
+    reader_preferences`` name to ``self._collections_state.reader_preferences``
+    (Task 5/7) -- exactly the same dotted-vs-flat shape Conversations already
+    established, requiring no change to this helper's own logic.
+    """
+    head, _, tail = attribute.rpartition(".")
+    target = operator.attrgetter(head)(owner) if head else owner
+    setattr(target, tail, value)
+
+
+def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
+    """The user-facing "why" and "what to do" for one flush-veto kind.
+
+    task-32133 AC#1 / fix round 1 Important 2: the mandated copy ("fix the
+    title or press Discard new note") is specific to VALIDATION_VETO; the
+    other four kinds each name their own real state and next step instead
+    of reusing that sentence verbatim. ``NoteFlushOutcome.message`` already
+    carries an accurate-but-technical string for these (meant for the
+    status line, e.g. "A destructive action is in progress."); this is the
+    same information reworded for a one-shot toast.
+    """
+    if kind is NoteFlushOutcomeKind.VALIDATION_VETO:
+        return "Can't leave yet — fix the title or press Discard new note."
+    if kind is NoteFlushOutcomeKind.FAILED:
+        return "Can't leave yet — the save failed; press Save to retry or Discard."
+    if kind is NoteFlushOutcomeKind.CONFLICTED:
+        return (
+            "Can't leave yet — this note changed elsewhere; "
+            "choose Overwrite or Reload."
+        )
+    if kind is NoteFlushOutcomeKind.BLOCKED:
+        return "Can't leave yet — another action is already in progress; wait for it to finish."
+    return "Can't leave yet — the note changed while saving; try again."  # STALE
+
+
+def _review_footer_entries(
+    progress: str, *, at_last: bool = False
+) -> tuple[tuple[str, str], ...]:
+    """The Reader footer's review-set segment for one progress line.
+
+    task-31225 (re-critique P2): on a COMPLETE set the final ``]`` is an
+    idempotent no-op, so advertising it violates the honest-footer rule
+    (task-28005). Completion keeps ``m`` (un-marking resumes the walk)
+    and names ``R`` as the next step. The completion check reads the
+    canonical ``format_review_progress`` "All N reviewed" form.
+
+    task-31271 seam (c): on the LAST live item a forward ``]`` marks
+    that item done in place rather than walking anywhere
+    (``plan_walk``'s completion gesture), so "next in set" promised an
+    item that does not exist (critique #4, B cap_50).
+
+    Args:
+        progress: The formatted live progress line.
+        at_last: Whether the cursor sits on the last live item, so the
+            next ``]`` completes the set instead of advancing.
+
+    Returns:
+        ``(key, label)`` entries for the footer.
+    """
+    if progress.startswith("All "):
+        return (
+            ("m", "toggle reviewed"),
+            ("R", "finish review"),
+            ("", progress),
+        )
+    return (
+        # task-31635 (critique #5 item 9, ruling): a forward step marks
+        # the item you leave done, and "next in set" hid that -- users
+        # read the mark as an accident. The behaviour stays (it is the
+        # set's contract since task-31233); the chip stops being coy.
+        ("]", "finish review" if at_last else "next (marks reviewed)"),
+        ("[", "prev in set"),
+        ("m", "toggle reviewed"),
+        ("R", "exit review"),
+        ("", progress),
+    )

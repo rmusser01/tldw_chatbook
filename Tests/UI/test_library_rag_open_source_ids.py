@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Input
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
@@ -71,8 +72,9 @@ def _app_with_result(source_type, source_id, *, backend=""):
     "shape", ["{id}", "{kind}_{id}", "{kind}-{id}", "local:{kind}:{id}"]
 )
 @pytest.mark.parametrize("gesture", ["button", "keyboard"])
+@private_profile_test
 async def test_result_open_resolves_exact_local_record(
-    tmp_path, source_type, shape, gesture
+    tmp_path, source_type, shape, gesture, request
 ):
     prompts = PromptsDatabase(tmp_path / "prompts.db", client_id="rag-open-id-test")
     prompt_id, _, _ = prompts.add_prompt(

@@ -79,6 +79,9 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import join_fleet_children
 
+# Real service/catalog config getters retain their selected private source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
@@ -295,7 +298,10 @@ class FleetChat:
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    with contextlib.closing(
+        AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    ) as database:
+        yield database
 
 
 def make_service(db, replies):
@@ -2168,15 +2174,17 @@ def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
             api_endpoint="llama_cpp",
         )
 
-    worker = threading.Thread(target=run)
+    worker = threading.Thread(target=agent_service.worker_guard(service)(run))
     worker.start()
-    assert runtime_waiting.wait(5)
-    run_id = db.list_runs("owner-seq-race", include_superseded=True)[0]["id"]
-    assert db.set_status(run_id, "cancelled") is True
-    service._record_terminal_lifecycle(run_id, "cancelled")
-    release_runtime.set()
-    worker.join(5)
-    assert not worker.is_alive()
+    try:
+        assert runtime_waiting.wait(5)
+        run_id = db.list_runs("owner-seq-race", include_superseded=True)[0]["id"]
+        assert db.set_status(run_id, "cancelled") is True
+        service._record_terminal_lifecycle(run_id, "cancelled")
+    finally:
+        release_runtime.set()
+        worker.join(5)
+        assert not worker.is_alive()
 
     path = db.db_path
     db.close()

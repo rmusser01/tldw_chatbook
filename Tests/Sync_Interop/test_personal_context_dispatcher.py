@@ -18,9 +18,9 @@ from tldw_profile_core import (
 )
 from tldw_profile_core.models import ActorType
 
-from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
-from tldw_chatbook.Personal_Context.reconciliation import _snapshot_token
 from tldw_chatbook.Personal_Context.key_protector import InMemoryProfileKeyProtector
+from tldw_chatbook.Personal_Context.reconciliation import _snapshot_token
+from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
 from tldw_chatbook.Personal_Context.service import PersonalContextService
 from tldw_chatbook.Personal_Context.sync_outbox import ProfileSyncOutbox
 from tldw_chatbook.Sync_Interop.personal_context_adapter import (
@@ -31,7 +31,6 @@ from tldw_chatbook.Sync_Interop.personal_context_dispatcher import (
 )
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
-
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 SCOPE = {
@@ -166,9 +165,9 @@ def test_dispatcher_crash_between_databases_replays_without_duplicate(
     assert len(first_pass) == 1
     assert profile_outbox.list_pending()
 
-    result = _dispatcher(
-        profile_outbox, sync_repository, adapter
-    ).dispatch_pending(device_id="device-1", storage_key=STORAGE_KEY, **SCOPE)
+    result = _dispatcher(profile_outbox, sync_repository, adapter).dispatch_pending(
+        device_id="device-1", storage_key=STORAGE_KEY, **SCOPE
+    )
 
     pending = sync_repository.list_pending_sync_v2_outbox_envelopes(**SCOPE)
     assert result == {"dispatched": expected, "quarantined": 0}
@@ -187,9 +186,7 @@ def test_first_link_dispatch_crash_replays_under_exact_freeze_authority(
     plan_id = "plan-first-link"
     service.acquire_first_link_freeze(
         plan_id=plan_id,
-        snapshot_token=_snapshot_token(
-            manifest, scopes, records, proposals, bindings
-        ),
+        snapshot_token=_snapshot_token(manifest, scopes, records, proposals, bindings),
     )
     sync_repository.set_personal_context_link_state(
         server_profile_id=SCOPE["server_profile_id"],
@@ -224,9 +221,11 @@ def test_first_link_dispatch_crash_replays_under_exact_freeze_authority(
         "purge_generation": 0,
         "bootstrap_cursor": "sha256:" + "a" * 64,
     }
-    with pytest.raises(RuntimeError, match="first-link cross-database crash"):
-        with service.first_link_reconciliation_writes(plan_id=plan_id):
-            dispatcher.dispatch_first_link_reconciliation(**dispatch_kwargs)
+    with (
+        pytest.raises(RuntimeError, match="first-link cross-database crash"),
+        service.first_link_reconciliation_writes(plan_id=plan_id),
+    ):
+        dispatcher.dispatch_first_link_reconciliation(**dispatch_kwargs)
 
     assert len(sync_repository.list_pending_sync_v2_outbox_envelopes(**SCOPE)) == 1
     assert profile_outbox.list_pending()
@@ -271,17 +270,14 @@ def test_crash_recovery_preserves_source_when_staged_ciphertext_is_invalid(
     corrupted["payload_ciphertext"] = "corrupt"
     with sync_repository._get_connection() as connection:
         connection.execute(
-            "UPDATE sync_v2_local_outbox SET envelope = ? "
-            "WHERE client_envelope_id = ?",
+            "UPDATE sync_v2_local_outbox SET envelope = ? WHERE client_envelope_id = ?",
             (
                 json.dumps(corrupted),
                 f"personal-context:{entry.outbox_id}",
             ),
         )
 
-    result = _dispatcher(
-        profile_outbox, sync_repository, adapter
-    ).dispatch_pending(
+    result = _dispatcher(profile_outbox, sync_repository, adapter).dispatch_pending(
         device_id="device-1",
         storage_key=STORAGE_KEY,
         limit=1,
@@ -324,17 +320,14 @@ def test_crash_recovery_preserves_source_when_staged_metadata_is_tampered(
     tampered["deleted"] = not tampered["deleted"]
     with sync_repository._get_connection() as connection:
         connection.execute(
-            "UPDATE sync_v2_local_outbox SET envelope = ? "
-            "WHERE client_envelope_id = ?",
+            "UPDATE sync_v2_local_outbox SET envelope = ? WHERE client_envelope_id = ?",
             (
                 json.dumps(tampered),
                 f"personal-context:{entry.outbox_id}",
             ),
         )
 
-    result = _dispatcher(
-        profile_outbox, sync_repository, adapter
-    ).dispatch_pending(
+    result = _dispatcher(profile_outbox, sync_repository, adapter).dispatch_pending(
         device_id="device-1",
         storage_key=STORAGE_KEY,
         limit=1,
@@ -354,16 +347,48 @@ def test_dispatcher_quarantines_poisoned_body_without_copying_content(
     profile_outbox, sync_repository, adapter, _service = _dependencies(tmp_path)
     for entry in profile_outbox.list_pending():
         profile_outbox.acknowledge(entry.outbox_id, f"bootstrap:{entry.outbox_id}")
-    poison_id = profile_outbox.repository.commit_outbox_body(
-        object_type="record",
-        object_id="record-poison",
-        version_id="version-poison",
-        body={"version": 1, "record": {"secret": "OUTBOX-POISON-CANARY"}},
+    from Tests.Personal_Context.native_barrier_helpers import (
+        replace_sealed_body,
+        sql_state,
+    )
+    from tldw_chatbook.Personal_Context.native_compatibility import (
+        ProfileCompatibilityError,
     )
 
-    result = _dispatcher(
-        profile_outbox, sync_repository, adapter
-    ).dispatch_pending(device_id="device-1", storage_key=STORAGE_KEY, **SCOPE)
+    repository = profile_outbox.repository
+    poisoned = {"version": 1, "record": {"secret": "OUTBOX-POISON-CANARY"}}
+    before = sql_state(repository)
+    with pytest.raises(ProfileCompatibilityError):
+        repository.commit_outbox_body(
+            object_type="record",
+            object_id="record-poison",
+            version_id="version-poison",
+            body=poisoned,
+        )
+    assert sql_state(repository) == before
+    record = _record(repository.get_manifest().profile_id)
+    poison_id = repository.commit_outbox_body(
+        object_type="record",
+        object_id=record.record_id,
+        version_id=record.version_id,
+        body={"version": 1, "record": record.model_dump(mode="json")},
+    )
+    with repository._connect() as connection:
+        version = connection.execute(
+            "SELECT envelope_version FROM encrypted_outbox WHERE outbox_id=?",
+            (poison_id,),
+        ).fetchone()[0]
+    replace_sealed_body(
+        repository,
+        object_type="outbox",
+        object_id=poison_id,
+        version_id=version,
+        raw=repository._canonical_payload(poisoned),
+    )
+
+    result = _dispatcher(profile_outbox, sync_repository, adapter).dispatch_pending(
+        device_id="device-1", storage_key=STORAGE_KEY, **SCOPE
+    )
 
     assert result == {"dispatched": 0, "quarantined": 1}
     assert profile_outbox.get_quarantine_reason(poison_id) == (
@@ -387,9 +412,7 @@ def test_dispatcher_quarantines_unauthenticated_encrypted_body(tmp_path) -> None
             (b"corrupt", entry.outbox_id, envelope_version),
         )
 
-    result = _dispatcher(
-        profile_outbox, sync_repository, adapter
-    ).dispatch_pending(
+    result = _dispatcher(profile_outbox, sync_repository, adapter).dispatch_pending(
         device_id="device-1", storage_key=STORAGE_KEY, limit=1, **SCOPE
     )
 
@@ -413,9 +436,9 @@ def test_successful_dispatch_keeps_profile_canary_encrypted_in_sync_state(
     ).model_copy(update={"scope_id": service.list_scopes()[0].scope_id})
     service.create_record(record)
 
-    result = _dispatcher(
-        profile_outbox, sync_repository, adapter
-    ).dispatch_pending(device_id="device-1", storage_key=STORAGE_KEY, **SCOPE)
+    result = _dispatcher(profile_outbox, sync_repository, adapter).dispatch_pending(
+        device_id="device-1", storage_key=STORAGE_KEY, **SCOPE
+    )
 
     assert result["dispatched"] == 2
     entries = sync_repository.list_pending_sync_v2_outbox_envelopes(**SCOPE)
@@ -426,10 +449,7 @@ def test_successful_dispatch_keeps_profile_canary_encrypted_in_sync_state(
     assert stored.payload == {}
     assert stored.payload_ciphertext
     restored = adapter.restore_from_storage(stored, storage_key=STORAGE_KEY)
-    assert (
-        restored.payload["payload"]["value"]
-        == "SYNC-STAGING-PLAINTEXT-CANARY-9f61"
-    )
+    assert restored.payload["payload"]["value"] == "SYNC-STAGING-PLAINTEXT-CANARY-9f61"
     durable = b"".join(
         path.read_bytes()
         for path in tmp_path.iterdir()

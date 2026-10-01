@@ -83,6 +83,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_library_shell,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app as _build_shared_test_app
 
 
@@ -2835,7 +2836,8 @@ def test_library_skill_trust_setup_explanation_css_block_matches_review_files_pa
 
 
 @pytest.mark.asyncio
-async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
+@private_profile_test
+async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty(request):
     """task-448 P0 regression: switching Library rail rows while the skill
     editor holds an unsaved edit must veto the switch -- the same contract
     ``_select_library_rail_row`` already enforces for dirty note and prompt
@@ -3370,7 +3372,8 @@ async def test_create_save_success_consumes_scroll_receipt_after_recompose():
 
 
 @pytest.mark.asyncio
-async def test_mark_dirty_clears_stale_saved_status():
+@private_profile_test
+async def test_mark_dirty_clears_stale_saved_status(request):
     """Typing after a save must clear the lingering 'Saved.' -- the status
     otherwise stays wrong across any number of later edits."""
     app = _build_test_app()

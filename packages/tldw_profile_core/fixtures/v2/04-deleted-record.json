@@ -1,0 +1,34 @@
+{
+  "fixture_version": 1,
+  "model": "ProfileRecordV2",
+  "valid": true,
+  "structurally_valid": true,
+  "data": {
+    "schema_version": 2,
+    "profile_id": "p1",
+    "record_id": "r1",
+    "scope_id": "s1",
+    "kind": "preference",
+    "payload": null,
+    "semantic_key": null,
+    "state": "deleted",
+    "controls": {
+      "sync_mode": "device_only",
+      "agent_visibility": "agent_visible",
+      "model_disclosure": {
+        "kind": "deny"
+      }
+    },
+    "provenance": null,
+    "claim": null,
+    "version_id": "v1",
+    "parent_version_id": null,
+    "created_at": "2026-09-26T15:00:00.000Z",
+    "updated_at": "2026-09-26T17:00:00.000Z",
+    "expires_at": null,
+    "no_expiry": false
+  },
+  "canonical_utf8": "{\"claim\":null,\"controls\":{\"agent_visibility\":\"agent_visible\",\"model_disclosure\":{\"kind\":\"deny\"},\"sync_mode\":\"device_only\"},\"created_at\":\"2026-09-26T15:00:00.000Z\",\"expires_at\":null,\"kind\":\"preference\",\"no_expiry\":false,\"parent_version_id\":null,\"payload\":null,\"profile_id\":\"p1\",\"provenance\":null,\"record_id\":\"r1\",\"schema_version\":2,\"scope_id\":\"s1\",\"semantic_key\":null,\"state\":\"deleted\",\"updated_at\":\"2026-09-26T17:00:00.000Z\",\"version_id\":\"v1\"}",
+  "sha256": "4c472338493e3c235dbc21a260e0bd00f77d6d139c7513894e5cbd9ed443bed2",
+  "integrity_tag": "hmac-sha256-v1:62535fcc01ea78c9eece03ea67a6bcb2e6ff52ef33c44fb6cf9290304cfc283b"
+}

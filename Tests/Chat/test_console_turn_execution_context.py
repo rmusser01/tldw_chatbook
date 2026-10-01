@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunBudget, RunOutcome
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.Chat.attachment_core import PendingAttachment

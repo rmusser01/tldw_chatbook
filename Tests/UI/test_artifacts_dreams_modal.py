@@ -15,12 +15,12 @@ import pytest
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.app import App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.Screens.artifacts_dreams_modal as dsm_module
 from Tests.Dreams.test_ingest_action import FakeCaptureBackend
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.test_artifacts_dreams_rows import _settle_artifacts_refreshes
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
@@ -159,6 +159,13 @@ async def test_keep_toggle_writes_kept_feedback_and_refreshes(tmp_path):
         )
         await app.push_screen(modal)
         await pilot.pause()
+
+        dialog = modal.query_one("#dsm-dialog")
+        assert dialog.styles.width.value == 76
+        assert dialog.styles.max_width.value == 96
+        assert dialog.styles.max_height.value == 90
+        assert tuple(dialog.styles.padding) == (1, 2, 1, 2)
+        assert modal.query_one("#dsm-hints").styles.margin.top == 1
 
         await pilot.press("k")
         await pilot.pause()

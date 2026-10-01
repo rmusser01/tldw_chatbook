@@ -49,6 +49,7 @@ def _messages(n: int) -> list[ConsoleChatMessage]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_anchors_at_mount_and_follows_growth():
     """Content growing past the viewport keeps the view at the bottom."""
@@ -66,6 +67,7 @@ async def test_transcript_anchors_at_mount_and_follows_growth():
         assert transcript.scroll_y == transcript.max_scroll_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scrolled_up_reader_is_not_yanked_by_assistant_growth():
     """A reader who scrolled up stays put while the reply keeps streaming."""
@@ -92,6 +94,7 @@ async def test_scrolled_up_reader_is_not_yanked_by_assistant_growth():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_user_message_reanchors_from_scrolled_up_position():
     """A send jumps to the tail even after the reader scrolled up."""
@@ -121,6 +124,7 @@ async def test_new_user_message_reanchors_from_scrolled_up_position():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_send_with_assistant_placeholder_still_reanchors():
     """The REAL send shape: USER + ASSISTANT placeholder appended together.
@@ -156,6 +160,7 @@ async def test_send_with_assistant_placeholder_still_reanchors():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_tail_user_message_updates_do_not_reanchor():
     """Ticks that merely UPDATE the tail user message never re-anchor."""

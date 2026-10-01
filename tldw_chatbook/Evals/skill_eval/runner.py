@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from importlib import import_module as _import_module
 from typing import Any, FrozenSet, Mapping, Optional, Sequence
 
 from ...Chat.provider_readiness import get_provider_readiness
 
-from .judge import parse_judge_json, run_judge_layer
 from .models import (
     CancelToken, EvalTarget, JudgeLayerResult, ProgressCallback,
     SkillEvalConfig, SkillEvalDepth, SkillEvalReport, SimLayerResult,
     SkillSubject,
 )
-from .prompts import BODY_CHAR_CAP
-from .scoring import build_report
-from .simulation import run_simulation_layer, select_decoys
-from .static_analyzer import analyze_static
 
+
+_runner = _import_module(__name__)
 
 def estimate_calls(depth: SkillEvalDepth, deep_sim_total: int = 50) -> int:
     """Estimated LLM calls a depth will spend (shown pre-launch in the UI).
@@ -155,7 +153,7 @@ class SkillEvalRunner:
                 except Exception:
                     pass
 
-        static = analyze_static(subject, builtin_tool_names=builtin_tool_names,
+        static = _runner.analyze_static(subject, builtin_tool_names=builtin_tool_names,
                                 local_tool_names=local_tool_names,
                                 reserved_names=reserved_names)
         tick(0)
@@ -179,7 +177,7 @@ class SkillEvalRunner:
             return _forward
 
         if config.depth is not SkillEvalDepth.QUICK:
-            judge_result = await run_judge_layer(
+            judge_result = await _runner.run_judge_layer(
                 subject, self._chat, generator=generator, judge=judge,
                 config=config, semaphore=semaphore,
                 progress=forward("judge"), cancel=self._cancel)
@@ -196,9 +194,9 @@ class SkillEvalRunner:
                 # cells because the generation call itself failed.
                 warnings.append(
                     "simulation prompt generation failed; no cells run")
-            decoys = select_decoys(decoy_pool, subject.name, k=8,
+            decoys = _runner.select_decoys(decoy_pool, subject.name, k=8,
                                    seed=config.seed)
-            sim_result = await run_simulation_layer(
+            sim_result = await _runner.run_simulation_layer(
                 subject, sim_prompts, decoys, self._chat, target=generator,
                 config=config, semaphore=semaphore,
                 progress=forward("sim"), cancel=self._cancel)
@@ -210,13 +208,13 @@ class SkillEvalRunner:
         # Final-review Important 3: the report must SAY the models only ever
         # saw a truncated body -- a capped body otherwise silently shifts
         # every instruction-fitness/quality score with no visible cause.
-        if len(subject.body) > BODY_CHAR_CAP:
+        if len(subject.body) > _runner.BODY_CHAR_CAP:
             warnings.append("body truncated to 8000 chars in prompts "
                             "(oversize skill body)")
 
         self.judge_result = judge_result
         self.sim_result = sim_result
-        return build_report(subject.to_provenance(), config.depth, static,
+        return _runner.build_report(subject.to_provenance(), config.depth, static,
                             judge_result, sim_result, tuple(warnings))
 
     async def _generate_sim_prompts(self, subject, generator, config,
@@ -249,7 +247,36 @@ class SkillEvalRunner:
                     max_tokens=config.max_tokens, seed=config.seed + 999)
         except Exception:
             return []
-        parsed = parse_judge_json(raw)
+        parsed = _runner.parse_judge_json(raw)
         if not parsed or not isinstance(parsed.get("prompts"), list):
             return []
         return [str(p) for p in parsed["prompts"] if isinstance(p, str)][:10]
+
+
+_LAZY_EXPORTS = {
+    "parse_judge_json": (".judge", "parse_judge_json"),
+    "run_judge_layer": (".judge", "run_judge_layer"),
+    "BODY_CHAR_CAP": (".prompts", "BODY_CHAR_CAP"),
+    "build_report": (".scoring", "build_report"),
+    "run_simulation_layer": (".simulation", "run_simulation_layer"),
+    "select_decoys": (".simulation", "select_decoys"),
+    "analyze_static": (".static_analyzer", "analyze_static"),
+}
+
+
+def __getattr__(name: str):
+    """Resolve original execution or inspector aliases at their use sites."""
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module, attribute = _LAZY_EXPORTS[name]
+    owner = _import_module(module, __package__)
+    value = getattr(owner, attribute) if attribute else owner
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
+
+__all__ = [name for name in __dir__() if not name.startswith("_")]

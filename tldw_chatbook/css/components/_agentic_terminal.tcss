@@ -1354,7 +1354,7 @@ Button.mcp-callout {
 
 .mcp-compact #mcp-detail-toolbar .console-action-primary,
 .mcp-compact #mcp-detail-toolbar .console-action-secondary {
-    width: 1fr;
+    width: $ds-width-fill;
     min-width: $ds-size-0;
 }
 
@@ -2536,6 +2536,6 @@ App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
 /* Optional denial text stays out of the compact card until requested.
    Scoped types preserve one-line keyboard focus; identical row rules above
    share declarations to keep this within the ADR-097 startup budget. */
-.deny-reason{min-height:$ds-size-1;margin:$ds-space-0;padding:$ds-space-0;border:none;}
+ChatApprovalCard Collapsible.deny-reason{min-height:$ds-size-1;margin:$ds-space-0;padding:$ds-space-0;border:none;}
 .deny-reason>Contents{padding:$ds-space-0;}
 ChatApprovalCard Collapsible.deny-reason>CollapsibleTitle,ChatApprovalCard Collapsible.deny-reason.-collapsed>CollapsibleTitle{height:$ds-size-1;border:none;}

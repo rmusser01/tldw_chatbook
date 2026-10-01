@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident after `import tldw_chatbook.app`.
-# 669 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 678 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -27,6 +27,7 @@ tldw_chatbook.Auth_Account_Interop.server_auth_account_service
 tldw_chatbook.Backup_Recovery
 tldw_chatbook.Backup_Recovery.activation
 tldw_chatbook.Backup_Recovery.admission
+tldw_chatbook.Backup_Recovery.admission_runtime
 tldw_chatbook.Backup_Recovery.archive_models
 tldw_chatbook.Backup_Recovery.bootstrap
 tldw_chatbook.Backup_Recovery.chat_source_participants
@@ -71,6 +72,7 @@ tldw_chatbook.Character_Chat.server_character_persona_service
 tldw_chatbook.Character_Chat.server_chat_dictionary_service
 tldw_chatbook.Character_Chat.visual_identity
 tldw_chatbook.Character_Chat.world_book_manager
+tldw_chatbook.Character_Chat.world_info_regex
 tldw_chatbook.Chat
 tldw_chatbook.Chat.Chat_Deps
 tldw_chatbook.Chat.Chat_Functions
@@ -163,7 +165,6 @@ tldw_chatbook.DB.VisualIdentity_DB
 tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.canvas_payload_validation
-tldw_chatbook.DB.fts_backfill_pacing
 tldw_chatbook.DB.private_sqlite
 tldw_chatbook.DB.private_sqlite_files
 tldw_chatbook.DB.private_sqlite_process
@@ -192,7 +193,6 @@ tldw_chatbook.Event_Handlers.STTS_Events
 tldw_chatbook.Event_Handlers.STTS_Events.stts_events
 tldw_chatbook.Event_Handlers.TTS_Events
 tldw_chatbook.Event_Handlers.TTS_Events.tts_events
-tldw_chatbook.Event_Handlers.worker_events
 tldw_chatbook.Event_Handlers.worker_handlers
 tldw_chatbook.Event_Handlers.worker_handlers.base_handler
 tldw_chatbook.Event_Handlers.worker_handlers.misc_worker_handler
@@ -214,9 +214,14 @@ tldw_chatbook.Kanban_Interop.server_kanban_service
 tldw_chatbook.LLM_Calls
 tldw_chatbook.LLM_Calls.LLM_API_Calls
 tldw_chatbook.LLM_Calls.LLM_API_Calls_Local
+tldw_chatbook.LLM_Calls.deepseek
+tldw_chatbook.LLM_Calls.groq
 tldw_chatbook.LLM_Calls.hosted_chat
 tldw_chatbook.LLM_Calls.hosted_chat_streaming
+tldw_chatbook.LLM_Calls.legacy_line_stream
+tldw_chatbook.LLM_Calls.mistral
 tldw_chatbook.LLM_Calls.moonshot
+tldw_chatbook.LLM_Calls.openrouter
 tldw_chatbook.LLM_Calls.qwencloud
 tldw_chatbook.LLM_Calls.qwencloud_url
 tldw_chatbook.LLM_Calls.recovery_review
@@ -266,6 +271,7 @@ tldw_chatbook.Local_Ingestion.stt_batch_routing
 tldw_chatbook.Logging_Config
 tldw_chatbook.MCP
 tldw_chatbook.MCP.activation
+tldw_chatbook.MCP.builtin_tool_policy
 tldw_chatbook.MCP.client
 tldw_chatbook.MCP.execution_log
 tldw_chatbook.MCP.hub_tool_catalog
@@ -274,7 +280,6 @@ tldw_chatbook.MCP.local_runtime_delegate
 tldw_chatbook.MCP.local_store
 tldw_chatbook.MCP.permission_prompt_reducer
 tldw_chatbook.MCP.permission_store
-tldw_chatbook.MCP.readiness
 tldw_chatbook.MCP.redaction
 tldw_chatbook.MCP.server
 tldw_chatbook.MCP.server_target_store
@@ -294,7 +299,6 @@ tldw_chatbook.Meetings_Interop
 tldw_chatbook.Meetings_Interop.meetings_scope_service
 tldw_chatbook.Meetings_Interop.server_meetings_service
 tldw_chatbook.Metrics
-tldw_chatbook.Metrics.Otel_Metrics
 tldw_chatbook.Metrics.metrics
 tldw_chatbook.Metrics.metrics_logger
 tldw_chatbook.Model_Artifacts
@@ -450,7 +454,6 @@ tldw_chatbook.Subscriptions.briefing_keep
 tldw_chatbook.Subscriptions.briefing_selection
 tldw_chatbook.Subscriptions.briefing_service
 tldw_chatbook.Subscriptions.db_offload
-tldw_chatbook.Subscriptions.fts_backfill
 tldw_chatbook.Subscriptions.item_persist
 tldw_chatbook.Subscriptions.local_watchlists_service
 tldw_chatbook.Subscriptions.monitoring_engine
@@ -515,6 +518,7 @@ tldw_chatbook.TTS.default_profile_request_resolver
 tldw_chatbook.TTS.effective_settings
 tldw_chatbook.TTS.legacy_bridge
 tldw_chatbook.TTS.legacy_catalogs
+tldw_chatbook.TTS.omnivoice_artifact_catalog
 tldw_chatbook.TTS.openai_compatible_config
 tldw_chatbook.TTS.pcm_stream
 tldw_chatbook.TTS.playground_types
@@ -543,6 +547,7 @@ tldw_chatbook.UI.Navigation
 tldw_chatbook.UI.Navigation.audio_cpp_model_handoff
 tldw_chatbook.UI.Navigation.base_app_screen
 tldw_chatbook.UI.Navigation.conversation_settings_navigation
+tldw_chatbook.UI.Navigation.llamacpp_handoff
 tldw_chatbook.UI.Navigation.main_navigation
 tldw_chatbook.UI.Navigation.pending_handoff_store
 tldw_chatbook.UI.Navigation.screen_registry
@@ -566,13 +571,10 @@ tldw_chatbook.UI.character_display_text
 tldw_chatbook.UI.console_command_provider
 tldw_chatbook.UI.destination_recovery
 tldw_chatbook.UI.image_gen_command_provider
-tldw_chatbook.UI.stable_command_palette
-tldw_chatbook.UI.tools_settings_messages
 tldw_chatbook.User_Governance_Interop
 tldw_chatbook.User_Governance_Interop.server_user_governance_service
 tldw_chatbook.User_Governance_Interop.user_governance_scope_service
 tldw_chatbook.Utils
-tldw_chatbook.Utils.Emoji_Handling
 tldw_chatbook.Utils.NotificationHelper
 tldw_chatbook.Utils.Splash
 tldw_chatbook.Utils.Splash_Screens
@@ -586,10 +588,11 @@ tldw_chatbook.Utils.atomic_file_ops
 tldw_chatbook.Utils.boot_worker_policy
 tldw_chatbook.Utils.console_background_effects
 tldw_chatbook.Utils.custom_tokenizers
+tldw_chatbook.Utils.datetime_codec
 tldw_chatbook.Utils.db_status_manager
 tldw_chatbook.Utils.egress
 tldw_chatbook.Utils.fd_protection
-tldw_chatbook.Utils.file_extraction
+tldw_chatbook.Utils.file_durability
 tldw_chatbook.Utils.filesystem_identity
 tldw_chatbook.Utils.fts5_match_forms
 tldw_chatbook.Utils.input_validation
@@ -607,9 +610,11 @@ tldw_chatbook.Utils.secure_temp_files
 tldw_chatbook.Utils.sensitive_config_keys
 tldw_chatbook.Utils.sensitive_llm_logging
 tldw_chatbook.Utils.sensitive_paths
+tldw_chatbook.Utils.startup_errors
 tldw_chatbook.Utils.text_selection_crash_guard
 tldw_chatbook.Utils.textual_css_fastpath
 tldw_chatbook.Utils.tiktoken_runtime
+tldw_chatbook.Utils.timestamps
 tldw_chatbook.Utils.tls_trust
 tldw_chatbook.Utils.token_counter
 tldw_chatbook.Utils.ui_responsiveness
@@ -624,10 +629,6 @@ tldw_chatbook.Web_Scraping_Interop.server_web_scraping_service
 tldw_chatbook.Web_Scraping_Interop.web_scraping_scope_service
 tldw_chatbook.Widgets
 tldw_chatbook.Widgets.AppFooterStatus
-tldw_chatbook.Widgets.Chat_Widgets
-tldw_chatbook.Widgets.Chat_Widgets.chat_message
-tldw_chatbook.Widgets.Settings_Widgets
-tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types
 tldw_chatbook.Widgets.confirmation_dialog
 tldw_chatbook.Widgets.glyph_fallback
 tldw_chatbook.Widgets.modal_dismissal
@@ -635,6 +636,7 @@ tldw_chatbook.Widgets.pausable_progress
 tldw_chatbook.Widgets.splash_screen
 tldw_chatbook.Workspaces
 tldw_chatbook.Workspaces.change_review_consent
+tldw_chatbook.Workspaces.conversation_attention
 tldw_chatbook.Workspaces.conversation_browser_state
 tldw_chatbook.Workspaces.models
 tldw_chatbook.Workspaces.registry_service
@@ -645,6 +647,12 @@ tldw_chatbook.Writing_Interop.writing_markdown_adapter
 tldw_chatbook.Writing_Interop.writing_normalizers
 tldw_chatbook.Writing_Interop.writing_scope_service
 tldw_chatbook.app
+tldw_chatbook.app_command_providers
+tldw_chatbook.app_feature_glue
+tldw_chatbook.app_ingest_queue
+tldw_chatbook.app_lifecycle
+tldw_chatbook.app_navigation
+tldw_chatbook.app_service_wiring
 tldw_chatbook.chunking_engine_version
 tldw_chatbook.config
 tldw_chatbook.css
@@ -654,6 +662,7 @@ tldw_chatbook.css.build_css
 tldw_chatbook.css.tie_aware_stylesheet
 tldw_chatbook.css.widget_css
 tldw_chatbook.model_capabilities
+tldw_chatbook.provider_registry
 tldw_chatbook.runtime_policy
 tldw_chatbook.runtime_policy.bootstrap
 tldw_chatbook.runtime_policy.enforcement

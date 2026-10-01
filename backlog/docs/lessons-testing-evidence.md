@@ -1,5 +1,48 @@
 # Lessons: what counts as evidence a change works
 
+## Zero-delay loop ticks do not establish an asynchronous ownership boundary
+
+**TASK-25907.23, 2026-09-30.** Native qualification of the emergency Console
+submit-detachment test failed on both the current source and an immutable BASE
+export. Its twenty `asyncio.sleep(0)` ticks could close the loop while Hook
+admission still awaited a worker, before the intended COMMITTING barrier. Waiting
+for the fixture's existing held event under the unchanged outer deadline restored
+the intended assertion path; increasing the tick count would not prove it.
+
+That fixture repair did not explain away a separate ContextVar unraisable. Real
+pending-Hook and COMMITTING tasks, with synchronous and foreign-live-loop callers,
+proved that emergency detachment must finalize the captured coroutine in its
+own native Task context. The existing submit registry now covers the entire
+diagnostic wrapper, and synchronous GeneratorExit seals the existing diagnostic
+monitor without scheduling work on a different loop. The tests assert context
+isolation, monitor sealing/drain and retired ownership before GC, while retaining
+Python's destroyed-pending-Task diagnostic contract. Distinguish synchronization
+errors from production lifetime defects; an admitted fixture and a passing body
+alone do not establish cleanup custody.
+
+## Passing UI cases can retain constructor-owned database caches
+
+**TASK-25907.23, 2026-09-29.** All 99 scoped native UI cases passed, but the
+unchanged descriptor sentinel reported growth of 380 (27 to 407, limit 200).
+The shared factory constructed real `TldwCli` objects, often wrapped by an
+unmounted `DestinationHarness`, then removed their temporary directories
+without closing four eager database caches. Native storage admission retains
+those registered connections through live leases, so unlinking the files and
+collecting the app cannot replace explicit database ownership cleanup.
+
+A three-app probe kept every app referenced while normal owner close released
+32 regular descriptors and retired all 12 native handles. The factory now
+records its exact constructor-owned Library Collections, Workspaces,
+Subscriptions and Evals databases and closes them before directory removal;
+later test-injected replacements remain caller-owned. Three native regressions
+prove closed handles before fixture teardown, replacement ownership, and a
+raised close error that preserves pending cleanup for retry. Their fresh session
+returned to 13 total / 8 regular descriptors; the subsequent ten Settings control
+cases also held regular descriptors at 8. The existing GC cadence and descriptor
+limit were unchanged. Check native handle retirement under retained app references
+and collect source-free before/after counts; a successful directory drain is not
+resource-lifecycle evidence.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
@@ -16836,6 +16879,130 @@ so test both. Drive the explicit case through the Hub's own write path
 own `pending_gate_for`. CLAUDE.md's "a tagged tool is floored to ask" describes
 built-ins and inherited defaults, not an explicit override.
 
+## Case folding can leave combining marks outside a Unicode regex token
+
+In TASK-25907.4 (2026-09-25), a field-aware memory matcher passed composed and
+decomposed `café` tests, yet review found that `compile_query("İstanbul")`
+became the separate tokens `i` and `stanbul`: Python's regex word class did
+not retain the combining dot left by case folding. A single-letter `i` query
+therefore falsely matched `İstanbul`; `q` also matched `q\u0301`. Three new
+negative cases failed before the repair and passed after a bounded Unicode
+category scanner kept marks attached to their base tokens. The frozen baseline
+report stayed byte-identical after the repair.
+
+When a retrieval contract promises accent-preserving whole tokens, test both
+canonical equivalents and non-composable marks left by normalization or case
+folding. A composed/decomposed pair alone did not exercise the false-match
+boundary. Record the cost of a tokenizer change as well: this pure 128-record
+sample rose from 1.56 ms to 5.41 ms median; repository reads were excluded.
+
+## Custom string methods can run during pytest parameter naming
+
+**TASK-25907.12, exact span identity, 2026-09-26.** A rejected-input test
+passed a str subclass whose encode method deliberately raised. Pytest called
+that method with unicode_escape while generating its automatic parameter ID;
+the module failed collection twice before the production function could run.
+Explicit pytest.param IDs for the custom string/integer cases removed that
+fixture failure. The actual unvalidated calculation then produced 14 failed
+negative controls and 16 passes; strict built-in type/range validation made
+all 30 new cases pass.
+
+**What to do.** Give custom scalar objects explicit ordinary-string parameter
+IDs when testing that their methods must never be invoked by production code.
+Keep collection errors distinct from meaningful rejection failures; automatic
+fixture naming can otherwise exercise the very callback the test is meant to
+exclude at the API boundary.
+
+---
+
+## Retention probes must preserve semantic mutation guards
+
+**Incident (TASK-25907.13, 2026-09-26).** The native source-readiness audit
+found that two sync-log deletion probes used raw SQL after current
+`add_message` had attached a semantic revision. The message delete and
+conversation FK cascade correctly failed the v57 semantic authorization guard;
+the obsolete fixtures did not demonstrate a retention regression.
+
+Use the production semantic coordinator for tracked-message hard deletion.
+Keep genuine pre-ledger FK-cascade coverage using a historical database reopened
+through current migrations, and separately assert tracked cascade rejection and
+rollback. The corrected probes keep positive before-delete bodies and assert
+canonical/sync-log outcomes; no guard is disabled to obtain a green check.
+
+
+## Frozen retrieval labels do not qualify a positive control
+
+**TASK-25907.16, device-only read correction, 2026-09-26.** The frozen d10
+baseline picked its shortest expected record as a positive control. After
+correctly denying device-only reads, that device record made the harness fail
+`positive_search_failed` before it could measure the privacy improvement.
+Choosing a static syncable candidate only for the positive probe restored real
+production search/get/context checks. Expected selection and relevance labels
+stayed frozen, so the report still exposed `selection_mismatch` and recall@3
+falling from 1.0 to 0.5. Two old successful mutation fixtures also needed
+syncable targets, with separate device-only denials retained. A historical
+relevance label is not current authorization; keep a permitted control without
+filtering measured outputs or rewriting scores to conceal the policy change.
+
+
+## Pydantic overrides and frozen models do not close every input path
+
+**Incident (TASK-25907.19, 2026-09-26).** The inactive V2 meaning component
+passed 406 targeted cases, yet independent review reproduced two digest-boundary
+gaps. An exact frozen model's replaced dict-subclass `__dict__` hid a stored
+unknown field through overridden `keys`; `dict(vars(model))` accepted the
+remaining fields and produced the valid fixture digest. A duplicate raw JSON
+scope member also passed through `TypeAdapter.validate_json` and a containing
+model's compiled JSON parser, bypassing the component's classmethod override.
+Six root/nested dictionary and four alternate JSON regressions failed first;
+exact raw-state type checks and refusing compiled JSON mode made all ten pass
+in the final 418-case targeted run. An additional RED case showed a default
+outer model formatting the inner ValueError with raw input; generic TypeError
+keeps unsupported compiled-mode rejection content-free. The dedicated duplicate-aware JSON method and
+Python-mode adapters remain supported.
+
+Test compiled Pydantic consumers as well as public classmethods. After JSON
+decoding discards duplicate members, fresh typed validation cannot recover them.
+When promising callback-free complete snapshots, check raw model dictionaries
+before copying, not just the model class: a conversion can invoke callbacks and
+filter stored fields before validation ever sees them. Record intentionally
+unsupported ingress paths instead of implying that a classmethod override
+governs every Pydantic consumer.
+
+
+## Per-call validation overrides and dynamic dialect anchors need real ingress checks
+
+**Incident (TASK-25907.20, 2026-09-27).** Inactive V2 aggregates passed658 targeted
+cases, but fresh review accepted no_expiry=0 through strict=False and dropped
+known-but-wrong fields through extra=ignore at record/V1 payload/origin boundaries.
+Later fresh canonical revalidation could not recover the original input. The
+shipped meta-schema also failed full offline self-validation with460 missing
+semantic declarations: its dynamic meta anchor recursively imposed the root
+required keyword on nested subschemas. Fragment/generic schema checks missed it.
+Thirty-one review regressions failed first. Exact scalar/contextual key checks
+before configurable parsing and a document-scoped declaration fixed those cases;
+728 final targeted cases passed, including full offline dialect and installed
+wheel checks. Three further defaulted-payload RED cases completed the contextual fix. Test supported model/adapter overrides, composed leaf shapes (including omitted defaults) and
+actual custom-dialect validation, not only default helpers or rule-map fragments.
+
+
+## Closed profile barriers need real legacy controls — TASK-25907.22 (2026-09-27)
+
+The native closed V2 barrier initially passed blocked-profile and envelope-corruption tests but the fresh final review re-sealed a known V1 record with invalid preference polarity. Both getter/list calls raised compatibility-unavailable instead of preserving the existing quarantine path. A narrow known-V1 validation-damage classification restored quarantine; extra fields, unknown schema/kind/privacy vocabulary and mixed corruption/unknown-field inputs still deny without omission or SQL changes. Negative V2 controls alone would have missed the V1 regression.
+
+A user-requested follow-up review re-sealed otherwise recognized V1 provenance with invalid hash syntax and too many source references: the initial error-category allowlist still denied whole collections instead of quarantining the damaged item. The corrective pass watched18independent getter/list cases fail before recognizing string_pattern_mismatch/too_long only at exact known provenance paths;18mixed future/privacy/extra-field controls remained denied. Representative polarity/expiry controls had not covered provenance constraints. When mapping validation errors to corruption, cover each distinct known constraint and its unsupported-data combinations, rather than assuming a short category list preserves all legacy outcomes.
+
+The same unit's real first-link tests found that clearing/rebuilding heads left the guard without its current manifest during transaction-local comparisons. Installing the validated current root/head/metadata first within the same rollback transaction made all 30 reconciliation controls pass without a skip-guard flag. Test the complete healthy owner path, including its temporary write ordering, before claiming that a denial gate preserves legacy behavior.
+
+
+### Required-check repair after TASK-25907.22 (2026-09-27)
+
+The closed native barrier's memory baseline timed out at 300s under both current and original source. Synthetic d01–d03 each opened 255 private SQLite connections; ordinary getters split head/quarantine/body reads across three admissions. One guarded operation snapshot reduced healthy getters to one admission without cached authority. The complete unchanged 24-case reports finished at 263.90s/251.29s. Diagnose and repair the native workload; an original-source failure does not prove no added latency or justify raising a timeout.
+
+Startup deferral broke Library state re-exports used by a suspend test. Fixed lazy exports restored exact canonical classes. The reachable test then exposed an inherited __new__ fixture missing its unavailable-navigation owner; an empty-state fixture also expected a removed preview. Both failed against exact pre-repair source. Real construction plus an isolated UI callback preserved timer assertions; the canvas test now checks absent preview/export and an enabled Start in Console. Include legacy-namespace and real-construction checks when deferring imports.
+
+The expanded owner run passed 925 cases and failed a navigation test in a Pilot global message-queue drain after ID/title selection was visible. Removing that drain exposed a second race: the typed navigation request had not yet cleared. The final helper polls all three concrete postconditions (ID, visible title, no pending navigation), with unchanged limits. Independent positive/wrong-ID/wrong-title/pending controls showed RED then GREEN, and the entire affected Library/closure group passed 34/34. Avoid global queue drains as substitutes for owner completion; wait for the complete state the test actually asserts.
+
 ### A module attribute patch can silently replace a process-wide clock (TASK-19642.4)
 
 **What happened.** The TASK-602 smoke node passed alone but errored during an
@@ -16924,6 +17091,103 @@ Sharing_Interop wrapper constructed by TldwCli; it failed before fixing the pane
 lookup. A mounted workflow test must also match the application's wiring names
 and service family, not only the underlying HTTP contract (TASK-32881).
 
+### Separate first-use setup from the bounded publication race (TASK-25907.23)
+
+The 2026-09-29 native integration batch exceeded the Canvas preview test's
+five-second start wait, while the exact case passed alone. A controlled six-second
+delay in the first real preview call reproduced the failure before the held
+snapshot reached its race gate. Building one real snapshot before starting the
+bounded lifecycle race kept both existing five-second gate limits and passed the
+same delayed control; it also verified that inspection created no live Canvas run.
+Do not charge first-use catalog setup to a timer intended to measure a subsequent
+publication race, or call an isolated pass proof that the original failure is fixed.
+
+The Settings authority case likewise checked its follow-up snapshot before the
+actual mutation worker completed. Joining that worker before the existing
+five-second snapshot predicate passed a controlled six-second mutation delay.
+Mounted regressions proved that a held Select event could otherwise apply its
+old value to a replacement scope or policy. Reviewing the first identity guard
+exposed a second gap: the snapshot changes before recomposition detaches the old
+control, so that control still passes the identity check. Deterministic delivery
+before and after recomposition now verifies both control identity and the exact
+snapshot it rendered. The same delivery gap affected Buttons: a held runtime
+click toggled the replacement value, and a held record click selected the
+replacement slot. Four native failures before the shared guard and ten passing
+Button/Select lifecycle cases afterward verify both families against their
+rendered snapshot. These controlled failures establish the repaired conditions,
+not the unknown cause of every historical intermittent timeout.
+
+A further held-event regression changed only the local scope filter or selected
+record while retaining the same snapshot. Two deliveries before recomposition
+still acted on the replacement local view. Capturing the six existing compose
+inputs alongside snapshot and widget identity made all thirteen currentness
+cases pass, followed by the complete 110-case UI qualification. The rendered
+snapshot alone does not identify an indexed row or toolbar target when local
+view state can change independently.
+
+### Trace maintenance must fence preparation and the actual worker (TASK-25907.23)
+
+The 2026-09-29 complete native Console continuation lost a saved user semantic
+revision before its next provider call. An immutable post-run database read
+showed completed logical GC at epoch 54 had removed two unrooted revisions;
+the user message still existed. The same saved-turn cases passed alone, which
+did not establish a fix. Runtime admission counted provider streams, while the
+registered submit was already writing revisions during preparation. Event-based
+regressions reproduced both that ownership gap and a submit starting after
+the idle check but before the first collection job.
+
+Review then found that cancelling an await of run_owned_db_call does not stop
+its native executor callback. A coroutine-level finally could release the
+preparation fence while collection continued. A held collection callback under
+two cancellations now verifies the existing shield-and-drain pattern retains
+exclusion until that exact job finishes, then releases it and propagates
+cancellation. Count the complete registered operation, and fence the actual
+worker lifetime; a quiet provider registry or a cancelled await is not evidence
+that semantic writes or collection have finished.
+
+The saved-Canvas continuation then passed its behavior assertions while the
+complete Console batch retained 201 extra descriptors. Exact native handle
+tracing found two finite automatic-work ledger callbacks using asyncio.to_thread
+before the already guarded agent worker. Reusing run_owned_db_call for those two
+callbacks retired their fresh AgentRuns connections while preserving the caller's
+MainThread handle; the 26-case ownership matrix passed. A guard around the main
+worker does not cover separate callbacks that run before it.
+
+Remaining growth came from exact test-owned databases. Their deterministic
+finalizers removed those handles; a durable fixture still refused its unchanged
+two-second quiescence deadline because a response-link read cursor remained
+borrowed. Closing that cursor in finally before shutdown made all ten focused
+fixture cases pass with zero test-owned native connections. Keep borrowed global
+owners intact and distinguish a held cursor from an unfinished worker.
+
+### Detached receiver guards must track custody transfer before rebinding
+
+During TASK-25907.23 qualification, a new fork census recognized fresh message
+constructors but missed objects passed inside containers, published through a
+mapping alias, or delegated before a local name was rebound. Native negative
+controls reproduced seven wrapped transfers and two alias/rebinding escapes.
+The existing helper now invalidates known object custody conservatively before
+changing bindings. Exact scalar reads remain separate: tightening transfer
+checks initially misclassified the private settings drain's immutable
+`frozenset[ConsoleSettingsComponent]` member union. Its actual annotation and
+canonical receiver are pinned, with a positive and a live-receiver negative.
+The final complete census and new fork controls pass 82 cases without adding a
+SAFE exemption. Constructor recognition alone does not establish continued
+ownership after the object is handed elsewhere.
+
+### Fault injection must identify the coordinator entry it intends to fail
+
+During TASK-25907.23 native provider qualification, the controlled core-sync
+rollback mock counted three entries instead of its two intended faults. Exact
+stacks proved forward adoption and rollback were direct shared-handoff calls;
+the third entry was a later summary projection refresh. The fixture now compares
+the immediate caller's code with the existing shared handoff owner and forwards
+helper refreshes normally, retaining no frame. All ten original restoration and
+replay assertions remain, and an additional assertion observes the two actual
+policy phases. All 20 provider journeys and 18 private children pass. Target
+the intended fault owner rather than treating every use of a shared helper as
+the same transaction.
+
 ## 2026-09-28 — Own and assert the native terminal size (TASK-33163)
 
 The Hooks integration requested 120×40 with stty and initially read that size,
@@ -16993,6 +17257,63 @@ burst and driving each one's tick directly in its own phase. Storage
 admissions and helper spawns still jitter *downward* by 1-3 (a worker that
 lands on an executor thread with a live connection skips the connect), so pin
 observed maxima, not a single run.
+
+
+## 2026-09-30 — Observe the dispatched callback and native shutdown boundary (TASK-25907.23)
+
+A joined resource run found `ScreenStackError` when the real splash-closed
+handler resumed after awaited widget removal during native Textual shutdown.
+A class-method observation wrapper recorded nothing because decorated message
+dispatch retained the original handler reference; that empty capture was
+inconclusive. A regression holding real removal across actual `_close_all`
+reproduced the error and recorded `is_running=False`, an empty screen stack,
+and the application-specific `_shutting_down=False`. The existing handler now
+rechecks public running state before its startup continuation. Exercise the
+actual dispatched callback and record the native lifecycle boundary; neither
+an isolated pass nor an application-specific flag proves the callback is safe
+after an await. Normal splash, disabled splash and keypress startup controls
+remain part of the covering evidence.
+
+## 2026-10-01 — A coalesced refresh request is not a render barrier (TASK-25907.23)
+
+The combined native Console selection exposed an assertion that session A's
+transcript had disappeared immediately after awaiting a direct refresh for
+session B. A held real sync worker reproduced the stale DOM on both immutable
+BASE and current source: the direct call only marked another refresh requested
+while an existing worker was in progress. Its finally path registered an
+exclusive successor before the predecessor retired. Waiting the predecessor
+could therefore raise cancellation and still miss the successor. The fixture
+now waits the public worker manager for the exact screen and console-sync group,
+under its original outer deadline, then retains its original render assertions.
+A held control observed that wait before release. An injected original assertion
+failure also proved the fixture's existing approval-thread join runs while the
+app context is live; otherwise its late callbacks reached a closed loop.
+
+## 2026-10-01 — Seed and reload the selected synthetic source (TASK-25907.23)
+
+Settings qualification found fixtures that changed TLDW_CONFIG_PATH after
+startup admission. Immutable BASE reproduced refusal before the intended
+behavior. Private children now write the same fixture TOML to their already
+selected synthetic path. Five fixtures then exposed a second assumption: the
+same path retained the intentional bootstrap cache, whereas the old source
+switch had incidentally missed it. Calling the public load_settings with
+force_reload=True after those original writes restored their actual behavior
+without resetting private caches or bypassing admission. All fifteen selected
+native child cases passed; source selection, cache freshness and the behavior
+assertion are separate contracts, so preserve evidence for each failure.
+
+## 2026-10-01 — Distinguish a borrowed WAL descriptor from a live worker handle (TASK-25907.23)
+
+The joined native resource probe reached zero owned and unexplained handles but
+still failed its private three-descriptor assumption for a legitimate borrowed
+WorkspaceDB owner. On SQLite3.49.1, both an isolated native control and the real
+WorkspaceDB close path showed a fourth same-inode descriptor retained by the
+Unix VFS while the original main WAL connection remained open. Repeated worker
+closes reused that descriptor; the original final main-owner close retired it
+without GC. The private assertion stayed RED. Connection/lease identity and
+native device/inode custody explained this observation; zero owned counters did
+not make the batch green, and the count did not authorize closing a borrower.
+The earlier aggregate growth warning remained a separate observation.
 
 ## The Impeccable detector "passes" a Textual screen by scanning zero files (Console UX review, 2026-09-29)
 

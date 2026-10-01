@@ -166,8 +166,7 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
                     classes="library-canvas-action",
                     compact=True,
                 )
-                label = Static(" Enabled ", markup=False)
-                label.styles.width = "auto"
+                label = Static(" Enabled ", markup=False, classes="w-auto")
                 yield label
                 yield Switch(
                     value=bool(preview.get("enabled", True)),

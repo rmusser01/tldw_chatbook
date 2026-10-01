@@ -16,10 +16,7 @@ import unicodedata
 
 from ..chunking_engine_version import ENGINE_VERSION
 from ..RAG_Admin.template_validation import validate_template
-from .engine.chunker import Chunker
-from .engine.regex_safety import check_pattern
 from .lab_models import PreparedRecipe, RuntimeIdentity, canonical_json
-from .template_runtime import registered_template_operations
 
 
 class PreviewUnsupportedError(ValueError):
@@ -102,6 +99,8 @@ def _config(value: object, defaults: dict, path: str) -> dict:
 def _pattern(pattern: object, field: str) -> None:
     if not isinstance(pattern, str):
         raise PreviewUnsupportedError(field, "Expected a regex string")
+    from .lab_preflight import check_pattern
+
     error = check_pattern(pattern, max_len=256)
     if error:
         raise PreviewUnsupportedError(field, str(error))
@@ -131,6 +130,8 @@ def prepare_recipe(body: dict, *, runtime: RuntimeIdentity) -> PreparedRecipe:
     evaluates them. Unknown metadata survives in authored_json. Call off the UI
     loop: validation, serialization, and hashing may exceed 100 ms.
     """
+    from .lab_preflight import Chunker, registered_template_operations
+
     verdict = validate_template(body)
     if not verdict["valid"]:
         issue = verdict["errors"][0]
@@ -271,3 +272,35 @@ def prepare_recipe(body: dict, *, runtime: RuntimeIdentity) -> PreparedRecipe:
         runtime=runtime,
         recipe_hash=hashlib.sha256(identity.encode("utf-8")).hexdigest(),
     )
+
+
+_LAZY_EXPORTS = {
+    "Chunker": (".engine.chunker", "Chunker"),
+    "check_pattern": (".engine.regex_safety", "check_pattern"),
+    "registered_template_operations": (
+        ".template_runtime",
+        "registered_template_operations",
+    ),
+}
+
+
+def __getattr__(name: str):
+    """Resolve the original dependency object only when a caller uses it."""
+    from importlib import import_module
+
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module, attribute = target
+    owner = import_module(module, __package__)
+    value = getattr(owner, attribute) if attribute else owner
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
+
+# Preserve the former implicit star-import surface, including deferred aliases.
+__all__ = [name for name in globals() if not name.startswith("_")] + list(_LAZY_EXPORTS)

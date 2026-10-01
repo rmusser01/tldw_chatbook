@@ -93,6 +93,7 @@ async def _settle(pilot, *, times: int = 8) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pin_long_load_is_bounded_and_leaves_the_reader_at_the_tail():
     """A 500-message load mounts a bounded tail and stays anchored to it."""
@@ -116,6 +117,7 @@ async def test_pin_long_load_is_bounded_and_leaves_the_reader_at_the_tail():
         assert "message 499 line 3" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pin_session_switch_rewindows_on_the_new_history():
     """Switching sessions drops every old row and re-windows on the new tail."""
@@ -138,6 +140,7 @@ async def test_pin_session_switch_rewindows_on_the_new_history():
         assert transcript._is_following_tail()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pin_watermarks_still_bound_the_mounted_height():
     """The height watermarks keep bounding the transcript under windowing."""
@@ -158,6 +161,7 @@ async def test_pin_watermarks_still_bound_the_mounted_height():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_windowed_out_message_reveals_it_contiguously():
     """`select_message` reveals through the target, keeping ONE tail stretch."""
@@ -185,6 +189,7 @@ async def test_selecting_a_windowed_out_message_reveals_it_contiguously():
         assert mounted[-1] == "m299"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_rows_stay_one_contiguous_suffix_after_prune_and_jump():
     """Why no gap marker is needed here: the hidden set is always a PREFIX.
@@ -225,6 +230,7 @@ async def test_mounted_rows_stay_one_contiguous_suffix_after_prune_and_jump():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scrollback_hydration_and_pruning_reach_a_fixed_point():
     """Idle frames must not churn rows in and out.
@@ -257,6 +263,7 @@ async def test_scrollback_hydration_and_pruning_reach_a_fixed_point():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_explicit_hydration_still_works_below_the_low_watermark():
     """The fixed point must not cost ordinary scrollback its hydration.
@@ -286,6 +293,7 @@ async def test_explicit_hydration_still_works_below_the_low_watermark():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restored_reading_state_reveals_its_selected_message():
     """`restore_reading_state` assigns the id directly — it must reveal it first."""
@@ -316,6 +324,7 @@ async def test_restored_reading_state_reveals_its_selected_message():
         assert transcript.selected_message_id == "m12"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restored_offset_is_applied_against_the_revealed_window():
     """The offset must be clamped against the window the restore produces.
@@ -401,6 +410,7 @@ def test_window_line_settings_resolve_from_config():
     ) == (0, 1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kill_switch_mounts_the_whole_history():
     """`transcript_window_lines = 0` restores the pre-task behavior."""
@@ -415,6 +425,7 @@ async def test_kill_switch_mounts_the_whole_history():
         assert len(_mounted_message_ids(transcript)) == 120
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_configured_window_lines_change_the_load_window():
     """A larger configured floor mounts more of the tail."""
@@ -440,6 +451,7 @@ async def test_configured_window_lines_change_the_load_window():
     assert big_window < 300, "a configured floor is still a window"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kill_switch_does_not_resurrect_watermark_pruned_rows():
     """The kill switch disables WINDOWING, not the height watermarks.

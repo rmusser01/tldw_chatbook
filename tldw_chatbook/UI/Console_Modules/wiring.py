@@ -59,6 +59,7 @@ from tldw_chatbook.Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,
     fleet_unseen_conversation_ids,
 )
+from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Chat.console_runtime import leave_console_runtime
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE,
@@ -1252,24 +1253,18 @@ def build_console_controllers(
         ),
     )
 
-    async def _seed_console_fleet_history(wake) -> None:
-        import asyncio
-        try:
-            if await asyncio.to_thread(wake.seed_from_marks):
-                wake.retry_soon()
-        except Exception as exc:
-            from loguru import logger
-            logger.warning("console fleet history seed failed (exception_type={})", type(exc).__name__)
-
     def _schedule_console_fleet_history_seed() -> bool:
         from functools import partial
+
+        from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+
         wake = getattr(screen._console_chat_controller, "fleet_wake", None)
         store = screen._console_chat_store
         if wake is not None and store is not None and any(
             session.persisted_conversation_id for session in store.sessions()
         ):
             screen.run_worker(
-                partial(_seed_console_fleet_history, wake),
+                partial(ConsoleFleetWakeCoordinator._seed_owned_history, wake),
                 exclusive=True,
                 group="console-fleet-seed",
             )
@@ -2358,4 +2353,41 @@ def build_console_controllers(
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
         sync_cost_chip=lambda: screen._sync_console_cost_chip(),
+    )
+
+
+def build_console_workbench_projection(self, control_state: ConsoleControlState):
+    from ..Screens import chat_screen as owner
+
+    blocker_copy = self._console_provider_blocker_copy()
+    composer = self._console_composer_or_none()
+    has_draft = bool(composer and composer.draft_text().strip())
+    controller = self._console_chat_controller
+    run_state = (
+        getattr(controller, "run_state", None) if controller is not None else None
+    )
+    store = self._console_chat_store
+    active_session_id = store.active_session_id if store is not None else None
+    image_edit_active = (
+        active_session_id is not None
+        and self._image._h3_image_edit_registry().active(active_session_id) is not None
+    )
+    can_stop = image_edit_active or bool(getattr(run_state, "is_stop_allowed", False))
+    run_allows_send = (
+        bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
+    )
+    can_send = (
+        has_draft and not bool(self._console_setup_blocked_reason()) and run_allows_send
+    )
+    return owner.build_console_workbench_state(
+        control_state=control_state,
+        provider_blocker_copy=blocker_copy,
+        can_send=can_send,
+        can_stop=can_stop,
+        density=self._console_workbench_density(),
+        run_active=self._console_run_active(),
+        ephemeral=self._console_active_session_is_ephemeral(),
+        hook_attention=getattr(
+            getattr(self, "_console_hook_review_snapshot", None), "pending_count", 0
+        ),
     )

@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Select
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.skill_eval.models import (
     EvalTarget,
@@ -233,7 +234,7 @@ async def test_skill_eval_detail_renders_report_for_a_seeded_run_group(
         StaticFinding,
     )
     from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
 
     subject = SkillSubject(
         name="csv-cleaner", description="d", body="b", source_kind="directory",
@@ -295,6 +296,7 @@ async def test_skill_eval_detail_renders_report_for_a_seeded_run_group(
 
     app = _DetailHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
+        assert tuple(app.query_one(SkillEvalDetail).styles.padding) == (1, 1, 1, 1)
         from textual.widgets import Static
 
         lines = [
@@ -590,7 +592,7 @@ async def test_skill_eval_detail_renders_layer_statistics(evals_db, tmp_path):
         SkillSubject,
     )
     from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
 
     subject = SkillSubject(
         name="csv-cleaner", description="d", body="b", source_kind="directory",
@@ -669,7 +671,7 @@ async def test_skill_eval_detail_renders_simulation_layer_statistics(
         SkillSubject,
     )
     from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
 
     subject = SkillSubject(
         name="csv-cleaner", description="d", body="b", source_kind="store",
@@ -1469,7 +1471,7 @@ async def test_report_lists_artifacts_read_only(evals_db, tmp_path):
     from tldw_chatbook.Evals.skill_eval.models import SkillSubject
     from tldw_chatbook.Evals.skill_eval.storage import save_artifact
     from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
 
     subject = SkillSubject(
         name="csv-cleaner", description="d", body="b",
@@ -1529,7 +1531,7 @@ async def test_compare_with_previous_run_group(evals_db, tmp_path):
     newer."""
     from tldw_chatbook.Evals.skill_eval.models import SkillSubject
     from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
     from textual.widgets import Button
 
     subject = SkillSubject(
@@ -1571,7 +1573,13 @@ async def test_compare_with_previous_run_group(evals_db, tmp_path):
         await pilot.pause()
         compare = app.screen.query_one("#skill-eval-compare", Button)
         compare.press()
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: any(
+                "newer" in str(static.render()) and "older" in str(static.render())
+                for static in app.screen.query("SkillEvalDetail Static")
+            ),
+        )
         lines = [
             str(static.render())
             for static in app.screen.query("SkillEvalDetail Static")
@@ -1596,7 +1604,7 @@ async def test_middle_report_compares_against_the_older_sibling(evals_db, tmp_pa
     chronology and every delta)."""
     from tldw_chatbook.Evals.skill_eval.models import SkillSubject
     from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
     from textual.widgets import Button
 
     subject = SkillSubject(
@@ -1642,7 +1650,13 @@ async def test_middle_report_compares_against_the_older_sibling(evals_db, tmp_pa
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
         await pilot.pause()
         app.screen.query_one("#skill-eval-compare", Button).press()
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: any(
+                "older: 70.0" in str(static.render())
+                for static in app.screen.query("SkillEvalDetail Static")
+            ),
+        )
         lines = [
             str(static.render())
             for static in app.screen.query("SkillEvalDetail Static")
@@ -1663,7 +1677,7 @@ async def test_artifact_listing_expands_beyond_the_first_page(evals_db, tmp_path
     from tldw_chatbook.Evals.skill_eval.models import SkillSubject
     from tldw_chatbook.Evals.skill_eval.storage import save_artifact
     from tldw_chatbook.UI.Evals.skill_eval_detail import SkillEvalDetail
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
     from textual.widgets import Button
 
     subject = SkillSubject(
@@ -1713,7 +1727,13 @@ async def test_artifact_listing_expands_beyond_the_first_page(evals_db, tmp_path
         assert "judge-task-11" in text
         assert "judge-task-14" not in text  # still on the first page
         app.screen.query_one("#skill-eval-artifacts-more", Button).press()
-        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: any(
+                "judge-task-14" in str(static.render())
+                for static in app.screen.query("SkillEvalDetail Static")
+            ),
+        )
         lines = [
             str(static.render())
             for static in app.screen.query("SkillEvalDetail Static")

@@ -40,6 +40,9 @@ import weakref
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 
+from . import console_run_hooks
+from .console_interrupt_rounds import _sibling_approval_refusals
+
 from tldw_chatbook.Agents.approval_provenance import (
     ApprovalDecisions,
     append_denial_reason,
@@ -291,11 +294,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     validate_continuation_restore,
 )
+from tldw_chatbook.DB.base_db import run_owned_db_call
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleMessagePresentation,
     ConsolePresentationContext,
-    expand_character_template,
     resolve_console_message_presentation,
     resolve_send_system_prompt,
 )
@@ -520,6 +523,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
     from tldw_chatbook.Agents.profile_tool_provider import ProfileToolProvider
     from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSelectionExplanation,
         ProfileContextService,
         ProfileContextSnapshot,
     )
@@ -2620,50 +2625,6 @@ def _stamp_answer_provenance(
     return result
 
 
-def _sibling_approval_refusals(
-    rows: Sequence[MCPPendingCall],
-    decision_for: Callable[[MCPPendingCall], str | None],
-    decisions: Mapping[str, str],
-    allowing_for: Callable[[MCPPendingCall], tuple[str, ...]],
-    record_refusal: Callable[[MCPPendingCall, bool], None],
-) -> dict[str, ToolReviewValue]:
-    """Refuse rows that would run only on a same-name sibling's approval.
-
-    TASK-33082. A tool's stamp is name-keyed and keeps the broadest approval
-    any row of that name received, so it cannot say "this call, not that
-    one". A row whose own answer is missing, ``"timeout"`` or unknown would
-    then run on its approved sibling's stamp. Each such row is refused here,
-    by its own key, and audited through ``record_refusal``, because the
-    runtime never dispatches it to the owner that would otherwise record the
-    outcome. A row with no approved sibling is left alone: its name's stamp
-    is not an approval, so the owner refuses and audits it at dispatch, as
-    before.
-
-    Args:
-        rows: The batch's pending approval rows.
-        decision_for: Resolves one row's own answer (call id first, then name).
-        decisions: The approval round's answers, for the review fact.
-        allowing_for: The answers that approve a given row's owner.
-        record_refusal: Audits one refused row; the flag is whether its own
-            answer was ``"timeout"``.
-
-    Returns:
-        Refusal verdicts keyed by call id, or by name for an id-less row.
-    """
-    approved = {row.llm_name for row in rows if decision_for(row) in allowing_for(row)}
-    refusals: dict[str, ToolReviewValue] = {}
-    for row in rows:
-        decision = decision_for(row)
-        if row.llm_name not in approved or decision == "deny":
-            continue
-        if decision in allowing_for(row):
-            continue
-        timed_out = decision == "timeout"
-        refusals[row.call_id or row.llm_name] = _review_decision(
-            row, decisions, TIMEOUT_REFUSAL if timed_out else UNRESOLVED_REFUSAL
-        )
-        record_refusal(row, timed_out)
-    return refusals
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -5690,17 +5651,17 @@ class ConsoleChatController:
         return self.store.capture_revision(session_id)
 
     def pause_trace_maintenance_dispatch(self) -> None:
-        """Prevent new runs from crossing a provider-dispatch boundary."""
+        """Pause new preparation and provider dispatch during trace maintenance."""
 
         self._trace_maintenance_dispatch_paused.set()
 
     def resume_trace_maintenance_dispatch(self) -> None:
-        """Release provider dispatch after physical database maintenance."""
+        """Release preparation and dispatch after trace maintenance."""
 
         self._trace_maintenance_dispatch_paused.clear()
 
     async def _wait_for_trace_maintenance_dispatch(self) -> None:
-        """Yield without blocking the UI loop while physical maintenance runs."""
+        """Yield on the owning loop while trace maintenance excludes new work."""
 
         while self._trace_maintenance_dispatch_paused.is_set():
             await asyncio.sleep(0.05)
@@ -6802,22 +6763,7 @@ class ConsoleChatController:
                     self._session_lifecycle_revisions.get(session_id, 0) + 1
                 )
 
-    def _hook_admission_reason(self) -> str | None:
-        from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
-        from tldw_chatbook.config import read_hooks_config_snapshot
-
-        try:
-            if self._hook_permissions_accessor is not None:
-                return self._hook_permissions_accessor().snapshot().blocked_reason
-            saved = read_hooks_config_snapshot()
-            inventory = inspect_hooks_config(
-                {"hooks": saved.section} if saved.section_present else {}
-            )
-            if not inventory.requires_authority:
-                return None
-            return "Hook review required; permission owner unavailable."
-        except Exception:  # noqa: BLE001 -- unavailable authority must refuse admission
-            return "Hooks unavailable; review or disable hooks before sending."
+    _hook_admission_reason = console_run_hooks._hook_admission_reason
 
     async def hook_admission_reason(self) -> str | None:
         """Read hook authority off-thread before acquiring new draft custody."""
@@ -7972,7 +7918,7 @@ class ConsoleChatController:
             self.store.session_thinking_history_policy(session_id)
         )
         try:
-            resolution = await self.provider_gateway.resolve_for_send(
+            resolution = await self._resolve_for_send_bounded(
                 self._provider_selection_for_session(session_id)
             )
         except Exception:
@@ -9222,8 +9168,8 @@ class ConsoleChatController:
 
         A closed event loop cannot terminally cancel or await its pending tasks
         through public asyncio APIs. This helper therefore removes only the
-        controller's volatile ownership and returns exclusively owned
-        preparations for synchronous cleanup. It does not promise a terminal
+        controller's volatile ownership, closes its coroutine in the task's
+        context, and returns exclusively owned preparations for cleanup. It does not promise a terminal
         Task state or suppress Python's destroyed-pending-task diagnostic.
         """
 
@@ -9236,6 +9182,7 @@ class ConsoleChatController:
                 preparation_id = self._active_submit_preparations.pop(task, None)
                 if preparation_id is not None:
                     closed_preparations.append(preparation_id)
+                task.get_context().run(task.get_coro().close)
             live_preparations = frozenset(self._active_submit_preparations.values())
         return tuple(
             preparation_id
@@ -9741,34 +9688,43 @@ class ConsoleChatController:
         """Observe the whole attempt, including refusals before trace setup."""
         from .console_send_diagnostics import send_diagnostic_scope
 
-        async with send_diagnostic_scope("controller_submit") as diagnostic:
-            result = await self._submit_draft_lifecycle(
-                draft,
-                session_id=session_id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                queue_authorization=queue_authorization,
-                wake_authorization=wake_authorization,
-                preserve_composer=preserve_composer,
-                configuration=configuration,
-                accepted_attachments=accepted_attachments,
-                captured_one_shot_prefill=captured_one_shot_prefill,
-                captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
-                staged_evidence_launch=staged_evidence_launch,
-                staged_evidence_capture=staged_evidence_capture,
-                staged_evidence_release=staged_evidence_release,
-                custody_acceptance_hook=custody_acceptance_hook,
-                _resume_preparation_id=_resume_preparation_id,
-                _resume_resolution=_resume_resolution,
+        active_task = asyncio.current_task()
+        if active_task is not None:
+            self._register_submit_task(
+                active_task, session_id or self.store.active_session_id
             )
-            diagnostic.outcome = (
-                result.terminal_status.value
-                if result.terminal_status is not None
-                else "accepted"
-                if result.accepted
-                else "refused"
-            )
-            return result
+        try:
+            async with send_diagnostic_scope("controller_submit") as diagnostic:
+                result = await self._submit_draft_lifecycle(
+                    draft,
+                    session_id=session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                    preserve_composer=preserve_composer,
+                    configuration=configuration,
+                    accepted_attachments=accepted_attachments,
+                    captured_one_shot_prefill=captured_one_shot_prefill,
+                    captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
+                    staged_evidence_launch=staged_evidence_launch,
+                    staged_evidence_capture=staged_evidence_capture,
+                    staged_evidence_release=staged_evidence_release,
+                    custody_acceptance_hook=custody_acceptance_hook,
+                    _resume_preparation_id=_resume_preparation_id,
+                    _resume_resolution=_resume_resolution,
+                )
+                diagnostic.outcome = (
+                    result.terminal_status.value
+                    if result.terminal_status is not None
+                    else "accepted"
+                    if result.accepted
+                    else "refused"
+                )
+                return result
+        finally:
+            if active_task is not None:
+                self._unregister_submit_task(active_task)
 
     async def _submit_draft_lifecycle(
         self,
@@ -9822,8 +9778,6 @@ class ConsoleChatController:
                     origin=origin,
                     queue_entry_id=queue_entry_id,
                 )
-            if active_task is not None:
-                self._register_submit_task(active_task, owner_key)
         if active_task is None:
             return await self._submit_draft_inner(
                 draft,
@@ -9892,8 +9846,6 @@ class ConsoleChatController:
                 origin=origin,
                 queue_entry_id=queue_entry_id,
             )
-        finally:
-            self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
         self,
@@ -9926,6 +9878,7 @@ class ConsoleChatController:
             else manual_work_scope()
         )
         try:
+            await self._wait_for_trace_maintenance_dispatch()
             with scope:
                 result = await self._submit_draft_body(
                     draft,
@@ -10053,1509 +10006,28 @@ class ConsoleChatController:
             the time this runs (see ``_session_closed_result``); ``True``
             once the turn actually proceeds.
         """
-        if not isinstance(origin, ConsoleSubmissionOrigin):
-            raise ValueError("origin must be an explicit ConsoleSubmissionOrigin")
-        target_id = session_id or self.store.active_session_id or ""
-        resumed_preparation = (
-            self._preparation_by_id(_resume_preparation_id)
-            if _resume_preparation_id is not None
-            else None
-        )
-        prepared_continuation = (
-            self._prepared_send_continuations.get(_resume_preparation_id)
-            if _resume_preparation_id is not None
-            else None
-        )
-        if prepared_continuation is not None:
-            preserve_composer = prepared_continuation.preserve_composer
-        if preserve_composer and not session_id:
-            return ConsoleSubmitResult(False, False, "Choose an explicit conversation.")
-        if preserve_composer and str(draft).lstrip().startswith((COMMAND_PREFIX, MENTION_SIGIL)):
-            return ConsoleSubmitResult(
-                False, False, "Use Console for slash commands and @ references.",
-                session_id=session_id,
-            )
-        if _resume_preparation_id is not None and resumed_preparation is None:
-            return ConsoleSubmitResult(
-                False, False, "Prepared turn is no longer available."
-            )
-        if _resume_preparation_id is not None and prepared_continuation is None:
-            return ConsoleSubmitResult(
-                False, False, "Prepared turn is no longer available."
-            )
-        if origin is ConsoleSubmissionOrigin.QUEUED:
-            if not queue_entry_id or (
-                _resume_preparation_id is None
-                and not self.prompt_queue_coordinator.authorizes(
-                    queue_authorization, target_id
-                )
-            ):
-                raise PermissionError(
-                    "queued sends require coordinator-issued generation authority"
-                )
-        elif origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-            # PR3a-2 Task 5: only the wake coordinator can mint the token
-            # (queue-token precedent) -- no other code path can fabricate
-            # a machine-origin send.
-            if not self._fleet_wake.authorizes(wake_authorization, target_id):
-                raise PermissionError(
-                    "agent-wake sends require coordinator-issued wake authority"
-                )
-            if target_id and self.prompt_queue_coordinator.controls_generation(
-                target_id
-            ):
-                # Defense-in-depth twin of the coordinator's own gate: a
-                # queue-owned session's next turn belongs to the queue.
-                # Refused WITHOUT a transcript row -- a machine deferral
-                # is not user-visible news; the wake retries later.
-                return ConsoleSubmitResult(
-                    False,
-                    False,
-                    "Queued messages control the next turn.",
-                )
-        elif target_id and self.prompt_queue_coordinator.controls_generation(target_id):
-            visible_copy = "Queued messages control the next turn. Resume or manage the queue first."
-            if target_id and any(
-                session.id == target_id for session in self.store.sessions()
-            ):
-                self.store.append_message(
-                    target_id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content=visible_copy,
-                )
-            return ConsoleSubmitResult(False, False, visible_copy)
+        from .console_draft_submission import submit_draft_body
 
-        active_rejection = self._active_run_rejection(
+        return await submit_draft_body(
+            self,
+            draft,
             session_id=session_id,
-            # A raced wake refusal is machine-internal (retried later);
-            # only user-facing origins get the explanatory SYSTEM row.
-            append_row=origin is not ConsoleSubmissionOrigin.AGENT_WAKE,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
             queue_authorization=queue_authorization,
+            wake_authorization=wake_authorization,
+            preserve_composer=preserve_composer,
+            configuration=configuration,
+            accepted_attachments=accepted_attachments,
+            captured_one_shot_prefill=captured_one_shot_prefill,
+            captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
+            staged_evidence_launch=staged_evidence_launch,
+            staged_evidence_capture=staged_evidence_capture,
+            staged_evidence_release=staged_evidence_release,
+            custody_acceptance_hook=custody_acceptance_hook,
+            _resume_preparation_id=_resume_preparation_id,
+            _resume_resolution=_resume_resolution,
         )
-        if active_rejection is not None and resumed_preparation is None:
-            return active_rejection
-
-        if (
-            target_id
-            and resumed_preparation is None
-            and self.store.dispatch_recovery_blocks_submission(target_id)
-        ):
-            return ConsoleSubmitResult(
-                False,
-                False,
-                "Finish or discard the pending response before sending another "
-                "message.",
-                session_id=target_id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-            )
-
-        if session_id:
-            session = next(
-                (s for s in self.store.sessions() if s.id == session_id), None
-            )
-            if session is None:
-                # The dispatching session was closed during the gap between
-                # dispatch and this coroutine actually running -- there is
-                # nothing left to submit into. Stamp the (now-orphaned)
-                # session id, never whatever is active now (see
-                # `_session_closed_result`'s own docstring). `dispatch_gap`
-                # is what makes THIS call site (uniquely among ~19) toast --
-                # every other one fires mid-run, after the user already
-                # confirmed closing that session themselves.
-                return self._session_closed_result(
-                    session_id=session_id, dispatch_gap=True
-                )
-        else:
-            # Task 4 (D2 fix wave, "bonus race"): mirror the mount-time
-            # creator (`ConsoleSessionController._ensure_active_console_session_settings`),
-            # which always passes `settings=` -- without this, a session
-            # bootstrapped from THIS branch (no dispatch-captured session id
-            # at all) got `settings=None` while every other creator gave the
-            # first session a real snapshot, and whichever creator ran first
-            # decided the outcome.
-            session = self._ensure_default_session()
-        active_task = asyncio.current_task()
-        if active_task is not None:
-            self._rebind_submit_task(active_task, session.id)
-            if resumed_preparation is not None:
-                self._bind_submit_preparation(
-                    active_task, resumed_preparation.preparation_id
-                )
-        if preserve_composer and (
-            self.store.pending_attachments(session.id)
-            or self.store.session_one_shot_prefill(session.id)
-            or self._has_explicit_staged_evidence(session.id) is not False
-        ):
-            return ConsoleSubmitResult(
-                False, False,
-                "This conversation has staged Console attachments, evidence or prefill. "
-                "Review them in Console before sending from Buddy.",
-                session_id=session.id,
-            )
-        # PR3a-2 Task 5: a wake never touches the user's staged state --
-        # pending attachments belong to the USER's next send and must be
-        # neither embedded nor cleared by a machine turn.
-        custodied_inputs = configuration is not None
-        admitted_prefill: str | None = None
-        admitted_prefill_from_one_shot = False
-        admitted_prefill_revision: int | None = None
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and custodied_inputs:
-            if captured_one_shot_prefill:
-                admitted_prefill = captured_one_shot_prefill
-                admitted_prefill_from_one_shot = True
-                admitted_prefill_revision = captured_one_shot_prefill_revision
-            elif configuration.session_settings is not None:
-                admitted_prefill = configuration.session_settings.pinned_prefill
-        pendings = (
-            list(prepared_continuation.attachments)
-            if prepared_continuation is not None
-            else list(accepted_attachments or ())
-            if custodied_inputs
-            else self.store.pending_attachments(session.id)
-            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and not preserve_composer
-            else []
-        )
-        attachment_mode_pendings = [
-            pending
-            for pending in pendings
-            if pending.insert_mode == "attachment" and pending.data is not None
-        ]
-        has_pending_attachment = bool(attachment_mode_pendings)
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-            # The notice is machine-composed from DB text and bounded by
-            # `compose_wake_notice`'s own result budget; `_validated_draft`
-            # exists to validate USER drafts (its length cap and markup
-            # rules are composer policy, not payload policy).
-            clean_draft = str(draft or "").strip()
-            validation_error = None if clean_draft else "Empty wake notice."
-        else:
-            clean_draft, validation_error = self._validated_draft(
-                draft, allow_empty=has_pending_attachment
-            )
-        if validation_error is not None:
-            return self._block(session.id, validation_error)
-        # TASK-27021: expand @-references (files/folders/diff) into the text
-        # the PROVIDER sees, before the one preparation construction below.
-        # The user echo keeps the RAW draft; a compact system row records what
-        # expanded/refused (26020 AC#6). Expansion failures never block the
-        # send -- the raw draft goes through with a note. AGENT_WAKE drafts
-        # are machine-composed and never expanded.
-        executed_draft_text = clean_draft
-        reference_records: tuple = ()
-        # Qodo #6 (PR #2313): a RESUMED preparation re-enters this seam with
-        # the already-expanded executed_draft; expansion is not idempotent
-        # (each raw @token survives ahead of its inserted block), so re-running
-        # it would inject every referenced file a second time. Expand only on
-        # the first pass.
-        if (
-            origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-            and resumed_preparation is None
-        ):
-            try:
-                from tldw_chatbook.Chat.console_references import (
-                    build_console_reference_resolver,
-                    expand_references,
-                    find_reference_candidates,
-                    run_git_reference,
-                )
-
-                if find_reference_candidates(clean_draft):
-                    def _expand() -> object:
-                        return expand_references(
-                            clean_draft,
-                            resolve=build_console_reference_resolver(),
-                            git_runner=run_git_reference,
-                        )
-
-                    expansion = await asyncio.to_thread(_expand)
-                    executed_draft_text = expansion.expanded_text
-                    reference_records = tuple(expansion.records)
-            except Exception:  # noqa: BLE001 - references must never block a send
-                logger.opt(exception=True).warning(
-                    "@-reference expansion failed; sending the raw draft"
-                )
-                executed_draft_text = clean_draft
-                reference_records = ()
-        configuration = (
-            resumed_preparation.execution_context.configuration
-            if resumed_preparation is not None
-            else configuration
-            if configuration is not None
-            else self.resolve_turn_configuration_snapshot(session.id)
-        )
-        turn_selection = configuration.provider_selection
-        if has_pending_attachment:
-            vision_model = configuration.effective_model
-            # ONE capability check decides the gate AND the copy: this
-            # module's is_vision_capable (the documented monkeypatch seam) is
-            # injected into vision_block_reason instead of being re-checked
-            # around it — the two seams could otherwise disagree under test.
-            block_reason = vision_block_reason(
-                turn_selection.provider,
-                vision_model,
-                is_capable=lambda _provider, _model: bool(
-                    configuration.capabilities.get("vision", False)
-                ),
-            )
-            if block_reason is not None:
-                return self._block(session.id, block_reason)
-        if turn_selection.workspace_context.has_policy_blocks:
-            return self._block(
-                session.id, turn_selection.workspace_context.recovery_copy
-            )
-        library_authority = (
-            resumed_preparation.execution_context.library_authority
-            if resumed_preparation is not None
-            else await self._capture_turn_library_authority(session.id, configuration)
-        )
-        existing_preparation = self.store.preparation_for_session(session.id)
-        if (
-            existing_preparation is not None
-            and existing_preparation is not resumed_preparation
-            and existing_preparation.state
-            not in {
-                ConsoleTurnPreparationState.CANCELLED,
-                ConsoleTurnPreparationState.SETTLED,
-            }
-        ):
-            return ConsoleSubmitResult(
-                False,
-                False,
-                "Another send is still preparing for this conversation.",
-            )
-        pre_send_title = (
-            resumed_preparation.pre_send_title
-            if resumed_preparation is not None
-            else session.title
-        )
-        pre_send_conversation_id = (
-            resumed_preparation.pre_send_conversation_id
-            if resumed_preparation is not None
-            else session.persisted_conversation_id
-        )
-        explicit_evidence_staged = (
-            staged_evidence_launch is not None
-            if custodied_inputs
-            else self._has_explicit_staged_evidence(session.id)
-        )
-
-        # TASK-457(a): echo the USER message BEFORE resolving the provider, so a
-        # slow/cold readiness probe no longer leaves the transcript blank while
-        # the composer clears — the message reads as "sent", not lost. On a
-        # not-ready provider the row persists next to the honest block-row below
-        # (the message is no longer silently dropped) and the draft is kept (the
-        # composer clears only on the accepted path via
-        # `_notify_submission_accepted`), so the user can re-attempt. Staged
-        # attachments are embedded on the row here but only CLEARED on the
-        # success path below, so a blocked attempt leaves them staged for retry.
-        #
-        # Auto-title BEFORE the append: a persisting append creates the durable
-        # conversation from `session.title` (persist_session_if_needed) and sets
-        # `persisted_conversation_id`, after which `_maybe_auto_title_session`
-        # early-returns. Titling first means the conversation is created as the
-        # derived title (e.g. "hello") instead of the default "Chat 1", so the
-        # workspace rail shows it immediately after persistence.
-        durable_commit = getattr(self.store.persistence, "commit_durable_turn", None)
-        durable_turn = bool(
-            not session.ephemeral
-            and origin
-            in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
-        )
-        if durable_turn and not callable(durable_commit):
-            # TASK-22030: a refusal the user cannot see is indistinguishable
-            # from a broken app. `_block_undurable_turn` writes the run state,
-            # the transcript row, and the toast that `56db75386` dropped.
-            return self._block_undurable_turn(
-                session.id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-            )
-        staged_title = session.title
-        if (
-            origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-            and resumed_preparation is None
-        ):
-            derived_title = (
-                derive_console_session_title(clean_draft)
-                if session.persisted_conversation_id is None
-                and is_default_console_session_title(session.title)
-                else ""
-            )
-            if durable_turn:
-                staged_title = derived_title or session.title
-            else:
-                self._maybe_auto_title_session(session, clean_draft)
-        staged_attachments = tuple(
-            MessageAttachment(
-                data=pending.data,
-                mime_type=pending.mime_type or "image/png",
-                display_name=pending.display_name,
-                position=index,
-            )
-            for index, pending in enumerate(attachment_mode_pendings)
-        )
-        # TASK-485: the optimistic echo is appended WITHOUT persistence. A send
-        # that is blocked/fails before it reaches the provider must leave no
-        # durable record — otherwise the resume path (which reconstructs every
-        # row as "complete") would silently drop the row's failed state and let a
-        # never-sent message re-enter the next send's context, and the orphan
-        # would render as a lonely user prompt. The row is flushed to storage
-        # only once the turn is confirmed to proceed (below).
-        #
-        # PR3a-2 Task 5: a wake echoes NOTHING here -- invariant 5 forbids
-        # a USER row for machine input, and the SYSTEM notice row is
-        # appended only at the acceptance point below (TASK-457(a)'s
-        # "reads as sent, not lost" concern protects a HUMAN's typed
-        # message during a slow readiness probe; a machine notice has no
-        # one watching for it, and appending late means a blocked wake
-        # leaves no orphaned notice row to clean up).
-        echoed_user = (
-            self.store.get_message(resumed_preparation.transient_user_message_id)
-            if resumed_preparation is not None
-            and resumed_preparation.transient_user_message_id is not None
-            else self.store.append_message(
-                session.id,
-                role=ConsoleMessageRole.USER,
-                content=clean_draft,
-                attachments=staged_attachments,
-                persist=False,
-            )
-            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-            else None
-        )
-        if reference_records:
-            # TASK-27021 / 26020 AC#6 (placement per Qodo #7, PR #2313): the
-            # audit row is written adjacent to the raw user echo and
-            # UNCONDITIONALLY -- a leading-@ draft with trace capture off
-            # skips ordinary preparation entirely, but its expansion still
-            # reaches the payload and must still be visible.
-            summary_lines = []
-            for record in reference_records:
-                mark = "included" if record.ok else "REFUSED"
-                summary_lines.append(f"{record.raw}: {mark} — {record.detail}")
-            self.store.append_message(
-                session.id,
-                role=ConsoleMessageRole.SYSTEM,
-                content="@-references:\n" + "\n".join(summary_lines),
-            )
-
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
-            session_id=session.id,
-        )
-        try:
-            resolution = (
-                _resume_resolution
-                if resumed_preparation is not None
-                else await self._resolve_for_send_bounded(turn_selection)
-            )
-        except BaseException as exc:
-            # A readiness probe that raises or is cancelled AFTER the optimistic
-            # USER echo must still fail that row — otherwise a never-sent USER
-            # message leaks into the NEXT send's provider context (`skip_failed`
-            # only drops "failed" rows). Fail it, then re-raise so the caller
-            # still sees the probe failure. (A wake echoed nothing: None guard.)
-            if echoed_user is not None:
-                if self._shutdown_requested.is_set():
-                    self.store.rollback_transient_send(
-                        session.id,
-                        echoed_user.id,
-                        title=pre_send_title,
-                        persisted_conversation_id=pre_send_conversation_id,
-                    )
-                else:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-            # Validation owns a busy slot even before a provider starts. Release
-            # it on failure so retry and the view's idle polling cleanup can run.
-            # A closed session or an already-stopped run keeps its owner's state.
-            # Wakes own a separate retry loop; releasing their slot here would
-            # immediately retry the same failed wake ahead of other pending wakes.
-            if (
-                origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-                and self.run_state_for(session.id).status is ConsoleRunStatus.VALIDATING
-                and any(item.id == session.id for item in self.store.sessions())
-            ):
-                cancelled = isinstance(exc, asyncio.CancelledError)
-                self._set_run_state(
-                    ConsoleRunState(
-                        ConsoleRunStatus.STOPPED
-                        if cancelled
-                        else ConsoleRunStatus.BLOCKED,
-                        "Provider validation was cancelled."
-                        if cancelled
-                        else "Provider validation failed. Try sending again.",
-                    ),
-                    session_id=session.id,
-                )
-            raise
-        if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(
-                getattr(resolution, "visible_copy", "")
-            )
-            # The echoed row stays visible but never reached a provider — fail it
-            # so it is excluded from the NEXT send's provider context
-            # (`skip_failed`) and reads honestly as unsent rather than polluting
-            # the history. (A wake echoed nothing: None guard.)
-            if echoed_user is not None:
-                self._mark_transient_echo_blocked(echoed_user.id)
-            return self._block(session.id, visible_copy)
-
-        thinking_block = self._thinking_persistence_preflight(
-            session_id=session.id,
-            resolution=resolution,
-        )
-        if thinking_block is not None:
-            if resumed_preparation is not None:
-                # This echo is the preparation's existing owner, not a fresh
-                # optimistic row. Keep its frozen inputs and any newer session
-                # identity intact, and return the state machine to the same
-                # retryable persistence pause used by durable commit failures.
-                self._pause_prepared_commit(
-                    resumed_preparation.preparation_id,
-                    ConsolePreparationPauseKind.PERSISTENCE,
-                )
-                return thinking_block
-            # The optimistic echo exists only to cover a slow readiness probe.
-            # Compatibility is still pre-acceptance: leave neither a synthetic
-            # transcript owner nor an auto-derived title behind, so the exact
-            # draft can be retried after the persistent backend is upgraded.
-            if echoed_user is not None:
-                self.store.rollback_transient_send(
-                    session.id,
-                    echoed_user.id,
-                    title=pre_send_title,
-                    persisted_conversation_id=pre_send_conversation_id,
-                )
-            return thinking_block
-
-        if resumed_preparation is not None:
-            turn_context = resumed_preparation.execution_context
-        else:
-            try:
-                turn_context = self._finalize_turn_execution_context(
-                    configuration,
-                    library_authority,
-                    resolution,
-                )
-            except (TypeError, ValueError):
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                    self.store.delete_message(echoed_user.id)
-                return self._block(session.id, "Provider destination is incomplete.")
-
-        admission_policy: CapturePolicySnapshot | None = None
-        if resumed_preparation is not None:
-            capture_mode = resumed_preparation.capture_mode
-        else:
-            try:
-                admission_policy = self.capture_policy_snapshot(session.id)
-                capture_mode = (
-                    ConsoleTraceCaptureMode.CAPTURE_ON
-                    if origin
-                    in {
-                        ConsoleSubmissionOrigin.MANUAL,
-                        ConsoleSubmissionOrigin.QUEUED,
-                    }
-                    and admission_policy.effective_capture_enabled
-                    # TASK-25814: policy alone is not enough -- the RUNTIME has
-                    # to be able to honour it. The gateway's durable-capture
-                    # seam is optional and unsupplied in production, so
-                    # preparing Capture-On against a gateway without one
-                    # guaranteed a pre-dispatch refusal on EVERY send
-                    # (`_reserve_trace_call` raises on its first statement).
-                    # Capture Off is the app's own modelled outcome for "no
-                    # capture" (`one_shot_capture_off`), so fall back to it
-                    # rather than promise something that cannot be recorded.
-                    # The dispatch guard itself is a deliberate invariant and
-                    # is untouched.
-                    and bool(
-                        getattr(
-                            self.provider_gateway,
-                            "supports_durable_capture",
-                            False,
-                        )
-                    )
-                    else ConsoleTraceCaptureMode.CAPTURE_OFF
-                )
-            except Exception as exc:
-                logger.bind(error_type=type(exc).__name__).warning(
-                    "capture_policy_preparation_failed"
-                )
-                capture_mode = ConsoleTraceCaptureMode.CAPTURE_OFF
-        from .console_send_diagnostics import record_send_stage
-
-        record_send_stage(
-            "capture_policy",
-            capture_enabled=capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON,
-        )
-        if resumed_preparation is not None:
-            pii_redaction_enabled = resumed_preparation.pii_redaction_enabled
-            pii_ruleset_revision_id = resumed_preparation.pii_ruleset_revision_id
-            next_trace_privacy_revision = (
-                resumed_preparation.next_trace_privacy_revision
-            )
-        else:
-            pii_redaction_enabled = (
-                capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
-                and admission_policy is not None
-                and admission_policy.pii_redaction_enabled
-            )
-            pii_ruleset_revision_id = (
-                admission_policy.pii_ruleset_revision_id
-                if pii_redaction_enabled and admission_policy is not None
-                else None
-            )
-            next_trace_privacy_revision = (
-                admission_policy.next_privacy_revision
-                if admission_policy is not None
-                and (
-                    admission_policy.next_capture_enabled is not None
-                    or admission_policy.next_pii_redaction_enabled is not None
-                )
-                else None
-            )
-        if (
-            resumed_preparation is None
-            and session.ephemeral
-            and origin is ConsoleSubmissionOrigin.QUEUED
-            and capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
-        ):
-            visible_copy = (
-                "Queued Capture On needs a durable conversation. Save the chat or "
-                "turn Capture Off before resuming the queue."
-            )
-            if echoed_user is not None:
-                self.store.rollback_transient_send(
-                    session.id,
-                    echoed_user.id,
-                    title=pre_send_title,
-                    persisted_conversation_id=pre_send_conversation_id,
-                )
-            self._set_run_state(
-                ConsoleRunState.blocked(visible_copy),
-                session_id=session.id,
-            )
-            return ConsoleSubmitResult(
-                False,
-                False,
-                visible_copy,
-                session_id=session.id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                provider_started=False,
-            )
-
-        preparation: ConsoleTurnPreparation | None = resumed_preparation
-        preparation_outcome: ConsolePreparationOutcome | None = (
-            self._preparation_outcomes.get(resumed_preparation.preparation_id)
-            if resumed_preparation is not None
-            else None
-        )
-        ordinary_library_text = self._ordinary_library_text(
-            clean_draft,
-            origin,
-            has_pending_attachment=has_pending_attachment,
-        )
-        if (
-            ordinary_library_text
-            or capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
-        ) and resumed_preparation is None:
-            automatic_eligible = (
-                ordinary_library_text
-                and library_authority.policy.auto_retrieve
-                is ConsoleAutoRetrieve.AUTOMATIC
-                and explicit_evidence_staged is False
-            )
-            if not ordinary_library_text:
-                initial_state = ConsoleTurnPreparationState.READY
-            else:
-                initial_state = (
-                    initial_preparation_state(
-                        library_authority.policy.auto_retrieve
-                    )
-                    if automatic_eligible
-                    or library_authority.policy.auto_retrieve
-                    is ConsoleAutoRetrieve.NEVER
-                    else ConsoleTurnPreparationState.READY
-                )
-            queue_generation = None
-            if origin is ConsoleSubmissionOrigin.QUEUED:
-                queue_generation = self.prompt_queue_registry.snapshot(
-                    session.id
-                ).revision
-            if custodied_inputs:
-                frozen_prefill = admitted_prefill
-                frozen_prefill_from_one_shot = admitted_prefill_from_one_shot
-                captured_prefill_revision = admitted_prefill_revision
-            elif preserve_composer:
-                frozen_prefill = self._pinned_prefill_for_session(session.id)
-                frozen_prefill_from_one_shot = False
-                captured_prefill_revision = None
-            else:
-                one_shot_prefill, captured_prefill_revision = (
-                    self.store.session_one_shot_prefill_snapshot(session.id)
-                )
-                frozen_prefill, frozen_prefill_from_one_shot = (
-                    self._resolve_submit_prefill(session.id)
-                )
-            one_shot_prefill = (
-                frozen_prefill if frozen_prefill_from_one_shot else None
-            )
-            if custodied_inputs:
-                staged_evidence_frozen = staged_evidence_launch is not None
-                staged_evidence = staged_evidence_launch
-            elif preserve_composer:
-                staged_evidence_frozen, staged_evidence, staged_evidence_release = True, None, None
-            else:
-                (
-                    staged_evidence_frozen,
-                    staged_evidence,
-                    staged_evidence_release,
-                ) = self._snapshot_staged_evidence()
-            preparation = ConsoleTurnPreparation(
-                preparation_id=str(uuid4()),
-                attempt_id=library_authority.attempt_id,
-                session_id=session.id,
-                origin=origin.value,
-                queue_entry_id=queue_entry_id,
-                executed_draft=executed_draft_text,
-                execution_context=turn_context,
-                transient_user_message_id=(
-                    echoed_user.id if echoed_user is not None else None
-                ),
-                attachment_ids=tuple(pending.attachment_id for pending in pendings),
-                evidence_ids=(
-                    ("explicit-staged-evidence",) if explicit_evidence_staged else ()
-                ),
-                prefill_id=(
-                    "prefill-"
-                    + hashlib.sha256(one_shot_prefill.encode("utf-8")).hexdigest()[:24]
-                    if one_shot_prefill is not None
-                    else None
-                ),
-                queue_generation=queue_generation,
-                pre_send_title=pre_send_title,
-                pre_send_conversation_id=pre_send_conversation_id,
-                state=initial_state,
-                pause_kind=None,
-                one_shot_bypass=False,
-                ephemeral=session.ephemeral,
-                capture_mode=capture_mode,
-                pii_redaction_enabled=pii_redaction_enabled,
-                pii_ruleset_revision_id=pii_ruleset_revision_id,
-                next_trace_privacy_revision=next_trace_privacy_revision,
-            )
-            preparation = pause_temporary_capture_on(preparation)
-            if self._begin_submit_preparation(active_task, preparation) is None:
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                return ConsoleSubmitResult(
-                    False,
-                    False,
-                    "Another send is still preparing for this conversation.",
-                )
-            if origin is ConsoleSubmissionOrigin.QUEUED and (
-                queue_entry_id is None
-                or not self.prompt_queue_coordinator.bind_claimed_preparation(
-                    session.id,
-                    entry_id=queue_entry_id,
-                    preparation_id=preparation.preparation_id,
-                )
-            ):
-                self._abandon_preparation(preparation.preparation_id)
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                return ConsoleSubmitResult(
-                    False,
-                    False,
-                    "Queued preparation could not bind its exact entry.",
-                    session_id=session.id,
-                    origin=origin,
-                    queue_entry_id=queue_entry_id,
-                )
-            self._prepared_send_continuations[preparation.preparation_id] = (
-                _PreparedSendContinuation(
-                    preparation_id=preparation.preparation_id,
-                    preserve_composer=preserve_composer,
-                    attachments=tuple(pendings),
-                    prefill=frozen_prefill,
-                    prefill_from_one_shot=frozen_prefill_from_one_shot,
-                    one_shot_prefill_revision=(
-                        captured_prefill_revision
-                        if frozen_prefill_from_one_shot
-                        else None
-                    ),
-                    staged_evidence_frozen=staged_evidence_frozen,
-                    staged_evidence=(
-                        _PreparedEvidenceLease(
-                            staged_evidence,
-                            capture=staged_evidence_capture,
-                            release=staged_evidence_release,
-                        )
-                        if staged_evidence is not None
-                        else None
-                    ),
-                )
-            )
-            prepared_continuation = self._prepared_send_continuations[
-                preparation.preparation_id
-            ]
-            if (
-                preparation.state is ConsoleTurnPreparationState.PAUSED
-                and preparation.pause_kind
-                is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
-            ):
-                visible_copy = (
-                    "Trace capture needs a saved chat. Choose Save & Send, "
-                    "Send without capture, or Cancel."
-                )
-                self._set_run_state(
-                    ConsoleRunState.blocked(visible_copy),
-                    session_id=session.id,
-                )
-                return ConsoleSubmitResult(
-                    False,
-                    False,
-                    visible_copy,
-                    session_id=session.id,
-                    origin=origin,
-                    queue_entry_id=queue_entry_id,
-                    preparation_id=preparation.preparation_id,
-                    provider_started=False,
-                )
-            if preparation.state is ConsoleTurnPreparationState.PREPARING:
-                preparation_outcome = await self.prepare_library_for_turn(
-                    preparation.preparation_id
-                )
-                if preparation_outcome.state is not ConsoleTurnPreparationState.READY:
-                    self._set_run_state(
-                        ConsoleRunState.blocked(
-                            "Library preparation paused before provider dispatch."
-                        ),
-                        session_id=session.id,
-                    )
-                    return ConsoleSubmitResult(
-                        False,
-                        False,
-                        "Library preparation paused before provider dispatch.",
-                        session_id=session.id,
-                        origin=origin,
-                        queue_entry_id=queue_entry_id,
-                    )
-
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-
-            try:
-                accepted = await self._fleet_wake.accept(wake_authorization, session.id)
-            except (SQLiteError, OSError, AutomaticWorkRefused):
-                return self._block(
-                    session.id,
-                    "Automatic work paused. Results are saved; send a message to continue.",
-                )
-            if not accepted:
-                return self._block(
-                    session.id,
-                    "Manual work has priority. Background results are saved.",
-                )
-        citation_context: str | None = None
-        citation_trace_builder: CitationTraceBuilder | None = None
-        prompt_evidence_set_id: str | None = None
-        citation_repair_contract: CitationRepairContract | None = None
-        terminal_citation_finalizer: TerminalCitationFinalizer | None = None
-        try:
-            provider_messages = self._provider_messages_for_session(
-                session.id, annotate_ids=True, turn_context=turn_context
-            )
-            trace_source_messages = tuple(dict(row) for row in provider_messages)
-            (
-                provider_messages,
-                refuse,
-                skill_notes,
-                skill_bindings,
-                skill_bundle_block,
-            ) = await self._apply_skill_substitution(provider_messages, turn_context)
-            if refuse is not None:
-                # A substitution refusal is a block outcome like any other
-                # (provider not ready, probe raise): fail the echoed row so the
-                # refused command never enters the next send's provider context.
-                # (A wake echoed nothing: None guard.)
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                if preparation is not None:
-                    self._abandon_preparation(preparation.preparation_id)
-                return self._block(session.id, refuse)
-            for note in skill_notes:
-                # An embedded skipped-skill note is never an abort: append the
-                # same system-row copy `_block` would, then let the turn proceed.
-                self.store.append_message(
-                    session.id, role=ConsoleMessageRole.SYSTEM, content=note
-                )
-            if (
-                preparation_outcome is not None
-                and preparation_outcome.evidence_bundle is not None
-            ):
-                citation_context = format_evidence_for_cited_answer(
-                    preparation_outcome.evidence_bundle
-                )
-            elif (
-                origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-                and prepared_continuation is not None
-                and prepared_continuation.staged_evidence_frozen
-            ):
-                (
-                    citation_context,
-                    citation_trace_builder,
-                    prompt_evidence_set_id,
-                    citation_repair_contract,
-                ) = await self._capture_frozen_rag_context(
-                    clean_draft,
-                    turn_context,
-                    prepared_continuation,
-                )
-            elif origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
-                # PR3a-2 Task 5: a wake notice is a delivery, not a query
-                # -- retrieving evidence "about" a machine notice would
-                # inject RAG context the user never asked for. The
-                # pre-initialized Nones above stand.
-                (
-                    citation_context,
-                    citation_trace_builder,
-                    prompt_evidence_set_id,
-                    citation_repair_contract,
-                ) = await self._capture_rag_context(
-                    clean_draft,
-                    turn_context=turn_context,
-                    origin=origin,
-                )
-            has_exact_citation_context = (
-                citation_trace_builder is not None
-                or citation_repair_contract is not None
-            )
-            if citation_context and not has_exact_citation_context:
-                provider_messages = self._prepend_evidence_context(
-                    provider_messages,
-                    citation_context,
-                )
-            if reference_records and executed_draft_text != clean_draft:
-                # TASK-27021: the store echo keeps the RAW draft; the payload
-                # carries the @-reference expansion. Swap the just-echoed last
-                # user message. Runs BEFORE dictionaries/world-info -- the
-                # expanded text is the user's composed message; note the
-                # accepted hazard that dictionary keywords inside included
-                # file content will also match.
-                for _i in range(len(provider_messages) - 1, -1, -1):
-                    if provider_messages[_i].get("role") == "user":
-                        provider_messages = (
-                            provider_messages[:_i]
-                            + [{**provider_messages[_i], "content": executed_draft_text}]
-                            + provider_messages[_i + 1 :]
-                        )
-                        break
-            provider_messages = await self._apply_chat_dictionaries(
-                provider_messages, session.id, turn_context
-            )
-            provider_messages = await self._apply_world_info(
-                provider_messages, session.id, turn_context
-            )
-            if citation_context and has_exact_citation_context:
-                provider_messages = self._prepend_evidence_context(
-                    provider_messages,
-                    citation_context,
-                )
-            if citation_context and echoed_user is not None:
-                trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
-                retrieval_event_id = f"{trace_prefix}:retrieval_completed"
-                attached_event_id = f"{trace_prefix}:context_attached"
-                self.store.record_trace_event(
-                    session.id,
-                    anchor_message_id=echoed_user.id,
-                    event_kind="context_attached",
-                    summary="Retrieved context attached",
-                    status="completed",
-                    event_id=attached_event_id,
-                    parent_event_id=retrieval_event_id,
-                    source_event_id=retrieval_event_id,
-                    sensitivity="system_context",
-                )
-                self.store.record_trace_event(
-                    session.id,
-                    anchor_message_id=echoed_user.id,
-                    event_kind="context_injected",
-                    summary="Retrieved context injected into provider request",
-                    status="completed",
-                    event_id=f"{trace_prefix}:context_injected",
-                    parent_event_id=attached_event_id,
-                    source_event_id=attached_event_id,
-                    sensitivity="system_context",
-                )
-            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-                # The one-shot prefill is USER-staged state; a wake must
-                # not consume (and thereby destroy) it.
-                prefill, prefill_from_one_shot, one_shot_prefill_revision = (
-                    None,
-                    False,
-                    None,
-                )
-            elif prepared_continuation is not None:
-                prefill = prepared_continuation.prefill
-                prefill_from_one_shot = prepared_continuation.prefill_from_one_shot
-                one_shot_prefill_revision = (
-                    prepared_continuation.one_shot_prefill_revision
-                )
-            elif custodied_inputs:
-                prefill = admitted_prefill
-                prefill_from_one_shot = admitted_prefill_from_one_shot
-                one_shot_prefill_revision = admitted_prefill_revision
-            else:
-                prefill, prefill_from_one_shot = self._resolve_submit_prefill(
-                    session.id
-                )
-                one_shot_prefill_revision = (
-                    self.store.session_one_shot_prefill_snapshot(session.id)[1]
-                    if prefill_from_one_shot
-                    else None
-                )
-            terminal_citation_finalizer = self._build_terminal_citation_finalizer(
-                context=citation_context,
-                builder=citation_trace_builder,
-                prompt_evidence_set_id=prompt_evidence_set_id,
-            )
-        except BaseException:
-            # Any failure between the optimistic echo and the confirmed turn
-            # (dictionary/world-info application, prefill resolution) must also
-            # fail the echoed row, or a never-sent message leaks into the next
-            # send's provider context (`skip_failed` only drops "failed" rows).
-            # (A wake echoed nothing: None guard.)
-            if echoed_user is not None:
-                self._mark_transient_echo_blocked(echoed_user.id)
-            if preparation is not None:
-                self._abandon_preparation(preparation.preparation_id)
-            raise
-        # The accepted-hook fires only once the turn is confirmed to
-        # actually proceed (Qodo finding 3, PR #636 bot review): it used to
-        # fire right after the USER row was appended, BEFORE this skill
-        # substitution/trust check ran. In the real ChatScreen this hook
-        # clears the composer, so firing it before a substitution refusal
-        # ate the refused draft the user needs to correct. A substitution
-        # refusal is a `_block()` outcome exactly like any other (provider
-        # not ready, policy block, validation failure) and those already
-        # never reach this hook -- this ordering just extends that same
-        # rule to cover it too.
-        if origin is ConsoleSubmissionOrigin.QUEUED and not (
-            self.prompt_queue_coordinator.authorizes(queue_authorization, session.id)
-        ):
-            # Close/shutdown can tombstone the chain while this claimed turn
-            # awaits readiness/substitution/RAG. Revalidate immediately before
-            # acceptance so cancellation cannot turn that stale claim into a
-            # durable user message or provider dispatch. (A wake echoed
-            # nothing: None guard.)
-            if echoed_user is not None:
-                self._mark_transient_echo_blocked(echoed_user.id)
-            if preparation is not None:
-                self._abandon_preparation(preparation.preparation_id)
-            return ConsoleSubmitResult(
-                False,
-                False,
-                "Queued turn canceled before it could start.",
-            )
-        # PR3a-2 Task 5: the wake notice enters the MODEL PAYLOAD here, as
-        # a payload-only trailing user-role entry -- appended AFTER every
-        # per-send transform (substitution/dictionaries/world-info ran on
-        # the history above and must never rewrite the notice) and never
-        # written to the store (the transcript's record is the SYSTEM
-        # machine-origin row at the acceptance point below). Trailing
-        # user-role is deliberate: SYSTEM transcript rows are dropped from
-        # payloads by design, and a payload ending on an assistant row is
-        # a prefill to strict providers -- see console_fleet_wake's
-        # delivery-path decision record for why neither turn_bundle_block
-        # nor the system fold can carry this.
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-            provider_messages = [
-                *provider_messages,
-                {
-                    "role": ConsoleMessageRole.USER.value,
-                    "content": clean_draft,
-                },
-            ]
-        # This await remains before acceptance. A refusal or cancellation must
-        # release the exact optimistic echo and preparation, preserving custody.
-        hook_context = ""
-        if origin is ConsoleSubmissionOrigin.MANUAL:
-            try:
-                from tldw_chatbook.Agents.run_hooks import truncate_hook_text
-
-                hooks_engine = self._run_hooks_engine()
-                outcome = (
-                    await hooks_engine.fire_async(
-                        "UserPromptSubmit",
-                        session_id=session.id,
-                        data={"prompt": truncate_hook_text(clean_draft)},
-                    )
-                    if hooks_engine is not None else None
-                )
-            except BaseException:
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                if preparation is not None:
-                    self._abandon_preparation(preparation.preparation_id)
-                self._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."),
-                    session_id=session.id,
-                )
-                raise
-            if outcome is not None and outcome.blocked:
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                if preparation is not None:
-                    self._abandon_preparation(preparation.preparation_id)
-                self._set_run_state(
-                    ConsoleRunState.blocked(f"Blocked by hook: {outcome.reason}"),
-                    session_id=session.id,
-                )
-                self.store.append_message(
-                    session.id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content=f"Send blocked by hook: {outcome.reason}",
-                    persist=self.store.persistence is not None,
-                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
-                )
-                return ConsoleSubmitResult(
-                    False, False, f"Blocked by hook: {outcome.reason}",
-                    session_id=session.id, origin=origin, queue_entry_id=queue_entry_id,
-                )
-            hook_context = outcome.context if outcome is not None else ""
-        if hook_context:
-            # Freeze the model-visible half before either acceptance path seals
-            # its request. The SYSTEM audit row is excluded from future history.
-            provider_messages = [
-                *provider_messages,
-                {"role": ConsoleMessageRole.USER.value, "content": hook_context},
-            ]
-        if preparation is not None:
-            current_preparation = self._preparation_by_id(preparation.preparation_id)
-            if current_preparation is None or (
-                current_preparation.state is not ConsoleTurnPreparationState.COMMITTING
-                and not self._transition_preparation(
-                    preparation.preparation_id,
-                    ConsoleTurnPreparationState.READY,
-                    ConsoleTurnPreparationState.COMMITTING,
-                )
-            ):
-                return ConsoleSubmitResult(
-                    False,
-                    False,
-                    "Prepared turn changed before provider dispatch.",
-                    session_id=session.id,
-                    origin=origin,
-                    queue_entry_id=queue_entry_id,
-                )
-        committed_context_epoch = self.store.conversation_context_epoch(session.id)
-        if durable_turn and preparation is not None and echoed_user is not None:
-            return await self._accept_durable_turn(
-                session=session,
-                preparation=preparation,
-                preparation_outcome=preparation_outcome,
-                prepared_continuation=prepared_continuation,
-                echoed_user=echoed_user,
-                staged_title=staged_title,
-                staged_attachments=staged_attachments,
-                resolution=resolution,
-                provider_messages=provider_messages,
-                trace_source_messages=trace_source_messages,
-                prefill=prefill,
-                prefill_from_one_shot=prefill_from_one_shot,
-                one_shot_prefill_revision=one_shot_prefill_revision,
-                skill_bindings=tuple(skill_bindings),
-                skill_bundle_block=skill_bundle_block,
-                citation_repair_contract=citation_repair_contract,
-                terminal_citation_finalizer=terminal_citation_finalizer,
-                turn_context=turn_context,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                committed_context_epoch=committed_context_epoch,
-                custody_acceptance_hook=custody_acceptance_hook,
-                hook_context=hook_context,
-            )
-        # TASK-1364: record the accepted send to the shared prompt history.
-        # Same placement rule as the accepted-hook above: only a send that is
-        # confirmed to proceed is recorded -- every `_block`/refusal path
-        # returns before this point, and `_record_prompt_history` itself
-        # skips empty (attachment-only) drafts. A wake notice is not a
-        # prompt the user typed and never enters their prompt history.
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
-            try:
-                await self._record_prompt_history(clean_draft)
-            except BaseException:
-                if preparation is not None:
-                    self._rollback_committing_preparation(preparation.preparation_id)
-                raise
-        if self._disposed or (
-            self._shutdown_requested.is_set()
-            and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-        ):
-            if echoed_user is not None:
-                try:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                except KeyError:
-                    pass
-            if preparation is not None:
-                self._rollback_committing_preparation(preparation.preparation_id)
-            return ConsoleSubmitResult(
-                False,
-                False,
-                "Console shut down before turn acceptance.",
-                session_id=session.id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-            )
-        # TASK-485: the turn is confirmed to proceed — flush the deferred USER
-        # echo to durable storage now (creating the conversation), BEFORE the
-        # assistant row, so a reload shows the user's prompt ahead of its reply.
-        #
-        # PR3a-2 Task 5, the wake half: the SYSTEM-class notice row is
-        # appended HERE, only once the turn is confirmed -- so a blocked
-        # wake leaves no orphaned notice -- ahead of the assistant row,
-        # persisted, and carrying the machine-origin metadata that marks
-        # it as not-user-input for every machine consumer.
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-            echoed_user = self.store.append_message(
-                session.id,
-                role=ConsoleMessageRole.SYSTEM,
-                content=clean_draft,
-                persist=self.store.persistence is not None,
-                metadata=MessageMetadata(origin=MESSAGE_ORIGIN_AGENT_WAKE),
-            )
-        else:
-            try:
-                self.store.persist_message_if_needed(echoed_user.id)
-            except BaseException:
-                if preparation is not None:
-                    self._rollback_committing_preparation(preparation.preparation_id)
-                raise
-            if hook_context:
-                # Run hooks (spec 2026-09-11, Task 7): a UserPromptSubmit
-                # hook's captured stdout is recorded as its own hook-origin
-                # SYSTEM row -- appended only once the user echo is
-                # confirmed proceeding (same placement rule as the wake
-                # notice above) and BEFORE the assistant row, persisted
-                # like it, and never merged into the user's message.
-                self.store.append_message(
-                    session.id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content=hook_context,
-                    persist=self.store.persistence is not None,
-                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
-                )
-        assistant: ConsoleChatMessage | None = None
-        citation_repair_session = (
-            ConsoleCitationRepairSession(
-                contract=citation_repair_contract,
-                resolution=resolution,
-            )
-            if citation_repair_contract is not None
-            else None
-        )
-        # task-15860: a wake turn in flight is exempt from `leave_console()`
-        # (owner ruling -- see that method). Registered here, released in
-        # the `finally` below, so the exemption cannot outlive the turn.
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-            self._agent_wake_turn_sessions.add(session.id)
-        try:
-            assistant = self.store.append_message(
-                session.id,
-                role=ConsoleMessageRole.ASSISTANT,
-                content="",
-                persist=self.store.persistence is not None,
-                terminal_citation_finalizer=terminal_citation_finalizer,
-                defer_terminal_persistence=citation_repair_session is not None,
-            )
-            if (
-                session.ephemeral
-                and origin
-                in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
-                and preparation is not None
-            ):
-                self.store.register_ephemeral_dispatch_recovery(
-                    session.id,
-                    user_message_id=echoed_user.id,
-                    assistant_message_id=assistant.id,
-                    preparation_id=preparation.preparation_id,
-                    attempt_id=turn_context.library_authority.attempt_id,
-                    checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
-                    origin=origin.value,
-                    queue_entry_id=queue_entry_id,
-                    frozen_authority=turn_context.library_authority,
-                    resolved_destination=turn_context.resolved_destination,
-                    reconstructability=ConsoleDispatchReconstructability(
-                        attachments_reconstructable=True,
-                        evidence_reconstructable=not bool(
-                            prepared_continuation is not None
-                            and (
-                                prepared_continuation.staged_evidence_frozen
-                                or prepared_continuation.staged_evidence is not None
-                            )
-                        ),
-                        prefill_reconstructable=(
-                            prefill is None and not prefill_from_one_shot
-                        ),
-                        opaque_reference=(f"opaque:{preparation.preparation_id}"),
-                    ),
-                    runtime_active=True,
-                )
-            if preparation is not None and not self._transition_preparation(
-                preparation.preparation_id,
-                ConsoleTurnPreparationState.COMMITTING,
-                ConsoleTurnPreparationState.ACCEPTED,
-            ):
-                raise RuntimeError("Prepared turn changed before acceptance.")
-            stream_signals = self._admit_capture_policy(
-                session.id,
-                origin,
-                frozen_capture_enabled=(
-                    capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
-                ),
-                frozen_pii_redaction_enabled=pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=pii_ruleset_revision_id,
-                frozen_next_trace_privacy_revision=next_trace_privacy_revision,
-            )
-            self._release_prepared_evidence(prepared_continuation)
-            if not custodied_inputs:
-                for pending in pendings:
-                    self.store.consume_pending_attachment(
-                        session.id, pending.attachment_id
-                    )
-            if custody_acceptance_hook is not None:
-                custody_acceptance_hook()
-            self._notify_submission_accepted(
-                session_id=session.id,
-                preserve_composer=preserve_composer,
-                origin=origin,
-                entry_id=queue_entry_id,
-                context_epoch=committed_context_epoch,
-                preparation_id=(
-                    preparation.preparation_id if preparation is not None else None
-                ),
-                assistant_message_id=assistant.id,
-                defer_queued_settlement=(
-                    resumed_preparation is not None
-                    and origin is ConsoleSubmissionOrigin.QUEUED
-                ),
-            )
-
-            async def enter_ephemeral_provider_dispatch() -> None:
-                if (
-                    session.ephemeral
-                    and self.store.dispatch_recovery_for_session(session.id) is not None
-                    and self.store.begin_ephemeral_dispatch(
-                        session.id,
-                        assistant_message_id=assistant.id,
-                        new_attempt_id=turn_context.library_authority.attempt_id,
-                    )
-                    is None
-                ):
-                    raise RuntimeError(
-                        "Ephemeral dispatch checkpoint changed before provider entry."
-                    )
-                if preparation is not None and not self._transition_preparation(
-                    preparation.preparation_id,
-                    ConsoleTurnPreparationState.ACCEPTED,
-                    ConsoleTurnPreparationState.DISPATCH_STARTED,
-                ):
-                    raise RuntimeError(
-                        "Prepared turn changed before provider dispatch."
-                    )
-
-            deferred_provider_dispatch = bool(
-                getattr(self.provider_gateway, "deferred_dispatch_boundary", False)
-            )
-            if (
-                not deferred_provider_dispatch
-                and session.ephemeral
-                and self.store.dispatch_recovery_for_session(session.id) is not None
-                and self.store.begin_ephemeral_dispatch(
-                    session.id,
-                    assistant_message_id=assistant.id,
-                    new_attempt_id=turn_context.library_authority.attempt_id,
-                )
-                is None
-            ):
-                raise RuntimeError(
-                    "Ephemeral dispatch checkpoint changed before provider entry."
-                )
-
-            stream_result = await self._stream_assistant_response(
-                route=ConsoleRequestRoute.FRESH,
-                resolution=resolution,
-                work_origin=(
-                    WorkOrigin.AUTOMATIC
-                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
-                    else WorkOrigin.MANUAL
-                ),
-                work_chain_id=(
-                    wake_authorization.work_chain_id
-                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
-                    else None
-                ),
-                provider_messages=provider_messages,
-                assistant_message_id=assistant.id,
-                prefill=prefill,
-                prefill_from_one_shot=prefill_from_one_shot,
-                one_shot_prefill_revision=one_shot_prefill_revision,
-                skill_bindings=skill_bindings,
-                skill_bundle_block=skill_bundle_block,
-                citation_repair_session=citation_repair_session,
-                turn_context=turn_context,
-                preparation_id=(
-                    preparation.preparation_id if preparation is not None else None
-                ),
-                stream_signals=stream_signals,
-                before_provider_dispatch=(
-                    enter_ephemeral_provider_dispatch
-                    if deferred_provider_dispatch
-                    else None
-                ),
-                trusted_profile_user_message_id=(
-                    echoed_user.id
-                    if echoed_user.role is ConsoleMessageRole.USER
-                    else None
-                ),
-            )
-            if (
-                not stream_result.accepted
-                and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-            ):
-                self._mark_transient_echo_blocked(echoed_user.id)
-            result = replace(
-                stream_result,
-                session_id=session.id,
-                user_message_id=echoed_user.id,
-                assistant_message_id=assistant.id,
-                terminal_status=self.run_state_for(session.id).status,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                committed_context_epoch=committed_context_epoch,
-            )
-            if preparation is not None:
-                self._settle_accepted_preparation(preparation.preparation_id)
-            return result
-        except BaseException as exc:
-            if isinstance(exc, ConsoleDispatchSettlementError):
-                if assistant is not None:
-                    self.store.release_dispatch_recovery_action(
-                        session.id,
-                        assistant.id,
-                    )
-                raise
-            if (
-                isinstance(exc, TraceCallPersistenceError)
-                and origin is ConsoleSubmissionOrigin.MANUAL
-                and preparation is not None
-            ):
-                current = self._preparation_by_id(preparation.preparation_id)
-                if (
-                    current is not None
-                    and current.state is ConsoleTurnPreparationState.ACCEPTED
-                ):
-                    paused_shape = pause_for_trace_call_failure(current, exc)
-                    paused = self.store.compare_and_set_preparation(
-                        current.session_id,
-                        ConsolePreparationTransition(
-                            preparation_id=current.preparation_id,
-                            expected_state=current.state,
-                            new_state=paused_shape.state,
-                            pause_kind=paused_shape.pause_kind,
-                            new_attempt_id=None,
-                        ),
-                    )
-                    if paused is not None:
-                        visible_copy = (
-                            "Trace capture could not start. Retry, Send without "
-                            "capture, or Cancel."
-                        )
-                        self._set_run_state(
-                            ConsoleRunState.blocked(visible_copy),
-                            session_id=session.id,
-                        )
-                        return ConsoleSubmitResult(
-                            True,
-                            True,
-                            visible_copy,
-                            session_id=session.id,
-                            user_message_id=(
-                                echoed_user.id if echoed_user is not None else None
-                            ),
-                            assistant_message_id=(
-                                assistant.id if assistant is not None else None
-                            ),
-                            terminal_status=ConsoleRunStatus.BLOCKED,
-                            origin=origin,
-                            queue_entry_id=queue_entry_id,
-                            committed_context_epoch=committed_context_epoch,
-                            preparation_id=preparation.preparation_id,
-                            provider_started=False,
-                        )
-            accepted_cancellation = isinstance(exc, asyncio.CancelledError) and (
-                assistant is not None and echoed_user is not None
-            )
-            explicit_cancellation = accepted_cancellation and (
-                self._accepted_cancellation_was_requested(session.id)
-            )
-            if assistant is not None:
-                try:
-                    if explicit_cancellation:
-                        self._mark_stream_stopped(
-                            assistant.id,
-                            visible_copy="Response stopped.",
-                        )
-                    else:
-                        self.store.mark_message_failed(assistant.id)
-                        self._set_run_state(
-                            ConsoleRunState(
-                                ConsoleRunStatus.FAILED,
-                                "Accepted turn failed before provider dispatch.",
-                            ),
-                            session_id=session.id,
-                        )
-                except KeyError:
-                    pass
-            if preparation is not None:
-                current = self._preparation_by_id(preparation.preparation_id)
-                if (
-                    current is not None
-                    and current.state is ConsoleTurnPreparationState.COMMITTING
-                ):
-                    self._rollback_committing_preparation(preparation.preparation_id)
-                elif current is not None and current.state in {
-                    ConsoleTurnPreparationState.ACCEPTED,
-                    ConsoleTurnPreparationState.DISPATCH_STARTED,
-                    ConsoleTurnPreparationState.DISPATCHED,
-                }:
-                    self._settle_accepted_preparation(preparation.preparation_id)
-            if accepted_cancellation:
-                terminal_state = self.run_state_for(session.id)
-                return ConsoleSubmitResult(
-                    True,
-                    True,
-                    terminal_state.visible_copy
-                    or "Accepted turn failed before provider dispatch.",
-                    session_id=session.id,
-                    user_message_id=echoed_user.id,
-                    assistant_message_id=assistant.id,
-                    terminal_status=terminal_state.status,
-                    origin=origin,
-                    queue_entry_id=queue_entry_id,
-                    committed_context_epoch=committed_context_epoch,
-                )
-            raise
-        finally:
-            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
-                self._agent_wake_turn_sessions.discard(session.id)
-            if assistant is not None:
-                self.store.clear_terminal_citation_state(assistant.id)
-            del terminal_citation_finalizer
-            del citation_trace_builder
 
     async def _run_durable_postcommit_effect(
         self,
@@ -21291,6 +19763,55 @@ class ConsoleChatController:
             trusted_profile_user_message_id=edited_message.id,
         )
 
+    def capture_personal_context_preview_guard(self, session_id: str) -> Callable[[], bool]:
+        """Fence disposable profile inspection across every later await boundary."""
+        try:
+            session = next(item for item in self.store.sessions() if item.id == session_id)
+            temporary = session.ephemeral
+            controller = self.store.canvas_turn_controller
+            enabled = self._canvas_enabled_reader() is True
+            scope = None
+            if enabled and controller is not None:
+                from tldw_chatbook.Canvas.models import CanvasScope
+
+                scope = CanvasScope(
+                    session_id,
+                    self._agent_conversation_id(session_id),
+                    self.store.canvas_active_path_message_ids(session_id),
+                    None,
+                    None,
+                    f"preview:{session_id}",
+                )
+                owner = controller.capture_interactive_owner(scope, temporary=temporary)
+        except Exception:  # noqa: BLE001 - an unavailable owner denies inspection.
+            return lambda: False
+
+        def current() -> bool:
+            try:
+                if (
+                    next(
+                        (item for item in self.store.sessions() if item.id == session_id),
+                        None,
+                    )
+                    is not session
+                    or session.ephemeral != temporary
+                    or self.store.canvas_turn_controller is not controller
+                    or (self._canvas_enabled_reader() is True) != enabled
+                ):
+                    return False
+                if scope is not None:
+                    controller.validate_interactive_owner(scope, owner, temporary=temporary)
+                    return (
+                        self._agent_conversation_id(session_id) == scope.conversation_id
+                        and self.store.canvas_active_path_message_ids(session_id)
+                        == scope.active_message_ids
+                    )
+                return True
+            except Exception:  # noqa: BLE001 - stale inspection fails closed.
+                return False
+
+        return current
+
     async def build_context_snapshot(
         self,
         draft: str,
@@ -21298,6 +19819,10 @@ class ConsoleChatController:
         staged_sources: Iterable[ConsoleStagedSource] | None = None,
         *,
         session_id: str | None = None,
+        profile_selection_sink: Callable[
+            [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
+            None,
+        ] | None = None,
     ) -> ConsoleContextSnapshot:
         """Return a read-only snapshot of the current transcript and the assembled next-send payload.
 
@@ -21320,6 +19845,8 @@ class ConsoleChatController:
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
+        preview_current = self.capture_personal_context_preview_guard(session_id)
+        profile_selections = []
         turn_context = self.resolve_turn_execution_context(session_id)
         provider_selection = turn_context.provider_selection
         current_messages = list(self.store.messages_for_session(session_id))
@@ -21466,6 +19993,11 @@ class ConsoleChatController:
                     turn_configuration=turn_context,
                     turn_skill_bindings=skill_bindings,
                     turn_bundle_block=skill_bundle_block,
+                    **(
+                        {"profile_selection_sink": lambda *args: profile_selections.append(args)}
+                        if profile_selection_sink is not None
+                        else {}
+                    ),
                 )
             if personal_context_snapshot.serialized_block:
                 provider_messages = copy.deepcopy(provider_messages)
@@ -21560,6 +20092,13 @@ class ConsoleChatController:
                 )
             if preview is not None:
                 next_send_payload = preview.next_send_payload
+            if not preview_current():
+                return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+            for selection in profile_selections:
+                try:
+                    profile_selection_sink(*selection)
+                except Exception:  # noqa: BLE001, S110 - diagnostics cannot change the model block.
+                    pass
             return ConsoleContextSnapshot(
                 current_messages=copied_messages,
                 next_send_payload=next_send_payload,
@@ -21567,6 +20106,8 @@ class ConsoleChatController:
                 personal_context_snapshot=personal_context_snapshot,
             )
         except Exception as exc:
+            if not preview_current():
+                return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
             logger.exception(
                 "Failed to build context snapshot: session_id={session_id} "
                 "draft_length={draft_length} attachments={attachments_count} "
@@ -21757,6 +20298,51 @@ class ConsoleChatController:
 
         return ProfileContextService(resolved) if resolved is not None else None
 
+    async def personal_context_selection_current(
+        self,
+        builder: ProfileContextService,
+        request: ProfileContextRequest,
+        explanation: ProfileContextSelectionExplanation,
+        *,
+        provider_selection: ConsoleProviderSelection,
+    ) -> bool:
+        """Recheck the exact preview builder and current app-owned profile."""
+
+        try:
+            resolution = await self._resolve_for_send_bounded(
+                provider_selection
+            )
+            if not getattr(resolution, "ready", True):
+                return False
+            model = str(
+                getattr(resolution, "model", "")
+                or provider_selection.explicit_model
+                or provider_selection.configured_model
+                or ""
+            )
+            provider = str(
+                getattr(resolution, "execution_key", "")
+                or getattr(resolution, "provider", "")
+                or "agent"
+            )
+            if (model, provider) != (request.model, request.provider):
+                return False
+            current_service = await self._personal_context_service()
+        except Exception:  # noqa: BLE001 - stale inspection fails closed.
+            return False
+        if current_service is None or current_service is not builder._service:
+            return False
+        if not await asyncio.to_thread(
+            builder.explanation_is_current, explanation, request
+        ):
+            return False
+        try:
+            # The app may replace its service while the read-only validation
+            # runs in a worker. Compare again at the final await boundary.
+            return await self._personal_context_service() is builder._service
+        except Exception:  # noqa: BLE001 - stale inspection fails closed.
+            return False
+
     async def _build_personal_context_snapshot(
         self,
         session: ConsoleChatSession | None,
@@ -21766,6 +20352,10 @@ class ConsoleChatController:
         turn_configuration: Any | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        profile_selection_sink: Callable[
+            [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
+            None,
+        ] | None = None,
     ) -> ProfileContextSnapshot:
         """Ask the agent planner for one fully reserved Next Send snapshot."""
 
@@ -21776,7 +20366,7 @@ class ConsoleChatController:
         if builder is None or session is None or not callable(build_preview):
             return _empty_profile_context_snapshot()
         try:
-            resolution = await self.provider_gateway.resolve_for_send(
+            resolution = await self._resolve_for_send_bounded(
                 provider_selection
             )
             if not getattr(resolution, "ready", True):
@@ -21797,6 +20387,14 @@ class ConsoleChatController:
                 if turn_configuration is not None
                 else self.resolve_turn_execution_context(session.id)
             )
+            canvas_controller = getattr(self.store, "canvas_turn_controller", None)
+            canvas_profile_snapshot = None
+            try:
+                canvas_enabled = self._canvas_enabled_reader() is True
+            except Exception:  # noqa: BLE001 - match live fail-closed enablement
+                canvas_enabled = False
+            if canvas_enabled and canvas_controller is not None:
+                canvas_profile_snapshot = canvas_controller.profile_snapshot
             library_provider: Any | None = None
             library_authority: Any | None = None
             if self._library_provider_factory is not None:
@@ -21908,8 +20506,7 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 - uncertain budget fails closed
             return _empty_profile_context_snapshot()
         try:
-            return await asyncio.to_thread(
-                build_preview,
+            preview_args = dict(  # noqa: C408 - preserve the existing keyword call shape.
                 session_id=session.id,
                 workspace_id=session.workspace_id,
                 ephemeral=session.ephemeral,
@@ -21929,6 +20526,7 @@ class ConsoleChatController:
                 library_provider=library_provider,
                 library_authority=library_authority,
                 profile_provider=profile_provider,
+                canvas_profile_snapshot=canvas_profile_snapshot,
                 scratch_root=(
                     scratch_snapshot.root if scratch_snapshot is not None else None
                 ),
@@ -21949,7 +20547,11 @@ class ConsoleChatController:
                     self.set_pending_skill_script is not None
                 ),
                 profile_context_service=builder,
+                persona_policy_rules=configuration.persona_policy_rules,
             )
+            if profile_selection_sink is not None:
+                preview_args["selection_sink"] = profile_selection_sink
+            return await asyncio.to_thread(build_preview, **preview_args)
         except Exception:  # noqa: BLE001 - personalization never blocks preview
             return _empty_profile_context_snapshot()
 
@@ -24150,100 +22752,9 @@ class ConsoleChatController:
             staged_evidence_launch=request.staged_evidence_launch,
         )
 
-    def _notify_run_hook_approval(
-        self, kind: str, payload: dict[str, Any], state: dict[str, Any]
-    ) -> None:
-        """Publish one successfully admitted permission round, including headless runs."""
-        engine = self._run_hooks_engine()
-        if engine is None:
-            return
-        from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments
+    _notify_run_hook_approval = console_run_hooks._notify_run_hook_approval
 
-        session_id = payload.get("session_id") or state.get("session_id")
-        run_id = (
-            state.get("run_id")
-            if kind == "worktree_merge"
-            else payload.get("run_id") or state.get("run_id")
-        )
-        if kind == "approval":
-            calls = [
-                {
-                    "name": row.get("llm_name") or row.get("tool_name") or "",
-                    "args_summary": summarize_hook_arguments(
-                        row.get("arguments") or {}
-                    ),
-                }
-                for row in payload.get("calls", ())
-            ]
-        elif kind == "worktree_merge":
-            action = payload.get("action") or payload.get("mode")
-            arguments = {
-                key: payload[key]
-                for key in (
-                    "handle_id",
-                    "run_id",
-                    "action",
-                    "mode",
-                    "branch",
-                    "worktree",
-                    "source",
-                    "destination",
-                )
-                if key in payload
-            }
-            calls = [
-                {
-                    "name": (
-                        "discard_agent_worktree"
-                        if action == "discard"
-                        else "merge_agent_worktree"
-                    ),
-                    "args_summary": summarize_hook_arguments(arguments),
-                }
-            ]
-        else:
-            arguments = (
-                {"url": payload.get("url", "")}
-                if kind == "skill_install"
-                else {
-                    key: payload[key]
-                    for key in ("skill_name", "script_path", "mechanism", "args")
-                    if key in payload
-                }
-            )
-            calls = [{
-                "name": "install_skill" if kind == "skill_install" else "run_skill_script",
-                "args_summary": summarize_hook_arguments(arguments),
-            }]
-        engine.notify(
-            "ApprovalRequested", session_id=session_id,
-            run_id=run_id,
-            data={
-                "calls": calls,
-                "session_active": bool(
-                    session_id == self.store.active_session_id
-                    and self._interrupt_host.view_visible is not False
-                    and (
-                        self.set_pending_decision is not None
-                        or self._interrupt_host._setter(kind) is not None
-                    )
-                ),
-            },
-        )
-
-    def _run_hooks_engine(self):
-        """Resolve the app-owned run-hooks engine for this send, or ``None``.
-
-        Spec 2026-09-11 (Task 7): the submit path reaches the engine through
-        the optional ``ensure_run_hooks`` accessor (the Task 5 bridge seam --
-        a bound ``ConsoleRuntime.ensure_run_hooks``, or a test double).
-        ``None`` -- no accessor wired, or no ``[hooks]`` configured -- means
-        the fire site skips entirely; the accessor is consulted per send, so
-        an engine built after the first-ever ``[hooks]`` entry appears is
-        picked up without rebuilding this controller.
-        """
-        accessor = self._ensure_run_hooks
-        return accessor() if accessor is not None else None
+    _run_hooks_engine = console_run_hooks._run_hooks_engine
 
     async def _record_prompt_history(self, text: str) -> None:
         """Append an accepted send's draft to the shared prompt history.
@@ -26382,18 +24893,17 @@ class ConsoleChatController:
             try:
                 if ledger is not None:
                     if work_origin is WorkOrigin.MANUAL:
-                        work_chain_id = await asyncio.to_thread(
-                            ledger.create_chain,
+                        work_chain_id = await run_owned_db_call(
+                            runs_db, ledger.create_chain,
                             self._agent_conversation_id(owner_id),
                             root_submission_id=uuid4().hex,
                         )
                     elif work_chain_id is not None:
-                        snapshot = await asyncio.to_thread(
-                            ledger.snapshot, work_chain_id
+                        snapshot = await run_owned_db_call(
+                            runs_db, ledger.snapshot, work_chain_id
                         )
-                        if snapshot.conversation_id != self._agent_conversation_id(
-                            owner_id
-                        ):
+                        conversation_id = self._agent_conversation_id(owner_id)
+                        if snapshot.conversation_id != conversation_id:
                             raise ValueError(
                                 "Automatic work chain does not own this conversation."
                             )

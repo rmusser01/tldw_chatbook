@@ -566,8 +566,15 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
     )
     runtime, store, attachments = _runtime_with_custody_inputs(request)
 
-    def fail_create_task(coroutine):
-        raise RuntimeError("scheduler unavailable")
+    original_create_task = asyncio.create_task
+    custody_code = runtime._run_custodied_turn.__func__.__code__
+    rejected_coroutines = []
+
+    def fail_create_task(coroutine, *args, **kwargs):
+        if getattr(coroutine, "cr_code", None) is custody_code:
+            rejected_coroutines.append(coroutine)
+            raise RuntimeError("scheduler unavailable")
+        return original_create_task(coroutine, *args, **kwargs)
 
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_runtime.asyncio.create_task",
@@ -577,6 +584,8 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
     with pytest.raises(RuntimeError, match="scheduler unavailable"):
         runtime.accept_turn(request)
 
+    assert len(rejected_coroutines) == 1
+    assert rejected_coroutines[0].cr_frame is None
     assert runtime._turn_custody == {}
     restored = store.pending_attachments(request.session_id)
     assert restored == list(attachments)
@@ -596,6 +605,7 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_leaving_console_preserves_stream_queue_and_controller_state():
     """Navigation clears the view without mutating app-owned work."""
     gateway = _StalledGateway()
@@ -727,6 +737,7 @@ async def test_leaving_console_does_not_cancel_an_in_flight_wake_turn():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_the_wake_exemption_never_outlives_its_turn():
     """A wake turn that finishes leaves nothing exempt behind."""
     store = ConsoleChatStore()
@@ -848,6 +859,7 @@ async def test_the_prompt_queue_admits_again_on_the_next_visit():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_runtime_closes_its_thread_local_db_after_coordinator_disposal(tmp_path):
     app = SimpleNamespace(
         chachanotes_db=SimpleNamespace(db_path=tmp_path / "chatbook.db")

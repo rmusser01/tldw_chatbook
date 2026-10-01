@@ -191,6 +191,20 @@
         text-style: bold underline;
     }
 
+/* ===== WIDGET: SkillEvalDetail (UI/Evals/skill_eval_detail.py) ===== */
+
+    SkillEvalDetail { padding: 1; }
+
+/* ===== WIDGET: SkillEvalPanel (UI/Evals/skill_eval_panel.py) ===== */
+
+    SkillEvalPanel { padding: 1; }
+
+/* ===== WIDGET: LlamaCppSetupView (UI/LLM_Management/llamacpp_setup_view.py) ===== */
+
+    LlamaCppSetupView { height: auto; }
+    LlamaCppSetupView Horizontal { height: auto; }
+    LlamaCppSetupView .llamacpp-status { height: auto; }
+
 /* ===== WIDGET: VllmSetupView (UI/LLM_Management/vllm_setup_view.py) ===== */
 
     VllmSetupView > #vllm-local-setup,
@@ -347,6 +361,15 @@
         margin-bottom: 1;
     }
     ArtifactShareDialog #share-dialog-status { color: $warning; }
+
+/* ===== WIDGET: DreamsStoryModal (UI/Screens/artifacts_dreams_modal.py) ===== */
+
+    DreamsStoryModal { align: center middle; background: $background 70%; }
+    DreamsStoryModal > VerticalScroll {
+        width: 76; max-width: 96%; height: auto; max-height: 90%;
+        background: $surface; border: solid $primary; padding: 1 2;
+    }
+    DreamsStoryModal #dsm-hints { color: $warning; margin-top: 1; }
 
 /* ===== WIDGET: BackupRestoreScreen (UI/Screens/backup_restore_screen.py) ===== */
 

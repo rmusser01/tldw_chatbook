@@ -10,6 +10,7 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from functools import partial
+from importlib import import_module as _import_module
 from pathlib import Path
 from typing import Any
 
@@ -100,15 +101,9 @@ from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.MCP.unified_control_plane_service import (
     MCPServerSourceDisplayOnlyError,
 )
-from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
-from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
-    MCPInspector,
-    _safe_diagnostic_message,
-    _safe_exception_text,
-    _safe_tool_test_text,
-)
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     _PROFILE_HINT_TEXT,
+    _cycled_ui_label,
     MCPPermissionsMode,
     PermissionProfileContext,
     PermRow,
@@ -116,12 +111,8 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     _undiscovered_servers_hint,
     format_tool_state_label,
 )
-from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
-from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
-from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
-from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
-from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
+_workbench = _import_module(__name__)
 
 # Sentinel distinguishing "key absent from a restore blob" from "key present
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
@@ -226,23 +217,6 @@ class _ToolProfileLeaseHandoff:
             )
 
 
-def _target_id_from_server_key(key: str | None) -> str | None:
-    """Parse a server-target id out of a `"server:<id>"` or
-    `"server:<id>/<sub>"` key (a target row directly, or an external-record
-    row beneath it), or `None` for anything else (a `local:`/`builtin:` key,
-    an empty string, or `None` itself).
-
-    Shared by `MCPWorkbench._selected_target_id()` (parses the workbench's
-    OWN rail/table selection) and `_refresh_server_discovery()` (New Minor
-    2, MCP Hub Phase 6 finale -- parses an arbitrary triggering event's
-    `server_key`, which need not match whatever is currently selected).
-    """
-    if not key or not key.startswith("server:"):
-        return None
-    remainder = key.split(":", 1)[1]
-    return remainder.split("/", 1)[0] if remainder else None
-
-
 # A pasted/imported mcpServers config JSON. 1MB comfortably covers even a
 # large hand-authored config while catching anything clearly not one --
 # mirrors attachment_core.MAX_ATTACHMENT_BYTES's constant style (a fixed
@@ -286,20 +260,6 @@ def _toast(text: str) -> str:
     layer that needs its own guard.
     """
     return escape_markup(text)
-
-
-def _cycled_ui_label(state: str | None) -> str:
-    """The mutation-echo word for a just-cycled TOOL-row state (Task 3, MCP
-    Hub Phase 6) -- `"Inherit"` for `None` (`cycle_ui_state()`'s own Inherit
-    rung), otherwise the same `EffectiveToolState.ui_label` word every other
-    state-word surface in this module uses (`"Allow"|"Ask"|"Off"`). A plain
-    `EffectiveToolState` can't represent Inherit at all (its `state` field
-    is a bare `str`, not `str | None`), so that one case is spelled out
-    directly rather than routed through it.
-    """
-    if state is None:
-        return "Inherit"
-    return EffectiveToolState(state=state, origin="tool_override").ui_label
 
 
 # Task 3 (built-in permissions UI, TASK-627): the Permissions matrix's
@@ -495,31 +455,8 @@ _SERVER_MUTATION_MESSAGES: dict[str, str] = {
 }
 
 
-def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
-    """One notify-ready sentence covering a whole import batch.
-
-    Every candidate is attempted regardless of an earlier failure (T8: "a
-    failing save produces the summary notify without aborting the rest") --
-    this renders whatever mix of successes/failures resulted into a single
-    toast instead of one per candidate.
-    """
-    parts: list[str] = []
-    if succeeded:
-        parts.append(f"Imported {len(succeeded)}: {', '.join(succeeded)}.")
-    if failed:
-        failed_desc = ", ".join(
-            f"{profile_id} ({error})" for profile_id, error in failed
-        )
-        parts.append(f"Failed {len(failed)}: {failed_desc}.")
-    return " ".join(parts) if parts else "Nothing to import."
 
 
-def _import_severity(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
-    if failed and not succeeded:
-        return "error"
-    if failed:
-        return "warning"
-    return "information"
 
 
 def _redact_external_server_record(record: Any) -> Any:
@@ -585,14 +522,14 @@ class _AdvancedSectionShim:
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
+                _workbench._safe_diagnostic_message(
                     "MCP workbench advanced section load failed", exc
                 ),
             )
             return {
                 "source": "local",
                 "section": section or "overview",
-                "error": _safe_exception_text(exc),
+                "error": _workbench._safe_exception_text(exc),
             }
         if isinstance(payload, dict):
             if isinstance(payload.get("external_servers"), list):
@@ -917,7 +854,7 @@ class MCPWorkbench(Container):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="mcp-hub-grid", classes="destination-workbench"):
-            yield MCPRail(
+            yield _workbench.MCPRail(
                 source=self._source,
                 snapshots=[],
                 selected_server_key=None,
@@ -933,7 +870,7 @@ class MCPWorkbench(Container):
                 id="mcp-hub-canvas",
                 classes="destination-workbench-pane",
             ):
-                yield MCPServersMode(id="mcp-mode-canvas-servers")
+                yield _workbench.MCPServersMode(id="mcp-mode-canvas-servers")
                 # task-2901: Tools/Permissions/Audit (T5/T6/T7 canvases —
                 # every `MCP_HUB_MODES` entry is a real canvas) arrive
                 # hidden behind the ContentSwitcher and are NOT composed
@@ -941,7 +878,7 @@ class MCPWorkbench(Container):
                 # (`_mount_deferred_canvases`), before `reload()` pushes
                 # data into them — off the click→paint critical path with
                 # the load pipeline's ordering intact.
-            yield MCPInspector(
+            yield _workbench.MCPInspector(
                 id="mcp-hub-inspector", classes="destination-workbench-pane"
             )
 
@@ -992,7 +929,7 @@ class MCPWorkbench(Container):
         nonce = self._tool_test_preview_nonce
         self._tool_test_preview_nonce = None
         try:
-            inspector_nonce = self.query_one(MCPInspector).clear_test_preview()
+            inspector_nonce = self.query_one(_workbench.MCPInspector).clear_test_preview()
         except Exception:
             inspector_nonce = None
         nonce = nonce or inspector_nonce
@@ -1054,10 +991,10 @@ class MCPWorkbench(Container):
             switcher = self.query_one(ContentSwitcher)
         except QueryError:
             return
-        if not self.query(MCPToolsMode):
-            tools = MCPToolsMode(id="mcp-mode-canvas-tools")
+        if not self.query(_workbench.MCPToolsMode):
+            tools = _workbench.MCPToolsMode(id="mcp-mode-canvas-tools")
             permissions = MCPPermissionsMode(id="mcp-mode-canvas-permissions")
-            audit = MCPAuditMode(id="mcp-mode-canvas-audit")
+            audit = _workbench.MCPAuditMode(id="mcp-mode-canvas-audit")
             # ContentSwitcher hides children from its `current` WATCHER, which
             # only fires on change — late-mounted children arrive visible, and
             # all three canvases briefly stacking pushed the current one's
@@ -1075,7 +1012,7 @@ class MCPWorkbench(Container):
         """Run the mount-time reload without letting a failure strand the UI."""
         try:
             await self._mount_deferred_canvases()
-            if not self.query(MCPToolsMode):
+            if not self.query(_workbench.MCPToolsMode):
                 # Textual 8.2.8 can deliver the first after-refresh callback
                 # before this widget's composed ContentSwitcher is queryable.
                 # In that case _mount_deferred_canvases() deliberately returns;
@@ -1152,7 +1089,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(
                         "{}",
-                        _safe_diagnostic_message(
+                        _workbench._safe_diagnostic_message(
                             "MCP workbench context load failed", exc
                         ),
                     )
@@ -1219,7 +1156,7 @@ class MCPWorkbench(Container):
         the module-level `_target_id_from_server_key()` (shared with
         `_refresh_server_discovery()`'s own, independent server_key).
         """
-        return _target_id_from_server_key(self._selected_server_key)
+        return _workbench._target_id_from_server_key(self._selected_server_key)
 
     def _active_service_target_id(self) -> str | None:
         """The target id server-source operations would actually run against.
@@ -1263,7 +1200,7 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(
                     "{}",
-                    _safe_diagnostic_message("MCP target label lookup failed", exc),
+                    _workbench._safe_diagnostic_message("MCP target label lookup failed", exc),
                 )
         return target_id
 
@@ -1301,7 +1238,7 @@ class MCPWorkbench(Container):
         if key == self._advanced_rebind_key:
             return
         self._advanced_rebind_key = key
-        self.query_one(MCPInspector).set_service_context(
+        self.query_one(_workbench.MCPInspector).set_service_context(
             _AdvancedSectionShim(service) if service is not None else None,
             _LEGACY_SECTIONS,
             source=self._source,
@@ -1350,7 +1287,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message("MCP available_actions check failed", exc),
+                _workbench._safe_diagnostic_message("MCP available_actions check failed", exc),
             )
             return False
         return any(
@@ -1393,7 +1330,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(
                         "{}",
-                        _safe_diagnostic_message(
+                        _workbench._safe_diagnostic_message(
                             "MCP local profile listing failed", exc
                         ),
                     )
@@ -1427,7 +1364,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(
                         "{}",
-                        _safe_diagnostic_message(
+                        _workbench._safe_diagnostic_message(
                             "MCP external server listing failed", exc
                         ),
                     )
@@ -1541,12 +1478,12 @@ class MCPWorkbench(Container):
                 recovery_token
             ):
                 return
-            if not self.query(MCPToolsMode):
+            if not self.query(_workbench.MCPToolsMode):
                 return
             display_snapshots = [
                 self._display_snapshot(snap) for snap in self._snapshots
             ]
-            rail = self.query_one(MCPRail)
+            rail = self.query_one(_workbench.MCPRail)
             rail.sync_state(
                 source=self._source,
                 snapshots=display_snapshots,
@@ -1556,7 +1493,7 @@ class MCPWorkbench(Container):
                 scope_ref_options=[],
                 scope_ref_value=self._scope_ref,
             )
-            canvas = self.query_one(MCPServersMode)
+            canvas = self.query_one(_workbench.MCPServersMode)
             await canvas.update_overview(
                 display_snapshots,
                 source=self._source,
@@ -1575,7 +1512,7 @@ class MCPWorkbench(Container):
                 recovery_token
             ):
                 return
-            await self.query_one(MCPInspector).update_readiness(
+            await self.query_one(_workbench.MCPInspector).update_readiness(
                 selected,
                 cancelling=bool(worker and worker.is_cancelled),
                 cancel_operation=worker,
@@ -1631,7 +1568,7 @@ class MCPWorkbench(Container):
         service = self._service()
         findings = await self._server_findings(service)
         self._last_audit_findings = findings or []
-        await self.query_one(MCPAuditMode).update_findings(
+        await self.query_one(_workbench.MCPAuditMode).update_findings(
             findings, source=self._source
         )
 
@@ -1665,7 +1602,7 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(
                     "{}",
-                    _safe_diagnostic_message("MCP execution log access failed", exc),
+                    _workbench._safe_diagnostic_message("MCP execution log access failed", exc),
                 )
                 log = None
         if log is not None:
@@ -1673,11 +1610,11 @@ class MCPWorkbench(Container):
                 entries = log.read_recent(200)
             except Exception as exc:
                 logger.warning(
-                    "{}", _safe_diagnostic_message("MCP execution log read failed", exc)
+                    "{}", _workbench._safe_diagnostic_message("MCP execution log read failed", exc)
                 )
                 entries = []
         self._last_audit_entries = entries
-        await self.query_one(MCPAuditMode).update_entries(entries)
+        await self.query_one(_workbench.MCPAuditMode).update_entries(entries)
 
     async def _server_findings(self, service: Any) -> list[dict[str, Any]] | None:
         """T8: this pass's server-source Audit-mode Findings listing,
@@ -1727,7 +1664,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message("MCP audit findings fetch failed", exc),
+                _workbench._safe_diagnostic_message("MCP audit findings fetch failed", exc),
             )
             return None
         if not isinstance(advanced_payload, Mapping):
@@ -1760,7 +1697,7 @@ class MCPWorkbench(Container):
         input.
         """
         diagnosis = None if tools else self._empty_tools_diagnosis()
-        canvas = self.query_one(MCPToolsMode)
+        canvas = self.query_one(_workbench.MCPToolsMode)
         enabled, workspace_root = self._local_tools_config_values()
         canvas.update_local_config(
             enabled=enabled,
@@ -1794,11 +1731,11 @@ class MCPWorkbench(Container):
             )
         return enabled, workspace_root
 
-    def _refresh_local_tools_controls(self) -> MCPToolsMode | None:
+    def _refresh_local_tools_controls(self) -> _workbench.MCPToolsMode | None:
         """Reset Tools-mode controls to persisted config after a failed save."""
-        if not self.query(MCPToolsMode):
+        if not self.query(_workbench.MCPToolsMode):
             return None
-        canvas = self.query_one(MCPToolsMode)
+        canvas = self.query_one(_workbench.MCPToolsMode)
         if not self._local_config_canvas_ready(canvas):
             return None
         enabled, workspace_root = self._local_tools_config_values()
@@ -1850,7 +1787,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(
                         "{}",
-                        _safe_diagnostic_message(
+                        _workbench._safe_diagnostic_message(
                             "MCP built-in inventory read failed", exc
                         ),
                     )
@@ -2312,7 +2249,7 @@ class MCPWorkbench(Container):
         self._last_effective_states.clear()
         self._last_cascade.clear()
         self._last_builtin_effective.clear()
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         await inspector.show_tool(None)
         async with self._sync_children_lock:
             await self._sync_permissions_mode()
@@ -2368,7 +2305,7 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(
                     "{}",
-                    _safe_diagnostic_message(
+                    _workbench._safe_diagnostic_message(
                         "MCP effective tool state resolution failed", exc
                     ),
                 )
@@ -2483,7 +2420,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
+                _workbench._safe_diagnostic_message(
                     "builtin permission row enumeration failed", exc
                 ),
             )
@@ -2712,7 +2649,7 @@ class MCPWorkbench(Container):
             self._last_effective_states.clear()
             self._last_cascade.clear()
             self._last_builtin_effective.clear()
-            inspector = self.query_one(MCPInspector)
+            inspector = self.query_one(_workbench.MCPInspector)
             await inspector.show_tool(None)
             effective, policy_inventory = self._capture_permission_render_state(tools)
             profiles, profile_options, profile_context = policy_inventory
@@ -2729,7 +2666,7 @@ class MCPWorkbench(Container):
                 # the log line no longer says "MCP" (matches that method's
                 # own "kill switch read failed" wording).
                 logger.warning(
-                    "{}", _safe_diagnostic_message("kill switch read failed", exc)
+                    "{}", _workbench._safe_diagnostic_message("kill switch read failed", exc)
                 )
 
         # T7: cache this batch resolution for `_effective_for_display()` --
@@ -2748,7 +2685,7 @@ class MCPWorkbench(Container):
             # `effective_tool_states()` call, no governance fetch, no
             # `_sync_tools_mode()`/tool-list rebuild -- just this one
             # widget's own narrow row re-render (`update_states()`).
-            self.query_one(MCPToolsMode).update_states(effective)
+            self.query_one(_workbench.MCPToolsMode).update_states(effective)
 
         canvas = self.query_one(MCPPermissionsMode)
         canvas.update_tool_policy_profiles(
@@ -2910,7 +2847,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message("MCP governance section fetch failed", exc),
+                _workbench._safe_diagnostic_message("MCP governance section fetch failed", exc),
             )
             return None
         if not isinstance(governance_payload, Mapping):
@@ -3441,7 +3378,7 @@ class MCPWorkbench(Container):
                 catalog, snapshots = {}, []
                 logger.warning(
                     "{}",
-                    _safe_diagnostic_message(
+                    _workbench._safe_diagnostic_message(
                         "Reviewed MCP catalog refresh failed", exc
                     ),
                 )
@@ -3460,7 +3397,7 @@ class MCPWorkbench(Container):
                 *snapshots,
             ]
             self._rebind_inspector_advanced_context(service)
-            inspector = self.query_one(MCPInspector)
+            inspector = self.query_one(_workbench.MCPInspector)
             await inspector.show_tool(None)
             if not self._mcp_recovery_current(token):
                 return
@@ -3619,7 +3556,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message("MCP permission cycle failed", exc),
+                _workbench._safe_diagnostic_message("MCP permission cycle failed", exc),
             )
             if _is_stale_profile_error(exc):
                 self.app.notify(
@@ -3660,7 +3597,7 @@ class MCPWorkbench(Container):
         # re-renders it -- today only the re-allow handler does. Refresh it
         # here too when it's explaining the tool that was just cycled.
         if event.row_kind == "tool" and cycled_tool is not None:
-            inspector = self.query_one(MCPInspector)
+            inspector = self.query_one(_workbench.MCPInspector)
             successor = self._successor_profile_context(context)
             if successor is None:
                 await inspector.show_tool(None)
@@ -3698,7 +3635,7 @@ class MCPWorkbench(Container):
             # task-545/T6: global switch (MCP + built-in tools) -- see the
             # matching read-path comment in `_sync_permissions_mode` above.
             logger.warning(
-                "{}", _safe_diagnostic_message("kill switch save failed", exc)
+                "{}", _workbench._safe_diagnostic_message("kill switch save failed", exc)
             )
             self.app.notify(
                 _toast(f"Failed to save kill switch: {exc}"), severity="error"
@@ -3711,7 +3648,7 @@ class MCPWorkbench(Container):
             await self._sync_permissions_mode(echo=echo)
 
     async def _show_selected_detail(
-        self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
+        self, canvas: _workbench.MCPServersMode, selected: ReadinessSnapshot | None
     ) -> None:
         """Route the selected snapshot to the read-only detail pane or,
         for an external-server record when mutations are available, to the
@@ -3755,7 +3692,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message("MCP credential slot listing failed", exc),
+                _workbench._safe_diagnostic_message("MCP credential slot listing failed", exc),
             )
             return []
         slots = result.get("credential_slots") if isinstance(result, Mapping) else None
@@ -3788,9 +3725,9 @@ class MCPWorkbench(Container):
             return
         mode_changed = mode != self._active_mode
         if mode_changed:
-            retired_revision = self.query_one(MCPServersMode).retire_detail_actions()
+            retired_revision = self.query_one(_workbench.MCPServersMode).retire_detail_actions()
             if self._active_mode == "audit":
-                self.query_one(MCPAuditMode).retire_selection()
+                self.query_one(_workbench.MCPAuditMode).retire_selection()
         self._active_mode = mode
         self.query_one(ContentSwitcher).current = f"mcp-mode-canvas-{mode}"
         if mode_changed:
@@ -3814,7 +3751,7 @@ class MCPWorkbench(Container):
             # Test Tool panel behind otherwise; switching INTO it starts
             # with nothing selected anyway, so this is a no-op there.
             self.run_worker(
-                self.query_one(MCPInspector).clear_mode_view,
+                self.query_one(_workbench.MCPInspector).clear_mode_view,
                 group="mcp-tool-clear",
                 exclusive=True,
             )
@@ -3865,7 +3802,7 @@ class MCPWorkbench(Container):
         # concurrently running `_sync_children()` doing the same via
         # `show_detail()` -- same DuplicateIds hazard the lock exists for.
         async with self._sync_children_lock:
-            await self.query_one(MCPServersMode).disarm_delete(
+            await self.query_one(_workbench.MCPServersMode).disarm_delete(
                 retired_revision=retired_revision
             )
 
@@ -3971,7 +3908,7 @@ class MCPWorkbench(Container):
                 await service.select_source(source)
             except Exception as exc:
                 logger.warning(
-                    "{}", _safe_diagnostic_message("MCP source switch failed", exc)
+                    "{}", _workbench._safe_diagnostic_message("MCP source switch failed", exc)
                 )
         self._source = source
         self._selected_server_key = None
@@ -3983,14 +3920,14 @@ class MCPWorkbench(Container):
         # T6: switching source invalidates any Tools-mode selection the
         # inspector was showing (the tool belonged to the OTHER source's
         # catalog), and also clears the finding detail pane (same reasoning).
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         await inspector.show_tool(None)
         await inspector.show_finding(None)
         self._snapshots = await self._collect_snapshots()
         await self._sync_children()
         self._rebind_inspector_advanced_context(service)
 
-    async def on_mcp_rail_source_changed(self, event: MCPRail.SourceChanged) -> None:
+    async def on_mcp_rail_source_changed(self, event: _workbench.MCPRail.SourceChanged) -> None:
         event.stop()
         await self._switch_source(event.source)
 
@@ -4033,7 +3970,7 @@ class MCPWorkbench(Container):
         # selection the inspector was showing -- "switching modes or
         # servers clears the tool view" -- and (I1 above) the Findings
         # detail pane for the same reason.
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         await inspector.show_tool(None)
         await inspector.show_finding(None)
         service = self._service()
@@ -4048,18 +3985,18 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(
                     "{}",
-                    _safe_diagnostic_message("MCP server target selection failed", exc),
+                    _workbench._safe_diagnostic_message("MCP server target selection failed", exc),
                 )
         if self._source == "server":
             self._snapshots = await self._collect_snapshots()
         await self._sync_children()
         self._rebind_inspector_advanced_context(service)
 
-    async def on_mcp_rail_server_selected(self, event: MCPRail.ServerSelected) -> None:
+    async def on_mcp_rail_server_selected(self, event: _workbench.MCPRail.ServerSelected) -> None:
         event.stop()
         await self._select_server_key(event.server_key)
 
-    async def on_mcp_rail_scope_changed(self, event: MCPRail.ScopeChanged) -> None:
+    async def on_mcp_rail_scope_changed(self, event: _workbench.MCPRail.ScopeChanged) -> None:
         event.stop()
         # C1 defense in depth: a no-op ScopeChanged (already-tracked scope +
         # scope_ref) must not round-trip to the service or resync children.
@@ -4075,7 +4012,7 @@ class MCPWorkbench(Container):
                 await service.select_scope(event.scope, event.scope_ref)
             except Exception as exc:
                 logger.warning(
-                    "{}", _safe_diagnostic_message("MCP scope selection failed", exc)
+                    "{}", _workbench._safe_diagnostic_message("MCP scope selection failed", exc)
                 )
         self._scope = event.scope
         self._scope_ref = event.scope_ref
@@ -4092,19 +4029,19 @@ class MCPWorkbench(Container):
             self._server_mutations_available = self._compute_server_mutations_available(
                 service
             )
-            self.query_one(MCPServersMode).set_mutations_available(
+            self.query_one(_workbench.MCPServersMode).set_mutations_available(
                 self._server_mutations_available,
                 mutation_target_label=self._active_target_label(),
             )
 
     async def on_mcp_servers_mode_server_row_selected(
-        self, event: MCPServersMode.ServerRowSelected
+        self, event: _workbench.MCPServersMode.ServerRowSelected
     ) -> None:
         event.stop()
         await self._select_server_key(event.server_key)
 
     async def on_mcp_inspector_hub_action_requested(
-        self, event: MCPInspector.HubActionRequested
+        self, event: _workbench.MCPInspector.HubActionRequested
     ) -> None:
         """Route one `HubActionRequested` -- from either the readiness pane's
         own action buttons or (Task 2, MCP Hub Phase 6) a Findings-detail
@@ -4148,8 +4085,8 @@ class MCPWorkbench(Container):
             # server has no tools in the current catalog.
             if event.server_key:
                 await self._mount_deferred_canvases()
-                if self.query(MCPToolsMode):
-                    await self.query_one(MCPToolsMode).focus_server(event.server_key)
+                if self.query(_workbench.MCPToolsMode):
+                    await self.query_one(_workbench.MCPToolsMode).focus_server(event.server_key)
         elif event.action is HubAction.OPEN_AUDIT:
             self.set_mode("audit")
         elif (
@@ -4170,7 +4107,7 @@ class MCPWorkbench(Container):
         ):
             profile_id = event.server_key.split(":", 1)[1]
             record = self._catalog_records.get(profile_id)
-            await self.query_one(MCPServersMode).show_form(record)
+            await self.query_one(_workbench.MCPServersMode).show_form(record)
         elif (
             event.action is HubAction.REFRESH_DISCOVERY
             and event.server_key
@@ -4240,7 +4177,7 @@ class MCPWorkbench(Container):
         active" behavior untouched.
         """
         service = self._service()
-        target_id = _target_id_from_server_key(server_key)
+        target_id = _workbench._target_id_from_server_key(server_key)
         if target_id is not None and target_id != self._active_service_target_id():
             if service is not None:
                 try:
@@ -4248,7 +4185,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(
                         "{}",
-                        _safe_diagnostic_message(
+                        _workbench._safe_diagnostic_message(
                             "MCP server target selection failed", exc
                         ),
                     )
@@ -4263,13 +4200,13 @@ class MCPWorkbench(Container):
         self.app.notify("Server discovery refreshed.")
 
     async def on_mcp_servers_mode_add_server_requested(
-        self, event: MCPServersMode.AddServerRequested
+        self, event: _workbench.MCPServersMode.AddServerRequested
     ) -> None:
         event.stop()
         await self._open_add_server(notify_if_gated=False)
 
     def on_mcp_tools_mode_local_tools_enabled_changed(
-        self, event: MCPToolsMode.LocalToolsEnabledChanged
+        self, event: _workbench.MCPToolsMode.LocalToolsEnabledChanged
     ) -> None:
         """Admit the explicit master choice before a UI observer can be cancelled."""
         event.stop()
@@ -4381,7 +4318,7 @@ class MCPWorkbench(Container):
     def _sync_master_save_status(self) -> None:
         canvases = [
             canvas
-            for canvas_type in (MCPToolsMode, MCPServersMode)
+            for canvas_type in (_workbench.MCPToolsMode, _workbench.MCPServersMode)
             for canvas in self.query(canvas_type)
             if self._local_config_canvas_ready(canvas)
         ]
@@ -4441,11 +4378,11 @@ class MCPWorkbench(Container):
         self._sync_master_save_status()
 
     def on_mcp_tools_mode_workspace_root_save_requested(
-        self, event: MCPToolsMode.WorkspaceRootSaveRequested
+        self, event: _workbench.MCPToolsMode.WorkspaceRootSaveRequested
     ) -> None:
         """Admit the exact visible draft before its disposable observer yields."""
         event.stop()
-        canvas = self.query_one(MCPToolsMode)
+        canvas = self.query_one(_workbench.MCPToolsMode)
         if (
             event.draft_identity is None
             or event.draft_identity[0] is not canvas.workspace_root_draft_identity[0]
@@ -4472,9 +4409,9 @@ class MCPWorkbench(Container):
 
     def _sync_root_save_status(self) -> None:
         """Project current-profile receipts, including after screen recreation."""
-        if not self.is_attached or not self.query(MCPToolsMode):
+        if not self.is_attached or not self.query(_workbench.MCPToolsMode):
             return
-        canvas = self.query_one(MCPToolsMode)
+        canvas = self.query_one(_workbench.MCPToolsMode)
         if not self._local_config_canvas_ready(canvas):
             return
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
@@ -4521,7 +4458,7 @@ class MCPWorkbench(Container):
                 and owner.state_for("workspace_root") == outcome
                 and outcome.request.config_path == get_cli_config_path()
             ):
-                canvas = self.query_one(MCPToolsMode)
+                canvas = self.query_one(_workbench.MCPToolsMode)
                 canvas.project_workspace_root_save(
                     outcome,
                     generation=current_config_identity()[0],
@@ -4535,7 +4472,7 @@ class MCPWorkbench(Container):
                 )
 
     async def on_mcp_tools_mode_empty_action_requested(
-        self, event: MCPToolsMode.EmptyActionRequested
+        self, event: _workbench.MCPToolsMode.EmptyActionRequested
     ) -> None:
         """Route the Tools mode diagnostic empty state's primary Button.
 
@@ -4564,7 +4501,7 @@ class MCPWorkbench(Container):
 
     async def _refresh_selected_tool(self) -> None:
         """Reconcile selected detail with the current catalog without selecting a row."""
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         current = inspector.current_tool
         if current is None:
             return
@@ -4612,7 +4549,7 @@ class MCPWorkbench(Container):
         return None
 
     async def on_mcp_tools_mode_tool_selected(
-        self, event: MCPToolsMode.ToolSelected
+        self, event: _workbench.MCPToolsMode.ToolSelected
     ) -> None:
         """T6: route a Tools-mode row selection to the inspector's tool
         detail view. `_tool_for_row_key()` resolves the row's packed
@@ -4627,7 +4564,7 @@ class MCPWorkbench(Container):
         via `show_tool()`'s `effective` keyword.
         """
         event.stop()
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         context = self._validate_profile_context(self._tool_policy_profile_context)
         if context is None:
             await inspector.show_tool(None)
@@ -4684,7 +4621,7 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(
                     "{}",
-                    _safe_diagnostic_message(
+                    _workbench._safe_diagnostic_message(
                         "MCP permission resolution failed; failing closed", exc
                     ),
                 )
@@ -4716,7 +4653,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
+                _workbench._safe_diagnostic_message(
                     f"MCP arg-rule list failed for {tool.server_key}::{tool.name}",
                     exc,
                 ),
@@ -4753,7 +4690,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
+                _workbench._safe_diagnostic_message(
                     "MCP session-approval list failed", exc
                 ),
             )
@@ -4804,7 +4741,7 @@ class MCPWorkbench(Container):
             return
         # The accepted native review may finish, but this selection owns the UI.
         self._mcp_recovery_token = None
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         if event.row_kind == "tool" and event.server_key == BUILTIN_TOOL_SERVER_KEY:
             effective = self._last_builtin_effective.get(
                 (event.server_key, event.tool_name or "")
@@ -4854,23 +4791,23 @@ class MCPWorkbench(Container):
     # -- T7 (MCP Hub Phase 5): Audit mode ------------------------------------
 
     async def on_mcp_audit_mode_entry_selected(
-        self, event: MCPAuditMode.EntrySelected
+        self, event: _workbench.MCPAuditMode.EntrySelected
     ) -> None:
         """Display the execution captured by the latest visible selection."""
         event.stop()
-        canvas = self.query_one(MCPAuditMode)
+        canvas = self.query_one(_workbench.MCPAuditMode)
         if self.active_mode != "audit" or event.entry is not canvas.selected_entry:
             return
         entry = event.entry
         context = self._validate_profile_context(self._tool_policy_profile_context)
         if context is None:
             entry = None
-        await self.query_one(MCPInspector).show_audit_entry(
+        await self.query_one(_workbench.MCPInspector).show_audit_entry(
             entry, profile_context=context
         )
 
     async def on_mcp_audit_mode_finding_selected(
-        self, event: MCPAuditMode.FindingSelected
+        self, event: _workbench.MCPAuditMode.FindingSelected
     ) -> None:
         """Route an Audit-mode Findings-table row selection to the
         inspector's finding detail view (T8, MCP Hub Phase 5). Findings retain
@@ -4899,7 +4836,7 @@ class MCPWorkbench(Container):
         server_key = (
             self._finding_owning_server_key(finding) if finding is not None else None
         )
-        await self.query_one(MCPInspector).show_finding(finding, server_key=server_key)
+        await self.query_one(_workbench.MCPInspector).show_finding(finding, server_key=server_key)
 
     def _finding_owning_server_key(self, finding: Mapping[str, Any]) -> str | None:
         """The finding's owning server key (Task 2, MCP Hub Phase 6).
@@ -4921,7 +4858,7 @@ class MCPWorkbench(Container):
         return self._selected_server_key
 
     async def on_mcp_audit_mode_sub_view_changed(
-        self, event: MCPAuditMode.SubViewChanged
+        self, event: _workbench.MCPAuditMode.SubViewChanged
     ) -> None:
         """Clear the now-inactive Audit sub-view pane's inspector detail
         (Critical fix, MCP Hub Phase 5 T8 review). `MCPAuditMode` itself
@@ -4944,14 +4881,14 @@ class MCPWorkbench(Container):
         sequential await is enough for the clear to actually execute.
         """
         event.stop()
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         if event.sub_view == "findings":
             await inspector.show_audit_entry(None)
         else:
             await inspector.show_finding(None)
 
     async def on_mcp_inspector_audit_open_tool_requested(
-        self, event: MCPInspector.AuditOpenToolRequested
+        self, event: _workbench.MCPInspector.AuditOpenToolRequested
     ) -> None:
         """Route the audit-entry detail's "Open tool" button: resolve the
         entry's `(server_key, tool_name)` against `_last_hub_tools`
@@ -4998,7 +4935,7 @@ class MCPWorkbench(Container):
     async def _open_audit_tool(
         self, tool: HubTool, context: PermissionProfileContext
     ) -> None:
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         context = self._validate_profile_context(context)
         if context is None:
             await inspector.show_tool(None)
@@ -5028,7 +4965,7 @@ class MCPWorkbench(Container):
                     severity="warning",
                 )
                 return
-            if not await self.query_one(MCPToolsMode).select_tool_row(current.tool_id):
+            if not await self.query_one(_workbench.MCPToolsMode).select_tool_row(current.tool_id):
                 await inspector.show_tool(None)
                 self.app.notify(
                     _toast(
@@ -5050,7 +4987,7 @@ class MCPWorkbench(Container):
             )
 
     async def on_mcp_inspector_audit_adjust_permission_requested(
-        self, event: MCPInspector.AuditAdjustPermissionRequested
+        self, event: _workbench.MCPInspector.AuditAdjustPermissionRequested
     ) -> None:
         """Route the audit-entry detail's "Adjust permission" button through
         the shared jump helper (`_goto_permission_row()`, Task 3, MCP Hub
@@ -5062,7 +4999,7 @@ class MCPWorkbench(Container):
         )
 
     async def on_mcp_inspector_change_in_permissions_requested(
-        self, event: MCPInspector.ChangeInPermissionsRequested
+        self, event: _workbench.MCPInspector.ChangeInPermissionsRequested
     ) -> None:
         """Route either "Change in Permissions" button (Task 3, MCP Hub
         Phase 6: the Tools-mode permission block's own button, and the Test
@@ -5124,7 +5061,7 @@ class MCPWorkbench(Container):
     async def _open_audit_permission(
         self, tool: HubTool, context: PermissionProfileContext
     ) -> None:
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         context = self._validate_profile_context(context)
         if context is None:
             await inspector.show_tool(None)
@@ -5189,7 +5126,7 @@ class MCPWorkbench(Container):
             )
 
     async def on_mcp_inspector_reallow_requested(
-        self, event: MCPInspector.ReallowRequested
+        self, event: _workbench.MCPInspector.ReallowRequested
     ) -> None:
         """T7: re-allow a rug-pull-downgraded tool override -- store the
         tool's CURRENT definition hash and set its state back to "allow"
@@ -5239,7 +5176,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
+                _workbench._safe_diagnostic_message(
                     f"MCP re-allow failed for {event.server_key}::{event.tool_name}",
                     exc,
                 ),
@@ -5251,7 +5188,7 @@ class MCPWorkbench(Container):
                 )
             else:
                 self.app.notify(_toast("Re-allow failed."), severity="error")
-            await self.query_one(MCPInspector).retry_permission_action(
+            await self.query_one(_workbench.MCPInspector).retry_permission_action(
                 event.permission_view
             )
             return
@@ -5263,7 +5200,7 @@ class MCPWorkbench(Container):
         await self._refresh_permission_action(event, context)
 
     async def on_mcp_inspector_remove_arg_rule_requested(
-        self, event: MCPInspector.RemoveArgRuleRequested
+        self, event: _workbench.MCPInspector.RemoveArgRuleRequested
     ) -> None:
         """task-32281: delete one exact-input allow rule, then resync the
         matrix (its ``≡`` marker clears once no rule remains) and
@@ -5303,7 +5240,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
+                _workbench._safe_diagnostic_message(
                     f"MCP arg-rule removal failed for {event.server_key}::{event.tool_name}",
                     exc,
                 ),
@@ -5311,7 +5248,7 @@ class MCPWorkbench(Container):
             self.app.notify(
                 _toast("Removing the rule failed."), severity="error"
             )
-            await self.query_one(MCPInspector).retry_permission_action(
+            await self.query_one(_workbench.MCPInspector).retry_permission_action(
                 event.permission_view
             )
             return
@@ -5321,7 +5258,7 @@ class MCPWorkbench(Container):
 
     async def _refresh_permission_action(
         self,
-        event: MCPInspector.ReallowRequested | MCPInspector.RemoveArgRuleRequested,
+        event: _workbench.MCPInspector.ReallowRequested | _workbench.MCPInspector.RemoveArgRuleRequested,
         context: PermissionProfileContext,
     ) -> None:
         """Refresh a completed write only while its originating panel still owns it."""
@@ -5329,7 +5266,7 @@ class MCPWorkbench(Container):
         if successor is None or event.permission_view is None:
             return
         tool = self._tool_for(event.server_key, event.tool_name)
-        await self.query_one(MCPInspector).show_permission(
+        await self.query_one(_workbench.MCPInspector).show_permission(
             tool,
             self._effective_for_display(tool) if tool is not None else None,
             cascade=self._cascade_for_tool(tool) if tool is not None else None,
@@ -5343,7 +5280,7 @@ class MCPWorkbench(Container):
         )
 
     async def on_mcp_inspector_revoke_session_approval_requested(
-        self, event: MCPInspector.RevokeSessionApprovalRequested
+        self, event: _workbench.MCPInspector.RevokeSessionApprovalRequested
     ) -> None:
         """task-32291: drop one live session approval, then resync the
         matrix (that tool's ` (session)` suffix clears) and re-render the
@@ -5379,7 +5316,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
+                _workbench._safe_diagnostic_message(
                     f"MCP session-approval revoke failed for {event.server_key}::{event.tool_name}",
                     exc,
                 ),
@@ -5387,14 +5324,14 @@ class MCPWorkbench(Container):
             self.app.notify(
                 _toast("Revoking the session approval failed."), severity="error"
             )
-            await self.query_one(MCPInspector).refresh_permission_session_approvals(
+            await self.query_one(_workbench.MCPInspector).refresh_permission_session_approvals(
                 self._session_approvals_for_row(context.profile_id),
                 profile_context=context,
             )
             return
         async with self._sync_children_lock:
             await self._sync_permissions_mode()
-        await self.query_one(MCPInspector).refresh_permission_session_approvals(
+        await self.query_one(_workbench.MCPInspector).refresh_permission_session_approvals(
             self._session_approvals_for_row(context.profile_id),
             profile_context=context,
         )
@@ -5428,7 +5365,7 @@ class MCPWorkbench(Container):
         non-None `_current_tool` only exists in Tools mode anyway, since
         every mode change clears the tool view.)
         """
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         status = await inspector.open_test_panel()
         if status == "no_tool" and self._active_mode == "tools":
             # Wave A (O5): IN TOOLS MODE the user may have ARROWED onto a
@@ -5461,7 +5398,7 @@ class MCPWorkbench(Container):
             return
         self.set_mode("tools")
 
-    async def _open_test_for_tools_cursor_row(self, inspector: MCPInspector) -> str:
+    async def _open_test_for_tools_cursor_row(self, inspector: _workbench.MCPInspector) -> str:
         """Wave A (O5): resolve the Tools table's CURSOR row (arrowed onto,
         not Enter-selected) into the inspector's tool view and retry the
         Test Tool open through the exact same path a row selection takes
@@ -5473,7 +5410,7 @@ class MCPWorkbench(Container):
         profile context) -- the caller then falls back to its hint.
         """
         try:
-            canvas = self.query_one(MCPToolsMode)
+            canvas = self.query_one(_workbench.MCPToolsMode)
             table = canvas.query_one("#mcp-tools-table", DataTable)
         except NoMatches:
             return "no_tool"
@@ -5510,7 +5447,7 @@ class MCPWorkbench(Container):
 
     @staticmethod
     def _show_tool_test_lifecycle_unavailable(
-        inspector: MCPInspector,
+        inspector: _workbench.MCPInspector,
         server_key: str,
         tool_name: str,
         context: PermissionProfileContext,
@@ -5528,11 +5465,11 @@ class MCPWorkbench(Container):
         )
 
     def on_mcp_inspector_tool_test_preview_requested(
-        self, event: MCPInspector.ToolTestPreviewRequested
+        self, event: _workbench.MCPInspector.ToolTestPreviewRequested
     ) -> None:
         """Prepare a service-owned preview off the UI loop."""
         event.stop()
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         if (
             event.panel_token is None
             or event.panel_token is not inspector.test_panel_token
@@ -5587,13 +5524,13 @@ class MCPWorkbench(Container):
             while service.hub_test_active(tool.server_key, tool.name):
                 if not self._test_panel_is_current(tool, generation):
                     return
-                self.query_one(MCPInspector).show_test_active(True)
+                self.query_one(_workbench.MCPInspector).show_test_active(True)
                 was_active = True
                 await asyncio.sleep(_TOOL_TEST_ACTIVE_POLL_SECONDS)
             if not self._test_panel_is_current(tool, generation):
                 return
             if was_active:
-                self.query_one(MCPInspector).show_test_preparing()
+                self.query_one(_workbench.MCPInspector).show_test_preparing()
             if self._validate_profile_context(profile_context) is None:
                 self._render_test_unavailable_if_current(
                     tool,
@@ -5608,14 +5545,14 @@ class MCPWorkbench(Container):
             raise
         except Exception as exc:
             self._render_test_unavailable_if_current(
-                tool, generation, _safe_exception_text(exc)
+                tool, generation, _workbench._safe_exception_text(exc)
             )
             return
         if not self._test_panel_is_current(tool, generation):
             await self._revoke_test_nonce(preview.nonce)
             return
         self._tool_test_preview_nonce = preview.nonce
-        self.query_one(MCPInspector).show_test_preview(preview)
+        self.query_one(_workbench.MCPInspector).show_test_preview(preview)
 
     async def _mint_test_preview(
         self,
@@ -5681,7 +5618,7 @@ class MCPWorkbench(Container):
         if generation != self._tool_test_generation or not self.is_attached:
             return False
         try:
-            inspector = self.query_one(MCPInspector)
+            inspector = self.query_one(_workbench.MCPInspector)
         except Exception:
             return False
         current = inspector.current_tool
@@ -5698,10 +5635,10 @@ class MCPWorkbench(Container):
         self, tool: HubTool, generation: int, reason: str
     ) -> None:
         if self._test_panel_is_current(tool, generation):
-            self.query_one(MCPInspector).show_test_unavailable(reason)
+            self.query_one(_workbench.MCPInspector).show_test_unavailable(reason)
 
     def on_mcp_inspector_tool_test_preview_revocation_requested(
-        self, event: MCPInspector.ToolTestPreviewRevocationRequested
+        self, event: _workbench.MCPInspector.ToolTestPreviewRevocationRequested
     ) -> None:
         """Revoke a nonce leaving the visible panel, best effort."""
         event.stop()
@@ -5730,7 +5667,7 @@ class MCPWorkbench(Container):
             logger.debug("MCP tool-test preview revoke failed: {}", type(exc).__name__)
 
     def on_mcp_inspector_tool_test_requested(
-        self, event: MCPInspector.ToolTestRequested
+        self, event: _workbench.MCPInspector.ToolTestRequested
     ) -> None:
         """Dispatch one immutable preview intent through the service only.
 
@@ -5738,7 +5675,7 @@ class MCPWorkbench(Container):
         client may deliver concurrent clicks but never authorizes or falls back.
         """
         event.stop()
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         context = self._validate_profile_context(event.profile_context)
         if context is None:
             inspector.show_test_unavailable(
@@ -5852,7 +5789,7 @@ class MCPWorkbench(Container):
             )
             return
         if self._test_panel_is_current(tool, generation):
-            inspector = self.query_one(MCPInspector)
+            inspector = self.query_one(_workbench.MCPInspector)
             inspector.clear_test_preview()
             inspector.show_test_active(True)
         if nonce == self._tool_test_preview_nonce:
@@ -5872,13 +5809,13 @@ class MCPWorkbench(Container):
                     server_key=tool.server_key,
                     tool_name=tool.name,
                     ok=False,
-                    text=_safe_exception_text(exc),
+                    text=_workbench._safe_exception_text(exc),
                     duration_ms=0,
                     blocked=_is_permission_refusal(exc),
                     show_permission_jump=False,
                     profile_context=profile_context,
                 )
-                inspector = self.query_one(MCPInspector)
+                inspector = self.query_one(_workbench.MCPInspector)
                 inspector.show_test_preparing()
                 await self._prepare_tool_test_preview(tool, generation, profile_context)
             await self._refresh_test_audit()
@@ -5890,7 +5827,7 @@ class MCPWorkbench(Container):
             await self._refresh_test_audit()
             return
 
-        inspector = self.query_one(MCPInspector)
+        inspector = self.query_one(_workbench.MCPInspector)
         if isinstance(outcome, ToolTestAdmissionStale):
             reason = self._prepared_test_reason(outcome.reason)
             inspector.show_tool_result(
@@ -5968,7 +5905,7 @@ class MCPWorkbench(Container):
                     server_key=tool.server_key,
                     tool_name=tool.name,
                     ok=False,
-                    text=_safe_exception_text(exc),
+                    text=_workbench._safe_exception_text(exc),
                     duration_ms=0,
                     profile_context=profile_context,
                 )
@@ -6002,7 +5939,7 @@ class MCPWorkbench(Container):
         try:
             await self._sync_audit_log_entries()
         except Exception as exc:
-            message = _safe_diagnostic_message(
+            message = _workbench._safe_diagnostic_message(
                 "MCP audit entries resync after tool test failed", exc
             )
             logger.warning("{}", message)
@@ -6041,7 +5978,7 @@ class MCPWorkbench(Container):
         profile_context: PermissionProfileContext | None = None,
     ) -> None:
         try:
-            self.query_one(MCPInspector).show_tool_result(
+            self.query_one(_workbench.MCPInspector).show_tool_result(
                 server_key=server_key,
                 tool_name=tool_name,
                 ok=ok,
@@ -6061,14 +5998,14 @@ class MCPWorkbench(Container):
             # so a log line alone left the user with literally nothing on
             # screen and no reason to suspect the run even happened. A
             # toast closes that gap; the log line stays for diagnosis.
-            safe_error = _safe_exception_text(exc)
+            safe_error = _workbench._safe_exception_text(exc)
             logger.warning(
                 "{}",
-                _safe_diagnostic_message("MCP tool test result render failed", exc),
+                _workbench._safe_diagnostic_message("MCP tool test result render failed", exc),
             )
             self.app.notify(
                 _toast(
-                    _safe_tool_test_text(
+                    _workbench._safe_tool_test_text(
                         f"{tool_name} finished running, but its result couldn't be "
                         f"shown: {safe_error}"
                     )
@@ -6089,7 +6026,7 @@ class MCPWorkbench(Container):
         await self._open_add_server(notify_if_gated=True)
 
     async def _open_add_server(self, *, notify_if_gated: bool) -> None:
-        canvas = self.query_one(MCPServersMode)
+        canvas = self.query_one(_workbench.MCPServersMode)
         if self._source == "server":
             # T9: mirrors `MCPServersMode._update_add_server_button()`'s gate
             # precedence -- scope gate first, then the no-active-target gate.
@@ -6107,7 +6044,7 @@ class MCPWorkbench(Container):
         else:
             await canvas.show_form(None)
 
-    def _notify_add_server_gated(self, canvas: MCPServersMode) -> None:
+    def _notify_add_server_gated(self, canvas: _workbench.MCPServersMode) -> None:
         """Surface the overview Add-server button's own gate tooltip as a notification.
 
         Reuses whatever `MCPServersMode._update_add_server_button()` already
@@ -6126,16 +6063,16 @@ class MCPWorkbench(Container):
         self.app.notify(message, severity="warning")
 
     async def on_mcp_servers_mode_import_servers_requested(
-        self, event: MCPServersMode.ImportServersRequested
+        self, event: _workbench.MCPServersMode.ImportServersRequested
     ) -> None:
         event.stop()
         # T8: existing catalog ids drive the panel's overwrite warnings --
         # `_catalog_records` is kept in sync with `_snapshots` by
         # `_collect_snapshots()` (Task 6).
-        await self.query_one(MCPServersMode).show_import(set(self._catalog_records))
+        await self.query_one(_workbench.MCPServersMode).show_import(set(self._catalog_records))
 
     async def on_mcp_servers_mode_disconnect_requested(
-        self, event: MCPServersMode.DisconnectRequested
+        self, event: _workbench.MCPServersMode.DisconnectRequested
     ) -> None:
         """Route the detail toolbar's Disconnect button through the same
         `_start_lifecycle()` dispatch T5 wired for connect/test/refresh --
@@ -6148,7 +6085,7 @@ class MCPWorkbench(Container):
             self._start_lifecycle(event.server_key, profile_id, "disconnect")
 
     def on_mcp_servers_mode_builtin_flag_changed(
-        self, event: MCPServersMode.BuiltinFlagChanged
+        self, event: _workbench.MCPServersMode.BuiltinFlagChanged
     ) -> None:
         """Dispatch a built-in server enable/expose toggle in the background.
 
@@ -6196,7 +6133,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message("MCP built-in flag save failed", exc),
+                _workbench._safe_diagnostic_message("MCP built-in flag save failed", exc),
             )
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
             return
@@ -6207,7 +6144,7 @@ class MCPWorkbench(Container):
         await self._sync_children()
 
     def on_mcp_servers_mode_tool_gate_changed(
-        self, event: MCPServersMode.ToolGateChanged
+        self, event: _workbench.MCPServersMode.ToolGateChanged
     ) -> None:
         """Admit the shared master choice or dispatch an existing per-tool gate."""
         event.stop()
@@ -6244,7 +6181,7 @@ class MCPWorkbench(Container):
             )
         except Exception as exc:
             logger.warning(
-                "{}", _safe_diagnostic_message("MCP tool gate save failed", exc)
+                "{}", _workbench._safe_diagnostic_message("MCP tool gate save failed", exc)
             )
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
         else:
@@ -6254,7 +6191,7 @@ class MCPWorkbench(Container):
         await self._sync_children()
 
     def on_mcp_servers_mode_delete_confirmed(
-        self, event: MCPServersMode.DeleteConfirmed
+        self, event: _workbench.MCPServersMode.DeleteConfirmed
     ) -> None:
         """Dispatch a profile delete in the background.
 
@@ -6292,7 +6229,7 @@ class MCPWorkbench(Container):
                 await service.delete_local_profile(profile_id)
             except Exception as exc:
                 logger.warning(
-                    "{}", _safe_diagnostic_message("MCP profile delete failed", exc)
+                    "{}", _workbench._safe_diagnostic_message("MCP profile delete failed", exc)
                 )
                 self.app.notify(_toast(f"Delete failed: {exc}"), severity="error")
                 return
@@ -6305,7 +6242,7 @@ class MCPWorkbench(Container):
             self._profile_delete_in_flight = False
 
     def on_mcp_profile_form_submit_requested(
-        self, event: MCPProfileForm.SubmitRequested
+        self, event: _workbench.MCPProfileForm.SubmitRequested
     ) -> None:
         """Dispatch a profile save in the background.
 
@@ -6333,9 +6270,9 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
-    def _form_or_none(self) -> MCPProfileForm | None:
+    def _form_or_none(self) -> _workbench.MCPProfileForm | None:
         try:
-            return self.query_one(MCPProfileForm)
+            return self.query_one(_workbench.MCPProfileForm)
         except Exception:
             return None
 
@@ -6379,7 +6316,7 @@ class MCPWorkbench(Container):
                 return
             except Exception as exc:
                 logger.warning(
-                    "{}", _safe_diagnostic_message("MCP profile save failed", exc)
+                    "{}", _workbench._safe_diagnostic_message("MCP profile save failed", exc)
                 )
                 # Route through show_error when possible: it also re-enables
                 # the form's Save button (disabled at submit) for a retry.
@@ -6389,7 +6326,7 @@ class MCPWorkbench(Container):
                 else:
                     self.app.notify(_toast(f"Save failed: {exc}"), severity="error")
                 return
-            canvas = self.query_one(MCPServersMode)
+            canvas = self.query_one(_workbench.MCPServersMode)
             await canvas.hide_form()
             self.app.notify(_toast(f"Saved {payload.get('profile_id')}."))
             if warning:
@@ -6405,21 +6342,21 @@ class MCPWorkbench(Container):
             self._profile_save_in_flight = False
 
     async def on_mcp_profile_form_cancelled(
-        self, event: MCPProfileForm.Cancelled
+        self, event: _workbench.MCPProfileForm.Cancelled
     ) -> None:
         event.stop()
-        await self.query_one(MCPServersMode).hide_form()
+        await self.query_one(_workbench.MCPServersMode).hide_form()
 
     # -- T9: server-source external-server + credential-slot mutations --------
 
-    def _mutations_panel_or_none(self) -> MCPServerMutationsPanel | None:
+    def _mutations_panel_or_none(self) -> _workbench.MCPServerMutationsPanel | None:
         try:
-            return self.query_one(MCPServerMutationsPanel)
+            return self.query_one(_workbench.MCPServerMutationsPanel)
         except Exception:
             return None
 
     def on_mcp_server_mutations_submit_requested(
-        self, event: MCPServerMutationsPanel.SubmitRequested
+        self, event: _workbench.MCPServerMutationsPanel.SubmitRequested
     ) -> None:
         """Dispatch one `run_action(action, payload)` call in the background.
 
@@ -6450,7 +6387,7 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(
                     "{}",
-                    _safe_diagnostic_message(
+                    _workbench._safe_diagnostic_message(
                         f"MCP server mutation failed ({action})", exc
                     ),
                 )
@@ -6485,7 +6422,7 @@ class MCPWorkbench(Container):
             self._server_mutation_in_flight = False
 
     async def on_mcp_server_mutations_cancelled(
-        self, event: MCPServerMutationsPanel.Cancelled
+        self, event: _workbench.MCPServerMutationsPanel.Cancelled
     ) -> None:
         """Close the mutations panel AND clear the selection that opened it.
 
@@ -6507,19 +6444,19 @@ class MCPWorkbench(Container):
         (possibly stale) guess.
         """
         event.stop()
-        await self.query_one(MCPServersMode).hide_form()
+        await self.query_one(_workbench.MCPServersMode).hide_form()
         await self._select_server_key(None)
 
     # -- T8: mcpServers import (paste or file) ---------------------------------
 
-    def _import_panel_or_none(self) -> MCPImportPanel | None:
+    def _import_panel_or_none(self) -> _workbench.MCPImportPanel | None:
         try:
-            return self.query_one(MCPImportPanel)
+            return self.query_one(_workbench.MCPImportPanel)
         except Exception:
             return None
 
     async def on_mcp_import_panel_file_requested(
-        self, event: MCPImportPanel.FileRequested
+        self, event: _workbench.MCPImportPanel.FileRequested
     ) -> None:
         event.stop()
         from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
@@ -6587,13 +6524,13 @@ class MCPWorkbench(Container):
             panel.set_file_text(text)
 
     async def on_mcp_import_panel_cancelled(
-        self, event: MCPImportPanel.Cancelled
+        self, event: _workbench.MCPImportPanel.Cancelled
     ) -> None:
         event.stop()
-        await self.query_one(MCPServersMode).hide_form()
+        await self.query_one(_workbench.MCPServersMode).hide_form()
 
     def on_mcp_import_panel_import_requested(
-        self, event: MCPImportPanel.ImportRequested
+        self, event: _workbench.MCPImportPanel.ImportRequested
     ) -> None:
         """Dispatch a batch of candidate saves in the background.
 
@@ -6626,16 +6563,16 @@ class MCPWorkbench(Container):
                     await service.save_local_profile(candidate.to_payload())
                 except Exception as exc:
                     logger.warning(
-                        "{}", _safe_diagnostic_message("MCP import failed", exc)
+                        "{}", _workbench._safe_diagnostic_message("MCP import failed", exc)
                     )
-                    failed.append((candidate.profile_id, _safe_exception_text(exc)))
+                    failed.append((candidate.profile_id, _workbench._safe_exception_text(exc)))
                 else:
                     succeeded.append(candidate.profile_id)
             self.app.notify(
-                _toast(_import_summary(succeeded, failed)),
-                severity=_import_severity(succeeded, failed),
+                _toast(_workbench._import_summary(succeeded, failed)),
+                severity=_workbench._import_severity(succeeded, failed),
             )
-            canvas = self.query_one(MCPServersMode)
+            canvas = self.query_one(_workbench.MCPServersMode)
             await canvas.hide_form()
             self._snapshots = await self._collect_snapshots()
             await self._sync_children()
@@ -6643,7 +6580,7 @@ class MCPWorkbench(Container):
             self._profile_import_in_flight = False
 
     def on_mcp_inspector_cancel_requested(
-        self, event: MCPInspector.CancelRequested
+        self, event: _workbench.MCPInspector.CancelRequested
     ) -> None:
         """Cancel an in-flight lifecycle worker.
 
@@ -6772,3 +6709,36 @@ class MCPWorkbench(Container):
         if isinstance(tools, int) and not isinstance(tools, bool):
             return tools
         return None
+
+
+_LAZY_EXPORTS = {
+    "MCPAuditMode": "mcp_audit_mode",
+    "MCPInspector": "mcp_inspector",
+    "_safe_diagnostic_message": "mcp_inspector",
+    "_safe_exception_text": "mcp_inspector",
+    "_safe_tool_test_text": "mcp_inspector",
+    "MCPImportPanel": "mcp_profile_form",
+    "MCPProfileForm": "mcp_profile_form",
+    "_import_summary": "mcp_profile_form",
+    "_import_severity": "mcp_profile_form",
+    "MCPRail": "mcp_rail",
+    "_target_id_from_server_key": "mcp_rail",
+    "MCPServerMutationsPanel": "mcp_server_mutations",
+    "MCPServersMode": "mcp_servers_mode",
+    "MCPToolsMode": "mcp_tools_mode",
+}
+
+
+def __getattr__(name: str):
+    """Resolve the original panel or helper only when its owner uses it."""
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(_import_module("." + _LAZY_EXPORTS[name], __package__), name)
+    return globals().setdefault(name, value)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
+
+__all__ = [name for name in __dir__() if not name.startswith("_")]

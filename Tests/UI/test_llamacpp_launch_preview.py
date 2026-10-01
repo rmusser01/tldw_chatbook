@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, Collapsible, Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_llm_gguf_source_modes import (
     _close_context,
     _deterministic_models_mount,  # noqa: F401 - registers the shared pytest fixture
@@ -34,10 +35,10 @@ async def preview_with_keyboard(view, pilot):
     await pilot.pause()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 28), (160, 48)])
+@private_profile_test
 async def test_preview_copy_and_stale_draft_on_production_models_pane(
-    monkeypatch, size
+    request, monkeypatch, size
 ):
     app, pilot, context, _screen, window, _ = await _mount_models(
         monkeypatch, size=size, mount_llamafile=False

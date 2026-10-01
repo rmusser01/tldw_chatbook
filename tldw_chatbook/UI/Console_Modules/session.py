@@ -2960,7 +2960,8 @@ class ConsoleSessionController:
 
         closed = self._session_is_gone(session_id)
         frames = traceback.extract_tb(exc.__traceback__)
-        logger.error(
+        logger.log(
+            "ERROR",
             "Console session close failed (stage={}, error_type={}, origin={})",
             "teardown" if closed else "close",
             type(exc).__name__,
@@ -2980,7 +2981,7 @@ class ConsoleSessionController:
         try:
             await self._sync_native_console_chat_ui()
         except Exception:  # noqa: BLE001 -- already reported; the next ✕ re-renders
-            pass
+            return
 
     def _session_is_gone(self, session_id: str) -> bool:
         """Whether the store no longer holds ``session_id`` (its close landed)."""

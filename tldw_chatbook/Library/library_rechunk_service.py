@@ -39,16 +39,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 from loguru import logger
 
-from ..Chunking.Chunk_Lib import ENGINE_VERSION
 from ..Chunking.auto_selection import AutoDecision
-from ..Chunking.template_runtime import (
-    TemplateResolutionError,
-    materialize_template_chunk_options,
-    resolve_for_rechunk,
-    resolve_template,
-)
+from ..chunking_engine_version import ENGINE_VERSION
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..RAG_Search.chunking_service import improved_chunking_process
 
 #: The two mutually exclusive bulk RAG operations (spec §10.3).
 BACKFILL_SLOT = "backfill"
@@ -172,6 +165,7 @@ def _effective_template_params(template: Dict[str, Any]) -> str:
     ``chunking_params`` spelling ingest-persisted rows do.
     """
     from ..Local_Ingestion.local_file_ingestion import _effective_chunk_params
+    from .library_rechunk_service import materialize_template_chunk_options
 
     options: Dict[str, Any] = {}
     materialize_template_chunk_options(options, template)
@@ -549,6 +543,14 @@ async def rechunk_one_item(
         Never raises for per-item conditions -- the caller decides how to
         count; the notes carry the reason/error strings.
     """
+    # Resolve through this module so the existing monkeypatch seam stays live.
+    from .library_rechunk_service import (
+        TemplateResolutionError,
+        improved_chunking_process,
+        resolve_for_rechunk,
+        resolve_template,
+    )
+
     if media_row is None:
         return {"status": "skipped", "notes": ["source row unavailable"]}
     try:
@@ -895,3 +897,39 @@ __all__ = [
     "release_bulk_rag_slot",
     "reset_bulk_rag_slots_for_tests",
 ]
+
+
+_LAZY_EXPORTS = {
+    "TemplateResolutionError": (
+        "..Chunking.template_runtime",
+        "TemplateResolutionError",
+    ),
+    "materialize_template_chunk_options": (
+        "..Chunking.template_runtime",
+        "materialize_template_chunk_options",
+    ),
+    "resolve_for_rechunk": ("..Chunking.template_runtime", "resolve_for_rechunk"),
+    "resolve_template": ("..Chunking.template_runtime", "resolve_template"),
+    "improved_chunking_process": (
+        "..RAG_Search.chunking_service",
+        "improved_chunking_process",
+    ),
+}
+
+
+def __getattr__(name: str):
+    """Resolve the original dependency object only when a caller uses it."""
+    from importlib import import_module
+
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module, attribute = target
+    owner = import_module(module, __package__)
+    value = getattr(owner, attribute) if attribute else owner
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))

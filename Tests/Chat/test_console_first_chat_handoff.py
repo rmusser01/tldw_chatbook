@@ -9,6 +9,8 @@ sat on "Validating provider." for 30s+ with no terminal state.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -93,7 +95,13 @@ def test_no_unbounded_resolve_for_send_awaits_remain():
     import ast
     from pathlib import Path
 
-    source = Path("tldw_chatbook/Chat/console_chat_controller.py").read_text()
+    source = "\n".join(
+        Path(path).read_text()
+        for path in (
+            "tldw_chatbook/Chat/console_chat_controller.py",
+            "tldw_chatbook/Chat/console_draft_submission.py",
+        )
+    )
     tree = ast.parse(source)
     offenders: list[int] = []
     for node in ast.walk(tree):
@@ -217,3 +225,102 @@ def test_prepared_continuation_allows_an_unchanged_destination():
         expected_destination=destination,
     )
     assert copy == "", f"an unchanged destination must proceed, got {copy!r}"
+
+
+class _ObservableHangingGateway(_HangingGateway):
+    """Prove validation has actually started and its waiter is cancelled."""
+
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.finished = asyncio.Event()
+
+    async def resolve_for_send(self, selection):
+        self.started.set()
+        try:
+            await super().resolve_for_send(selection)
+        finally:
+            self.finished.set()
+
+
+@pytest.fixture
+def hanging_inspection(monkeypatch):
+    """Exercise the three read-only entry paths without loading a profile."""
+
+    gateway = _ObservableHangingGateway()
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=gateway
+    )
+    session = controller.store.ensure_session()
+    controller.store.set_session_thinking_history_policy(session.id, "exclude")
+    service = object()
+    builder = SimpleNamespace(
+        _service=service,
+        explanation_is_current=Mock(side_effect=AssertionError("not ready")),
+    )
+    build_preview = Mock(side_effect=AssertionError("not ready"))
+    monkeypatch.setattr(
+        controller, "_personal_context_service", AsyncMock(return_value=service)
+    )
+    monkeypatch.setattr(
+        controller, "_personal_context_builder", AsyncMock(return_value=builder)
+    )
+    monkeypatch.setattr(
+        controller,
+        "_agent_bridge",
+        SimpleNamespace(build_personal_context_preview_snapshot=build_preview),
+    )
+    selection = controller._provider_selection_for_session(session.id)
+
+    def start(path):
+        if path == "thinking_history":
+            return controller.effective_thinking_history_policy_for_session(session.id)
+        if path == "selection_current":
+            return controller.personal_context_selection_current(
+                builder,
+                SimpleNamespace(model="unused", provider="unused"),
+                object(),
+                provider_selection=selection,
+            )
+        return controller._build_personal_context_snapshot(
+            session, [], provider_selection=selection
+        )
+
+    return controller, gateway, builder, build_preview, start
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["thinking_history", "selection_current", "snapshot"])
+async def test_read_only_inspection_times_out_closed(path, hanging_inspection):
+    controller, gateway, builder, build_preview, start = hanging_inspection
+    controller.PROVIDER_VALIDATION_TIMEOUT_SECONDS = 0.05
+    result = await asyncio.wait_for(start(path), timeout=1.0)
+
+    assert gateway.started.is_set()
+    assert gateway.finished.is_set(), "the timed-out gateway waiter must be cancelled"
+    builder.explanation_is_current.assert_not_called()
+    build_preview.assert_not_called()
+    if path == "thinking_history":
+        assert result == "exclude", "retain the saved replay preference"
+    elif path == "selection_current":
+        assert result is False, "an unvalidated selection cannot be published"
+    else:
+        from tldw_chatbook.Personal_Context.context_service import (
+            ProfileContextSnapshot,
+        )
+
+        assert result == ProfileContextSnapshot.empty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["thinking_history", "selection_current", "snapshot"])
+async def test_read_only_inspection_propagates_cancellation(path, hanging_inspection):
+    _controller, gateway, builder, build_preview, start = hanging_inspection
+    pending = asyncio.create_task(start(path))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1.0)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(pending, timeout=1.0)
+
+    assert gateway.finished.is_set()
+    builder.explanation_is_current.assert_not_called()
+    build_preview.assert_not_called()

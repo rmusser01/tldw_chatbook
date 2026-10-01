@@ -81,10 +81,11 @@ async def _wait_for_library_conversation_selection(
     attempts: int = 80,
 ) -> None:
     for _ in range(attempts):
-        if getattr(
-            screen, "_selected_conversation_id", None
-        ) == conversation_id and expected_title in _visible_text(screen):
-            await pilot.pause()
+        if (
+            getattr(screen, "_selected_conversation_id", None) == conversation_id
+            and expected_title in _visible_text(screen)
+            and screen._pending_library_source_open is None
+        ):
             return
         await asyncio.sleep(0.05)
     raise AssertionError(
@@ -626,6 +627,7 @@ async def test_library_unavailable_browse_owns_page_filter_and_retry(
         ordinary_calls = len(ordinary.calls)
         assert screen._pending_library_character_navigation is None
         assert screen._library_unavailable_browse_scope is not None
+        await _wait_for_selector(screen, pilot, "#library-conversations-next")
 
         screen.query_one("#library-conversations-next", Button).press()
         for _ in range(80):
@@ -1126,7 +1128,12 @@ async def test_library_conversations_empty_state_is_honest_and_blocks_actions() 
         status = str(screen.query_one("#library-conversations-status").renderable)
         assert status == "No conversations yet. Chat in Console and it appears here."
         assert not screen.query(".library-conversation-row")
-        assert screen.query_one("#library-conversation-preview").display is False
+        # The Conversations canvas removed the former preview pane entirely.
+        assert not screen.query("#library-conversation-preview")
+        assert not screen.query("#library-conversations-export")
+        start = screen.query_one("#library-conversations-empty-console", Button)
+        assert str(start.label) == "Start in Console"
+        assert not start.disabled
 
 
 @pytest.mark.asyncio
@@ -1172,3 +1179,39 @@ async def test_library_conversations_snapshot_requests_all_scopes() -> None:
             "Console workspace chat",
         )
         assert "Console workspace chat" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selected,title,pending,ready",
+    [
+        ("chat-2", "Design Review", None, True),
+        ("chat-1", "Design Review", None, False),
+        ("chat-2", "Planning Chat", None, False),
+        ("chat-2", "Design Review", ("conversations", "chat-2"), False),
+    ],
+)
+async def test_conversation_selection_wait_checks_its_postcondition_without_global_drain(
+    monkeypatch, selected, title, pending, ready
+):
+    from types import SimpleNamespace
+
+    class UnrelatedQueueBarrier:
+        async def pause(self):
+            raise AssertionError(
+                "A completed selection must not drain unrelated widget queues"
+            )
+
+    screen = SimpleNamespace(
+        _selected_conversation_id=selected, _pending_library_source_open=pending
+    )
+    monkeypatch.setitem(globals(), "_visible_text", lambda _: title)
+    if ready:
+        await _wait_for_library_conversation_selection(
+            screen, UnrelatedQueueBarrier(), "chat-2", "Design Review", attempts=1
+        )
+    else:
+        with pytest.raises(AssertionError, match="was not selected"):
+            await _wait_for_library_conversation_selection(
+                screen, UnrelatedQueueBarrier(), "chat-2", "Design Review", attempts=1
+            )

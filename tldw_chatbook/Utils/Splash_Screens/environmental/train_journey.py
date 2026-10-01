@@ -28,8 +28,8 @@ class TrainJourneyEffect(BaseEffect):
         self.train = [
             "    ___    ",
             "   |   |   ",
-            "  /|___|\  ",
-            " /_|_O_|_\ ",
+            r"  /|___|\  ",
+            r" /_|_O_|_\ ",
             "  o o o o  ",
         ]
 

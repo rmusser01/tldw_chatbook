@@ -22,7 +22,7 @@ from tldw_profile_core import (
     SyncMode,
 )
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import CSS_DIR, ConsolidatedCSSApp
 from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
 from tldw_chatbook.Personal_Context.service import (
     PersonalContextSettingsSnapshot,
@@ -39,8 +39,79 @@ from tldw_chatbook.Widgets.Settings_Widgets.personal_context_review_modal import
     ProposalReviewResult,
 )
 
+# Real config getters retain the private source selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["accept", "accept-edited", "reject"])
+async def test_provenance_renewal_preserves_proposal_editor_and_acceptance(
+    action, tmp_path
+):
+    from Tests.UI.test_personal_context_provenance import rendered, until
+    from tldw_chatbook.Personal_Context.settings_provenance import (
+        SettingsProfileIdentity,
+        SettingsProvenanceResult,
+        project_provenance,
+        provenance_subject,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.personal_context_provenance import (
+        PersonalContextProvenanceDetails,
+    )
+
+    proposal = _proposal()
+    subject = provenance_subject(
+        SettingsProfileIdentity(proposal.profile_id, 0), proposal
+    )
+
+    class Inspector:
+        def settings_provenance(self, requested):
+            assert requested == subject
+            return SettingsProvenanceResult(
+                "available", project_provenance(subject, proposal)
+            )
+
+    inspector = Inspector()
+    service = _ProposalService(proposal)
+    host = _ProvenanceHost()
+    async with host.run_test(size=(60, 24)) as pilot:
+        modal = PersonalContextProposalReviewModal(
+            service,
+            proposal=proposal,
+            scope_label="Global",
+            provenance_subject=subject,
+            provenance_service_loader=lambda: inspector,
+        )
+        await host.push_screen(modal, callback=host.results.append)
+        detail = modal.query_one(PersonalContextProvenanceDetails)
+        detail.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await until(pilot, lambda: "message-1" in rendered(detail))
+        detail.scroll_visible(top=True, animate=False)
+        await pilot.pause()
+        host.save_screenshot(f"provenance-proposal-{action}.svg", path=str(tmp_path))
+        value = modal.query_one("#personal-context-proposal-value", Input)
+        value.value = "typed but not yet accepted"
+        detail._tick()
+        await until(pilot, lambda: not detail._pending)
+        assert value.value == "typed but not yet accepted"
+        button = modal.query_one(f"#personal-context-proposal-{action}", Button)
+        button.focus()
+        await pilot.press("enter")
+        await until(pilot, lambda: bool(host.results))
+        assert host.results[0].state == (
+            "rejected" if action == "reject" else "accepted"
+        )
+        if action != "reject":
+            call = service.accept_calls[0]
+            assert call["proposal_id"] == proposal.proposal_id
+            assert call["user_actor"] is ActorType.USER
+            if action == "accept-edited":
+                assert call["edited_payload"].value == "typed but not yet accepted"
+            else:
+                assert call["edited_payload"] is None
 
 
 def _record(
@@ -165,6 +236,13 @@ class _Host(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.results: list[ProposalReviewResult | None] = []
+
+
+class _ProvenanceHost(_Host):
+    CSS_PATH = [
+        CSS_DIR / "tldw_cli_modular.tcss",
+        CSS_DIR / "screen_agentic_settings.tcss",
+    ]
 
 
 @pytest.mark.asyncio

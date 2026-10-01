@@ -1173,7 +1173,7 @@ async def test_runtime_runs_gc_then_physical_maintenance_after_normalization(
     runtime._schedule_legacy_trace_maintenance(object(), object)
     await asyncio.sleep(1.08)
 
-    assert events[:3] == ["gc", "compactor", "vacuum"]
+    assert events[:5] == ["pause", "gc", "resume", "compactor", "vacuum"]
     assert events.count("gc") == 1
     await runtime.dispose()
 

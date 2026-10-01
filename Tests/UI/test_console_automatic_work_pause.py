@@ -249,6 +249,7 @@ async def test_run_history_and_manual_send_leave_old_paused_chain_unchanged(tmp_
         assert next(row for row in chains if row["id"] != chain)["status"] == "active"
 
 
+@pytest.mark.bootstrap_profile
 async def test_mount_seed_discovers_saved_results_without_badges(tmp_path):
     app = _app(tmp_path)
     host = _PauseHarness(app)

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 # Imports
 import json  # For MediaWiki streaming
-import math
 import ssl
 from pathlib import Path  # For utils.prepare_files_for_httpx
 from typing import (
@@ -14,7 +13,6 @@ from typing import (
     Any,
     List,
     AsyncGenerator,
-    NoReturn,
     Union,
     Literal,
 )
@@ -1065,7 +1063,10 @@ from .exceptions import (
     AuthenticationError,
     PersonalContextBootstrapAttentionError,
 )
-from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
+from .utils import (
+    model_to_form_data, prepare_files_for_httpx, cleanup_file_objects,
+    _validate_timeout, _raise_if_redirected, _raise_api_error_from,
+)
 #
 ########################################################################################################################
 #
@@ -1082,14 +1083,6 @@ class ChatQueueActivityResponse(BaseModel):
     """Placeholder response for chat queue activity endpoints."""
 
     model_config = ConfigDict(extra="ignore")
-
-
-# task-19557 Qodo round: actual redirect statuses only. The whole 3xx band
-# also contains 304 Not Modified, which is a cache-validation response (no
-# `Location`, not a redirect) that conditional-GET callers rely on reaching
-# normal processing -- e.g. `get_user_profile_catalog(if_none_match=...)`.
-# Treating 304 as a refused redirect would break that path.
-_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
 
 def _workspace_source_path_id(value: Any, field_name: str) -> str:
@@ -1132,80 +1125,6 @@ def _reject_unsafe_endpoint(endpoint: str) -> str:
         raise APIRequestError(str(exc)) from exc
 
 
-def _raise_api_error_from(error: httpx.HTTPStatusError) -> NoReturn:
-    """Translate a non-2xx response into this package's exception family.
-
-    One implementation for all five request primitives. There were five
-    hand-rolled copies and only ``_request``'s carried the structured
-    ``{"detail": {...}}`` branch, so a tldw_server refusal reached the user
-    as the raw httpx text on the other four -- the "schedules task 6
-    round 2, D9" regression, still live on both streaming paths. ``detail``
-    is handled in all three shapes the server sends: a pydantic validation
-    list, a string, or the structured refusal object.
-
-    The streaming primitives read the body before ``raise_for_status()``,
-    so ``response.json()`` works here; the ``except`` arm covers a non-JSON
-    body and an unread stream (``.text`` then raises ``ResponseNotRead``,
-    a ``RuntimeError``, not a ``ValueError``).
-
-    Args:
-        error: The ``httpx.HTTPStatusError`` from ``raise_for_status()``.
-
-    Raises:
-        AuthenticationError: On 401.
-        APIRequestError: On 422.
-        APIResponseError: On any other non-2xx status.
-    """
-    response = error.response
-    error_detail = str(error)
-    response_data: Any
-    try:
-        response_data = response.json()
-    except Exception:
-        try:
-            raw_text = response.text
-        except Exception:  # unread streaming response
-            raw_text = ""
-        response_data = {"raw_text": raw_text}
-    else:
-        detail = (
-            response_data.get("detail") if isinstance(response_data, dict) else None
-        )
-        if isinstance(detail, list) and detail:
-            first = detail[0] if isinstance(detail[0], dict) else {}
-            loc = ".".join(map(str, first.get("loc", [])))
-            error_detail = f"Validation Error: {first.get('msg', '')} for field '{loc}'"
-        elif isinstance(detail, str):
-            error_detail = detail
-        elif isinstance(detail, dict):
-            # Structured refusal: tldw_server returns `{"detail": {"code",
-            # "message", "details", "retryable"}}` for its deterministic
-            # 4xx refusals. Without this branch `error_detail` stayed the
-            # raw httpx text ("Client error '409 Conflict' for url ... For
-            # more information check: https://developer.mozilla.org/..."),
-            # so the server's own explanation was dropped on the floor and
-            # callers could only report a generic failure -- exactly what
-            # made a 409 `scheduled_task_definition_archived` surface to
-            # the user as "this action requires a server connection"
-            # (schedules task 6 round 2, D9). `message` is the human
-            # sentence, `code` the machine token; prefer the former, fall
-            # back to the latter, and only then to the raw text.
-            error_detail = str(
-                detail.get("message") or detail.get("code") or error_detail
-            )
-
-    status_code = response.status_code
-    if status_code == 401:
-        raise AuthenticationError(
-            f"Authentication failed: {error_detail}", response_data=response_data
-        )
-    if status_code == 422:  # Unprocessable Entity (pydantic validation error)
-        raise APIRequestError(
-            f"Validation Error: {error_detail}", response_data=response_data
-        )
-    raise APIResponseError(status_code, error_detail, response_data=response_data)
-
-
 class TLDWAPIClient:
     # Ceiling on how long a *connection* may take to establish.
     #
@@ -1222,39 +1141,7 @@ class TLDWAPIClient:
     # connect never is.
     DEFAULT_CONNECT_TIMEOUT_SECONDS: float = 15.0
 
-    @staticmethod
-    def _validate_timeout(value: Any, field: str) -> float:
-        """Reject a nonsensical timeout at the boundary instead of at request time.
-
-        httpx validates none of this -- ``httpx.Timeout(300.0, connect=-5)``,
-        ``connect=nan`` and even ``connect="abc"`` are all accepted -- so an
-        invalid value would otherwise cross this public boundary and only
-        misbehave later, at the request, far from the call that caused it.
-        NaN is the sharp case: ``min(nan, cap)`` is ``nan``, which would
-        silently defeat the connect ceiling that keeps an unreachable host
-        from freezing the app.
-
-        Args:
-            value: The candidate timeout, in seconds.
-            field: Parameter name, used in the error message.
-
-        Returns:
-            The validated timeout as a float.
-
-        Raises:
-            TypeError: If ``value`` is not a real number.
-            ValueError: If ``value`` is not finite and positive.
-        """
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError(
-                f"{field} must be a number of seconds, got {type(value).__name__}"
-            )
-        value = float(value)
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError(
-                f"{field} must be a finite, positive number of seconds, got {value!r}"
-            )
-        return value
+    _validate_timeout = staticmethod(_validate_timeout)
 
     def __init__(
         self,
@@ -1332,54 +1219,7 @@ class TLDWAPIClient:
             )
         return self._client
 
-    @staticmethod
-    async def _raise_if_redirected(response: httpx.Response, endpoint: str) -> None:
-        """Refuse a redirect response rather than following it with credentials.
-
-        The shared client carries the ``X-API-KEY`` (and possibly bearer
-        ``Authorization``) header and is constructed with
-        ``follow_redirects=False`` (see ``_get_client``) specifically so a
-        redirect response lands here instead of httpx silently completing
-        the hop. There is no legitimate reason for this client to follow a
-        redirect -- ``base_url`` is the server the caller explicitly
-        configured -- so an actual redirect is treated as hostile/
-        misconfigured and refused outright.
-
-        Only ``_REDIRECT_STATUS_CODES`` (301/302/303/307/308) trigger the
-        refusal -- NOT the whole 3xx band. 304 Not Modified is a
-        cache-validation response, not a redirect (no ``Location``), and
-        conditional-GET callers (e.g. ``get_user_profile_catalog``'s
-        ``if_none_match``) rely on it reaching normal processing rather
-        than being refused here.
-
-        The redirect ``Location`` is deliberately never echoed in the
-        raised message -- it is server- (and on a hostile/compromised
-        endpoint, attacker-) controlled data, same reasoning as the
-        Anthropic/Google redirect-refusal sites in ``LLM_API_Calls.py``.
-
-        Explicitly closes ``response`` before raising. httpx's own
-        ``send()``/``stream()`` already release the connection on the
-        paths that reach here (an eagerly-read non-streaming response, or
-        the ``stream()`` context manager's own ``finally: aclose()``), but
-        ``aclose()`` is idempotent and this makes the guarantee explicit
-        here rather than resting on a reader's trust of that internal
-        contract.
-
-        Args:
-            response: The response to inspect.
-            endpoint: The request path, used only for the error message.
-
-        Raises:
-            APIConnectionError: If ``response`` is an actual redirect.
-        """
-        if response.status_code not in _REDIRECT_STATUS_CODES:
-            return
-        await response.aclose()
-        raise APIConnectionError(
-            f"Server returned a redirect ({response.status_code}) for "
-            f"{endpoint}; refusing to follow with the X-API-KEY/Authorization "
-            "credential."
-        )
+    _raise_if_redirected = staticmethod(_raise_if_redirected)
 
     async def close(self):
         if self._client and not self._client.is_closed:

@@ -360,6 +360,7 @@ from ...Library.library_skills_state import (
     SkillBrowseResult,
     SkillBrowseScope,
     build_skill_editor_state,
+    skill_editor_fields_match_state,
     classify_skill_save_error,
     coerce_skill_reader_mode,
     compose_skill_markdown,
@@ -1572,22 +1573,7 @@ class LibrarySkillsController:
         fields = self._read_library_skill_editor_fields()
         if fields is None:
             return False
-        (
-            raw_name,
-            raw_description,
-            raw_argument_hint,
-            raw_allowed_tools_csv,
-            raw_model,
-            raw_body,
-        ) = fields
-        return (
-            raw_name == (state.name or "")
-            and raw_description == (state.description or "")
-            and raw_argument_hint == (state.argument_hint or "")
-            and raw_allowed_tools_csv == (state.allowed_tools_csv or "")
-            and raw_model == (state.model or "")
-            and raw_body == (state.body or "")
-        )
+        return skill_editor_fields_match_state(state, fields)
 
     def _library_skill_on_disk_path(self) -> str:
         """The selected skill's on-disk directory, for remediation copy.

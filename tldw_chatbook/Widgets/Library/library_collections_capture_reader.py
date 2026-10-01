@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -39,9 +39,11 @@ from tldw_chatbook.Library.library_pager_state import (
     simple_library_pager_display,
 )
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
-from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
-    CollectionsCaptureControllerState,
-)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
+        CollectionsCaptureControllerState,
+    )
 
 #: task-32057 AC#4. The reason half is scoped to LEGACY Collections on
 #: purpose: the captures browser around it accepts writes (Quick Capture),

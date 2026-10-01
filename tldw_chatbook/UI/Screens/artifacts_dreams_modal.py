@@ -243,16 +243,14 @@ class DreamsStoryModal(ModalScreen[None]):
         Binding("escape", "close", "Close", show=False),
     )
 
-    # Mirrors ArtifactShareDialog's placement ruling: DEFAULT_CSS parses
-    # at mount (runtime), not into the boot bundle, and uses only
-    # existing theme variables -- zero new tokens or literals (ADR-150).
-    DEFAULT_CSS = """
-    DreamsStoryModal { align: center middle; background: $background 70%; }
+    # Keep the native default-CSS tier and owner scope in the shared sheets.
+    BUNDLED_CSS = """
+    DreamsStoryModal { align: center middle; background: $background $ds-percent-70; }
     DreamsStoryModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
+        width: $ds-size-76; max-width: $ds-percent-96; height: $ds-height-auto; max-height: $ds-percent-90;
+        background: $surface; border: solid $primary; padding: $ds-space-1 $ds-space-2;
     }
-    DreamsStoryModal #dsm-hints { color: $warning; margin-top: 1; }
+    DreamsStoryModal #dsm-hints { color: $warning; margin-top: $ds-space-1; }
     """
 
     def __init__(

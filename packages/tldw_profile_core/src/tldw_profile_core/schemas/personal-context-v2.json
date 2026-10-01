@@ -1,0 +1,2565 @@
+{
+  "$comment": "Structural Draft 2020-12 validation alone is insufficient; the required V2 semantic vocabulary and explicit reference validator enforce canonical byte, digest, attribution, ordering and scalar rules. Data validation never qualifies native admission or authority.",
+  "$defs": {
+    "AllTargetValidityV2": {
+      "additionalProperties": false,
+      "description": "Asserted effect on a target; native admission checks its validity.",
+      "properties": {
+        "kind": {
+          "const": "all_target_validity",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "AllTargetValidityV2",
+      "type": "object"
+    },
+    "ApprovalReceiptV2": {
+      "additionalProperties": false,
+      "properties": {
+        "acted_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Acted At",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "authored",
+            "accepted",
+            "accepted_edited"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "claim_digest": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claim Digest",
+          "type": "string"
+        },
+        "record_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Record Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "claim_digest",
+        "record_version_id",
+        "acted_at"
+      ],
+      "title": "ApprovalReceiptV2",
+      "type": "object"
+    },
+    "AttributionOriginV2": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "enum": [
+            "user",
+            "agent",
+            "system"
+          ],
+          "title": "Actor",
+          "type": "string"
+        },
+        "actor_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Actor Id"
+        },
+        "method": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor",
+        "actor_id",
+        "method"
+      ],
+      "title": "AttributionOriginV2",
+      "type": "object"
+    },
+    "BoundSourceBasisV2": {
+      "additionalProperties": false,
+      "description": "Inert source-binding identities, not source permissions.",
+      "properties": {
+        "binding_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Binding Ids",
+          "type": "array"
+        },
+        "kind": {
+          "const": "bound_source",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "binding_ids"
+      ],
+      "title": "BoundSourceBasisV2",
+      "type": "object"
+    },
+    "ChangeFromV2": {
+      "additionalProperties": false,
+      "description": "Exact change transition; historical projection is runtime-owned.",
+      "properties": {
+        "edge_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "change_from",
+          "title": "Kind",
+          "type": "string"
+        },
+        "target_record_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Record Id",
+          "type": "string"
+        },
+        "target_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Version Id",
+          "type": "string"
+        },
+        "transition_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Transition At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "target_record_id",
+        "target_version_id",
+        "kind",
+        "transition_at"
+      ],
+      "title": "ChangeFromV2",
+      "type": "object"
+    },
+    "ConfidenceEstimateV2": {
+      "additionalProperties": false,
+      "properties": {
+        "assessed_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Assessed At",
+          "type": "string"
+        },
+        "claim_digest": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claim Digest",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/AttributionOriginV2"
+        },
+        "value": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "origin",
+        "assessed_at",
+        "claim_digest"
+      ],
+      "title": "ConfidenceEstimateV2",
+      "type": "object"
+    },
+    "ConstraintPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "constraint",
+          "default": "constraint",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "ConstraintPayload",
+      "type": "object"
+    },
+    "ConventionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "convention",
+          "default": "convention",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "ConventionPayload",
+      "type": "object"
+    },
+    "CorrectionOfV2": {
+      "additionalProperties": false,
+      "description": "Exact target assertion and correction effect.",
+      "properties": {
+        "edge_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "effect": {
+          "discriminator": {
+            "mapping": {
+              "all_target_validity": "#/$defs/AllTargetValidityV2",
+              "overlap": "#/$defs/OverlapEffectV2"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AllTargetValidityV2"
+            },
+            {
+              "$ref": "#/$defs/OverlapEffectV2"
+            }
+          ],
+          "title": "Effect"
+        },
+        "kind": {
+          "const": "correction_of",
+          "title": "Kind",
+          "type": "string"
+        },
+        "target_record_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Record Id",
+          "type": "string"
+        },
+        "target_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "target_record_id",
+        "target_version_id",
+        "kind",
+        "effect"
+      ],
+      "title": "CorrectionOfV2",
+      "type": "object"
+    },
+    "CorrectionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "correction",
+          "default": "correction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "CorrectionPayload",
+      "type": "object"
+    },
+    "DenyDisclosureV2": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "deny",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "DenyDisclosureV2",
+      "type": "object"
+    },
+    "DisclosureAudienceV2": {
+      "additionalProperties": false,
+      "properties": {
+        "audience_handle": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Audience Handle",
+          "type": "string"
+        },
+        "purposes": {
+          "items": {
+            "enum": [
+              "conversation",
+              "embedding",
+              "interview",
+              "summary"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Purposes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "audience_handle",
+        "purposes"
+      ],
+      "title": "DisclosureAudienceV2",
+      "type": "object"
+    },
+    "GoalPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "goal",
+          "default": "goal",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Outcome",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "outcome"
+      ],
+      "title": "GoalPayload",
+      "type": "object"
+    },
+    "IdentityPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "identity",
+          "default": "identity",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "IdentityPayload",
+      "type": "object"
+    },
+    "IntervalValidityV2": {
+      "additionalProperties": false,
+      "description": "An explicitly based half-open effective interval.",
+      "properties": {
+        "basis": {
+          "discriminator": {
+            "mapping": {
+              "bound_source": "#/$defs/BoundSourceBasisV2",
+              "user_reviewed": "#/$defs/UserReviewedBasisV2"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UserReviewedBasisV2"
+            },
+            {
+              "$ref": "#/$defs/BoundSourceBasisV2"
+            }
+          ],
+          "title": "Basis"
+        },
+        "kind": {
+          "const": "interval",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid From"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid Until"
+        }
+      },
+      "required": [
+        "kind",
+        "valid_from",
+        "valid_until",
+        "basis"
+      ],
+      "title": "IntervalValidityV2",
+      "type": "object"
+    },
+    "LegacyUnclassifiedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "legacy_unclassified",
+          "default": "legacy_unclassified",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "text": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "LegacyUnclassifiedPayload",
+      "type": "object"
+    },
+    "ObjectSchemaRequirementV2": {
+      "additionalProperties": false,
+      "properties": {
+        "object_kind": {
+          "enum": [
+            "manifest",
+            "proposal",
+            "record",
+            "scope"
+          ],
+          "title": "Object Kind",
+          "type": "string"
+        },
+        "versions": {
+          "items": {
+            "ge": 0,
+            "le": 9007199254740991,
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Versions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "object_kind",
+        "versions"
+      ],
+      "title": "ObjectSchemaRequirementV2",
+      "type": "object"
+    },
+    "OnDeviceDisclosureV2": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "on_device_only",
+          "title": "Kind",
+          "type": "string"
+        },
+        "purposes": {
+          "items": {
+            "enum": [
+              "conversation",
+              "embedding",
+              "interview",
+              "summary"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Purposes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "purposes"
+      ],
+      "title": "OnDeviceDisclosureV2",
+      "type": "object"
+    },
+    "OverlapEffectV2": {
+      "additionalProperties": false,
+      "description": "Explicit interval; actual authorized overlap is runtime-owned.",
+      "properties": {
+        "kind": {
+          "const": "overlap",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid From"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid Until"
+        }
+      },
+      "required": [
+        "kind",
+        "valid_from",
+        "valid_until"
+      ],
+      "title": "OverlapEffectV2",
+      "type": "object"
+    },
+    "OwnerVersionEvidenceBinding": {
+      "additionalProperties": false,
+      "description": "Immutable structural assertions about one exact message representation.",
+      "properties": {
+        "authority_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Authority Id",
+          "type": "string"
+        },
+        "authority_kind": {
+          "enum": [
+            "local_profile",
+            "authenticated_tenant"
+          ],
+          "title": "Authority Kind",
+          "type": "string"
+        },
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Captured At",
+          "type": "string"
+        },
+        "component_version": {
+          "const": 1,
+          "title": "Component Version",
+          "type": "integer"
+        },
+        "governance_scope_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Governance Scope Id",
+          "type": "string"
+        },
+        "offset_unit": {
+          "const": "unicode_codepoint",
+          "title": "Offset Unit",
+          "type": "string"
+        },
+        "representation_id": {
+          "const": "message_content_text_v1",
+          "title": "Representation Id",
+          "type": "string"
+        },
+        "representation_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Representation Sha256",
+          "type": "string"
+        },
+        "source_container_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Source Container Id",
+          "type": "string"
+        },
+        "source_kind": {
+          "const": "conversation_message",
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "source_object_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Source Object Id",
+          "type": "string"
+        },
+        "source_role": {
+          "enum": [
+            "direct_user_message",
+            "quoted_material",
+            "attachment",
+            "tool_result",
+            "imported_material"
+          ],
+          "title": "Source Role",
+          "type": "string"
+        },
+        "source_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Source Version Id",
+          "type": "string"
+        },
+        "span_end": {
+          "ge": 0,
+          "le": 9007199254740991,
+          "title": "Span End",
+          "type": "integer"
+        },
+        "span_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Span Sha256",
+          "type": "string"
+        },
+        "span_start": {
+          "ge": 0,
+          "le": 9007199254740991,
+          "title": "Span Start",
+          "type": "integer"
+        },
+        "version_kind": {
+          "const": "owner_immutable",
+          "title": "Version Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component_version",
+        "binding_id",
+        "authority_kind",
+        "authority_id",
+        "governance_scope_id",
+        "source_kind",
+        "source_container_id",
+        "source_object_id",
+        "version_kind",
+        "source_version_id",
+        "representation_id",
+        "representation_sha256",
+        "offset_unit",
+        "span_start",
+        "span_end",
+        "span_sha256",
+        "source_role",
+        "captured_at"
+      ],
+      "title": "OwnerVersionEvidenceBinding",
+      "type": "object"
+    },
+    "PreferencePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "preference",
+          "default": "preference",
+          "title": "Kind",
+          "type": "string"
+        },
+        "polarity": {
+          "enum": [
+            "like",
+            "dislike"
+          ],
+          "title": "Polarity",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "polarity",
+        "value"
+      ],
+      "title": "PreferencePayload",
+      "type": "object"
+    },
+    "ProfileClaimV2": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_receipt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalReceiptV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "claim_basis": {
+          "enum": [
+            "direct_user_assertion",
+            "inference",
+            "imported_assertion",
+            "legacy_unknown"
+          ],
+          "title": "Claim Basis",
+          "type": "string"
+        },
+        "claim_digest": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claim Digest",
+          "type": "string"
+        },
+        "confidence_estimate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfidenceEstimateV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_bindings": {
+          "items": {
+            "$ref": "#/$defs/OwnerVersionEvidenceBinding"
+          },
+          "maxItems": 8,
+          "title": "Evidence Bindings",
+          "type": "array"
+        },
+        "hold_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "legacy_review",
+                "privacy_review"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Hold Reason"
+        },
+        "relations": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "change_from": "#/$defs/ChangeFromV2",
+                "correction_of": "#/$defs/CorrectionOfV2",
+                "supersedes": "#/$defs/SupersedesV2",
+                "workspace_exception_to": "#/$defs/WorkspaceExceptionToV2"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CorrectionOfV2"
+              },
+              {
+                "$ref": "#/$defs/ChangeFromV2"
+              },
+              {
+                "$ref": "#/$defs/SupersedesV2"
+              },
+              {
+                "$ref": "#/$defs/WorkspaceExceptionToV2"
+              }
+            ]
+          },
+          "maxItems": 4,
+          "title": "Relations",
+          "type": "array"
+        },
+        "salience_hint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SalienceHintV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "support_assessments": {
+          "items": {
+            "$ref": "#/$defs/SupportAssessmentV2"
+          },
+          "maxItems": 8,
+          "title": "Support Assessments",
+          "type": "array"
+        },
+        "temporal_validity": {
+          "discriminator": {
+            "mapping": {
+              "interval": "#/$defs/IntervalValidityV2",
+              "standing": "#/$defs/StandingValidityV2",
+              "unknown": "#/$defs/UnknownValidityV2"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UnknownValidityV2"
+            },
+            {
+              "$ref": "#/$defs/StandingValidityV2"
+            },
+            {
+              "$ref": "#/$defs/IntervalValidityV2"
+            }
+          ],
+          "title": "Temporal Validity"
+        }
+      },
+      "required": [
+        "claim_basis",
+        "temporal_validity",
+        "relations",
+        "claim_digest",
+        "evidence_bindings",
+        "support_assessments",
+        "approval_receipt",
+        "confidence_estimate",
+        "salience_hint",
+        "hold_reason"
+      ],
+      "title": "ProfileClaimV2",
+      "type": "object"
+    },
+    "ProfileControlsV2": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_visibility": {
+          "enum": [
+            "agent_visible",
+            "user_only"
+          ],
+          "title": "Agent Visibility",
+          "type": "string"
+        },
+        "model_disclosure": {
+          "discriminator": {
+            "mapping": {
+              "deny": "#/$defs/DenyDisclosureV2",
+              "on_device_only": "#/$defs/OnDeviceDisclosureV2",
+              "reviewed_destinations": "#/$defs/ReviewedDisclosureV2"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DenyDisclosureV2"
+            },
+            {
+              "$ref": "#/$defs/OnDeviceDisclosureV2"
+            },
+            {
+              "$ref": "#/$defs/ReviewedDisclosureV2"
+            }
+          ],
+          "title": "Model Disclosure"
+        },
+        "sync_mode": {
+          "enum": [
+            "device_only",
+            "syncable"
+          ],
+          "title": "Sync Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sync_mode",
+        "agent_visibility"
+      ],
+      "title": "ProfileControlsV2",
+      "type": "object"
+    },
+    "ProfileManifestV2": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Current Version Id",
+          "type": "string"
+        },
+        "evidence_retirement_epoch": {
+          "ge": 0,
+          "le": 9007199254740991,
+          "title": "Evidence Retirement Epoch",
+          "type": "integer"
+        },
+        "profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "purge_generation": {
+          "ge": 0,
+          "le": 9007199254740991,
+          "title": "Purge Generation",
+          "type": "integer"
+        },
+        "required_context_semantics": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 7,
+          "minItems": 7,
+          "title": "Required Context Semantics",
+          "type": "array"
+        },
+        "required_object_schemas": {
+          "items": {
+            "$ref": "#/$defs/ObjectSchemaRequirementV2"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Required Object Schemas",
+          "type": "array"
+        },
+        "revision": {
+          "ge": 0,
+          "le": 9007199254740991,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": 2,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "profile_id",
+        "revision",
+        "purge_generation",
+        "created_at",
+        "updated_at",
+        "current_version_id",
+        "required_object_schemas",
+        "required_context_semantics",
+        "evidence_retirement_epoch"
+      ],
+      "title": "ProfileManifestV2",
+      "type": "object"
+    },
+    "ProfileProposalV2": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "pending"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "provenance": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "pending"
+                }
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "proposed_record": {
+                "type": "null"
+              },
+              "provenance": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "create"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "base_version_id": {
+                "type": "null"
+              },
+              "target_record_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "update",
+                  "archive",
+                  "promote"
+                ]
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "base_version_id": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "target_record_id": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "archive",
+                  "promote"
+                ]
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "proposed_record": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "create",
+                  "update"
+                ]
+              },
+              "state": {
+                "const": "pending"
+              }
+            },
+            "required": [
+              "state",
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "proposed_record": {
+                "allOf": [
+                  {
+                    "not": {
+                      "type": "null"
+                    }
+                  },
+                  {
+                    "properties": {
+                      "claim": {
+                        "properties": {
+                          "approval_receipt": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "state": {
+                        "const": "active"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "base_version_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Base Version Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "create",
+            "update",
+            "archive",
+            "promote"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "proposed_record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileRecordV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileProvenanceV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_version": {
+          "const": 2,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "scope_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Scope Id",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "accepted",
+            "rejected",
+            "superseded",
+            "expired"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "target_record_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Record Id"
+        }
+      },
+      "required": [
+        "schema_version",
+        "proposal_id",
+        "profile_id",
+        "scope_id",
+        "operation",
+        "target_record_id",
+        "base_version_id",
+        "proposed_record",
+        "provenance",
+        "state",
+        "created_at",
+        "expires_at"
+      ],
+      "title": "ProfileProposalV2",
+      "type": "object"
+    },
+    "ProfileProvenanceV2": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "enum": [
+            "user",
+            "agent",
+            "system"
+          ],
+          "title": "Actor",
+          "type": "string"
+        },
+        "derived_from_record_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Derived From Record Id"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "manual",
+            "agent",
+            "import",
+            "migration",
+            "privacy_retirement"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "actor",
+        "reason_code",
+        "derived_from_record_id"
+      ],
+      "title": "ProfileProvenanceV2",
+      "type": "object"
+    },
+    "ProfileRecordV2": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "deleted"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "expires_at": {
+                "type": "null"
+              },
+              "no_expiry": {
+                "const": false
+              },
+              "payload": {
+                "type": "null"
+              },
+              "semantic_key": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "deleted"
+                }
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "payload"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "identity"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/IdentityPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "preference"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PreferencePayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "relationship"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RelationshipPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "correction"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CorrectionPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "constraint"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ConstraintPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "goal"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GoalPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "convention"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ConventionPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "working_context"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorkingContextPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "legacy_unclassified"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LegacyUnclassifiedPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "working_context"
+              },
+              "state": {
+                "not": {
+                  "const": "deleted"
+                }
+              }
+            },
+            "required": [
+              "state",
+              "kind"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "properties": {
+                  "expires_at": {
+                    "not": {
+                      "type": "null"
+                    }
+                  },
+                  "no_expiry": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "expires_at"
+                ]
+              },
+              {
+                "properties": {
+                  "expires_at": {
+                    "type": "null"
+                  },
+                  "no_expiry": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "no_expiry"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "not": {
+                  "const": "working_context"
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "expires_at": {
+                "type": "null"
+              },
+              "no_expiry": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "deleted"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "claim": {
+                "type": "null"
+              },
+              "controls": {
+                "properties": {
+                  "model_disclosure": {
+                    "properties": {
+                      "kind": {
+                        "const": "deny"
+                      }
+                    }
+                  }
+                }
+              },
+              "provenance": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "not": {
+                  "const": "deleted"
+                }
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "claim": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "provenance": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "claim": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileClaimV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "controls": {
+          "$ref": "#/$defs/ProfileControlsV2"
+        },
+        "created_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expires At"
+        },
+        "kind": {
+          "enum": [
+            "identity",
+            "preference",
+            "relationship",
+            "correction",
+            "constraint",
+            "goal",
+            "convention",
+            "working_context",
+            "legacy_unclassified"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "no_expiry": {
+          "title": "No Expiry",
+          "type": "boolean"
+        },
+        "parent_version_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Version Id"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "constraint": "#/$defs/ConstraintPayload",
+                  "convention": "#/$defs/ConventionPayload",
+                  "correction": "#/$defs/CorrectionPayload",
+                  "goal": "#/$defs/GoalPayload",
+                  "identity": "#/$defs/IdentityPayload",
+                  "legacy_unclassified": "#/$defs/LegacyUnclassifiedPayload",
+                  "preference": "#/$defs/PreferencePayload",
+                  "relationship": "#/$defs/RelationshipPayload",
+                  "working_context": "#/$defs/WorkingContextPayload"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/IdentityPayload"
+                },
+                {
+                  "$ref": "#/$defs/PreferencePayload"
+                },
+                {
+                  "$ref": "#/$defs/RelationshipPayload"
+                },
+                {
+                  "$ref": "#/$defs/CorrectionPayload"
+                },
+                {
+                  "$ref": "#/$defs/ConstraintPayload"
+                },
+                {
+                  "$ref": "#/$defs/GoalPayload"
+                },
+                {
+                  "$ref": "#/$defs/ConventionPayload"
+                },
+                {
+                  "$ref": "#/$defs/WorkingContextPayload"
+                },
+                {
+                  "$ref": "#/$defs/LegacyUnclassifiedPayload"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payload"
+        },
+        "profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileProvenanceV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 2,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "scope_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Scope Id",
+          "type": "string"
+        },
+        "semantic_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SemanticKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "active",
+            "archived",
+            "deleted"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "profile_id",
+        "record_id",
+        "scope_id",
+        "kind",
+        "payload",
+        "semantic_key",
+        "state",
+        "controls",
+        "provenance",
+        "claim",
+        "version_id",
+        "parent_version_id",
+        "created_at",
+        "updated_at",
+        "expires_at",
+        "no_expiry"
+      ],
+      "title": "ProfileRecordV2",
+      "type": "object"
+    },
+    "RelationshipPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "relationship",
+          "default": "relationship",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "RelationshipPayload",
+      "type": "object"
+    },
+    "ReplaceFromEffectV2": {
+      "additionalProperties": false,
+      "description": "Replacement boundary, without claiming historical falsity.",
+      "properties": {
+        "kind": {
+          "const": "replace_from",
+          "title": "Kind",
+          "type": "string"
+        },
+        "replace_from": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Replace From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "replace_from"
+      ],
+      "title": "ReplaceFromEffectV2",
+      "type": "object"
+    },
+    "ReviewedDisclosureV2": {
+      "additionalProperties": false,
+      "properties": {
+        "audiences": {
+          "items": {
+            "$ref": "#/$defs/DisclosureAudienceV2"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Audiences",
+          "type": "array"
+        },
+        "kind": {
+          "const": "reviewed_destinations",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "audiences"
+      ],
+      "title": "ReviewedDisclosureV2",
+      "type": "object"
+    },
+    "SalienceHintV2": {
+      "additionalProperties": false,
+      "properties": {
+        "chosen_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Chosen At",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/AttributionOriginV2"
+        },
+        "priority": {
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "record_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Record Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "priority",
+        "origin",
+        "chosen_at",
+        "record_version_id"
+      ],
+      "title": "SalienceHintV2",
+      "type": "object"
+    },
+    "SemanticKey": {
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Namespace",
+          "type": "string"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "subject"
+      ],
+      "title": "SemanticKey",
+      "type": "object"
+    },
+    "StandingValidityV2": {
+      "additionalProperties": false,
+      "description": "Explicit asserted standing validity; authority remains external.",
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/UserReviewedBasisV2"
+        },
+        "kind": {
+          "const": "standing",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "basis"
+      ],
+      "title": "StandingValidityV2",
+      "type": "object"
+    },
+    "SupersedesV2": {
+      "additionalProperties": false,
+      "description": "Exact replacement with independent reason/effect semantics.",
+      "properties": {
+        "edge_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "effect": {
+          "discriminator": {
+            "mapping": {
+              "all_target_validity": "#/$defs/AllTargetValidityV2",
+              "replace_from": "#/$defs/ReplaceFromEffectV2"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AllTargetValidityV2"
+            },
+            {
+              "$ref": "#/$defs/ReplaceFromEffectV2"
+            }
+          ],
+          "title": "Effect"
+        },
+        "kind": {
+          "const": "supersedes",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "target_record_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Record Id",
+          "type": "string"
+        },
+        "target_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "target_record_id",
+        "target_version_id",
+        "kind",
+        "effect",
+        "reason_code"
+      ],
+      "title": "SupersedesV2",
+      "type": "object"
+    },
+    "SupportAssessmentV2": {
+      "additionalProperties": false,
+      "properties": {
+        "assessed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Assessed At"
+        },
+        "binding_digest": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Binding Digest",
+          "type": "string"
+        },
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "claim_digest": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claim Digest",
+          "type": "string"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttributionOriginV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "not_assessed",
+            "supports",
+            "contradicts",
+            "insufficient"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "binding_digest",
+        "claim_digest",
+        "status",
+        "origin",
+        "assessed_at"
+      ],
+      "title": "SupportAssessmentV2",
+      "type": "object"
+    },
+    "UnknownValidityV2": {
+      "additionalProperties": false,
+      "description": "No dates are known or silently inferred.",
+      "properties": {
+        "kind": {
+          "const": "unknown",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "UnknownValidityV2",
+      "type": "object"
+    },
+    "UserReviewedBasisV2": {
+      "additionalProperties": false,
+      "description": "Reported review basis, not a runtime approval receipt.",
+      "properties": {
+        "kind": {
+          "const": "user_reviewed",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "UserReviewedBasisV2",
+      "type": "object"
+    },
+    "WorkingContextPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "working_context",
+          "default": "working_context",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "WorkingContextPayload",
+      "type": "object"
+    },
+    "WorkspaceExceptionToV2": {
+      "additionalProperties": false,
+      "description": "Asserted workspace exception, never a target-read capability.",
+      "properties": {
+        "edge_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "workspace_exception_to",
+          "title": "Kind",
+          "type": "string"
+        },
+        "target_record_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Record Id",
+          "type": "string"
+        },
+        "target_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Version Id",
+          "type": "string"
+        },
+        "workspace_scope_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Workspace Scope Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "target_record_id",
+        "target_version_id",
+        "kind",
+        "workspace_scope_id"
+      ],
+      "title": "WorkspaceExceptionToV2",
+      "type": "object"
+    }
+  },
+  "$id": "urn:tldw:profile-core:schema:personal-context:2",
+  "$schema": "urn:tldw:profile-core:json-schema:dialect:2",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ProfileManifestV2"
+    },
+    {
+      "$ref": "#/$defs/ProfileRecordV2"
+    },
+    {
+      "$ref": "#/$defs/ProfileProposalV2"
+    }
+  ],
+  "title": "tldw Personal Context Profile v2 (inactive data contract)",
+  "version": 2,
+  "x-tldw-profile-semantics": {
+    "aggregateRules": "profile-aggregates-v2",
+    "attributionRules": "claim-attribution-v2",
+    "bindingProjection": "owner-version-evidence-binding-v1",
+    "canonicalClaimMaxUtf8Bytes": 16384,
+    "canonicalDateTime": "utc-milliseconds-v1",
+    "canonicalManifestMaxUtf8Bytes": 16384,
+    "canonicalPayloadMaxUtf8Bytes": 16384,
+    "canonicalProposalMaxUtf8Bytes": 98304,
+    "canonicalRecordMaxUtf8Bytes": 65536,
+    "canonicalization": "rfc8785-v1",
+    "claimProjection": "profile-claim-v2",
+    "disclosureRules": "profile-disclosure-ceiling-v2",
+    "iJsonMaxSafeInteger": 9007199254740991,
+    "manifestRequirements": "profile-context-requirements-v2",
+    "pendingProposalExpiryDays": 90,
+    "temporalRelations": "profile-relations-v2"
+  }
+}

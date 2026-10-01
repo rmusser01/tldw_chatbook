@@ -539,4 +539,3 @@ def test_nvidia_qwen_thinking_toggle_survives_the_draft_rebase() -> None:
     assert "reasoning_effort" not in supported_generation_fields(
         "nvidia", "meta/llama-3.3-70b-instruct"
     )
-

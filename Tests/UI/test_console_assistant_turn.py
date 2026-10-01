@@ -449,6 +449,7 @@ def test_refusal_marker_line_names_who_refused(status: str, line: str) -> None:
     assert header.renderable.plain == line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(120, 32), (42, 24)])
 async def test_assistant_turn_geometry_under_production_bundle(
@@ -499,6 +500,7 @@ async def test_assistant_turn_geometry_under_production_bundle(
         assert "success" in app.export_screenshot(), "status text is compositor-clipped"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_activity_label_ellipsizes_before_fixed_status() -> None:
     """The bounded status never yields its columns to a worst-case literal label."""
@@ -523,6 +525,7 @@ async def test_narrow_activity_label_ellipsizes_before_fixed_status() -> None:
         assert "success" in screenshot
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_composite_retains_roleplay_and_failed_answer_backgrounds(
@@ -628,6 +631,7 @@ async def test_activity_status_compositor_contrast(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_success_status_rest_contrast_in_every_shipped_theme() -> None:
     """Success remains readable against every shipped theme's resolved tokens."""

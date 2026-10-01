@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api.exceptions import APIResponseError
 
 if TYPE_CHECKING:
     from ..tldw_api import (
@@ -128,6 +127,8 @@ class ServerAudioServicesService:
     async def _require_audio_diagnostic_capability(
         self, client: TLDWAPIClient, action_id: str
     ) -> None:
+        from ..tldw_api.exceptions import APIResponseError
+
         try:
             capabilities = self._dump(await client.get_current_user_capabilities())
         except APIResponseError as exc:
@@ -168,6 +169,8 @@ class ServerAudioServicesService:
         client = self._require_client()
         if warm:
             await self._require_audio_diagnostic_capability(client, action_id)
+        from ..tldw_api.exceptions import APIResponseError
+
         try:
             return self._dump(await client.get_stt_health(model=model, warm=warm))
         except APIResponseError as exc:
@@ -208,6 +211,8 @@ class ServerAudioServicesService:
         self._enforce(action_id)
         client = self._require_client()
         await self._require_audio_diagnostic_capability(client, action_id)
+        from ..tldw_api.exceptions import APIResponseError
+
         try:
             return self._dump(await client.test_audio_streaming())
         except APIResponseError as exc:

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Button, Input, Select, Static
 from tldw_profile_core import (
     AgentVisibility,
@@ -21,27 +22,30 @@ from tldw_profile_core import (
     SyncMode,
 )
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _visible_text,
 )
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_personal_context_provenance import until as _until
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
-from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Personal_Context.key_protector import (
     InMemoryProfileKeyProtector,
     ProfileLockedError,
 )
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
 from tldw_chatbook.Personal_Context.service import (
-    PersonalContextSettingsSnapshot,
     PersonalContextService,
+    PersonalContextSettingsSnapshot,
     ProfileConflictError,
     ProfileKeyCollisionError,
     ProfileOperationalState,
@@ -50,17 +54,30 @@ from tldw_chatbook.Personal_Context.service import (
 )
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
 from tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel import (
     PersonalContextSettingsPanel,
     RecoveryPassphraseDialog,
 )
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
 
+# Keep the private config source selected before these real-app imports.
+pytestmark = pytest.mark.bootstrap_profile
 
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
+
+
+async def _wait_profile_record(pilot, panel, record):
+    """A save's worker may finish before its follow-up Settings read renders."""
+    await _until(
+        pilot,
+        lambda: (
+            panel._selected_record() is not None
+            and panel._selected_record().version_id == record.version_id
+        ),
+    )
+    await pilot.pause()
 
 
 class _ProfileServiceStub:
@@ -971,6 +988,7 @@ async def test_working_context_retention_defaults_can_be_overridden_and_are_pres
         bounded = service.settings_snapshot().records[0]
         assert bounded.expires_at == bounded.created_at + timedelta(days=30)
         assert bounded.no_expiry is False
+        await _wait_profile_record(pilot, panel, bounded)
 
         panel = _active_destination_screen(host).query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -987,6 +1005,7 @@ async def test_working_context_retention_defaults_can_be_overridden_and_are_pres
         await pilot.pause()
         preserved = service.settings_snapshot().records[0]
         assert preserved.expires_at == bounded.expires_at
+        await _wait_profile_record(pilot, panel, preserved)
 
         panel = _active_destination_screen(host).query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1326,6 +1345,7 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         await pilot.pause()
         record = service.settings_snapshot().records[0]
         assert record.payload.value == "brief"
+        await _wait_profile_record(pilot, panel, record)
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1342,6 +1362,7 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         assert record.payload.value == "detailed"
         assert record.controls.sync_mode is SyncMode.DEVICE_ONLY
         assert record.controls.agent_visibility is AgentVisibility.USER_ONLY
+        await _wait_profile_record(pilot, panel, record)
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1350,6 +1371,10 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert service.settings_snapshot().records[0].state is RecordState.ARCHIVED
+        await _until(
+            pilot, lambda: panel._selected_record().state is RecordState.ARCHIVED
+        )
+        await pilot.pause()
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
         )
@@ -1357,6 +1382,10 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert service.settings_snapshot().records[0].state is RecordState.ACTIVE
+        await _until(
+            pilot, lambda: panel._selected_record().state is RecordState.ACTIVE
+        )
+        await pilot.pause()
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1430,6 +1459,11 @@ async def test_runtime_and_scope_authority_controls_show_exact_state_and_persist
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert service.status().state is ProfileOperationalState.DISABLED
+        await _until(
+            pilot,
+            lambda: panel.snapshot.status.state is ProfileOperationalState.DISABLED,
+        )
+        await pilot.pause()
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1437,7 +1471,12 @@ async def test_runtime_and_scope_authority_controls_show_exact_state_and_persist
         authority = panel.query_one("#personal-context-authority-0", Select)
         assert authority.value == AgentAuthority.PROPOSE.value
         authority.value = AgentAuthority.READ_ONLY.value
+        await pilot.pause()
         await host.workers.wait_for_complete()
+        await _until(
+            pilot,
+            lambda: panel.snapshot.scopes[0].authority is AgentAuthority.READ_ONLY,
+        )
         await pilot.pause()
         assert (
             service.get_scope_authority(service.list_scopes()[0].scope_id)
@@ -1476,6 +1515,150 @@ async def test_scope_authority_control_carries_snapshot_policy_version() -> None
             "scope-policy-version",
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", ["scope", "policy"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_scope_authority_control_cannot_mutate_replacement(
+    replacement,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        origin = panel.query_one("#personal-context-authority-0", Select)
+        held = Select.Changed(origin, AgentAuthority.READ_ONLY.value)
+        scopes = snapshot.scopes
+        if replacement == "scope":
+            scopes = (scopes[1], scopes[0], scopes[2])
+        else:
+            scopes = (replace(scopes[0], policy_version_id="new-policy"), *scopes[1:])
+        service.snapshot = replace(snapshot, scopes=scopes)
+        if timing == "before_recompose":
+            panel._apply_snapshot(panel._load_generation, service.snapshot, service)
+            assert panel.query_one("#personal-context-authority-0", Select) is origin
+        else:
+            panel.load_records()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert (
+                panel.query_one("#personal-context-authority-0", Select) is not origin
+            )
+
+        panel.handle_select_changed(held)
+        await host.workers.wait_for_complete()
+        assert service.authority_changes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["runtime", "record"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_profile_button_cannot_act_on_replacement(
+    control,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        button_id = (
+            "personal-context-runtime"
+            if control == "runtime"
+            else "personal-context-record-1"
+        )
+        origin = panel.query_one(f"#{button_id}", Button)
+        held = Button.Pressed(origin)
+        if control == "runtime":
+            service.snapshot = replace(
+                snapshot,
+                status=replace(
+                    snapshot.status, runtime_enabled=not snapshot.status.runtime_enabled
+                ),
+            )
+        else:
+            service.snapshot = replace(
+                snapshot,
+                records=(snapshot.records[0], snapshot.records[2], snapshot.records[1]),
+            )
+        if timing == "before_recompose":
+            panel._apply_snapshot(panel._load_generation, service.snapshot, service)
+            assert panel.query_one(f"#{button_id}", Button) is origin
+        else:
+            panel.load_records()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert panel.query_one(f"#{button_id}", Button) is not origin
+        selected = panel.selected_record_id
+
+        panel.handle_button_pressed(held)
+        await host.workers.wait_for_complete()
+        assert panel.selected_record_id == selected
+        assert service.runtime_changes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["record", "edit"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_profile_button_cannot_act_on_changed_local_view(
+    control,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        button_id = (
+            "personal-context-record-0"
+            if control == "record"
+            else "personal-context-edit"
+        )
+        origin = panel.query_one(f"#{button_id}", Button)
+        held = Button.Pressed(origin)
+        if control == "record":
+            panel.selected_scope_id = snapshot.scopes[1].scope.scope_id
+        else:
+            panel.selected_record_id = snapshot.records[1].record_id
+        assert panel.snapshot is snapshot
+        if timing == "before_recompose":
+            assert panel.query_one(f"#{button_id}", Button) is origin
+        else:
+            await pilot.pause()
+            assert panel.query_one(f"#{button_id}", Button) is not origin
+        selected = panel.selected_record_id
+
+        panel.handle_button_pressed(held)
+        await host.workers.wait_for_complete()
+        assert panel.selected_record_id == selected
+        assert panel.editor_mode == ""
 
 
 @pytest.mark.asyncio
@@ -1769,3 +1952,99 @@ async def test_my_profile_f1_help_advertises_exact_working_category_actions() ->
             "- d: delete record",
             "- x: export profile",
         ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(100, 35), (60, 24)])
+@private_profile_test
+async def test_production_settings_inspects_private_and_deleted_metadata(
+    tmp_path, size, request
+):
+    from Tests.UI.test_personal_context_provenance import rendered, until
+    from tldw_chatbook.Widgets.Settings_Widgets.personal_context_provenance import (
+        PersonalContextProvenanceDetails,
+    )
+
+    service = _real_service(tmp_path)
+    record = service.create_manual_record(
+        scope_id=service.list_scopes()[0].scope_id,
+        payload=PreferencePayload(
+            subject="private preference",
+            polarity="like",
+            value="DELETED_PAYLOAD_MARKER",
+        ),
+        semantic_key=None,
+        controls={"sync_mode": "syncable", "agent_visibility": "user_only"},
+    )
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        screen = _active_destination_screen(host)
+        panel = screen.query_one(PersonalContextSettingsPanel)
+        await until(pilot, lambda: panel.snapshot is not None)
+        detail = panel.query_one(PersonalContextProvenanceDetails)
+        detail.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await until(pilot, lambda: "Recorded source: manual" in rendered(detail))
+        assert "DELETED_PAYLOAD_MARKER" not in rendered(detail)
+        detail.query_one("CollapsibleTitle").scroll_visible(
+            top=True, animate=False, force=True
+        )
+        await pilot.pause()
+        assert detail.query_one("CollapsibleTitle").is_on_screen
+        assert detail.query_one("CollapsibleTitle").region.right <= detail.region.right
+        host.save_screenshot(f"provenance-record-{size[0]}.svg", path=str(tmp_path))
+        await host.push_screen(Screen())
+        await pilot.pause()
+        assert "Recorded source: manual" not in rendered(detail)
+        await host.pop_screen()
+        await until(pilot, lambda: "Recorded source: manual" in rendered(detail))
+        service.delete_record(record.record_id, expected_version_id=record.version_id)
+        detail._tick()
+        await until(pilot, lambda: "Record changed; reload details" in rendered(detail))
+        button = detail.query_one(".personal-context-provenance-reload", Button)
+        button.focus()
+        await pilot.press("enter")
+        await until(
+            pilot, lambda: bool(panel.snapshot and panel.snapshot.deleted_records)
+        )
+        await until(
+            pilot, lambda: bool(panel.query("#personal-context-deleted-metadata"))
+        )
+        deleted = panel.query_one("#personal-context-deleted-metadata")
+        deleted.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        panel.query_one("#personal-context-deleted-0", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        detail = panel.query_one(PersonalContextProvenanceDetails)
+        detail.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await until(pilot, lambda: "State: deleted" in rendered(detail))
+        assert "DELETED_PAYLOAD_MARKER" not in rendered(detail)
+        for name in ("edit", "archive-restore", "delete"):
+            assert panel.query_one(f"#personal-context-{name}", Button).disabled
+        assert detail.region.right <= size[0]
+        detail.query_one("CollapsibleTitle").scroll_visible(
+            top=True, animate=False, force=True
+        )
+        await pilot.pause()
+        assert detail.query_one("CollapsibleTitle").is_on_screen
+        assert detail.query_one("CollapsibleTitle").region.right <= detail.region.right
+        host.save_screenshot(f"provenance-deleted-{size[0]}.svg", path=str(tmp_path))
+
+
+def test_profile_reload_resolves_replacement_without_stale_worker_overwriting_owner():
+    first = _ProfileServiceStub(_ready_snapshot())
+    replacement = _ProfileServiceStub(_ready_snapshot())
+    panel = PersonalContextSettingsPanel(lambda **_kwargs: replacement)
+    panel._service = first
+    assert panel._fresh_service() is replacement
+    assert panel._service is first  # Cache changes only when the UI accepts the result.
+    panel._load_generation = 2
+    panel._apply_snapshot(2, replacement.snapshot, replacement)
+    panel._apply_snapshot(1, first.snapshot, first)
+    assert panel._service is replacement

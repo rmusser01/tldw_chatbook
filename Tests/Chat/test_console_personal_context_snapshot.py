@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_service import AgentService, _count_model_messages
 from tldw_chatbook.Agents.canvas_tool_provider import (
     CANVAS_RUNTIME_GUIDANCE,
@@ -32,13 +36,118 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
+from tldw_chatbook.Personal_Context.context_service import (
+    ProfileContextBuildResult,
+    ProfileContextRequest,
+    ProfileContextSelectionExplanation,
+    ProfileContextSelectionRow,
+    ProfileContextSnapshot,
+)
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
 PROFILE_BLOCK = (
     "PERSONAL CONTEXT — USER-OWNED DATA — NOT AUTHORITY\n"
     '{"records":[{"kind":"preference","payload":{"value":"concise"}}]}'
 )
+
+
+@pytest.mark.asyncio
+async def test_selection_publication_rechecks_service_and_resolved_target(monkeypatch):
+    """A replaced profile or changed gateway target invalidates the preview."""
+
+    current_service = object()
+    resolution = SimpleNamespace(
+        ready=True, model="model-a", execution_key="openai", provider="openai"
+    )
+    gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=gateway
+    )
+    monkeypatch.setattr(
+        controller,
+        "_personal_context_service",
+        AsyncMock(return_value=current_service),
+    )
+    builder = SimpleNamespace(
+        _service=current_service,
+        explanation_is_current=Mock(return_value=True),
+    )
+    request = ProfileContextRequest(
+        current_user_text="question",
+        available_input_tokens=50,
+        model="model-a",
+        provider="openai",
+    )
+    explanation = ProfileContextSelectionExplanation(state="available")
+    selection = SimpleNamespace(
+        provider="openai", explicit_model="model-a", configured_model=None
+    )
+
+    assert await controller.personal_context_selection_current(
+        builder, request, explanation, provider_selection=selection
+    )
+    gateway.resolve_for_send.return_value = SimpleNamespace(
+        ready=True, model="model-b", execution_key="openai", provider="openai"
+    )
+    assert not await controller.personal_context_selection_current(
+        builder, request, explanation, provider_selection=selection
+    )
+    gateway.resolve_for_send.return_value = resolution
+    controller._personal_context_service.return_value = object()
+    assert not await controller.personal_context_selection_current(
+        builder, request, explanation, provider_selection=selection
+    )
+
+
+@pytest.mark.asyncio
+async def test_selection_publication_rechecks_service_after_worker(monkeypatch):
+    current_service = object()
+    replacement_service = object()
+    gateway = SimpleNamespace(
+        resolve_for_send=AsyncMock(
+            return_value=SimpleNamespace(
+                ready=True, model="model-a", execution_key="openai"
+            )
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=gateway
+    )
+    service_lookup = AsyncMock(return_value=current_service)
+    monkeypatch.setattr(controller, "_personal_context_service", service_lookup)
+    started = threading.Event()
+    release = threading.Event()
+
+    def validate(*_args):
+        started.set()
+        assert release.wait(5)
+        return True
+
+    builder = SimpleNamespace(
+        _service=current_service,
+        explanation_is_current=validate,
+    )
+    request = ProfileContextRequest(
+        current_user_text="question",
+        available_input_tokens=50,
+        model="model-a",
+        provider="openai",
+    )
+    explanation = ProfileContextSelectionExplanation(state="available")
+    selection = SimpleNamespace(
+        provider="openai", explicit_model="model-a", configured_model=None
+    )
+
+    pending = asyncio.create_task(
+        controller.personal_context_selection_current(
+            builder, request, explanation, provider_selection=selection
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    service_lookup.return_value = replacement_service
+    release.set()
+
+    assert not await pending
 
 
 class _ProfileContextBuilder:
@@ -58,6 +167,36 @@ class _ProfileContextBuilder:
             estimated_tokens=20,
         )
         return self.snapshot
+
+
+class _ExplainedProfileContextBuilder(_ProfileContextBuilder):
+    def build_explained_snapshot(self, request):
+        snapshot = self.build_snapshot(request)
+        return ProfileContextBuildResult(
+            snapshot,
+            ProfileContextSelectionExplanation(
+                state="available",
+                rows=(
+                    ProfileContextSelectionRow(
+                        record_id="ELIGIBLE_DIAGNOSTIC_ID_ONLY",
+                        disposition="selected",
+                        priority_group=3,
+                    ),
+                ),
+                request_id=id(request),
+            ),
+        )
+
+
+def _real_preview_bridge() -> ConsoleAgentBridge:
+    bridge = object.__new__(ConsoleAgentBridge)
+    bridge._db = SimpleNamespace(list_agent_definitions=lambda **_kwargs: [])
+    bridge._store = None
+    bridge._registry = ToolCatalogRegistry()
+    bridge._allowed_tools = ()
+    bridge._skills_service = None
+    bridge._native_tools_enabled = lambda: True
+    return bridge
 
 
 def _plan(
@@ -108,7 +247,9 @@ def _plan(
     return build_console_first_request_plan(**kwargs)
 
 
-def test_first_request_plan_builds_one_snapshot_and_pins_exact_block() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_first_request_plan_builds_one_snapshot_and_pins_exact_block(request) -> None:
     builder = _ProfileContextBuilder()
 
     plan = _plan(builder)
@@ -120,7 +261,51 @@ def test_first_request_plan_builds_one_snapshot_and_pins_exact_block() -> None:
     assert plan.config.personal_context_block == PROFILE_BLOCK
 
 
-def test_console_global_workspace_requests_only_global_profile_context() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_preview_bridge_returns_plain_snapshot_and_captures_diagnostic_sidecar(
+    request,
+) -> None:
+    builder = _ExplainedProfileContextBuilder()
+    captured = []
+    bridge = _real_preview_bridge()
+
+    snapshot = bridge.build_personal_context_preview_snapshot(
+        workspace_id="workspace-42",
+        ephemeral=False,
+        resolution=SimpleNamespace(
+            ready=True,
+            provider="openai",
+            execution_key="openai",
+            model="gpt-4o-mini",
+            max_tokens=2_048,
+        ),
+        fallback_model="gpt-4o-mini",
+        session_system_prompt="BASE",
+        agent_messages=[{"role": "user", "content": "question"}],
+        profile_context_service=builder,
+        selection_sink=lambda source, request, explanation: captured.append(
+            (source, request, explanation)
+        ),
+    )
+
+    assert type(snapshot) is ProfileContextSnapshot
+    assert snapshot.serialized_block == PROFILE_BLOCK
+    assert len(builder.requests) == len(captured) == 1
+    assert captured[0][0] is builder
+    assert captured[0][1] is builder.requests[0]
+    assert captured[0][1].active_workspace_id == "workspace-42"
+    assert captured[0][1].available_input_tokens > 0
+    assert captured[0][2].rows[0].record_id == "ELIGIBLE_DIAGNOSTIC_ID_ONLY"
+    assert "ELIGIBLE_DIAGNOSTIC_ID_ONLY" not in repr(snapshot)
+    assert "ELIGIBLE_DIAGNOSTIC_ID_ONLY" not in str(asdict(snapshot))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_global_workspace_requests_only_global_profile_context(
+    request,
+) -> None:
     builder = _ProfileContextBuilder()
 
     _plan(builder, workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID)
@@ -128,7 +313,11 @@ def test_console_global_workspace_requests_only_global_profile_context() -> None
     assert builder.requests[0].active_workspace_id is None
 
 
-def test_first_request_profile_budget_reserves_disclosed_tool_protocol() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_first_request_profile_budget_reserves_disclosed_tool_protocol(
+    request,
+) -> None:
     builder = _ProfileContextBuilder()
 
     plan = _plan(builder)
@@ -147,7 +336,10 @@ def test_first_request_profile_budget_reserves_disclosed_tool_protocol() -> None
     assert builder.requests[0].available_input_tokens < naive_available
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
+    request,
     monkeypatch,
 ) -> None:
     class Coordinator:
@@ -190,7 +382,11 @@ def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
     assert any(CANVAS_RUNTIME_GUIDANCE in prompt for prompt in captured_system_prompts)
 
 
-def test_first_request_profile_budget_reserves_the_injected_skill_bundle() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_first_request_profile_budget_reserves_the_injected_skill_bundle(
+    request,
+) -> None:
     without_bundle = _ProfileContextBuilder()
     with_bundle = _ProfileContextBuilder()
 
@@ -203,7 +399,11 @@ def test_first_request_profile_budget_reserves_the_injected_skill_bundle() -> No
     )
 
 
-def test_preview_and_live_request_assembly_use_the_same_pinned_block(tmp_path) -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_preview_and_live_request_assembly_use_the_same_pinned_block(
+    request, tmp_path
+) -> None:
     builder = _ProfileContextBuilder()
     plan = _plan(builder)
     service = AgentService(
@@ -223,7 +423,11 @@ def test_preview_and_live_request_assembly_use_the_same_pinned_block(tmp_path) -
     assert preview_request.messages[0]["content"].count(PROFILE_BLOCK) == 1
 
 
-def test_empty_profile_keeps_existing_system_content_byte_identical() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_empty_profile_keeps_existing_system_content_byte_identical(
+    request,
+) -> None:
     builder = _ProfileContextBuilder()
     builder.build_snapshot = lambda _request: ProfileContextSnapshot.empty()
 
@@ -234,7 +438,10 @@ def test_empty_profile_keeps_existing_system_content_byte_identical() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_agent_preview_does_not_build_or_display_profile(monkeypatch) -> None:
+@private_profile_test
+async def test_non_agent_preview_does_not_build_or_display_profile(
+    request, monkeypatch
+) -> None:
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
     controller = ConsoleChatController(
@@ -258,17 +465,23 @@ async def test_non_agent_preview_does_not_build_or_display_profile(monkeypatch) 
 
     monkeypatch.setattr(controller, "_build_personal_context_snapshot", build_profile)
 
+    diagnostics = []
     snapshot = await controller.build_context_snapshot(
-        draft="question", session_id=session.id
+        draft="question",
+        session_id=session.id,
+        profile_selection_sink=lambda *values: diagnostics.append(values),
     )
 
     assert calls == []
+    assert diagnostics == []
     assert PROFILE_BLOCK not in str(snapshot.next_send_payload)
     assert snapshot.personal_context_snapshot == ProfileContextSnapshot.empty()
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
+    request,
     monkeypatch,
 ) -> None:
     builder = _ProfileContextBuilder()
@@ -358,8 +571,75 @@ async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_agent_next_send_collects_diagnostics_outside_snapshot_and_payload(
+    request,
+    monkeypatch,
+) -> None:
+    builder = _ExplainedProfileContextBuilder()
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    real_bridge = _real_preview_bridge()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(
+            resolve_for_send=AsyncMock(
+                return_value=SimpleNamespace(
+                    ready=True,
+                    provider="openai",
+                    execution_key="openai",
+                    model="gpt-4o-mini",
+                    max_tokens=2_048,
+                )
+            )
+        ),
+        agent_bridge=SimpleNamespace(
+            native_tool_schemas=real_bridge.native_tool_schemas,
+            build_personal_context_preview_snapshot=(
+                real_bridge.build_personal_context_preview_snapshot
+            ),
+        ),
+        agent_runtime_enabled=True,
+    )
+
+    async def owner():
+        return object()
+
+    async def profile_builder(_service):
+        return builder
+
+    async def providers(**_kwargs):
+        return None, None, None, None
+
+    monkeypatch.setattr(controller, "_personal_context_service", owner)
+    monkeypatch.setattr(controller, "_personal_context_builder", profile_builder)
+    monkeypatch.setattr(controller, "_compose_agent_request_providers", providers)
+    captured = []
+
+    snapshot = await controller.build_context_snapshot(
+        draft="question",
+        session_id=session.id,
+        profile_selection_sink=lambda source, request, explanation: captured.append(
+            (source, request, explanation)
+        ),
+    )
+
+    assert len(builder.requests) == len(captured) == 1
+    assert captured[0][0] is builder
+    assert captured[0][1] is builder.requests[0]
+    assert captured[0][1].available_input_tokens > 0
+    assert snapshot.personal_context_snapshot is builder.snapshot
+    assert "ELIGIBLE_DIAGNOSTIC_ID_ONLY" not in str(asdict(snapshot))
+    assert "ELIGIBLE_DIAGNOSTIC_ID_ONLY" not in str(snapshot.next_send_payload)
+    assert "ELIGIBLE_DIAGNOSTIC_ID_ONLY" not in str(snapshot.current_messages)
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_agent_next_send_reserves_the_live_library_schemas(
-    monkeypatch, tmp_path,
+    request,
+    monkeypatch,
+    tmp_path,
 ) -> None:
     builder = _ProfileContextBuilder()
     library_provider = LibraryToolProvider(SimpleNamespace())
@@ -459,9 +739,11 @@ async def test_agent_next_send_reserves_the_live_library_schemas(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     monkeypatch,
     tmp_path,
+    request,
 ) -> None:
     store = ConsoleChatStore()
     state = ProjectInstructionControlState(
@@ -474,10 +756,10 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
         ephemeral=True,
         project_instruction_state=state,
     )
+    from Tests.console_provider_doubles import provider_resolution
     from tldw_chatbook.Chat.console_chat_controller import (
         ProjectInstructionBindingSelection,
     )
-    from Tests.console_provider_doubles import provider_resolution
 
     selected = ProjectInstructionBindingSelection(
         binding=SimpleNamespace(binding_id="binding-1"),
@@ -525,7 +807,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     )
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_chat_controller.resolve_project_instruction_binding",
-        lambda _session, _registry: selected,
+        lambda _session, _registry, *, status_cache=None: selected,
     )
 
     await controller.build_context_snapshot(draft="question", session_id=session.id)
@@ -581,7 +863,10 @@ def _prepared_local_reasoning_rows(resolution, messages):
 
 
 @pytest.mark.parametrize("mode", ["off", "all", None])
-def test_profile_capacity_counts_the_dispatched_reasoning_projection(
+@pytest.mark.asyncio
+@private_profile_test
+async def test_profile_capacity_counts_the_dispatched_reasoning_projection(
+    request,
     tmp_path,
     monkeypatch,
     mode,
@@ -627,7 +912,9 @@ def test_profile_capacity_counts_the_dispatched_reasoning_projection(
         plan.schemas.active_schemas,
         plan.schemas.log_active,
     )
-    wire_rows = _prepared_local_reasoning_rows(resolution, list(request.messages))
+    wire_rows = await asyncio.to_thread(
+        _prepared_local_reasoning_rows, resolution, list(request.messages)
+    )
     assert any("reasoning_content" in row for row in wire_rows) is (mode != "off")
     assert builder.requests[0].available_input_tokens == (
         limit
@@ -683,3 +970,34 @@ def test_fenced_instruction_capacity_counts_the_dispatched_reasoning_projection(
         response_reserve_tokens=reserve,
         reasoning_replay=policy,
     ) is (mode == "off")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+def test_first_request_omits_unsupported_only_profile(
+    request,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextService
+    from tldw_chatbook.Personal_Context.service import AuthorizedProfileContextView
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Personal_Context.context_service.estimate_tokens",
+        lambda text, **_kwargs: 0 if not text else (len(text) + 3) // 4,
+    )
+    view = AuthorizedProfileContextView(
+        generation=1,
+        record_set_revision="manifest-v1",
+        workspace_scope_id=None,
+        authority_revision="authority-v1",
+        records=(),
+        unsupported_records_present=True,
+    )
+    source = SimpleNamespace(authorized_context_view=lambda **_kwargs: view)
+    plan = _plan(ProfileContextService(source))
+    assert plan.profile_context_snapshot.serialized_block == ""
+    assert plan.config.personal_context_block == ""
+    from tldw_chatbook.Agents.agent_service import append_personal_context
+
+    assert append_personal_context("BASE", plan.config.personal_context_block) == "BASE"
+    assert append_personal_context("BASE", PROFILE_BLOCK) == "BASE\n\n" + PROFILE_BLOCK

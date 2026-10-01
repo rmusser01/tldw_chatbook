@@ -88,7 +88,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to flush Console roleplay context on first persist": (),
     },
     "tldw_chatbook/Chat/console_agent_bridge.py": {
-        "fleet drain consumer raised": ("type(exc).__name__",),
+        # 827b622638f7 generalized the fan-out to per-child settlement events.
+        "fleet settlement consumer raised": ("type(exc).__name__",),
         "model-call loop did not stop": (),
         "could not open the post-turn window": (),
         "post-turn window failed": (),
@@ -109,14 +110,13 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "fleet toast session-title fallback failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/Chat/console_fleet_wake.py": {
-        "fleet wake drain intake failed": ("type(exc).__name__",),
-        "wake send gate raised; deferring": ("type(exc).__name__",),
-        "wake user-priority probe raised; deferring": ("type(exc).__name__",),
+        # 827b622638f7 retired the old intake/probe/stamp/mark catch owners.
+        # Pin the replacement scheduling, pause, recovery, and view diagnostics.
+        "wake delivery task could not be scheduled; deferring": ("type(exc).__name__",),
+        "wake pause could not be saved": ("type(exc).__name__",),
         "wake delivery failed": ("type(exc).__name__",),
-        "wake delivery ledger stamp failed (exception_type=": ("type(exc).__name__",),
-        "wake delivery ledger stamp failed after dispose": ("type(exc).__name__",),
-        "wake mark listing failed": ("type(exc).__name__",),
-        "wake ledger read failed": ("type(exc).__name__",),
+        "wake recovery failed": ("type(exc).__name__",),
+        "wake view probe raised; keeping the unseen mark": ("type(exc).__name__",),
         "wake session resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/DB/ChaChaNotes_DB.py": {
@@ -164,9 +164,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "console fleet wake mount-claim failed": ("type(exc).__name__",),
         "fleet survivor check failed": ("type(exc).__name__",),
     },
-    "tldw_chatbook/UI/Screens/chat_screen.py": {
-        "Pending sidebar-state write failed": ("type(error).__name__",),
-    },
+    # b5251e9a6ebc retired the pending sidebar worker await and its diagnostic.
+    # The repeated sidebar-write family remains governed by the inventory.
     "tldw_chatbook/UI/Console_Modules/video.py": {
         # TASK-15600: the per-operation video failure events were consolidated
         # into one "Console video operation={} failed error_type={}" family
@@ -279,10 +278,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/UI/Console_Modules/workspace.py": {
         "Star-toggle cancellation re-sync failed": (),
     },
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
-        "MCP Tools-mode local master save failed": ("type(exc).__name__",),
-        "MCP Tools-mode workspace root save failed": ("type(exc).__name__",),
-    },
+    # 149acda36be8 replaced MCP's direct-save catches with app-owned outcomes;
+    # their two diagnostics were retired, rather than moved to the new queue.
     "tldw_chatbook/UI/Screens/settings_screen.py": {
         "Console identity refresh hook failed after settings save": (
             "type(screen).__name__",
@@ -290,7 +287,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "type(exc).__name__",
         ),
         "Settings post-pane-swap callback failed": (),
-        "Failed to persist render_remote_images": (),
+        # 5ac787ce6a2b replaced this direct-save diagnostic with toggle outcomes.
         "Failed to persist model_catalog settings": (),
     },
     "tldw_chatbook/UI/Dictation_Window_Improved.py": {
@@ -331,9 +328,16 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/UI/Screens/video_player_screen.py": {
         "component=modal_player": ("phase", "type(exc).__name__"),
     },
-    "tldw_chatbook/Video_Generation/adapter_registry.py": {
-        "Failed to initialize video adapter": ("name", "type(exc).__name__"),
-        "Failed to resolve video adapter class": (
+    # 7a3d9461613f moved Video's error-type-only branch into the shared registry.
+    # The full error_type label distinguishes it from Image's detail branch.
+    "tldw_chatbook/Media_Generation/adapter_registry.py": {
+        "Failed to initialize {} adapter for '{}' (error_type={})": (
+            "self.modality",
+            "name",
+            "type(exc).__name__",
+        ),
+        "Failed to resolve {} adapter class for '{}' (error_type={})": (
+            "self.modality",
             "name",
             "type(exc).__name__",
         ),
@@ -341,9 +345,14 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
         "remote task cancel failed": ("type(exc).__name__",),
     },
-    "tldw_chatbook/Video_Generation/config.py": {
-        "unknown-key scan failed": ("type(e).__name__",),
-        "keyring lookup failed": ("backend", "type(e).__name__"),
+    # 7a3d9461613f moved these catches with code-owned modality labels.
+    "tldw_chatbook/Media_Generation/config_machinery.py": {
+        "unknown-key scan failed": ("tables.section_name", "type(e).__name__"),
+        "keyring lookup failed": (
+            "tables.keyring_label",
+            "backend",
+            "type(e).__name__",
+        ),
     },
     "tldw_chatbook/Video_Generation/video_store.py": {
         "VideoStore: startup removal failed": ("type(exc).__name__",),
@@ -378,6 +387,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "route.screen_name",
             "type(exc).__name__",
         ),
+    },
+    # f487e79a4fcb moved the module-level entry tail verbatim (TASK-33011).
+    "tldw_chatbook/app_entry.py": {
         "Generated CSS is stale during module entry; rebuilding": (),
         "Generated CSS is stale during CLI entry; rebuilding": (),
     },
@@ -463,7 +475,7 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
         "fleet unseen mark set failed": (1, ("type(exc).__name__",)),
     },
     "tldw_chatbook/Chat/console_fleet_wake.py": {
-        "wake delivery UI hook raised": (1, ("type(exc).__name__",)),
+        # 827b622638f7 retired the _attempt hook log; _notify_ui now returns.
         "wake view probe raised; keeping the unseen mark": (
             1,
             ("type(exc).__name__",),
@@ -617,6 +629,10 @@ _TASK_15743_STACKED = "fdee8a31f"
 _TASK_15743_REPAIRED = "afee9672a"
 _TASK_15743_CURRENT_OWNERS = {
     (
+        "tldw_chatbook/UI/Screens/library_screen.py",
+        "Failed to load Library conversations page.",
+    ): "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py",
+    (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "console fleet wake mount-claim failed",
     ): "tldw_chatbook/UI/Console_Modules/fleet.py",
@@ -628,7 +644,55 @@ _TASK_15743_CURRENT_OWNERS = {
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "Console fleet completion handoff will retry",
     ): "tldw_chatbook/UI/Console_Modules/fleet.py",
+    (
+        "tldw_chatbook/app.py",
+        "Generated CSS is stale during module entry; rebuilding",
+    ): "tldw_chatbook/app_entry.py",
+    (
+        "tldw_chatbook/app.py",
+        "Generated CSS is stale during CLI entry; rebuilding",
+    ): "tldw_chatbook/app_entry.py",
 }
+# 827b622638f7 renamed the fan-out log and retired these six historical catches.
+# Keep TASK-15743's immutable 31/9 row populations; resolve only their live sites.
+_TASK_15743_CURRENT_LABELS = {
+    (
+        "tldw_chatbook/Chat/console_agent_bridge.py",
+        "fleet drain consumer raised",
+    ): "fleet settlement consumer raised",
+    (
+        "tldw_chatbook/Chat/console_agent_bridge.py",
+        "fleet drain consumer raised (exception_type={})",
+    ): "fleet settlement consumer raised (exception_type={})",
+}
+_TASK_15743_RETIRED_WAKE_LABELS = {
+    "fleet wake drain intake failed",
+    "wake send gate raised; deferring",
+    "wake user-priority probe raised; deferring",
+    "wake delivery ledger stamp failed",
+    "wake mark listing failed",
+    "wake ledger read failed",
+}
+
+
+def _task_15743_current_diagnostic(owner: str, label: str) -> tuple[str, str] | None:
+    """Resolve reviewed moves; a proven retirement must still be absent."""
+    if owner == "tldw_chatbook/Chat/console_fleet_wake.py" and label in (
+        _TASK_15743_RETIRED_WAKE_LABELS
+        | {
+            f"{retired} (exception_type={{}})"
+            for retired in _TASK_15743_RETIRED_WAKE_LABELS
+        }
+    ):
+        calls = discover_diagnostic_calls(
+            (REPO_ROOT / owner).read_text(encoding="utf-8"), module=owner
+        )
+        assert not any(label in call.event for call in calls)
+        return None
+    return (
+        _TASK_15743_CURRENT_OWNERS.get((owner, label), owner),
+        _TASK_15743_CURRENT_LABELS.get((owner, label), label),
+    )
 
 
 def _task_15743_archaeology_available() -> bool:
@@ -859,6 +923,35 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
     assert len(reviewed_safe_rows) == 9
     assert repair_rows.isdisjoint(reviewed_safe_rows)
 
+    # These live-owner checks must run even when the old review objects are gone.
+    for owner, label in repair_rows:
+        current = _task_15743_current_diagnostic(owner, label)
+        if current is None:
+            continue
+        current_owner, current_label = current
+        expected_fields = (
+            ()
+            if label in no_field_repairs
+            else ("len(sources)",)
+            if label == "Consolidated widget CSS incomplete"
+            else ("type(exc).__name__",)
+        )
+        assert (
+            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(current_label)
+            == expected_fields
+        )
+    for owner, labels in safe_rows.items():
+        for label, expected_fields in labels.items():
+            current = _task_15743_current_diagnostic(owner, label)
+            assert current is not None
+            current_owner, current_label = current
+            assert (
+                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(
+                    current_label
+                )
+                == expected_fields
+            )
+
     if not _task_15743_archaeology_available():
         pytest.skip(
             "TASK-15743 pinned commits "
@@ -900,26 +993,6 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
         repair_added, repair_details, repair_rows
     ) == Counter(repair_rows)
 
-    for owner, label in repair_rows:
-        current_owner = _TASK_15743_CURRENT_OWNERS.get((owner, label), owner)
-        expected_fields = (
-            ()
-            if label in no_field_repairs
-            else ("len(sources)",)
-            if label == "Consolidated widget CSS incomplete"
-            else ("type(exc).__name__",)
-        )
-        assert (
-            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(label)
-            == expected_fields
-        )
-    for owner, labels in safe_rows.items():
-        for label, expected_fields in labels.items():
-            current_owner = _TASK_15743_CURRENT_OWNERS.get((owner, label), owner)
-            assert (
-                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(label)
-                == expected_fields
-            )
 
 
 def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
@@ -996,7 +1069,10 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
         )
     failures: list[str] = []
     for relative, label in sorted(expected):
-        relative = _TASK_15743_CURRENT_OWNERS.get((relative, label), relative)
+        current = _task_15743_current_diagnostic(relative, label)
+        if current is None:
+            continue
+        relative, label = current
         source = (REPO_ROOT / relative).read_text(encoding="utf-8")
         tree = ast.parse(source, filename=relative)
         logger_symbols = diagnostic_inventory._logger_symbols(tree)
@@ -1347,6 +1423,25 @@ def test_inventory_counts_chained_logger_diagnostic_calls() -> None:
     ]
 
     assert len(diagnostic_calls) == 3
+
+
+def test_inventory_counts_live_controller_logger_calls_in_lazy_submission() -> None:
+    tree = ast.parse(
+        "async def submit_draft_body(self):\n"
+        "    from . import console_chat_controller as owner\n"
+        "    owner.logger.opt(exception=True).warning('reference expansion failed')\n"
+        "    owner.logger.bind(error_type='TypeError').warning('capture policy failed')\n"
+        "    owner.service.warning('ordinary service call')\n"
+    )
+    symbols = diagnostic_inventory._logger_symbols(tree)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and diagnostic_inventory._is_diagnostic_call(node, symbols)
+    ]
+    assert len(calls) == 2
+    assert all(ast.unparse(call.func).startswith("owner.logger.") for call in calls)
 
 
 TASK_15103_REVIEW_PATH = REPO_ROOT / "Docs/security/task-15103-diagnostic-review.json"

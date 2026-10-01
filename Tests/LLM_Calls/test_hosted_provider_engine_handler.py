@@ -487,4 +487,3 @@ def test_streaming_reasoning_only_length_stop_reaches_caller_as_token_limit(
         list(stream)
     assert caught.value.status_code == 400
     assert "max-tokens limit before writing a reply" in str(caught.value)
-

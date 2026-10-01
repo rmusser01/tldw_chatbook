@@ -2271,7 +2271,10 @@ class ChatPersistenceService:
             raise ValueError(
                 "Workspace registry is required for workspace conversations"
             )
-        workspace = self.workspace_registry.get_workspace(safe_workspace_id)
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+            workspace = self.workspace_registry.get_workspace(safe_workspace_id)
         if workspace is None:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
