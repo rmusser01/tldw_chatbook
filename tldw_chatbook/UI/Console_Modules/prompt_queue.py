@@ -651,6 +651,10 @@ class ConsolePromptQueueUIController:
                         result.visible_copy or "That recovery action is unavailable.",
                         "warning",
                     )
+                elif result.queue_notice:
+                    # The response settled, but the prompts queued behind it
+                    # stopped at a context review (TASK-33621.19).
+                    self._notify(result.queue_notice, "warning")
             except (Exception, asyncio.CancelledError) as exc:
                 action_error = exc
                 raise

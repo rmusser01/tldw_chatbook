@@ -373,7 +373,11 @@ class ConsolePromptQueueCoordinator:
         if snapshot.total_count == 0:
             return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # Same guard as resume_and_drain: a context change while the response
+        # was pending makes resume() re-pause as CONTEXT_CHANGED (APPLIED, no
+        # chain). Stop at that review; its detail carries the notice for the
+        # Retry or Discard press that settled the owner (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         await self._drain_waiting(session_id, terminal_status)
         return resumed

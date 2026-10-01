@@ -1907,3 +1907,240 @@ async def test_manager_retry_stopped_after_a_compaction_asks_for_review():
     # Not re-run: regenerating the stopped turn after review is TASK-33621.39.
     assert store.get_message(stopped.id).status == "stopped"
     assert notices == []
+
+
+# ---------------------------------------------------------------------------
+# Round 4: settle_dispatch_recovery_and_drain is the third caller that drains
+# after resume(). A pending response's Retry or Discard settles the queued
+# turn that owned it, then resumes the prompts waiting behind it. If the
+# conversation context moved while that response waited, resume() re-pauses
+# as CONTEXT_CHANGED with no chain, and the drain raised KeyError in
+# _drain_waiting. Live reachability is not established: it needs a pending
+# response with prompts waiting behind it, plus a context change before the
+# press. These tests put the real registry, coordinator, controller and store
+# in that state directly.
+# ---------------------------------------------------------------------------
+
+
+def _begin_queue_owner(registry, session_id: str, *, context_epoch: int) -> str:
+    """Start a chain whose first entry, 'one', will own the pending response."""
+
+    snapshot = registry.snapshot(session_id)
+    begun = registry.begin_chain(
+        session_id, context_epoch=context_epoch, expected_revision=snapshot.revision
+    )
+    first = registry.admit(
+        session_id, text="one", expected_revision=begun.snapshot.revision
+    )
+    assert first.applied
+    return first.entry_id
+
+
+def _retire_queue_owner(registry, session_id: str, owner_id: str) -> None:
+    """'one' crosses durable acceptance and retires; later prompts wait."""
+
+    snapshot = registry.snapshot(session_id)
+    claimed = registry.claim_next(session_id, expected_revision=snapshot.revision)
+    assert claimed.entry_id == owner_id
+    assert registry.bind_claimed_preparation(
+        session_id, entry_id=owner_id, preparation_id="preparation-1"
+    ).applied
+    assert registry.settle_durable_acceptance(
+        session_id, entry_id=owner_id, preparation_id="preparation-1"
+    ).applied
+
+
+@pytest.mark.asyncio
+async def test_pending_response_settlement_after_a_context_change_asks_for_review():
+    """Coordinator level: settling the owner must not drain a chain never made."""
+
+    import itertools
+
+    from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
+    from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
+        ConsolePromptQueueCoordinator,
+    )
+
+    registry = ConsolePromptQueueRegistry(
+        id_factory=iter(("accepted-entry", "later-entry")).__next__,
+        monotonic=itertools.count(1.0).__next__,
+    )
+    session_id = "session-1"
+    epoch = [0]
+    submitted: list[str] = []
+
+    async def submit(prompt, *, session_id, entry_id, authorization):
+        assert authorization.session_id == session_id
+        submitted.append(entry_id)
+        coordinator.turn_accepted(
+            session_id,
+            origin=ConsoleSubmissionOrigin.QUEUED,
+            context_epoch=epoch[0],
+            entry_id=entry_id,
+        )
+        return SimpleNamespace(
+            accepted=True, terminal_status=ConsoleRunStatus.COMPLETED
+        )
+
+    coordinator = ConsolePromptQueueCoordinator(
+        registry=registry,
+        context_epoch=lambda _session_id: epoch[0],
+        run_status=lambda _session_id: ConsoleRunStatus.COMPLETED,
+        submit_queued=submit,
+    )
+    accepted_id = _begin_queue_owner(registry, session_id, context_epoch=0)
+    later_id = registry.admit(
+        session_id,
+        text="two",
+        expected_revision=registry.snapshot(session_id).revision,
+    ).entry_id
+    _retire_queue_owner(registry, session_id, accepted_id)
+    assert coordinator.hydrate_dispatch_recovery(
+        session_id,
+        queue_entry_id=accepted_id,
+        preparation_id="preparation-1",
+        checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+    )
+    assert registry.snapshot(session_id).mode is PromptQueueMode.PAUSED
+
+    epoch[0] = 1  # the conversation changed while the response was pending
+
+    settled = await coordinator.settle_dispatch_recovery_and_drain(
+        session_id,
+        queue_entry_id=accepted_id,
+        preparation_id="preparation-1",
+        terminal_status=ConsoleRunStatus.COMPLETED,
+    )
+
+    assert submitted == []
+    review = registry.snapshot(session_id)
+    assert (review.mode, review.pause_reason, review.reservation) == (
+        PromptQueueMode.PAUSED,
+        PromptQueuePauseReason.CONTEXT_CHANGED,
+        PromptQueueReservation.RELEASED,
+    )
+    assert [entry.entry_id for entry in review.entries] == [later_id]
+    assert settled.detail == CONTEXT_CHANGED_NOTICE
+    assert coordinator.dispatch_recovery_blocks_queue(session_id) is False
+    assert coordinator.activity(session_id).occupies_slot is False
+
+    # Nothing is stranded: Use current context drains the waiting prompt.
+    resumed = await coordinator.use_current_context_and_resume(
+        session_id,
+        expected_revision=review.revision,
+        reviewed_context_epoch=1,
+    )
+    assert resumed.applied
+    assert submitted == [later_id]
+    assert registry.snapshot(session_id).total_count == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_response_discard_after_a_context_change_says_why():
+    """The real Discard press: no KeyError, nothing sent, and a notice."""
+
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchReconstructability,
+        ConsoleLibraryItemScopeSnapshot,
+        ConsoleProviderIntent,
+        ConsoleTurnLibraryAuthority,
+    )
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+        ConsoleAutoRetrieve,
+    )
+
+    gateway = SequencedGateway()
+    controller, store, session_id = _arm_controller(gateway)
+    registry = controller.prompt_queue_registry
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    user = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="one", persist=False
+    )
+    pending = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    accepted_id = _begin_queue_owner(
+        registry,
+        session_id,
+        context_epoch=store.conversation_context_epoch(session_id),
+    )
+    # The real admission path, so 'two' carries its frozen custody request.
+    await _queue(controller, session_id, "two")
+    _retire_queue_owner(registry, session_id, accepted_id)
+    store.register_ephemeral_dispatch_recovery(
+        session_id,
+        user_message_id=user.id,
+        assistant_message_id=pending.id,
+        preparation_id="preparation-1",
+        attempt_id="attempt-1",
+        checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+        origin="queued",
+        queue_entry_id=accepted_id,
+        frozen_authority=ConsoleTurnLibraryAuthority(
+            policy=ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=None,
+                source="temporary",
+            ),
+            direct_library_tools=False,
+            source_types=("notes", "media", "conversations"),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+                note_ids=(), media_ids=(), conversations_allowed=True
+            ),
+            provider_intent=ConsoleProviderIntent(
+                provider="llama_cpp",
+                model="test-model",
+                endpoint="http://127.0.0.1:9099",
+            ),
+            attempt_id="attempt-1",
+        ),
+        resolved_destination=ConsoleResolvedDestination(
+            provider="llama_cpp",
+            model="test-model",
+            endpoint_identity="http://127.0.0.1:9099",
+            egress_class=ConsoleEgressClass.ON_DEVICE,
+        ),
+        reconstructability=ConsoleDispatchReconstructability(
+            attachments_reconstructable=True,
+            evidence_reconstructable=True,
+            prefill_reconstructable=True,
+            opaque_reference="opaque:ephemeral-1",
+        ),
+    )
+    # The in-process path that leaves a queued owner pending with prompts
+    # waiting behind it: its settlement failed, so the response is restored
+    # as unresolved recovery and projected onto the queue.
+    controller._restore_dispatch_recovery_after_settlement_failure(
+        session_id, pending.id
+    )
+    assert controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+        session_id
+    )
+
+    _compact(store, session_id)
+
+    completed: list[bool] = []
+    review = await _press_lands_on_context_review(
+        controller,
+        ui,
+        gateway,
+        session_id,
+        lambda: ui.handle_primary_intent(
+            session_id,
+            action="discard",
+            expected_revision=registry.snapshot(session_id).revision,
+            on_recovery_complete=lambda: completed.append(True),
+        ),
+    )
+    assert completed == [True]
+    assert store.dispatch_recovery_for_session(session_id) is None
+    assert store.get_message(pending.id).status == "discarded"
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+
+    await _use_current_context_drains_two(
+        controller, ui, gateway, session_id, review, next_call=0
+    )
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]

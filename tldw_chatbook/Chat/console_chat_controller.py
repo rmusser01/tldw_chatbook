@@ -4367,6 +4367,11 @@ class ConsoleSubmitResult:
     committed_context_epoch: int | None = None
     preparation_id: str | None = None
     provider_started: bool = False
+    #: TASK-33621.19: set by a response-recovery Retry or Discard that
+    #: settled its queued owner, when the prompts waiting behind it stopped
+    #: at a context review instead of draining. The shelf shows it as a
+    #: warning so the press says why nothing else was sent.
+    queue_notice: str = ""
 
 
 @dataclass(frozen=True)
@@ -13281,8 +13286,10 @@ class ConsoleChatController:
                 result = await self.resume_durable_postcommit(preparation_id)
                 if self.store.dispatch_recovery_for_session(session_id) is not None:
                     return result
-                await self._settle_recovered_queue_owner(session_id, claimed, result)
-                return result
+                notice = await self._settle_recovered_queue_owner(
+                    session_id, claimed, result
+                )
+                return replace(result, queue_notice=notice)
             context = await self._resolve_dispatch_retry_context(session_id, claimed)
             thinking_block = self._thinking_persistence_preflight(
                 session_id=session_id,
@@ -13385,9 +13392,10 @@ class ConsoleChatController:
                 visible_copy,
             )
         self._retire_live_recovery_continuation(claimed)
-        await self._settle_recovered_queue_owner(session_id, claimed, result)
+        notice = await self._settle_recovered_queue_owner(session_id, claimed, result)
         return replace(
             result,
+            queue_notice=notice,
             session_id=session_id,
             user_message_id=(
                 claimed.checkpoint.user_message_id if claimed.checkpoint else None
@@ -13576,8 +13584,8 @@ class ConsoleChatController:
             preparation_id=claimed.preparation_id,
         )
         self._retire_live_recovery_continuation(claimed)
-        await self._settle_recovered_queue_owner(session_id, claimed, result)
-        return result
+        notice = await self._settle_recovered_queue_owner(session_id, claimed, result)
+        return replace(result, queue_notice=notice)
 
     def _retire_live_recovery_continuation(self, recovery: Any) -> None:
         """Drop app-lifetime acceptance state after explicit settlement."""
@@ -13651,15 +13659,37 @@ class ConsoleChatController:
         session_id: str,
         recovery: Any,
         result: ConsoleSubmitResult,
-    ) -> None:
+    ) -> str:
+        """Release a settled queued owner and drain the prompts behind it.
+
+        Args:
+            session_id: Session whose response recovery just settled.
+            recovery: The claimed recovery; only a queued owner (with a queue
+                entry and preparation id) has prompts behind it.
+            result: The settled Retry or Discard result.
+
+        Returns:
+            The context-review notice when the waiting prompts stopped at a
+            review instead of draining (TASK-33621.19), else ``""``.
+        """
         if recovery.queue_entry_id is None or recovery.preparation_id is None:
-            return
-        await self.prompt_queue_coordinator.settle_dispatch_recovery_and_drain(
-            session_id,
-            queue_entry_id=recovery.queue_entry_id,
-            preparation_id=recovery.preparation_id,
-            terminal_status=result.terminal_status or ConsoleRunStatus.COMPLETED,
+            return ""
+        settled = (
+            await self.prompt_queue_coordinator.settle_dispatch_recovery_and_drain(
+                session_id,
+                queue_entry_id=recovery.queue_entry_id,
+                preparation_id=recovery.preparation_id,
+                terminal_status=result.terminal_status or ConsoleRunStatus.COMPLETED,
+            )
         )
+        # Only resume()'s context-review re-pause is an accepted result that
+        # carries a detail; refusals stay as quiet as they were.
+        if settled.status in {
+            QueueMutationStatus.APPLIED,
+            QueueMutationStatus.UNCHANGED,
+        }:
+            return settled.detail or ""
+        return ""
 
     def new_session(
         self,
