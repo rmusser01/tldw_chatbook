@@ -425,6 +425,53 @@ async def test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_ex
 
 
 @pytest.mark.asyncio
+async def test_a_recovery_that_raises_is_logged_before_the_loud_exit(monkeypatch):
+    """PR #2945 review: ``except Exception: return None`` left no record, so a
+    recovery that crashed and a stack with nothing live left took the same
+    exit and could not be told apart in the log. The crash is logged as a
+    warning naming its class and where it was raised -- identifiers only,
+    never the message; the honest ``None`` logs nothing."""
+    from loguru import logger
+
+    from tldw_chatbook import app_keep_alive
+
+    def broken_discard(_app, _screen):
+        raise RuntimeError(_CANARY)
+
+    raise_line = broken_discard.__code__.co_firstlineno + 1
+    lines: list[str] = []
+    sink_id = logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="WARNING",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        app = App()
+        async with app.run_test() as pilot:
+            content = _Plain()
+            await app.push_screen(content)
+            await pilot.pause()
+            # Nothing live left: the loud exit, and nothing to report.
+            assert (
+                app_keep_alive.retire_dead_pump(app, content, _DISPATCH_DEATH) is None
+            )
+            assert lines == []
+            # The recovery itself raises: the same exit, but on the record.
+            monkeypatch.setattr(app_keep_alive, "_discard_dead_screen", broken_discard)
+            assert (
+                app_keep_alive.retire_dead_pump(app, content, _DISPATCH_DEATH) is None
+            )
+    finally:
+        logger.remove(sink_id)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("Dead pump recovery failed: RuntimeError at "), lines
+    assert f"broken_discard:{raise_line}" in lines[0], lines[0]
+    assert "tldw_chatbook.app_keep_alive.retire_dead_pump:" in lines[0], lines[0]
+    assert _CANARY not in lines[0]
+
+
+@pytest.mark.asyncio
 async def test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_it():
     """Screens above the dead one are popped with their pending result
     resolved to ``None`` -- a ``push_screen_wait`` in a worker resumes with

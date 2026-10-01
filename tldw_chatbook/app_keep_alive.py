@@ -34,6 +34,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Literal
 
+from loguru import logger
 from textual.screen import Screen
 from textual.widget import Widget
 
@@ -100,7 +101,8 @@ def retire_dead_pump(
         ``"screen"`` when a dead screen was taken off the stack (or out of the
         reusable-screen cache), ``"widget"`` when the app can stay up around a
         dead widget, or ``None`` when no live screen would be left in charge
-        -- the caller must then exit.
+        -- the caller must then exit. A recovery that itself raises also
+        returns ``None``, after a warning naming its class and site.
     """
     if not pump_loop_ended(frames):
         return "alive"
@@ -110,8 +112,36 @@ def retire_dead_pump(
         if isinstance(pump, Widget):
             _move_focus_off_dead_widget(app, pump)
         return "widget"
-    except Exception:  # noqa: BLE001 -- a recovery that fails takes the loud exit
+    except Exception as exc:  # noqa: BLE001 -- a recovery that fails takes the loud exit
+        # Without this line the exit is indistinguishable from "nothing live
+        # left": only the original error reaches the diagnostics log.
+        logger.warning(
+            "Dead pump recovery failed: {} at {}", type(exc).__name__, _raise_site(exc)
+        )
         return None
+
+
+def _raise_site(error: BaseException) -> str:
+    """``module.qualname:line`` of the frame that raised ``error`` and, when
+    that frame is outside the package, of the innermost Chatbook frame too.
+
+    Identifiers only, never the message or a file path -- the shape
+    ``_handle_exception`` records for the original error (TASK-32533).
+    """
+    raised = chatbook = None
+    tb = error.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        raised = (
+            f"{frame.f_globals.get('__name__', '?')}."
+            f"{frame.f_code.co_qualname}:{tb.tb_lineno}"
+        )
+        if raised.startswith("tldw_chatbook."):
+            chatbook = raised
+        tb = tb.tb_next
+    if raised is None:
+        return "unknown"
+    return raised if chatbook in (None, raised) else f"{raised} via {chatbook}"
 
 
 def keep_alive_notice(
