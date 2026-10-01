@@ -148,6 +148,50 @@ def _classify_ip(ip_str: str) -> str:
     return "public" if ip.is_global else "private"
 
 
+def address_is_fetchable(ip_str: str) -> bool:
+    """The ONE shared per-address SSRF verdict, used by every fetch layer.
+
+    Both this module's policy pipeline (``evaluate_url_policy``/
+    ``is_public_http_url``/``_post_resolution``) AND
+    ``Skills_Interop/skill_remote_fetch._assert_host_allowed`` route through
+    this predicate (task-609), so the two layers cannot drift on which
+    address categories are rejected. The layers keep their deliberately
+    different surrounding policy -- egress adds ``trusted_origins`` and the
+    ``[web_security]`` config allowlist and allows http+https; the skill
+    layer adds https-only per-hop revalidation with no bypasses -- but the
+    per-address classification is computed in exactly this one place.
+
+    Verdict: an address is fetchable iff it classifies ``"public"`` under
+    :func:`_classify_ip` (not a metadata endpoint, not multicast, globally
+    reachable, IPv4-mapped addresses normalized to their IPv4 side) AND it
+    is in none of the stdlib non-global categories that ``is_global`` alone
+    misses -- reserved, unspecified, loopback, link-local. The reserved
+    category is load-bearing: the NAT64 well-known prefix ``64:ff9b::/96``
+    is ``is_global`` yet ``is_reserved``, and its addresses embed IPv4
+    (``64:ff9b::7f00:1`` IS ``127.0.0.1``); the skill layer always rejected
+    it and task-609 reconciled egress to the same verdict.
+
+    Args:
+        ip_str: One resolved address (string form). A trailing IPv6 zone
+            suffix must already be split off by the caller (both layers do).
+
+    Returns:
+        ``True`` iff the address may be fetched from. Fail closed:
+        unparseable input returns ``False``, never raises.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return (
+        not ip.is_reserved
+        and not ip.is_unspecified
+        and not ip.is_loopback
+        and not ip.is_link_local
+        and _classify_ip(ip_str) == "public"
+    )
+
+
 def is_public_http_url(url: str) -> bool:
     """Strict "is this genuinely a public internet address" check (task-1356).
 
@@ -200,7 +244,7 @@ def is_public_http_url(url: str) -> bool:
     if not ips:
         return False
     try:
-        return all(_classify_ip(ip) == "public" for ip in ips)
+        return all(address_is_fetchable(ip) for ip in ips)
     except ValueError:
         return False
 
@@ -285,7 +329,7 @@ def _post_resolution(
         return _blocked(url, "metadata", host, f"resolves to metadata IP ({ips})")
     if host in trusted_origins:
         return EgressDecision(allowed=True, reason="ok", host=host, resolved_ips=ips)
-    if "private" in classes:
+    if not all(address_is_fetchable(ip) for ip in ips):
         return _blocked(url, "private", host, f"resolves to private IP ({ips})")
     return EgressDecision(allowed=True, reason="ok", host=host, resolved_ips=ips)
 
