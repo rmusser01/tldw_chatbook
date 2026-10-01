@@ -1,7 +1,8 @@
-# ADR-206: URL provenance, not caller identity, seeds egress self-trust
+# ADR-207: URL provenance, not caller identity, seeds egress self-trust
 
 Status: Accepted
 Date: 2026-09-30
+Renumbered from ADR-206: concurrent branch fix/task-592-610-609-egress-hardening committed its own ADR-206 (shared SSRF address classification) first; older-keeps-id per the TASK-19601 rule in backlog/docs/lessons-backlog-hygiene.md.
 Related Task: [task-20973 - Two public media seams let a caller supply the URL that vouches for itself](../tasks/task-20973%20-%20Two%20public%20media%20seams%20let%20a%20caller%20supply%20the%20URL%20that%20vouches%20for%20itself.md)
 Supersedes: N/A (extends the contract recorded in `Utils/egress.py`'s module
 docstring and `Docs/superpowers/specs/2026-07-23-web-fetch-hardening-design.md`;

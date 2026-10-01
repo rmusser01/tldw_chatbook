@@ -80,7 +80,7 @@ finding NO egress ADR from the TASK-19556 era to link: the provenance
 vocabulary is a new, durable, cross-module security contract with a
 minting rule and two deliberate non-changes reviewers will question
 again, which is exactly what an ADR is for).
-ADR path: backlog/decisions/206-url-provenance-seeds-egress-self-trust.md
+ADR path: backlog/decisions/207-url-provenance-seeds-egress-self-trust.md
 Reason: `UrlProvenance` is a public contract spanning `Utils/egress.py`,
 the whole video chain, the two Media service seams, the parse worker and
 the ingest queue; the enum's membership rule, the single minting point,
@@ -160,7 +160,7 @@ honouring it ONLY as a genuine enum instance (a plain string cannot
 launder trust). `parse_local_file_for_ingest` itself never mints; direct
 programmatic callers default to `UNKNOWN`.
 
-Deliberate non-changes, recorded in ADR-206: the audio arm
+Deliberate non-changes, recorded in ADR-207: the audio arm
 (`audio_processing.download_audio_file`'s own `origin_set(url)`,
 TASK-19556's parity choice — same shape, different seams, out of scope)
 and the server backend (its URLs are fetched by a remote process our
@@ -245,7 +245,7 @@ tests), `Tests/Local_Ingestion/test_video_egress_guard.py`,
 `Tests/Media/test_local_media_reading_service.py`,
 `Tests/Utils/test_egress_adoption_census.py` (updated with reasons
 inline).
-Docs: `backlog/decisions/206-url-provenance-seeds-egress-self-trust.md`.
+Docs: `backlog/decisions/207-url-provenance-seeds-egress-self-trust.md`.
 
 ### Residual limits (unchanged, restated)
 
