@@ -113,7 +113,8 @@ exit and retain the encrypted draft, or **Discard draft** to exit and destroy
 its draft key. A memory-only interview cannot be kept, so it offers only
 continue or discard, and **Ctrl+Q** during one asks **Discard interview and
 quit?** first (**Continue interview** returns to it). An encrypted draft
-already holds your answers, so quitting keeps it without asking. You may also
+already holds your submitted answers, so quitting keeps it without asking;
+text typed but not yet submitted is not kept, the same as **Keep draft**. You may also
 finish early. The draft and transcript objects
 are local and are not Personal Context Sync payloads. Adaptive requests still
 send the material described above to the configured provider. Drafts expire
