@@ -1,5 +1,6 @@
 """Restored remote MCP definitions stay inert until their local review."""
 
+import errno
 import inspect
 
 import pytest
@@ -304,6 +305,60 @@ def test_remote_mcp_fixtures_preserve_unicode_paths(tmp_path, script, route, sta
     profile = tmp_path / "profilé-😄"
     profile.mkdir(mode=0o700)
     _run(profile, route, state, script=script)
+
+
+@pytest.mark.parametrize("error", [None, errno.EACCES, errno.EIO, errno.ENOTSUP])
+def test_remote_permission_writer_uses_windows_directory_barrier(
+    tmp_path, monkeypatch, error
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP import permission_store
+    from tldw_chatbook.Utils import file_durability, platform_files
+
+    events = []
+
+    def open_directory(path, flags):
+        assert path == tmp_path
+        assert flags == 3
+        events.append("open")
+        return 57
+
+    def flush_directory(fd):
+        assert fd == 57
+        events.append("flush")
+        if error is not None:
+            raise OSError(error, "native_directory_flush_failed")
+
+    def close_directory(fd):
+        assert fd == 57
+        events.append("close")
+
+    def posix_open(*args):
+        raise AssertionError("Windows directory opened through stdlib os")
+
+    monkeypatch.setattr(
+        permission_store, "os", SimpleNamespace(name="nt", O_RDONLY=0, open=posix_open)
+    )
+    monkeypatch.setattr(
+        platform_files,
+        "os",
+        SimpleNamespace(
+            O_RDONLY=0,
+            O_DIRECTORY=1,
+            O_NOFOLLOW=2,
+            open=open_directory,
+            close=close_directory,
+        ),
+    )
+    monkeypatch.setattr(file_durability, "flush_directory", flush_directory)
+    if error is None:
+        permission_store._fsync_parent_directory(tmp_path)
+    else:
+        with pytest.raises(OSError) as caught:
+            permission_store._fsync_parent_directory(tmp_path)
+        assert caught.value.errno == error
+    assert events == ["open", "flush", "close"]
 
 
 def test_remote_mcp_supported_operation_set_has_no_unguarded_async_route():
