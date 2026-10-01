@@ -11,13 +11,19 @@ which the preservation tests below pin.
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import statistics
+import time
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.DB import base_db
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+#: Every test here drives real SQLite connections (cubic, #2894).
+pytestmark = pytest.mark.integration
 
 
 def _seed_traced_message(db: CharactersRAGDB) -> str:
@@ -195,13 +201,39 @@ class ObservedCursor(sqlite3.Cursor):
 class DirectCursor(sqlite3.Cursor):
     """Overrides every statement entry point without calling ``super()``."""
 
-    def execute(self, sql, parameters=()):  # noqa: D102
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        """Run one statement through the base cursor directly.
+
+        Args:
+            sql: Statement text.
+            parameters: Bound parameters.
+
+        Returns:
+            This cursor.
+        """
         return sqlite3.Cursor.execute(self, sql, parameters)
 
-    def executemany(self, sql, seq_of_parameters):  # noqa: D102
+    def executemany(self, sql: str, seq_of_parameters: object) -> sqlite3.Cursor:
+        """Run one statement per parameter set through the base cursor directly.
+
+        Args:
+            sql: Statement text.
+            seq_of_parameters: Parameter sets.
+
+        Returns:
+            This cursor.
+        """
         return sqlite3.Cursor.executemany(self, sql, seq_of_parameters)
 
-    def executescript(self, sql_script):  # noqa: D102
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        """Run a script through the base cursor directly.
+
+        Args:
+            sql_script: Statements separated by semicolons.
+
+        Returns:
+            This cursor.
+        """
         return sqlite3.Cursor.executescript(self, sql_script)
 
 
@@ -403,3 +435,41 @@ def test_a_cursor_used_after_close_does_not_pin_the_quiescence_registry(
 
     token = registry.begin_quiescence(timeout_seconds=0.2)
     registry.end_quiescence(token)
+
+
+def test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost(
+    tmp_path: Path,
+) -> None:
+    """TASK-33263 AC#3, pinned: a 3 MiB image message no longer costs ~1.2 s.
+
+    The trace callback made SQLite hex-render the bound BLOB for the statement
+    and every trigger/FTS step (1,217 ms median, isolated profile); without it
+    the insert measured 28.8 ms. The pin is 250 ms -- five times under the old
+    cost, loose enough for a loaded CI runner -- on the median of five inserts.
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+    """
+    db = CharactersRAGDB(tmp_path / "blob-insert.sqlite", "blob-insert")
+    try:
+        conversation_id = db.add_conversation({"title": "blob"})
+        assert conversation_id is not None
+        image = os.urandom(3 * 1024 * 1024)
+        samples = []
+        for index in range(5):
+            started = time.perf_counter()
+            db.add_message(
+                {
+                    "conversation_id": conversation_id,
+                    "sender": "user",
+                    "content": f"image {index}",
+                    "image_data": image,
+                    "image_mime_type": "image/png",
+                }
+            )
+            samples.append(time.perf_counter() - started)
+    finally:
+        db.close_connection()
+
+    median_ms = statistics.median(samples) * 1000
+    assert median_ms < 250, f"3 MiB image insert median {median_ms:.0f} ms (pin 250 ms)"

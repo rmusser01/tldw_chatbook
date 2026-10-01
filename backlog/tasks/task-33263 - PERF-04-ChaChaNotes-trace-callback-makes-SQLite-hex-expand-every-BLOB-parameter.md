@@ -13,7 +13,7 @@ references:
 - qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
 assignee:
 - '@claude'
-updated_date: 2026-09-28 23:40
+updated_date: 2026-10-01 07:40
 ---
 
 ## Description
@@ -26,7 +26,7 @@ DB/base_db.py (~738) installs set_trace_callback on every ChaChaNotes connection
 <!-- AC:BEGIN -->
 - [x] #1 Transaction-boundary detection no longer requires a trace callback that expands bound parameters
 - [x] #2 The semantic-mutation guard keeps its fail-closed behaviour (existing guard tests pass)
-- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB takes under 50 ms in a pinned test or benchmark
+- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB takes under 50 ms (measured), and a pinned test fails if the hex-expansion cost returns
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,6 +61,7 @@ Fail-closed behaviour is preserved and now pinned. Inside an authorization scope
 
 Measured (isolated profile, load avg ~30):
 - 3 MiB image add_message: 1,217 ms -> 28.8 ms median
+- Pinned (review on #2894): test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost asserts a median of five inserts under 250 ms -- five times under the old cost, loose enough for a loaded runner. With the trace callback restored it fails at 1,226 ms. AC#3 was reworded from "under 50 ms in a pinned test" to match: 50 ms is the measured result, not a CI-stable bound.
 - text add_message: 10.3 -> 6.6 ms
 
 Tests, all in Tests/DB/test_semantic_guard_transaction_boundaries.py:
