@@ -1239,8 +1239,7 @@ def test_a_new_mixin_action_reaching_its_host_pane_push_is_flagged_on_the_real_t
     )
     mixin.body.append(
         ast.parse(
-            "async def action_probe_leave(self):\n"
-            "    await self._ask_leave_choice()\n"
+            "async def action_probe_leave(self):\n    await self._ask_leave_choice()\n"
         ).body[0]
     )
     mutated = dict(real_tree)

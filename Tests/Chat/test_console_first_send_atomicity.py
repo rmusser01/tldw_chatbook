@@ -737,9 +737,11 @@ async def test_project_folder_survives_a_first_send_that_stops_after_its_commit(
     assert result.provider_started is False
     assert gateway.calls == 0
     assert store.sessions()[0].persisted_conversation_id is None
-    rows = db.get_connection().execute(
-        "SELECT id FROM conversations WHERE deleted = 0"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute("SELECT id FROM conversations WHERE deleted = 0")
+        .fetchall()
+    )
     assert len(rows) == 1
     conversation_id = rows[0]["id"]
     assert db.get_conversation_console_project_context(conversation_id) == (
@@ -791,9 +793,11 @@ def _restored_project_state(
     """Reopen the only saved chat the way a restart does: new connection, new
     store. Returns its id and the project controls it comes back with."""
     reopened_db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="restart")
-    rows = reopened_db.get_connection().execute(
-        "SELECT id FROM conversations WHERE deleted = 0"
-    ).fetchall()
+    rows = (
+        reopened_db.get_connection()
+        .execute("SELECT id FROM conversations WHERE deleted = 0")
+        .fetchall()
+    )
     assert len(rows) == 1, rows
     conversation = reopened_db.get_conversation_by_id(rows[0]["id"])
     reopened = ConsoleChatStore(
