@@ -96,7 +96,6 @@ $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
 $ds-model-switcher-width: 140;
-$ds-model-switcher-max-height: 80%;
 $ds-width-full: 100%;
 $ds-width-fill: 1fr;
 $ds-width-auto: auto;

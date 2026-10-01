@@ -180,10 +180,9 @@ $ds-control-height-compact: 1;
 /* Default/minimum height for multi-line text inputs. */
 $ds-textarea-min-height: 5;
 /* TASK-33004.4 (spec §6): Switch model is 140 columns at 211x44 and
- * 235x52 (120 until the final review let ids render whole), auto height
- * up to 80% of the screen. */
+ * 235x52 (120 until the final review let ids render whole); its auto
+ * height caps at $ds-percent-80 (_console_panels.tcss). */
 $ds-model-switcher-width: 140;
-$ds-model-switcher-max-height: 80%;
 /* Fill the parent's inline axis (ADR-161 task 8a): the tokenized expression
  * of the recurring `width: 100%` on promoted full-width components (status
  * areas, message bodies). Raw percentage widths in moved rules map here. */

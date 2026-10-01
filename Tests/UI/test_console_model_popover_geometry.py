@@ -3,7 +3,7 @@
 Rewritten on purpose: the 85%/170-column wide tier (PR #2672) and its
 Python toggle are gone. Spec §6 sets one width token instead:
 ``$ds-model-switcher-width`` in ``css/core/_variables.tcss``, with auto
-height up to ``$ds-model-switcher-max-height`` (80%). The token went from
+height up to the ``$ds-percent-80`` scale token. The width went from
 120 to 140 at the TASK-33004 final review, so model ids render whole.
 """
 
@@ -32,7 +32,15 @@ def test_switcher_size_comes_from_tokens() -> None:
     """The width and the height cap are tokens, not literals in the widget."""
     tokens = VARIABLES.read_text(encoding="utf-8")
     assert re.search(r"^\$ds-model-switcher-width: 140;$", tokens, re.MULTILINE)
-    assert re.search(r"^\$ds-model-switcher-max-height: 80%;$", tokens, re.MULTILINE)
+    panels = (VARIABLES.parent.parent / "features/_console_panels.tcss").read_text(
+        encoding="utf-8"
+    )
+    assert re.search(
+        r"^#console-model-popover \{ width: \$ds-model-switcher-width; "
+        r"max-height: \$ds-percent-80; \}$",
+        panels,
+        re.MULTILINE,
+    )
 
 
 @pytest.mark.parametrize(

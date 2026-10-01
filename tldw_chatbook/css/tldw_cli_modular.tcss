@@ -118,7 +118,6 @@ $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
 
 $ds-model-switcher-width: 140;
-$ds-model-switcher-max-height: 80%;
 
 $ds-width-full: 100%;
 
@@ -10835,11 +10834,7 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 .console-tool-approval:focus { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
 .console-tool-approval:disabled { background: $ds-disabled-bg; color: $ds-text-disabled-readable; }
 
-
-#console-model-popover {
-    width: $ds-model-switcher-width;
-    max-height: $ds-model-switcher-max-height;
-}
+#console-model-popover { width: $ds-model-switcher-width; max-height: $ds-percent-80; }
 
 .console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
 .console-popover-source { width: $ds-size-18; }
