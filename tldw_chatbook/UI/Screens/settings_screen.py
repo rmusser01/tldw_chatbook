@@ -24966,11 +24966,13 @@ class SettingsScreen(BaseAppScreen):
             )
         finally:
             self._theme_leave_in_progress = False
-        if choice == "cancel":
-            return False
         if choice == "save":
             await editor.save_theme()
             return not editor.is_modified
+        if choice != "discard":
+            # Stay -- and fail closed: a prompt closed with no answer keeps
+            # the edits rather than dropping them (TASK-33622.10 review).
+            return False
         # TASK-33060: Discard undoes the Try before the leave/quit proceeds;
         # a clean leave relies on the editor's unmount (review I-1).
         editor.discard_try()

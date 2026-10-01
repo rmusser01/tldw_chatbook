@@ -4111,7 +4111,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "0295270fa149e7660e13",
+      "diagnostic_digest": "31412d08d548e0d275d3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/confirmation_dialog.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4156,6 +4156,13 @@
       "diagnostic_digest": "886acbd53a6db54b57e1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/file_picker_dialog.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "6be9710c2a349e71ddf3",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/modal_dismissal.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

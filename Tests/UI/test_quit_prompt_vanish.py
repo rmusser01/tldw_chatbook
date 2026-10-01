@@ -12,6 +12,13 @@ a timer therefore pops a quit prompt sitting above it, and a bare
 These pin it against a mounted Textual app (the real pop semantics), plus the
 ordering race no mounted app can schedule on demand. The real-``TldwCli``
 journeys, one per prompt route, live in ``test_app_quit_under_modal.py``.
+
+Review follow-up: Textual leaves the caller behind as a zombie -- still on the
+stack, its result already delivered -- whose NEXT ``dismiss()`` raises
+``InvalidStateError`` and takes the app down. So a ``SafeModalDismissMixin``
+modal now refuses a dismiss while another screen covers it (the prompt is
+never popped), and for any other modal the helper finishes the caller's
+interrupted close once its prompt has vanished.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from textual.widgets import Static
 import tldw_chatbook.Widgets.confirmation_dialog as confirmation_dialog
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 pytestmark = pytest.mark.asyncio
 
@@ -160,9 +168,16 @@ async def test_an_answered_prompt_resolves_to_the_answer(press, expected):
 
 
 async def test_a_prompt_popped_by_the_modal_it_covers_resolves_to_no_answer():
-    """The hazard itself, on Textual's real pop: never a hang, always Stay."""
+    """The hazard itself, on Textual's real pop: never a hang, always Stay.
+
+    And never a zombie: Textual pops the prompt instead of the caller and
+    fires the caller's callback, leaving the caller on the stack with a spent
+    result. Its next dismiss would raise ``InvalidStateError`` and exit the
+    app, so the helper finishes the close the caller asked for.
+    """
     app = App()
     async with app.run_test(size=(100, 30)) as pilot:
+        base = app.screen
         (
             covered,
             covered_results,
@@ -175,12 +190,131 @@ async def test_a_prompt_popped_by_the_modal_it_covers_resolves_to_no_answer():
 
         assert await _settled(worker, "a vanished prompt") is _NO_ANSWER
         await _until(pilot, lambda: prompt not in app.screen_stack, "the pop")
-        # Textual popped the prompt, not the caller, and fired the caller's
-        # own callback: exactly the hazard, reproduced on the real stack.
-        assert app.screen is covered
+        # The caller's own result was delivered exactly once, and its
+        # interrupted close is finished: nothing is left to re-dismiss.
         assert covered_results == ["covered closed itself"]
+        await _until(
+            pilot,
+            lambda: covered not in app.screen_stack,
+            "the covered modal's interrupted close to be finished",
+        )
+        assert app.screen is base
         await _until_cancelled_notice(pilot)
         assert (await _settled_notices(pilot)).count("Quit cancelled.") == 1
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app._exception is None
+        assert app.is_running
+
+
+async def test_a_prompt_popped_from_outside_leaves_the_covered_modal_open():
+    """Negative control: only a screen whose own close went astray is closed.
+
+    Here nothing dismissed the covered modal -- something else popped the
+    prompt -- so its result is still pending and it must stay open.
+    """
+    app = App()
+    async with app.run_test(size=(100, 30)) as pilot:
+        (
+            covered,
+            covered_results,
+            prompt,
+            worker,
+        ) = await _open_prompt_over_a_covered_modal(app, pilot, _await_quit_prompt())
+
+        app.pop_screen()
+
+        assert await _settled(worker, "a prompt popped from outside") is _NO_ANSWER
+        assert prompt not in app.screen_stack
+        assert app.screen is covered
+        assert covered_results == []
+
+        covered.dismiss("closed for real")
+        await _until(pilot, lambda: covered not in app.screen_stack, "its close")
+        # The result callback is delivered with call_next, a moment later.
+        await _until(
+            pilot, lambda: covered_results == ["closed for real"], "its result"
+        )
+        assert app._exception is None
+
+
+class _SafeCoveredModal(SafeModalDismissMixin, ModalScreen[str]):
+    """A covered modal on the shared safe-dismissal primitive, like the switcher."""
+
+    def compose(self):
+        yield Static("safe covered modal")
+
+
+async def _open_prompt_over_a_safe_modal(app, pilot):
+    covered = _SafeCoveredModal()
+    covered_results: list[object] = []
+    await app.push_screen(covered, covered_results.append)
+    await _until(pilot, lambda: app.screen is covered, "the covered modal")
+    worker = app.run_worker(_await_quit_prompt()(app), exit_on_error=False)
+    await _until(
+        pilot,
+        lambda: isinstance(app.screen, ConfirmationDialog),
+        "the quit prompt on top of the covered modal",
+    )
+    return covered, covered_results, app.screen, worker
+
+
+async def test_a_covered_safe_modal_cannot_pop_the_quit_prompt():
+    """ADR-031: async self-closing may dismiss only the active top screen.
+
+    ``SafeModalDismissMixin.dismiss`` refuses while another screen covers the
+    modal, so the prompt stays up for the user to answer, the modal's result
+    is not spent, and its own close works once it is on top again.
+    """
+    app = App()
+    async with app.run_test(size=(100, 30)) as pilot:
+        covered, covered_results, prompt, worker = await _open_prompt_over_a_safe_modal(
+            app, pilot
+        )
+
+        # A bare dismiss from the covered modal, as its own timer would.
+        covered.dismiss("covered closed itself")
+        # Longer than the helper's watch interval plus its grace.
+        await pilot.pause(0.4)
+
+        assert app.screen is prompt
+        assert not worker.is_finished
+        assert covered_results == []
+
+        prompt.dismiss(False)  # Stay
+        assert await _settled(worker, "the answered prompt") is False
+        assert app.screen is covered
+        assert "Quit cancelled." not in await _settled_notices(pilot)
+
+        covered.dismiss("closed for real")
+        await _until(pilot, lambda: covered not in app.screen_stack, "its close")
+        await _until(
+            pilot, lambda: covered_results == ["closed for real"], "its result"
+        )
+        assert app._exception is None
+
+
+async def test_a_safe_modal_dismissed_twice_never_pops_the_screen_beneath():
+    """A stale second dismiss (a late timer or worker) is refused too."""
+    app = App()
+    async with app.run_test(size=(100, 30)) as pilot:
+        beneath = _CoveredModal()
+        await app.push_screen(beneath)
+        modal = _SafeCoveredModal()
+        modal_results: list[object] = []
+        await app.push_screen(modal, modal_results.append)
+        await _until(pilot, lambda: app.screen is modal, "the modal on top")
+
+        modal.dismiss("first")
+        await _until(pilot, lambda: modal not in app.screen_stack, "its close")
+        await _until(pilot, lambda: modal_results == ["first"], "its result")
+        modal.dismiss("stale")
+        await pilot.pause()
+
+        assert app.screen is beneath
+        assert modal_results == ["first"]
+        assert app._exception is None
 
 
 async def test_an_answer_followed_by_a_covered_pop_in_the_same_tick_keeps_the_answer():

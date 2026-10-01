@@ -291,6 +291,18 @@ async def await_quit_prompt(
     future is deliberately left alone: cancelling it would make a late
     ``dismiss`` raise inside the prompt's own handler.
 
+    When the prompt vanished because a covered screen dismissed itself,
+    Textual has delivered that screen's result but popped the prompt in its
+    place, leaving it on the stack as a zombie whose next close raises
+    ``InvalidStateError`` and exits the app. ``SafeModalDismissMixin``
+    modals refuse such a dismiss, so this only meets plain ones; for those
+    the close the screen asked for is finished here.
+
+    Unlike ``push_screen_wait`` it does not first await the app's pending
+    ``call_next`` callbacks. Deliberately: at quit time those are earlier
+    pops' own removals, which a push does not conflict with, and the prompt
+    still lands on the stack synchronously.
+
     Must run inside a worker, as ``push_screen_wait`` must.
 
     Args:
@@ -313,13 +325,41 @@ async def await_quit_prompt(
         done, _ = await asyncio.wait({answer}, timeout=PROMPT_ANSWER_GRACE_SECONDS)
         if done:
             return answer.result()
+        finished = _finish_interrupted_closes(app)
         logger.warning(
-            "{} left the screen stack unanswered; treating it as Stay",
+            "{} left the screen stack unanswered; treating it as Stay "
+            "(finished {} interrupted close(s))",
             type(prompt).__name__,
+            finished,
         )
         if vanished_notice:
             app.notify(vanished_notice, severity="warning")
         return no_answer
+
+
+def _closed_but_still_stacked(screen: Any) -> bool:
+    """Whether ``screen``'s own dismiss already delivered a result.
+
+    Textual 8.2.8 gives every push a ``ResultCallback`` whose future is
+    resolved only by that screen's ``dismiss``. Resolved -- not cancelled,
+    which a cancelled ``push_screen_wait`` waiter does to a screen still
+    legitimately open -- while the screen is still on the stack means its
+    pop went to the screen that was above it.
+    """
+    callbacks = getattr(screen, "_result_callbacks", None)
+    if not callbacks:
+        return False
+    future = getattr(callbacks[-1], "future", None)
+    return future is not None and future.done() and not future.cancelled()
+
+
+def _finish_interrupted_closes(app: Any) -> int:
+    """Pop each top screen whose own close went astray; return how many."""
+    finished = 0
+    while len(app.screen_stack) > 1 and _closed_but_still_stacked(app.screen):
+        app.pop_screen()
+        finished += 1
+    return finished
 
 
 async def confirm_quit_discarding_edits(screen: Screen, message: str) -> bool:

@@ -929,12 +929,7 @@ class TldwCli(
     # Shell shortcuts are keyed by stable destination ID so inserting a new
     # destination cannot transfer an existing shortcut to another screen.
     BINDINGS = [
-        # TASK-33622.10: priority, because ADR-031 makes Ctrl+Q app-global.
-        # Textual merges BINDINGS per key by replacement, so this entry
-        # REPLACES Textual's own priority ctrl+q. Without priority=True here,
-        # the binding is only looked up from the focused widget as far as the
-        # first modal screen, and every open modal swallowed Ctrl+Q.
-        Binding("ctrl+q", "quit", "Quit App", show=True, priority=True),
+        Binding("ctrl+q", "quit", "Quit App", show=True, priority=True),  # ADR-031
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
         Binding("f1", "show_workbench_help", "Help", show=True),
         Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),

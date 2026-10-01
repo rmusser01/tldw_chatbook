@@ -389,6 +389,11 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         if self._max_seconds is not None and self._started_wall is not None:
             elapsed = time.monotonic() - self._started_wall
             if elapsed > self._max_seconds:
+                if self.app.screen is not self:
+                    # Covered (the quit prompt, under the priority Ctrl+Q):
+                    # a dismiss now would be refused, and this tick repeats
+                    # every 0.25 s -- close on the first one back on top.
+                    return
                 self.app.notify(
                     f"Stream session hit the {int(self._max_seconds // 60)}-minute time box.",
                     severity="information",

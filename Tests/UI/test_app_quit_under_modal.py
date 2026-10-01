@@ -26,7 +26,13 @@ sits above it pops that prompt unanswered: before the fix the quit worker
 waited on it forever, ``_quit_in_progress`` stayed set, and Ctrl+Q was dead
 for the rest of the session. Each case covers a different prompt route: the
 app-owned Console prompt, a dirty modal's discard prompt, and a destination's
-own prompt beneath a modal.
+own prompt beneath a modal. Those covered modals are plain ``ModalScreen``s:
+the prompt vanishes, the flow ends as Stay, and the helper finishes the
+covered modal's own interrupted close -- left on the stack with its result
+already spent, that modal's next close raised ``InvalidStateError`` and
+exited the app (review follow-up). A modal on ``SafeModalDismissMixin`` (the
+switcher, the video player, most Console modals) cannot pop the prompt at
+all: its covered dismiss is refused, which the switcher journey pins.
 """
 
 from __future__ import annotations
@@ -338,7 +344,11 @@ async def _until_exited(app, cleanups: list[bool], what: str) -> None:
 
 
 async def _assert_quit_ended_as_stay(app, pilot, prompt, covered) -> None:
-    """The prompt left unanswered; the flow must end as Stay, never hang."""
+    """The prompt left unanswered; the flow must end as Stay, never hang.
+
+    And the covered modal, whose own dismiss went to the prompt, is closed as
+    it asked -- not left behind as a zombie whose next close crashes the app.
+    """
     await _until(
         pilot,
         lambda: prompt not in app.screen_stack,
@@ -360,14 +370,68 @@ async def _assert_quit_ended_as_stay(app, pilot, prompt, covered) -> None:
         'the "Quit cancelled." toast',
         timeout=5.0,
     )
-    # The covered modal's own dismiss popped the prompt instead of itself.
-    assert app.screen is covered
+    # The covered modal's dismiss popped the prompt instead of itself; its
+    # close is finished, so nothing is left to re-dismiss.
+    await _until(
+        pilot,
+        lambda: covered not in app.screen_stack,
+        "the covered modal's interrupted close to be finished",
+        timeout=5.0,
+    )
+    await pilot.pause()
+    assert app._exception is None
+    assert app.is_running
 
 
 async def test_ctrl_q_survives_a_covered_modal_popping_the_console_quit_prompt(
     monkeypatch,
 ):
-    """The app-owned "Quit Chatbook?" prompt, over the Ctrl+K switcher."""
+    """The app-owned "Quit Chatbook?" prompt, over a plain modal."""
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(140, 44)) as pilot:
+        console = await _mounted_console(app, pilot)
+        _arm_unsent_console_work(console, monkeypatch)
+        modal = _HooklessModal()
+        await app.push_screen(modal)
+        await _until(pilot, lambda: app.screen is modal, "the covering modal")
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot, lambda: bool(_quit_dialogs(app)), "the quit prompt", timeout=5.0
+        )
+        prompt = _quit_dialogs(app)[0]
+        assert app.screen is prompt
+
+        _close_from_its_own_timer(modal)
+        await _assert_quit_ended_as_stay(app, pilot, prompt, modal)
+        assert app.screen is console
+
+        # Ctrl+Q is still live: it asks again, and Quit quits.
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_quit_dialogs(app)),
+            "a second Ctrl+Q to ask again",
+            timeout=5.0,
+        )
+        assert cleanups == []
+        await pilot.click("#confirm-button")
+        await _until_exited(app, cleanups, "Quit to reach the approved shutdown")
+    assert cleanups == [True]
+    assert app.return_code == 0
+
+
+async def test_a_covered_switcher_cannot_pop_the_console_quit_prompt(monkeypatch):
+    """The switcher is a ``SafeModalDismissMixin`` modal: its covered close is refused.
+
+    So the prompt stays up for the user to answer, nothing says "Quit
+    cancelled.", Stay brings the switcher back intact, and it still closes.
+    """
     app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
     cleanups: list[bool] = []
@@ -391,12 +455,22 @@ async def test_ctrl_q_survives_a_covered_modal_popping_the_console_quit_prompt(
             pilot, lambda: bool(_quit_dialogs(app)), "the quit prompt", timeout=5.0
         )
         prompt = _quit_dialogs(app)[0]
-        assert app.screen is prompt
 
         _close_from_its_own_timer(switcher)
-        await _assert_quit_ended_as_stay(app, pilot, prompt, switcher)
+        await pilot.pause(0.5)  # the timer, then past the watch interval + grace
+        assert app.screen is prompt, "the covered switcher popped the quit prompt"
+        assert app._quit_in_progress is True
+        assert not _notified(app, "Quit cancelled.")
 
-        # Ctrl+Q is still live: it asks again, and Quit quits.
+        await pilot.click("#cancel-button")  # Stay
+        await _until(pilot, lambda: app.screen is switcher, "Stay to restore it")
+        await _until(
+            pilot, lambda: app._quit_in_progress is False, "the guard to clear"
+        )
+        await pilot.press("escape")
+        await _until(pilot, lambda: app.screen is console, "Escape to close it")
+        assert app._exception is None
+
         await pilot.press("ctrl+q")
         await _until(
             pilot,
@@ -404,7 +478,6 @@ async def test_ctrl_q_survives_a_covered_modal_popping_the_console_quit_prompt(
             "a second Ctrl+Q to ask again",
             timeout=5.0,
         )
-        assert cleanups == []
         await pilot.click("#confirm-button")
         await _until_exited(app, cleanups, "Quit to reach the approved shutdown")
     assert cleanups == [True]
@@ -447,18 +520,14 @@ async def test_ctrl_q_survives_a_dirty_form_popping_its_own_discard_prompt(
 
         _close_from_its_own_timer(form)
         await _assert_quit_ended_as_stay(app, pilot, prompt, form)
-        assert title.value == "Pay"
+        # The form closed itself, as it asked to, so its edits are gone with
+        # it and nothing is left to ask about: Ctrl+Q is live and just quits.
+        assert type(app.screen).__name__ == "ChatScreen"
+        assert cleanups == []
 
         await pilot.press("ctrl+q")
-        await _until(
-            pilot,
-            lambda: bool(_dialogs_titled(app, "Discard changes and quit?")),
-            "a second Ctrl+Q to ask again",
-            timeout=5.0,
-        )
-        assert cleanups == []
-        await pilot.click("#confirm-button")
-        await _until_exited(app, cleanups, "Discard and quit to reach the shutdown")
+        await _until_exited(app, cleanups, "a second Ctrl+Q to reach the shutdown")
+        assert not _dialogs_titled(app, "Discard changes and quit?")
     assert cleanups == [True]
     assert app.return_code == 0
 
@@ -520,6 +589,7 @@ async def test_ctrl_q_survives_a_covered_modal_popping_settings_theme_prompt(
 
         _close_from_its_own_timer(modal)
         await _assert_quit_ended_as_stay(app, pilot, prompt, modal)
+        assert app.screen is settings
         assert editor.is_modified
         # Settings' one-prompt-at-a-time latch must not stay stuck either.
         assert settings._theme_leave_in_progress is False

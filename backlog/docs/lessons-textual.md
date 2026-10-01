@@ -1382,11 +1382,41 @@ a zombie whose callback already fired: measured with a two-modal probe, its
 SECOND `dismiss()` raises `asyncio.InvalidStateError` (the waiter's future is
 already done) -- inside a timer that is an app-level exception.
 
+**Review follow-up: the zombie is the real crash.** Two reviewer probes drove
+the REAL `VideoPlayerScreen` under the quit prompt: both of its own closes ran
+a bare `self.dismiss(None)` -- `_notify_and_dismiss` (reached from activation,
+pump and seek failures) and the stream time box in `_refresh_status` (a
+0.25 s interval). Each popped the prompt; the quit flow correctly ended as
+Stay; then the player's next close -- the user's `q`, or with no user action
+at all the time box's next tick -- raised `InvalidStateError` and the app
+exited with code 1, skipping the approved quit cleanup. Treating the vanish
+as Stay had fixed the hang and left the crash.
+
 **What to do.** Async self-closing (timers, polls, worker completions) must
-dismiss only when `self.app.screen is self` (ADR-031; the session switcher's
-authority poll and `SafeModalDismissMixin.dismiss_safe_once` both do).
-`VideoPlayerScreen._refresh_status` still does not. A prompt you cannot afford
-to lose (the quit flow's) goes through `await_quit_prompt` in
-`Widgets/confirmation_dialog.py`, which also answers "no answer" when the
-prompt leaves the stack unanswered. Do not "fix" it by cancelling the
-orphaned future: a late `dismiss` would then raise inside the prompt.
+dismiss only when `self.app.screen is self` (ADR-031). That is now enforced at
+the shared primitive: `SafeModalDismissMixin.dismiss` refuses (logs at debug,
+returns a completed awaitable, delivers nothing) while the modal is covered or
+already popped, which covers the switcher, the video player and the other
+mixin modals without per-site guards. Before trusting a refusal in a primitive
+121 modal classes inherit, it was measured: a temporarily instrumented refusal
+branch, run over every test file naming a mixin class (and again with the
+bootstrap profile forced for the files the per-test sandbox fails closed on),
+recorded refusals in only the four tests written to cause them. A periodic
+caller needs one more line so it does not act on a refused close every tick:
+the time box returns early while covered and closes on its first tick back on
+top. Plain `ModalScreen`s are not covered by that (about two in five of the
+app's modal classes); for those, `await_quit_prompt` finishes the zombie's
+interrupted close once its prompt vanished -- a top screen whose newest
+`ResultCallback.future` is resolved (not cancelled) yet still stacked can only
+be one whose pop went astray. Every prompt the quit flow owns goes through
+`await_quit_prompt`, and
+`Tests/Architecture/test_quit_flow_prompt_choke_point.py` fails on a
+`push_screen_wait` / `wait_for_dismiss=True` in any `confirm_quit` /
+`prepare_for_quit` path. Do not "fix" the hang by cancelling the orphaned
+future: a late `dismiss` would then raise inside the prompt. Still open: a
+plain modal that self-closes under some OTHER covering screen -- one that
+background code pushed, since Ctrl+Q is the only priority app binding, so the
+only key that opens a screen over a modal -- is repaired by nothing. A static
+scan for plain modals that dismiss from a timer or worker found one:
+`LibraryCharacterRepairDialog._apply_owned`, which dismisses when its repair
+worker finishes (the quit prompt over it is handled; nothing else is).

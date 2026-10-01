@@ -25,7 +25,12 @@ from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
-pytestmark = pytest.mark.asyncio
+# bootstrap_profile: the splash reads its card through get_cli_setting, and
+# under the per-test profile sandbox config admission fails closed
+# (RecoveryRequired raw_source_selection_changed). Run alone, six of these
+# were red -- and the fork point's copy erred all six at setup, in the UI
+# conftest's lazy app import (TASK-33622.10 review). Nothing here writes config.
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 class _SplashHost(App):
@@ -141,7 +146,6 @@ class _SplashHostWithAppQuit(_SplashHost):
         self.quit_requests += 1
 
 
-@pytest.mark.bootstrap_profile
 async def test_ctrl_q_mid_splash_quits_instead_of_dismissing() -> None:
     """TASK-33622.10: the app's Ctrl+Q is a priority binding, so Textual runs
     it before the focused splash's ``on_key`` -- one press quits. Before, the
