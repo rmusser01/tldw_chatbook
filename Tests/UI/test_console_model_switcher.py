@@ -1278,19 +1278,25 @@ async def test_edits_for_a_pair_come_back_after_switching_away_and_back() -> Non
         assert _controls(switcher)[0] == "0.4"
 
 
-@pytest.mark.parametrize("previous", [None, "claude-sonnet-4-5"])
-async def test_opening_and_closing_leaves_no_edit(previous) -> None:
+@pytest.mark.parametrize(
+    "previous, max_tokens", [(None, None), ("claude-sonnet-4-5", 2048)]
+)
+async def test_opening_and_closing_leaves_no_edit(previous, max_tokens) -> None:
     """AC#7, AC#13: the Inputs' and the Select's mount-time Changed echoes are
     not edits, even after the highlight has rebased the row to PREVIOUS's
-    different values; Esc then closes at once with no change."""
+    different values; Esc then closes at once with no change. Every echo the
+    switcher waits for arrives (a blank Input posts none, so none is awaited)."""
     recorder = Recorder()
     app = SwitcherHarness()
+    draft = _draft()
+    draft = replace(draft, settings=replace(draft.settings, max_tokens=max_tokens))
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(
             app,
             pilot,
             _real_switcher(
                 recorder,
+                draft=draft,
                 remembered_previous=(
                     _Use("anthropic", previous, timedelta(hours=1))
                     if previous
@@ -1298,6 +1304,7 @@ async def test_opening_and_closing_leaves_no_edit(previous) -> None:
                 ),
             ),
         )
+        assert switcher._mount_echo == {}
         drafts = (
             switcher._draft.field_drafts,
             *(remembered.field_drafts for remembered in switcher._draft.model_drafts),
@@ -1342,6 +1349,14 @@ async def test_esc_with_edits_asks_and_keeps_editing_then_d_discards() -> None:
         assert "Enter apply · d discard · Esc keep editing" in "\n".join(
             painted_lines(app)
         )
+        # Its focus outline closes at the bottom (Textual 8.2.8 repeats the
+        # top edge on a bottom padding row).
+        region = guard.region
+        edges = [
+            line[region.x : region.right]
+            for line in painted_lines(app)[region.y : region.bottom]
+        ]
+        assert edges[0][0] + edges[-1][0] == "┌└", edges
 
         await pilot.press("escape")
         await pilot.pause()
@@ -1527,3 +1542,74 @@ async def test_tab_into_the_values_pins_the_pair_and_typing_re_ranks() -> None:
         await pilot.press("shift+tab", *"son")
         await pilot.pause()
         assert switcher.highlighted_row().model == "sonic-1"
+
+
+@pytest.mark.parametrize("before, after", [("0.9", ""), ("0", ".9")])
+async def test_a_typed_id_tabbed_into_before_readiness_yields_to_the_catalog_match(
+    before, after
+) -> None:
+    """T5 review fix: before readiness lists any catalog, 'son' highlights only
+    the TYPED MODEL ID row. Tab and an edit typed ahead of readiness must not
+    pin that row: when readiness lands, the catalog match takes the highlight,
+    the edit carries to it, and the text being typed is not rewritten."""
+    gate = threading.Event()
+    recorder = Recorder()
+
+    def gated_readiness(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        gate.wait(5)
+        return recorder.readiness(provider, model)
+
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = _real_switcher(recorder)
+        switcher._default_readiness_resolver = gated_readiness
+        app.push_screen(switcher)
+        for _ in range(3):
+            await pilot.pause()
+        await pilot.press(*"son", "tab", *before)
+        await pilot.pause()
+        row = switcher.highlighted_row()
+        assert (row.kind, row.provider, row.model) == ("typed", "llama_cpp", "son")
+
+        gate.set()
+        await _settle(app, pilot)
+        assert switcher.highlighted_row().model == "claude-sonnet-4-5"
+        assert "Values for claude-sonnet-4-5" in _strip(app)
+        assert _controls(switcher)[0] == before
+        await pilot.press(*after, "tab", *"8192", "enter")
+        await pilot.pause()
+
+    (submission,) = recorder.submissions
+    settings = submission.draft.settings
+    assert (settings.provider, settings.model) == ("anthropic", "claude-sonnet-4-5")
+    assert (settings.temperature, settings.max_tokens) == (0.9, 8192)
+
+
+async def test_clearing_a_value_the_chat_opened_blank_is_an_edit() -> None:
+    """T5 review fix: a blank Input posts no mount-time Changed, so clearing
+    PREVIOUS's Max tokens (blank = no cap) on a chat that opened with no cap
+    is the user's edit, not a swallowed echo, and Enter applies no cap."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            _real_switcher(
+                recorder,
+                remembered_previous=_Use(
+                    "anthropic", "claude-sonnet-4-5", timedelta(hours=1)
+                ),
+            ),
+        )
+        assert _controls(switcher)[1] == "1024"
+        await pilot.press("tab", "tab", "backspace")
+        await pilot.pause()
+        assert _controls(switcher)[1] == ""
+        assert _words(switcher)["max_tokens"] == "edited *"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    (submission,) = recorder.submissions
+    settings = submission.draft.settings
+    assert (settings.model, settings.max_tokens) == ("claude-sonnet-4-5", None)

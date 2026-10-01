@@ -20,7 +20,8 @@
   ▊  Filter visible     ▎           │                                                                                                                                                                   │
   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │◂ Inspect
-  Chats                        ▾    │                                                                 Ready — type a message to begin.                                                                  │
+   New conversation                 │                                                                 Ready — type a message to begin.                                                                  │
+  Chats                        ▾    │                                                                                                                                                                   │
    Chat 1                     💬    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
@@ -35,9 +36,8 @@
                                     │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
-                                    │                                                                                                                                                                   │
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Model: qwen3:32b     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $0.00 ·
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-sonnet-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $
 
 █  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
 

@@ -538,7 +538,9 @@ type over it; Tab again does the same for Max tokens. So switching to a
 Sonnet model with Temperature 0.9 and Max tokens 8192 is **Alt+M**, `son`,
 **Tab**, `0.9`, **Tab**, `8192`, **Enter**. Once you edit a value or Tab
 into the values, the highlight stays on that pair while the list finishes
-filling in; typing in Find again picks the best match for the new text. If
+filling in, except on a **TYPED MODEL ID** row: a listed model that matches
+better and arrives later takes the highlight, and your edits move with it.
+Typing in Find again picks the best match for the new text. If
 you edit a pair, move to another and come back, your edits for the first
 pair are still there.
 

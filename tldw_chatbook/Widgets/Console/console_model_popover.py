@@ -357,13 +357,15 @@ class ConsoleModelPopover(
         margin: 0 1 0 0;
     }
 
-    /* Focused while shown: the app's focus outline paints the padding rows. */
+    /* Focused while shown: the app's focus outline paints its blank first and
+       last lines. Not padding rows: Textual 8.2.8 caches the top padding row,
+       outline edge included, and repeats it as the bottom one. */
     #console-popover-guard {
         height: auto;
         background: $warning 25%;
         color: $text;
         text-style: bold;
-        padding: 1 1;
+        padding: 0 1;
     }
 
     #console-popover-scope {
@@ -454,12 +456,15 @@ class ConsoleModelPopover(
         self._chat_settings = settings
         self._streaming = bool(settings.streaming)
         # Input and Select post Changed once at mount, after on_mount, with
-        # the value they were composed with; that echo is not an edit.
+        # the value they were composed with; that echo is not an edit. A
+        # blank Input posts none ("" is its default), so none is awaited:
+        # a stale "" would swallow the user clearing that value.
         self._mount_echo: dict[str, object] = {
-            "temperature": self._input_text(settings.temperature),
-            "max_tokens": self._input_text(settings.max_tokens),
-            "streaming": self._streaming,
+            name: text
+            for name in ("temperature", "max_tokens")
+            if (text := self._input_text(getattr(settings, name)))
         }
+        self._mount_echo["streaming"] = self._streaming
         self._guard_focus: Widget | None = None
         self._updating_controls = False
         self._submit_pending = False
@@ -1327,6 +1332,17 @@ class ConsoleModelPopover(
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Tab into the values pins the highlighted pair they belong to."""
         if "console-popover-value" in event.widget.classes:
+            self._pin_highlight()
+
+    def _pin_highlight(self) -> None:
+        """Keep the highlighted pair through late fills (Tab in, or an edit).
+
+        Not a TYPED MODEL ID row: typed ahead of readiness it is the only
+        match, and the catalog row readiness brings must still win; the
+        rebaser carries the edits to it.
+        """
+        row = self.highlighted_row()
+        if row is None or row.kind != "typed":
             self._user_moved = True
 
     @on(OptionList.OptionSelected, "#console-popover-pairs")
@@ -1476,7 +1492,7 @@ class ConsoleModelPopover(
             return
         if name in self._mount_echo and self._mount_echo.pop(name) == raw:
             return
-        self._user_moved = True  # a late fill must not retarget an edit
+        self._pin_highlight()  # a late fill must not retarget an edit
         if name == "streaming":
             self._streaming = bool(value)
         if value is _INVALID:
@@ -1533,8 +1549,11 @@ class ConsoleModelPopover(
         try:
             for name in ("temperature", "max_tokens"):
                 control = self._value_input(name)
+                value = getattr(settings, name)
+                if self._parse_value(name, control.value) == value:
+                    continue  # never rewrite text being typed ("0" -> "0.0")
                 with control.prevent(Input.Changed):
-                    control.value = self._input_text(getattr(settings, name))
+                    control.value = self._input_text(value)
             streaming = self.query_one("#console-popover-streaming", Select)
             with streaming.prevent(Select.Changed):
                 streaming.value = self._streaming
@@ -1749,7 +1768,7 @@ class ConsoleModelPopover(
             self.dismiss_safe_once(None)
             return
         self._guard_focus = self.focused
-        guard.update(unsaved_prompt_copy(labels))
+        guard.update(f"\n{unsaved_prompt_copy(labels)}\n")  # blank edge lines (CSS)
         guard.display = True
         # Focus leaves Find, so Enter and d reach the guard, not the query.
         guard.focus()
