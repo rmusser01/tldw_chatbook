@@ -903,7 +903,10 @@ class ConsolePromptQueueCoordinator:
         """Reacquire one slot and dispatch the next waiting entry."""
 
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # A changed context epoch makes resume() re-pause as CONTEXT_CHANGED,
+        # which the registry reports as APPLIED with no chain created. Drain
+        # only a queue that actually resumed (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         await self._drain_waiting(session_id, self._run_status(session_id))
         return resumed
