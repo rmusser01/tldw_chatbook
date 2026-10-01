@@ -44,7 +44,12 @@ def _hint_texts(switcher) -> list[str]:
 @pytest.mark.parametrize("size", [(211, 44), (235, 52)])
 @private_profile_test
 async def test_switch_model_renders_no_fold_hint(request, size) -> None:
-    """AC#2: no fold hint at rest, at the end of the scroll, or back at top."""
+    """AC#2: no fold hint at rest, after paging down the list, or back up.
+
+    Page keys, not End/Home: focus stays in Find, whose Input takes End and
+    Home as caret moves (cubic #2947), while the switcher binds PageDown and
+    PageUp to the list.
+    """
     app = _console_app()
     harness = _Harness(app)
     async with harness.run_test(size=size) as pilot:
@@ -55,10 +60,14 @@ async def test_switch_model_renders_no_fold_hint(request, size) -> None:
         assert not switcher.query(f"#{_RETIRED_HINT_ID}"), size
         assert _hint_texts(switcher) == [], size
 
-        for key in ("end", "home"):
+        highlights = []
+        for key in ("pagedown", "pagedown", "pageup", "pageup"):
             await pilot.press(key)
             await pilot.pause()
             assert _hint_texts(switcher) == [], (size, key)
+            highlights.append(switcher.highlighted_row())
+        # The keys reached the list: PageDown went down it, PageUp back up.
+        assert highlights[0] is not None and highlights[0] != highlights[-1], highlights
 
         await pilot.press("escape")
         await pilot.pause()

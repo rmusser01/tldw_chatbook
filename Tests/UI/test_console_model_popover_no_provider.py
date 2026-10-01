@@ -16,6 +16,7 @@ provider select.
 from __future__ import annotations
 
 import pytest
+from textual.widgets import Input
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.app import TldwCli
@@ -134,6 +135,8 @@ async def test_blank_popover_survives_a_custom_model_id_keystroke() -> None:
 
         assert app.is_running, "the popover took the app down on the update path"
         assert app._exception is None, f"the update path raised {app._exception!r}"
+        # The key reached Find (so the typed-id path ran) and made no row.
+        assert app.screen.query_one("#console-popover-find", Input).value == "g"
         assert all(row.kind != "typed" for row in app.screen._rows)
         assert isinstance(app.screen, ConsoleModelPopover)
 

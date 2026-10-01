@@ -44,7 +44,10 @@ from tldw_chatbook.Chat.console_settings_defaults import build_console_default_i
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
 )
-from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.Console.console_model_popover import (
+    CURRENT_MARK,
+    ConsoleModelPopover,
+)
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsModal,
 )
@@ -1091,7 +1094,7 @@ async def test_quick_popover_mounts_with_no_model_selected() -> None:
 
         rows = app.screen._rows
         assert ("pair", "llama_cpp", "model-a") in {row.key for row in rows}
-        assert all(row.note != "● CURRENT" for row in rows)
+        assert all(row.note != CURRENT_MARK for row in rows)
 
 
 # --- TASK-26019: context breakdown by category ------------------------------

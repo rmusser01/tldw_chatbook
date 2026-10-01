@@ -246,6 +246,8 @@ async def test_real_console_change_model_command_opens_real_picker(
                 if popover._first_readiness_done and not popover._readiness_pending:
                     break
                 await pilot.pause(0.01)
+            else:
+                raise AssertionError("Switch model readiness did not settle in 3 s")
             search.value = "gpt-task"
             await pilot.pause()
             pairs = [row for row in popover._rows if row.kind == "pair"]

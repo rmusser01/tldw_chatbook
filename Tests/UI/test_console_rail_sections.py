@@ -1099,7 +1099,7 @@ async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
 
 
 @pytest.mark.asyncio
-async def test_popover_model_picker_escape_restores_then_dismisses_popover():
+async def test_popover_escape_with_a_query_typed_dismisses_without_applying():
     """Esc from Find with a query typed dismisses and applies nothing."""
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:

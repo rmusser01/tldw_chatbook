@@ -253,32 +253,67 @@ def test_controller_selection_carries_the_sessions_endpoint_policy() -> None:
     assert selection.endpoint_provenance is ConsoleEndpointProvenance.EPHEMERAL_SESSION
 
 
-def _selection_construction_sites() -> set[tuple[str, str]]:
+def _constructs_selection(call, aliases: set[str]) -> bool:
+    """A call of the class by name, by an import alias or as ``mod.Class``."""
     import ast
 
-    root = Path(__file__).resolve().parents[2]
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id in aliases
+    return isinstance(func, ast.Attribute) and func.attr == "ConsoleProviderSelection"
+
+
+def _selection_construction_sites(
+    sources: dict[str, str] | None = None,
+) -> set[tuple[str, str]]:
+    import ast
+
+    if sources is None:
+        root = Path(__file__).resolve().parents[2]
+        sources = {
+            path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
+            for path in sorted((root / "tldw_chatbook").rglob("*.py"))
+        }
     sites: set[tuple[str, str]] = set()
-    for path in sorted((root / "tldw_chatbook").rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        if "ConsoleProviderSelection(" not in source:
+    for name, source in sources.items():
+        if "ConsoleProviderSelection" not in source:
             continue
         tree = ast.parse(source)
+        aliases = {"ConsoleProviderSelection"} | {
+            alias.asname
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name == "ConsoleProviderSelection" and alias.asname
+        }
 
         def visit(node, owner):
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     visit(child, child.name)
                     continue
-                if (
-                    isinstance(child, ast.Call)
-                    and isinstance(child.func, ast.Name)
-                    and child.func.id == "ConsoleProviderSelection"
-                ):
-                    sites.add((path.relative_to(root).as_posix(), owner))
+                if isinstance(child, ast.Call) and _constructs_selection(child, aliases):
+                    sites.add((name, owner))
                 visit(child, owner)
 
         visit(tree, "<module>")
     return sites
+
+
+def test_the_site_scan_sees_aliased_and_qualified_constructions() -> None:
+    """cubic #2947: an import alias or a module-qualified call is a site too,
+    so the guard below fails closed for them."""
+    sources = {
+        "a.py": "from m import ConsoleProviderSelection as CPS\ndef f():\n    CPS()\n",
+        "b.py": "import m\ndef g():\n    m.ConsoleProviderSelection()\n",
+        "c.py": "def h():\n    ConsoleProviderSelection()\n",
+    }
+
+    assert _selection_construction_sites(sources) == {
+        ("a.py", "f"),
+        ("b.py", "g"),
+        ("c.py", "h"),
+    }
 
 
 def test_only_the_builder_constructs_a_selection_from_session_settings() -> None:

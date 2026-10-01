@@ -23,6 +23,10 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
+from tldw_chatbook.Chat.console_session_settings import (
+    build_target_default_console_session_settings,
+)
+from tldw_chatbook.config import load_settings
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
@@ -113,8 +117,11 @@ class _Keys:
 
 async def _drain(app) -> None:
     owner = app.console_settings_durability_owner
-    while owner.tasks:
+    for _ in range(50):
+        if not owner.tasks:
+            return
         await asyncio.gather(*tuple(owner.tasks))
+    raise AssertionError(f"durability tasks still pending: {owner.tasks!r}")
 
 
 def _composer(console: ChatScreen):
@@ -261,11 +268,15 @@ async def test_default_keys_write_the_three_values_through_the_real_writer(
         assert (settings.provider, settings.model) == ("anthropic", "claude-sonnet-4-5")
 
         # AC#11: Ctrl+N, pressed while Max tokens holds a typed value. Haiku has
-        # no profile yet: its Temperature is whatever the chain resolves.
+        # no profile yet: its Temperature is whatever the config chain
+        # resolves, read from the saved config rather than from the field.
+        resolved = build_target_default_console_session_settings(
+            load_settings(force_reload=True), "anthropic", "claude-haiku-4-5"
+        ).temperature
+        assert resolved is not None
         await keys.run(("alt+m", "h", "a", "i", "tab", "tab", "8", "1", "9", "2"))
-        shown = float(
-            harness.screen.query_one("#console-popover-temperature", Input).value
-        )
+        shown = harness.screen.query_one("#console-popover-temperature", Input).value
+        assert shown and float(shown) == pytest.approx(resolved), shown
         await keys.run(("ctrl+n",))
         await _drain(app)
         assert harness.screen is console
@@ -274,7 +285,7 @@ async def test_default_keys_write_the_three_values_through_the_real_writer(
         assert config["chat_defaults"]["model"] == "claude-haiku-4-5"
         profiles = config["api_settings"]["anthropic"]["model_defaults"]
         assert profiles["claude-haiku-4-5"] == {
-            "temperature": pytest.approx(shown),
+            "temperature": pytest.approx(resolved),
             "max_tokens": 8192,
             "streaming": True,
         }

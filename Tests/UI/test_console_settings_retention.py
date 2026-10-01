@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_model_popover import CURRENT_MARK
 
 
 async def _open_settings(console, harness, pilot, surface):
@@ -35,7 +36,8 @@ async def _open_settings(console, harness, pilot, surface):
 async def _highlight_current(modal, pilot) -> None:
     """Move Switch model's highlight to the CURRENT row (PREVIOUS opens it)."""
     rows = modal._rows
-    index = next(i for i, row in enumerate(rows) if row.note == "● CURRENT")
+    index = next((i for i, row in enumerate(rows) if row.note == CURRENT_MARK), None)
+    assert index is not None, f"no {CURRENT_MARK} row: {[row.key for row in rows]}"
     modal._set_highlight(index)
     await pilot.pause()
 

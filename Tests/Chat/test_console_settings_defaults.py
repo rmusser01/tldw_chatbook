@@ -73,9 +73,10 @@ def _select_scratch_config_source(tmp_path: Path, monkeypatch) -> None:
     The tests re-point ``TLDW_CONFIG_PATH`` at ``tmp_path / "config.toml"``;
     against the session-bound config module the ADR-126 admission refuses
     that as ``raw_source_selection_changed`` (TASK-33004.1 review: every
-    ``apply_console_default_intent`` test here was red locally and no PR or
-    dev CI lane runs this file). Selecting the same path first, through the
-    repo's ``install_config_source``, keeps the gate and satisfies it.
+    ``apply_console_default_intent`` test here was red locally, and no PR
+    lane collects this file; TASK-33641.5 tracks gating it). Selecting the
+    same path first, through the repo's ``install_config_source``, keeps the
+    gate and satisfies it.
     """
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
     fresh = install_config_source(monkeypatch)
