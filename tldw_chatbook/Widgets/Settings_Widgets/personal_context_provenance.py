@@ -129,11 +129,15 @@ class PersonalContextProvenanceDetails(Collapsible):
             self._lease_timer.stop()
             self._lease_timer = None
         self._deadline = 0.0
-        self._content.update(Text("Provenance unavailable. Expand to inspect again."))
-        self._reload.display = False
+        if not self._latched:
+            self._content.update(
+                Text("Provenance unavailable. Expand to inspect again.")
+            )
+            self._reload.display = False
 
     def invalidate(self) -> None:
         """Permanently fence this captured selection until its host reloads it."""
+        self._latched = False
         self.suspend()
         self._latched = True
 

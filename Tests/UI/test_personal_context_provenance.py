@@ -236,3 +236,45 @@ async def test_yielding_mount_still_starts_initial_read():
     app.detail.collapsed = False
     async with app.run_test(size=(100, 35)) as pilot:
         await until(pilot, lambda: "SOURCE_MARKER" in rendered(app.detail))
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("hide", ["collapse", "suspend"])
+async def test_changed_details_keep_content_free_reload_after_hiding(hide):
+    reader = Reader()
+    app = Host(reader)
+    reloads = []
+    app.detail._reload_details = lambda: reloads.append(SUBJECT)
+    async with app.run_test(size=(100, 35)) as pilot:
+        app.detail.collapsed = False
+        await until(pilot, lambda: "SOURCE_MARKER" in rendered(app.detail))
+        reader.state = "changed"
+        app.detail._tick()
+        await until(pilot, lambda: app.detail._latched)
+        assert "Record changed; reload details" in rendered(app.detail)
+        assert app.detail._reload.display
+        calls = reader.calls
+        if hide == "collapse":
+            app.detail.collapsed = True
+            await pilot.pause()
+            app.detail.collapsed = False
+        else:
+            await app.push_screen(Screen())
+            await pilot.pause()
+            await app.pop_screen()
+        await pilot.pause()
+        assert "SOURCE_MARKER" not in rendered(app.detail)
+        assert "Record changed; reload details" in rendered(app.detail)
+        assert app.detail._reload.display
+        app.detail._tick()
+        assert reader.calls == calls
+        assert await pilot.click(".personal-context-provenance-reload")
+        assert reloads == [SUBJECT]
+        # A host selection/profile invalidation still retires the old action.
+        app.detail.invalidate()
+        app.detail.resume()
+        assert not app.detail._reload.display
+        assert "changed" not in rendered(app.detail)
+        assert "SOURCE_MARKER" not in rendered(app.detail)
+        assert reader.calls == calls

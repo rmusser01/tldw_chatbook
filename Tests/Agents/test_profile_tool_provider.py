@@ -264,6 +264,69 @@ def test_search_ranks_distinct_terms_subject_phrase_and_applies_limit(tmp_path) 
     ]
 
 
+def test_search_equal_scores_use_identity_order_before_twenty_result_limit(tmp_path):
+    record_ids = iter("xwvutsrqponmlkjihgfedcba")
+    version_ids = iter("abcdefghijklmnopqrstuvwx")
+    other_ids = Ids()
+
+    def ids(label):
+        if label == "record":
+            return "record-" + next(record_ids)
+        if label == "record-version":
+            return "version-" + next(version_ids)
+        return other_ids(label)
+
+    service = PersonalContextService(
+        PersonalContextRepository(
+            tmp_path / "personal-context.db",
+            key_protector=InMemoryProfileKeyProtector(),
+        ),
+        clock=lambda: NOW,
+        id_factory=ids,
+    )
+    manifest = service.create_profile()
+    scope = service.list_scopes()[0]
+    service.set_runtime_enabled(True)
+    for index in range(24):
+        service.create_manual_record(
+            scope_id=scope.scope_id,
+            payload=PreferencePayload(
+                subject=f"style.{index}", polarity="like", value="concise replies"
+            ),
+            semantic_key={"namespace": "preference", "subject": f"style.{index}"},
+            controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        )
+    provider = _bind_provider(service, manifest, scope, AgentAuthority.READ_ONLY)
+    result = provider.invoke(
+        "profile_search", {"query": "concise replies", "limit": 20}
+    )
+    assert result.ok
+    records = json.loads(result.content)["data"]["records"]
+    # Fixed independently of match_record, service iteration and runtime sort keys.
+    assert [(row["record_id"], row["version_id"]) for row in records] == [
+        ("record-a", "version-x"),
+        ("record-b", "version-w"),
+        ("record-c", "version-v"),
+        ("record-d", "version-u"),
+        ("record-e", "version-t"),
+        ("record-f", "version-s"),
+        ("record-g", "version-r"),
+        ("record-h", "version-q"),
+        ("record-i", "version-p"),
+        ("record-j", "version-o"),
+        ("record-k", "version-n"),
+        ("record-l", "version-m"),
+        ("record-m", "version-l"),
+        ("record-n", "version-k"),
+        ("record-o", "version-j"),
+        ("record-p", "version-i"),
+        ("record-q", "version-h"),
+        ("record-r", "version-g"),
+        ("record-s", "version-f"),
+        ("record-t", "version-e"),
+    ]
+
+
 def test_get_refuses_other_workspace_without_disclosing_the_record(
     tmp_path,
 ) -> None:
