@@ -57,6 +57,9 @@ from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
+from tldw_chatbook.UI.Screens.settings_screen import (
+    SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH,
+)
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
@@ -2550,8 +2553,11 @@ async def test_settings_action_rows_keep_every_button_whole(size):
         await _wait_for_selector(screen, pilot, "#settings-impact-pane-body")
         await host.workers.wait_for_complete()
         detail = screen.query_one("#settings-detail-pane")
+        # The pane stacks by its own width (its on_resize), not the screen's.
+        stacked = detail.size.width < SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH
+        assert detail.has_class("settings-stacked-actions") == stacked, size
         if size[0] >= 211:
-            assert not detail.has_class("settings-stacked-actions"), size
+            assert not stacked, size  # full-screen sizes keep rows inline
         clipped = []
         for summary in screen._category_summaries():
             screen._select_category(summary.category.value)
