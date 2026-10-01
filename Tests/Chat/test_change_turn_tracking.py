@@ -2220,6 +2220,7 @@ def test_summary_row_survives_the_next_message(tmp_path, root, tracker):
     assert len(rows) == 1, "the summary row was destroyed by the next message"
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracker):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 

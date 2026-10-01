@@ -441,3 +441,242 @@ async def test_ui_history_seed_runs_and_cancels_as_native_async_worker(
         assert queued.state is WorkerState.CANCELLED
         assert receivers == [controller.fleet_wake]
         assert settled == receivers
+
+
+@pytest.mark.parametrize(
+    "reader", ["change_review_marker_messages", "resume_marker_messages"]
+)
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_finite_marker_read_retires_reopened_cache_and_preserves_borrowed_owner(
+    tmp_path, local_root, reader, borrowed
+) -> None:
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "runs.db")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    connection = db._held_connection() if borrowed else None
+    if borrowed:
+        connection.execute("BEGIN")
+    else:
+        db.close()
+    try:
+        assert getattr(bridge, reader)("never-ran") == []
+        if borrowed:
+            assert db._held_connection() is connection
+            assert connection.in_transaction is True
+        else:
+            assert not db._maintenance_participant.connections
+    finally:
+        if borrowed:
+            connection.rollback()
+        bridge.close_all_progress()
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cache_state", ["fresh", "stale", "borrowed"])
+@pytest.mark.parametrize("known", [False, True])
+async def test_workspace_target_read_retires_only_its_worker_connection(
+    tmp_path, local_root, cache_state, known
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    db = WorkspaceDB(tmp_path / "workspaces.db")
+    notes = CharactersRAGDB(tmp_path / "notes.db", "test")
+    registry = LocalWorkspaceRegistryService(db)
+    workspace = registry.ensure_default_workspace()
+    service = ChatPersistenceService(notes, workspace_registry=registry)
+    target = workspace.workspace_id if known else "unknown-workspace"
+    db.close()
+    loop = asyncio.get_running_loop()
+
+    def read():
+        connection = None
+        if cache_state == "stale":
+            db._held_connection().close()
+        elif cache_state == "borrowed":
+            connection = db._held_connection()
+            connection.execute("BEGIN")
+        try:
+            if known:
+                assert (
+                    service.validate_workspace_target(
+                        scope_type="workspace", workspace_id=target
+                    )
+                    == target
+                )
+            else:
+                with pytest.raises(ValueError, match=f"Unknown workspace: {target}"):
+                    service.validate_workspace_target(
+                        scope_type="workspace", workspace_id=target
+                    )
+            assert service.workspace_registry is registry
+            assert registry.db is db
+            if connection is not None:
+                assert db._held_connection() is connection
+                assert connection.in_transaction
+            else:
+                assert not db._maintenance_participant.connections
+        finally:
+            if connection is not None:
+                connection.rollback()
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            await loop.run_in_executor(executor, read)
+        assert not worker_leases(db)
+    finally:
+        db.close()
+        notes.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cache_state", ["fresh", "stale", "borrowed"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "target_primary",
+        "target_drill",
+        "target_unknown",
+        "target_mismatch",
+        "target_primary_drill",
+        "owner_primary",
+        "owner_child",
+        "owner_unknown",
+    ],
+)
+async def test_run_log_metadata_retires_only_its_worker_connection(
+    tmp_path, local_root, cache_state, operation
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "runs.db")
+    primary = db.create_run(conversation_id="conversation", agent_kind="primary")
+    child = db.create_run(
+        conversation_id="conversation", agent_kind="subagent", parent_run_id=primary
+    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    db.close()
+    loop = asyncio.get_running_loop()
+
+    def read():
+        connection = None
+        if cache_state == "stale":
+            db._held_connection().close()
+        elif cache_state == "borrowed":
+            connection = db._held_connection()
+            connection.execute("BEGIN")
+        try:
+            if operation.startswith("owner_"):
+                run_id = {
+                    "owner_primary": primary,
+                    "owner_child": child,
+                    "owner_unknown": "unknown",
+                }[operation]
+                expected = "unknown" if operation == "owner_unknown" else primary
+                assert bridge._owning_run_id_for_log(run_id) == expected
+            else:
+                conversation, drill, expected = {
+                    "target_primary": ("conversation", None, primary),
+                    "target_drill": ("conversation", child, child),
+                    "target_unknown": ("conversation", "unknown", None),
+                    "target_mismatch": ("other", child, None),
+                    "target_primary_drill": ("conversation", primary, None),
+                }[operation]
+                assert bridge.resolve_run_log_target(conversation, drill) == expected
+            assert bridge.runs_db is db
+            if connection is not None:
+                assert db._held_connection() is connection
+                assert connection.in_transaction
+            else:
+                assert not db._maintenance_participant.connections
+        finally:
+            if connection is not None:
+                connection.rollback()
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            await loop.run_in_executor(executor, read)
+        assert not worker_leases(db)
+    finally:
+        bridge.close_all_progress()
+        db.close()
+
+
+@pytest.mark.parametrize("owner", ["workspace", "target", "owning_run"])
+@pytest.mark.parametrize("memory", [False, True])
+def test_finite_metadata_reads_preserve_memory_and_custom_owners(
+    local_root, owner, memory
+) -> None:
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    if memory:
+        if owner == "workspace":
+            db = WorkspaceDB(":memory:")
+            registry = LocalWorkspaceRegistryService(db)
+            target = registry.ensure_default_workspace().workspace_id
+        else:
+            db = AgentRunsDB(":memory:")
+            target = db.create_run(
+                conversation_id="conversation",
+                agent_kind="subagent",
+                parent_run_id="primary",
+            )
+        connection = db._held_connection()
+        connection.execute("BEGIN")
+    else:
+        db = SimpleNamespace(
+            close=lambda: pytest.fail("custom owner must not be closed"),
+            get_run_metadata=lambda _: {
+                "conversation_id": "conversation",
+                "agent_kind": "subagent",
+                "parent_run_id": "primary",
+            },
+        )
+        target = "custom"
+        registry = SimpleNamespace(get_workspace=lambda _: object())
+    try:
+        if owner == "workspace":
+            service = SimpleNamespace(workspace_registry=registry)
+            assert (
+                ChatPersistenceService._require_workspace_scope(
+                    service, scope_type="workspace", workspace_id=target
+                )
+                == target
+            )
+            assert service.workspace_registry is registry
+        elif owner == "target":
+            assert (
+                ConsoleAgentBridge.resolve_run_log_target(
+                    SimpleNamespace(_db=db), "conversation", target
+                )
+                == target
+            )
+        else:
+            assert (
+                ConsoleAgentBridge._owning_run_id_for_log(
+                    SimpleNamespace(_db=db), target
+                )
+                == "primary"
+            )
+        if memory:
+            assert db._held_connection() is connection
+            assert connection.in_transaction
+    finally:
+        if memory:
+            connection.rollback()
+            db.close()

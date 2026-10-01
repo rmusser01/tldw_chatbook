@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.Agents.agent_models import ContinuationEventContext, ToolBatchReady
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
@@ -909,6 +911,7 @@ async def test_submit_draft_observes_resolved_destination_at_real_dispatch_bound
             assistant_access=assistant_access,
         ),
     )
+    session.library_policy_holder.snapshot = store.library_policy_coordinator.snapshot
     holder_before = session.library_policy_holder.snapshot
     gateway = _DestinationSequenceGateway(
         store,
@@ -1025,6 +1028,8 @@ async def test_submitted_destination_owners_settle_exactly_and_isolate_sessions(
             assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
         ),
     )
+    session_a.library_policy_holder.snapshot = store.library_policy_coordinator.snapshot
+    session_b.library_policy_holder.snapshot = store.library_policy_coordinator.snapshot
     gateway_a = _DestinationSequenceGateway(
         store,
         session_a.id,
@@ -1119,6 +1124,7 @@ async def test_queued_submit_observes_destination_only_after_dequeue_dispatch() 
             assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
         ),
     )
+    session.library_policy_holder.snapshot = store.library_policy_coordinator.snapshot
     gateway = _DestinationSequenceGateway(
         store,
         session.id,
@@ -1159,7 +1165,7 @@ async def test_queued_submit_observes_destination_only_after_dequeue_dispatch() 
 
 
 @pytest.mark.asyncio
-async def test_queued_configuration_and_policy_capture_only_after_dequeue():
+async def test_queued_configuration_and_policy_capture_only_after_dequeue(monkeypatch):
     events: list[str] = []
     store = ConsoleChatStore()
     session = store.create_session()
@@ -1183,21 +1189,45 @@ async def test_queued_configuration_and_policy_capture_only_after_dequeue():
     gateway = _QueueGateway()
     captures: list[str] = []
 
+    captured_configurations: list[ConsoleTurnConfigurationSnapshot] = []
+
     def capture_configuration(session_id: str):
         captures.append(session_id)
-        return ConsoleTurnConfigurationSnapshot.capture(
+        configuration = ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=ConsoleProviderSelection(
                 provider="openai", explicit_model="model-a"
             ),
             tool_configuration={"agent_runtime_enabled": False},
         )
+        captured_configurations.append(configuration)
+        return configuration
 
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
         turn_context_provider=capture_configuration,
         agent_runtime_enabled=False,
+    )
+    authority_inputs: list[ConsoleTurnConfigurationSnapshot] = []
+    real_capture_authority = controller._capture_turn_library_authority
+
+    async def observe_authority_input(session_id, configuration):
+        authority_inputs.append(configuration)
+        return await real_capture_authority(session_id, configuration)
+
+    monkeypatch.setattr(
+        controller, "_capture_turn_library_authority", observe_authority_input
+    )
+    observed_contexts: list[ConsoleTurnExecutionContext] = []
+    real_inner = controller._stream_assistant_response_inner
+
+    async def observe_provider_boundary(**kwargs):
+        observed_contexts.append(kwargs["turn_context"])
+        return await real_inner(**kwargs)
+
+    monkeypatch.setattr(
+        controller, "_stream_assistant_response_inner", observe_provider_boundary
     )
     chain = asyncio.create_task(
         controller.run_prompt_chain("manual", session_id=session.id)
@@ -1211,15 +1241,21 @@ async def test_queued_configuration_and_policy_capture_only_after_dequeue():
         expected_revision=snapshot.revision,
     )
     assert queued.applied is True
-    assert len(captures) == before_queue
+    assert len(captures) == before_queue + 1
     assert len(coordinator.calls) == before_queue
 
+    queued_configuration = captured_configurations[-1]
+    assert events.count("gateway") == 1
     coordinator.snapshot = replace(coordinator.snapshot, policy_revision=9)
     gateway.releases[0].set()
     await gateway.starts[1].wait()
 
     assert len(captures) == before_queue + 1
     assert len(coordinator.calls) == before_queue + 1
+    assert authority_inputs[1] is queued_configuration
+    assert observed_contexts[1].configuration == queued_configuration
+    assert observed_contexts[1].library_authority.policy.policy_revision == 9
+    assert events.count("gateway") == 2
     gateway.releases[1].set()
     await chain
 
@@ -1622,12 +1658,14 @@ async def test_queued_retry_captures_complete_context_only_after_recovery_claim(
 
     capture_reservations: list[PromptQueueReservation] = []
 
+    captured_configurations: list[ConsoleTurnConfigurationSnapshot] = []
+
     def capture_configuration(session_id: str):
         events.append("configuration")
         capture_reservations.append(
             controller.prompt_queue_registry.snapshot(session_id).reservation
         )
-        return ConsoleTurnConfigurationSnapshot.capture(
+        configuration = ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=ConsoleProviderSelection(
                 provider="openai",
@@ -1635,6 +1673,8 @@ async def test_queued_retry_captures_complete_context_only_after_recovery_claim(
             ),
             tool_configuration={"agent_runtime_enabled": False},
         )
+        captured_configurations.append(configuration)
+        return configuration
 
     gateway = QueueRetryGateway()
     controller = ConsoleChatController(
@@ -1642,6 +1682,16 @@ async def test_queued_retry_captures_complete_context_only_after_recovery_claim(
         provider_gateway=gateway,
         turn_context_provider=capture_configuration,
         agent_runtime_enabled=False,
+    )
+    authority_inputs: list[ConsoleTurnConfigurationSnapshot] = []
+    real_capture_authority = controller._capture_turn_library_authority
+
+    async def observe_authority_input(session_id, configuration):
+        authority_inputs.append(configuration)
+        return await real_capture_authority(session_id, configuration)
+
+    monkeypatch.setattr(
+        controller, "_capture_turn_library_authority", observe_authority_input
     )
     observed_contexts: list[ConsoleTurnExecutionContext] = []
     boundary_starts = [asyncio.Event() for _ in range(3)]
@@ -1673,8 +1723,10 @@ async def test_queued_retry_captures_complete_context_only_after_recovery_claim(
         expected_revision=queue_snapshot.revision,
     )
     assert queued.applied
-    assert len(capture_reservations) == before_enqueue_config
+    assert len(capture_reservations) == before_enqueue_config + 1
     assert len(coordinator.calls) == before_enqueue_policy
+    queued_configuration = captured_configurations[-1]
+    assert events.count("gateway") == 1
     gateway.releases[0].set()
     await first
     failed = next(
@@ -1683,18 +1735,29 @@ async def test_queued_retry_captures_complete_context_only_after_recovery_claim(
         if item.role is ConsoleMessageRole.ASSISTANT and item.status == "failed"
     )
 
+    coordinator.snapshot = replace(coordinator.snapshot, policy_revision=9)
     recovery = asyncio.create_task(controller.retry_failed_queue_turn(failed.id))
     await boundary_starts[1].wait()
 
     assert capture_reservations[-1] is PromptQueueReservation.HELD
-    assert len(capture_reservations) == before_enqueue_config + 1
+    assert len(capture_reservations) == before_enqueue_config + 2
     assert len(coordinator.calls) == before_enqueue_policy + 1
     assert isinstance(observed_contexts[-1], ConsoleTurnExecutionContext)
     assert observed_contexts[-1].resolved_destination == _destination()
 
+    assert authority_inputs[1] is not queued_configuration
+    assert observed_contexts[1].configuration == authority_inputs[1]
+    assert observed_contexts[1].library_authority.policy.policy_revision == 9
+    assert events.count("gateway") == 2
     await gateway.starts[1].wait()
+    coordinator.snapshot = replace(coordinator.snapshot, policy_revision=11)
     gateway.releases[1].set()
     await gateway.starts[2].wait()
+    assert authority_inputs[2] is queued_configuration
+    assert observed_contexts[2].configuration == queued_configuration
+    assert observed_contexts[2].library_authority.policy.policy_revision == 11
+    assert len(capture_reservations) == before_enqueue_config + 2
+    assert events.count("gateway") == 3
     gateway.releases[2].set()
     await recovery
 

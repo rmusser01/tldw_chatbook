@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1030 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1033 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -147,6 +147,7 @@ tldw_chatbook.Chat.console_capture_policy_repository
 tldw_chatbook.Chat.console_chat_controller
 tldw_chatbook.Chat.console_chat_fork
 tldw_chatbook.Chat.console_chat_models
+tldw_chatbook.Chat.console_chat_persistence
 tldw_chatbook.Chat.console_chat_store
 tldw_chatbook.Chat.console_command_grammar
 tldw_chatbook.Chat.console_command_suggestions
@@ -196,6 +197,7 @@ tldw_chatbook.Chat.console_raw_cli
 tldw_chatbook.Chat.console_realtime_loop
 tldw_chatbook.Chat.console_roleplay_identity
 tldw_chatbook.Chat.console_roleplay_metadata
+tldw_chatbook.Chat.console_run_hooks
 tldw_chatbook.Chat.console_runtime
 tldw_chatbook.Chat.console_save_targets
 tldw_chatbook.Chat.console_scratch_space
@@ -749,6 +751,7 @@ tldw_chatbook.UI.Console_Modules.dispatch_recovery
 tldw_chatbook.UI.Console_Modules.fleet
 tldw_chatbook.UI.Console_Modules.frame
 tldw_chatbook.UI.Console_Modules.hands_free
+tldw_chatbook.UI.Console_Modules.hooks
 tldw_chatbook.UI.Console_Modules.image
 tldw_chatbook.UI.Console_Modules.left_rail
 tldw_chatbook.UI.Console_Modules.library_activity

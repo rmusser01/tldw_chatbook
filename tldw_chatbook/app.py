@@ -5618,28 +5618,28 @@ class TldwCli(
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
 
-        # Mount the shared app chrome before pushing the first screen so
-        # persistent navigation is available after splash startup too.
-        existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
-        main_ui_widgets = self._create_main_ui_widgets()
-        widgets_to_mount = []
-        for widget in main_ui_widgets:
-            if widget.id not in existing_ids:
-                widgets_to_mount.append(widget)
-            else:
-                logger.debug(f"Skipping duplicate widget with ID: {widget.id}")
+        if self.is_running:
+            # Mount the shared app chrome before pushing the first screen so
+            # persistent navigation is available after splash startup too.
+            existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
+            widgets_to_mount = []
+            for widget in self._create_main_ui_widgets():
+                if widget.id not in existing_ids:
+                    widgets_to_mount.append(widget)
+                else:
+                    logger.debug(f"Skipping duplicate widget with ID: {widget.id}")
 
-        if widgets_to_mount:
-            await self.mount(*widgets_to_mount)
+            if widgets_to_mount:
+                await self.mount(*widgets_to_mount)
 
-        # Push the initial screen after the shared navigation is mounted.
-        await self._push_initial_screen()
+            # Push the initial screen after the shared navigation is mounted.
+            await self._push_initial_screen()
 
-        # Screen navigation uses buffered logging until the Logs screen is ready.
-        self._setup_buffered_logging()
+            # Screen navigation uses buffered logging until the Logs screen is ready.
+            self._setup_buffered_logging()
 
-        # Finish deferred startup work once the mounted screen has rendered.
-        self.call_after_refresh(self._post_mount_setup)
+            # Finish deferred startup work once the mounted screen has rendered.
+            self.call_after_refresh(self._post_mount_setup)
 
     def _show_generic_screen_help(self) -> None:
         """Show a help panel generated from the active screen's BINDINGS."""

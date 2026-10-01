@@ -737,6 +737,7 @@ async def test_leaving_console_does_not_cancel_an_in_flight_wake_turn():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_the_wake_exemption_never_outlives_its_turn():
     """A wake turn that finishes leaves nothing exempt behind."""
     store = ConsoleChatStore()

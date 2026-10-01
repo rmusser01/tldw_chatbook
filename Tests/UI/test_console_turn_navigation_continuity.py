@@ -26,7 +26,10 @@ from Tests.UI.test_console_headless_approval import (
     _risk_row,
     _wait_for_round,
 )
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _ReadyResolutionGateway,
+)
 from Tests.UI.test_console_store_continuity import (
     _StallingWakeGateway,
     _db_chain,
@@ -51,6 +54,8 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @dataclass
 class _DetachedViewCounters:
@@ -61,6 +66,8 @@ class _DetachedViewCounters:
 
 class _TwoChunkGateway(_StallingWakeGateway):
     """Direct-provider double with barriers after each streamed delta."""
+
+    cached_context_window = _ReadyResolutionGateway.cached_context_window
 
     def __init__(self) -> None:
         super().__init__()
@@ -1066,98 +1073,110 @@ async def test_hidden_completion_and_background_approval_reconcile_by_session(
     approval_round_id = None
 
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
-        chat, controller, store, turn_session_id, conversation_id = await _seed_console(
-            app, pilot, gateway
-        )
-        runtime = chat._console_runtime()
-        approval_session = controller.new_session(title="Approval session")
-        controller.switch_session(turn_session_id)
-        assert store.active_session_id == turn_session_id
+        try:
+            (
+                chat,
+                controller,
+                store,
+                turn_session_id,
+                conversation_id,
+            ) = await _seed_console(app, pilot, gateway)
+            runtime = chat._console_runtime()
+            approval_session = controller.new_session(title="Approval session")
+            controller.switch_session(turn_session_id)
+            assert store.active_session_id == turn_session_id
 
-        gateway.arm_two_chunks("SESSION-A")
-        final_content = "SESSION-A-ASESSION-A-B"
-        turn_id = _admit_console_turn_to_runtime(
-            chat,
-            "complete while another session waits",
-            turn_session_id,
-        )
-        turn_task = runtime._turn_custody[turn_id].task
-        assert turn_task is not None
-        await asyncio.wait_for(gateway.first_chunk.wait(), timeout=3)
+            gateway.arm_two_chunks("SESSION-A")
+            final_content = "SESSION-A-ASESSION-A-B"
+            turn_id = _admit_console_turn_to_runtime(
+                chat,
+                "complete while another session waits",
+                turn_session_id,
+            )
+            turn_task = runtime._turn_custody[turn_id].task
+            assert turn_task is not None
+            await asyncio.wait_for(gateway.first_chunk.wait(), timeout=3)
 
-        await _navigate(
-            app,
-            pilot,
-            "library",
-            expect="LibraryScreen",
-            allow_confirmation=False,
-        )
-        assert runtime.view is None
+            await _navigate(
+                app,
+                pilot,
+                "library",
+                expect="LibraryScreen",
+                allow_confirmation=False,
+            )
+            assert runtime.view is None
 
-        approval_thread, _approval_box = _arm(
-            controller,
-            approval_session.id,
-            call=_risk_row(),
-        )
-        assert await _wait_for_round(controller, approval_session.id)
-        approval_round_id = _armed_round_ids(controller, approval_session.id)[0]
-        assert runtime.console_needs_attention is True
-        assert app.console_needs_attention is True
+            approval_thread, _approval_box = _arm(
+                controller,
+                approval_session.id,
+                call=_risk_row(),
+            )
+            assert await _wait_for_round(controller, approval_session.id)
+            approval_round_id = _armed_round_ids(controller, approval_session.id)[0]
+            assert runtime.console_needs_attention is True
+            assert app.console_needs_attention is True
 
-        gateway.release_second.set()
-        await asyncio.wait_for(gateway.second_chunk.wait(), timeout=3)
-        gateway.release_terminal.set()
-        result = await asyncio.wait_for(turn_task, timeout=8)
-        assert result.accepted
+            gateway.release_second.set()
+            await asyncio.wait_for(gateway.second_chunk.wait(), timeout=3)
+            gateway.release_terminal.set()
+            result = await asyncio.wait_for(turn_task, timeout=8)
+            assert result.accepted
 
-        terminal_rows = _unique_terminal_rows(
-            store,
-            turn_session_id,
-            final_content,
-        )
-        assert len(terminal_rows) == 1
-        receipt_id = terminal_receipt_id_for_message(terminal_rows[0])
-        assert receipt_id
-        marks_service = runtime._console_local_marks_service()
-        assert (conversation_id, receipt_id) in (
-            marks_service.list_console_unseen_marks()
-        )
+            terminal_rows = _unique_terminal_rows(
+                store,
+                turn_session_id,
+                final_content,
+            )
+            assert len(terminal_rows) == 1
+            receipt_id = terminal_receipt_id_for_message(terminal_rows[0])
+            assert receipt_id
+            marks_service = runtime._console_local_marks_service()
+            assert (conversation_id, receipt_id) in (
+                marks_service.list_console_unseen_marks()
+            )
 
-        reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
-        await pilot.pause()
-        assert store.active_session_id == turn_session_id
-        assert _rendered_text(reopened).count(final_content) == 1
-        assert not any(card.display for card in reopened.query("#chat-approval-card"))
-        assert (conversation_id, receipt_id) not in (
-            marks_service.list_console_unseen_marks()
-        )
-        # Visiting A acknowledges only A's terminal receipt. B's unresolved
-        # review continues to own the app-wide marker.
-        assert controller.has_pending_approval_round(approval_session.id)
-        assert runtime.console_needs_attention is True
-        assert app.console_needs_attention is True
+            reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
+            await pilot.pause()
+            assert store.active_session_id == turn_session_id
+            assert _rendered_text(reopened).count(final_content) == 1
+            assert not any(
+                card.display for card in reopened.query("#chat-approval-card")
+            )
+            assert (conversation_id, receipt_id) not in (
+                marks_service.list_console_unseen_marks()
+            )
+            # Visiting A acknowledges only A's terminal receipt. B's unresolved
+            # review continues to own the app-wide marker.
+            assert controller.has_pending_approval_round(approval_session.id)
+            assert runtime.console_needs_attention is True
+            assert app.console_needs_attention is True
 
-        controller.switch_session(approval_session.id)
-        await reopened._sync_native_console_chat_ui()
-        await pilot.pause()
-        assert final_content not in _rendered_text(reopened)
-        assert any(card.display for card in reopened.query("#chat-approval-card"))
+            controller.switch_session(approval_session.id)
+            await reopened._sync_native_console_chat_ui()
+            while any(
+                worker.node is reopened and worker.group == "console-sync"
+                for worker in app.workers
+            ):
+                await asyncio.sleep(0)
+            await pilot.pause()
+            assert final_content not in _rendered_text(reopened)
+            assert any(card.display for card in reopened.query("#chat-approval-card"))
 
-        controller.resolve_pending_approval(
-            {"builtin__write_file": "deny"},
-            round_id=approval_round_id,
-        )
-        await asyncio.to_thread(approval_thread.join, 5)
-        assert not approval_thread.is_alive()
-        approval_round_id = None
-        assert not controller.has_pending_approval_round(approval_session.id)
-        assert runtime.recompute_console_attention(force_projection=True) is False
-        assert app.console_needs_attention is False
-
-    if approval_thread is not None and approval_thread.is_alive():
-        if approval_round_id is not None:
             controller.resolve_pending_approval(
                 {"builtin__write_file": "deny"},
                 round_id=approval_round_id,
             )
-        await asyncio.to_thread(approval_thread.join, 5)
+            await asyncio.to_thread(approval_thread.join, 5)
+            assert not approval_thread.is_alive()
+            approval_round_id = None
+            assert not controller.has_pending_approval_round(approval_session.id)
+            assert runtime.recompute_console_attention(force_projection=True) is False
+            assert app.console_needs_attention is False
+        finally:
+            if approval_thread is not None and approval_thread.is_alive():
+                if approval_round_id is not None:
+                    controller.resolve_pending_approval(
+                        {"builtin__write_file": "deny"},
+                        round_id=approval_round_id,
+                    )
+                await asyncio.to_thread(approval_thread.join, 5)

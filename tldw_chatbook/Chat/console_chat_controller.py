@@ -9182,8 +9182,8 @@ class ConsoleChatController:
 
         A closed event loop cannot terminally cancel or await its pending tasks
         through public asyncio APIs. This helper therefore removes only the
-        controller's volatile ownership and returns exclusively owned
-        preparations for synchronous cleanup. It does not promise a terminal
+        controller's volatile ownership, closes its coroutine in the task's
+        context, and returns exclusively owned preparations for cleanup. It does not promise a terminal
         Task state or suppress Python's destroyed-pending-task diagnostic.
         """
 
@@ -9196,6 +9196,7 @@ class ConsoleChatController:
                 preparation_id = self._active_submit_preparations.pop(task, None)
                 if preparation_id is not None:
                     closed_preparations.append(preparation_id)
+                task.get_context().run(task.get_coro().close)
             live_preparations = frozenset(self._active_submit_preparations.values())
         return tuple(
             preparation_id
@@ -9701,34 +9702,43 @@ class ConsoleChatController:
         """Observe the whole attempt, including refusals before trace setup."""
         from .console_send_diagnostics import send_diagnostic_scope
 
-        async with send_diagnostic_scope("controller_submit") as diagnostic:
-            result = await self._submit_draft_lifecycle(
-                draft,
-                session_id=session_id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                queue_authorization=queue_authorization,
-                wake_authorization=wake_authorization,
-                preserve_composer=preserve_composer,
-                configuration=configuration,
-                accepted_attachments=accepted_attachments,
-                captured_one_shot_prefill=captured_one_shot_prefill,
-                captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
-                staged_evidence_launch=staged_evidence_launch,
-                staged_evidence_capture=staged_evidence_capture,
-                staged_evidence_release=staged_evidence_release,
-                custody_acceptance_hook=custody_acceptance_hook,
-                _resume_preparation_id=_resume_preparation_id,
-                _resume_resolution=_resume_resolution,
+        active_task = asyncio.current_task()
+        if active_task is not None:
+            self._register_submit_task(
+                active_task, session_id or self.store.active_session_id
             )
-            diagnostic.outcome = (
-                result.terminal_status.value
-                if result.terminal_status is not None
-                else "accepted"
-                if result.accepted
-                else "refused"
-            )
-            return result
+        try:
+            async with send_diagnostic_scope("controller_submit") as diagnostic:
+                result = await self._submit_draft_lifecycle(
+                    draft,
+                    session_id=session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                    preserve_composer=preserve_composer,
+                    configuration=configuration,
+                    accepted_attachments=accepted_attachments,
+                    captured_one_shot_prefill=captured_one_shot_prefill,
+                    captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
+                    staged_evidence_launch=staged_evidence_launch,
+                    staged_evidence_capture=staged_evidence_capture,
+                    staged_evidence_release=staged_evidence_release,
+                    custody_acceptance_hook=custody_acceptance_hook,
+                    _resume_preparation_id=_resume_preparation_id,
+                    _resume_resolution=_resume_resolution,
+                )
+                diagnostic.outcome = (
+                    result.terminal_status.value
+                    if result.terminal_status is not None
+                    else "accepted"
+                    if result.accepted
+                    else "refused"
+                )
+                return result
+        finally:
+            if active_task is not None:
+                self._unregister_submit_task(active_task)
 
     async def _submit_draft_lifecycle(
         self,
@@ -9782,8 +9792,6 @@ class ConsoleChatController:
                     origin=origin,
                     queue_entry_id=queue_entry_id,
                 )
-            if active_task is not None:
-                self._register_submit_task(active_task, owner_key)
         if active_task is None:
             return await self._submit_draft_inner(
                 draft,
@@ -9852,8 +9860,6 @@ class ConsoleChatController:
                 origin=origin,
                 queue_entry_id=queue_entry_id,
             )
-        finally:
-            self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
         self,

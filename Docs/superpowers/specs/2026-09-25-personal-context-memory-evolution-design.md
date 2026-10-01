@@ -1,7 +1,7 @@
 # Personal Context memory evolution design
 
 Date: 2026-09-25
-Status: Approved for executable planning after technical review, 2026-09-25
+Status: First-release implementation complete; pinned-dev integration under review. Later designs remain gated.
 Foundation: TASK-25907
 ADR required: yes
 ADR path: backlog/decisions/182-personal-context-memory-evolution.md (Accepted)
@@ -23,17 +23,20 @@ eventually correct or forget information across its derivatives.
 
 The user endorsed the direction, requested a technical review, and selected
 native execution. This document incorporates that review and records later
-design work. The offline baseline is implemented; the tracker carries its
-verification status. Runtime behavior remains unchanged. Approval of this
-direction does not finalize a future schema or change existing permissions.
+design work. The offline baseline and first-release provenance, Next Send
+selection, and local retrieval slices are implemented; the tracker links their
+plans, native verification, and reviews. The pinned-dev integration is undergoing
+qualification. Later schema, forgetting, disclosure, consolidation, and repair
+designs do not authorize runtime activation or change existing permissions.
 
-## Current behavior and evidence
+## Original inspected baseline and evidence
 
-The baseline is the inspected local checkout, not a live audit of Muse or the
-companion server. Branch state and documentation can differ; implementation
-plans must recheck these owners before coding.
+This table records the local checkout inspected for the original design, before
+the first-release implementation. It is not a live audit of Muse or the companion
+server, or a current implementation inventory. The tracker records subsequent
+delivery; future implementation plans must recheck these owners before coding.
 
-| Capability | Current owner and limit |
+| Capability | Originally inspected owner and limit |
 | --- | --- |
 | Typed facts, record versions, controls, and source metadata | `packages/tldw_profile_core/src/tldw_profile_core/models.py`; references and hashes are not a complete versioned citation contract |
 | User-authorized mutation and read views | `tldw_chatbook/Personal_Context/service.py`; Settings inspection and agent eligibility are separate concerns |
@@ -326,5 +329,8 @@ presented as verified and no new background provider activity is enabled.
 - [x] Self-review completed for ownership, unknown evidence, privacy, scope, and acceptance coverage.
 - [x] User endorsed the direction and requested review before continuing.
 - [x] Pre-implementation review corrections recorded in the design and tracker.
-- [ ] Executable plans for the approved first-release tasks are reviewed.
-- [ ] Runtime implementation begins under those approved plans.
+- [x] Executable plans for the approved first-release tasks are reviewed; linked from the [roadmap](../../../backlog/docs/personal-context-memory-roadmap.md).
+- [x] Runtime implementation began under those approved plans; TASK-25907.1 through TASK-25907.4 are complete.
+
+These historical milestones do not close the reopened pinned-dev integration
+review or authorize any later design-only capability.

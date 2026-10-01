@@ -1,6 +1,6 @@
 # Personal Context memory roadmap and tracker
 
-Updated: 2026-09-29
+Updated: 2026-10-01
 Status: PR #2862 is being qualified against pinned dev; the Canvas preview correction is complete, and V2 activation/disclosure/server rollout remain gated
 Foundation: [TASK-25907](../tasks/task-25907%20-%20Cross-session-persistent-memory-for-the-agent.md) — Done, @codex
 
@@ -75,7 +75,8 @@ layout, database, cadence, and embedded instructions are not requirements.
 - [x] Complete all nine original tasks while retaining implementation/design-only boundaries.
 - [x] Create and attach [PR #2862](https://github.com/rmusser01/tldw_chatbook/pull/2862) against dev.
 - [x] Complete TASK-33165: reserve Canvas context through the shared request schema plan and reject stale preview publication after asynchronous work.
-- [x] Complete TASK-25907.23: resolve reported qualification failures under unchanged limits and publish the approved integration and PR description.
+- [x] Prior TASK-25907.23 qualification resolved reported failures under unchanged limits and published the then-approved integration and PR description.
+- [ ] Reopened TASK-25907.23: finish independent review of the refreshed pinned-dev candidate before a new publication and verified closure.
 
 This is a program plan and status index. Task files are the source of truth
 for status and acceptance criteria. Design-only tasks do not represent shipped
@@ -574,3 +575,22 @@ The [refresh plan](../../Docs/superpowers/plans/2026-09-30-personal-context-dev-
 keeps both Settings memory/Hooks stylesheet owners and both lesson additions,
 then qualifies the actual combined candidate under existing limits. All production
 activation gates remain closed, and independent retirement work remains separate.
+
+
+### Local qualification checkpoint — Phase A
+
+The pinned dev candidate has targeted native evidence for Console, Hooks,
+Settings, Personal Context/Next Send, provider handoff, private-profile children,
+resource owners, import/size budgets and generated assets. Qualification repairs
+reuse finite connection custody, submit diagnostic cleanup and the existing
+splash continuation; synthetic fixture contracts and Settings search metadata
+are reconciled with retained baseline controls.
+
+The joined resource receipt retains the unchanged private borrowed-WAL
+descriptor-count diagnostic RED, with native owner identities and a separately
+labeled offline invariant audit. It is not an all-resource-green result. Earlier
+unattributed timeouts, aggregate descriptor growth, expected history/runtime
+limitations and narrow import/size margins remain explicit in the task report.
+The local PR draft and frozen evidence await independent task and whole-branch
+review. No publication, criteria closure, status advancement, dev merge or
+production activation is claimed at this checkpoint.

@@ -1,5 +1,25 @@
 # Lessons: what counts as evidence a change works
 
+## Zero-delay loop ticks do not establish an asynchronous ownership boundary
+
+**TASK-25907.23, 2026-09-30.** Native qualification of the emergency Console
+submit-detachment test failed on both the current source and an immutable BASE
+export. Its twenty `asyncio.sleep(0)` ticks could close the loop while Hook
+admission still awaited a worker, before the intended COMMITTING barrier. Waiting
+for the fixture's existing held event under the unchanged outer deadline restored
+the intended assertion path; increasing the tick count would not prove it.
+
+That fixture repair did not explain away a separate ContextVar unraisable. Real
+pending-Hook and COMMITTING tasks, with synchronous and foreign-live-loop callers,
+proved that emergency detachment must finalize the captured coroutine in its
+own native Task context. The existing submit registry now covers the entire
+diagnostic wrapper, and synchronous GeneratorExit seals the existing diagnostic
+monitor without scheduling work on a different loop. The tests assert context
+isolation, monitor sealing/drain and retired ownership before GC, while retaining
+Python's destroyed-pending-Task diagnostic contract. Distinguish synchronization
+errors from production lifetime defects; an admitted fixture and a passing body
+alone do not establish cleanup custody.
+
 ## Passing UI cases can retain constructor-owned database caches
 
 **TASK-25907.23, 2026-09-29.** All 99 scoped native UI cases passed, but the
@@ -17230,3 +17250,60 @@ burst and driving each one's tick directly in its own phase. Storage
 admissions and helper spawns still jitter *downward* by 1-3 (a worker that
 lands on an executor thread with a live connection skips the connect), so pin
 observed maxima, not a single run.
+
+
+## 2026-09-30 — Observe the dispatched callback and native shutdown boundary (TASK-25907.23)
+
+A joined resource run found `ScreenStackError` when the real splash-closed
+handler resumed after awaited widget removal during native Textual shutdown.
+A class-method observation wrapper recorded nothing because decorated message
+dispatch retained the original handler reference; that empty capture was
+inconclusive. A regression holding real removal across actual `_close_all`
+reproduced the error and recorded `is_running=False`, an empty screen stack,
+and the application-specific `_shutting_down=False`. The existing handler now
+rechecks public running state before its startup continuation. Exercise the
+actual dispatched callback and record the native lifecycle boundary; neither
+an isolated pass nor an application-specific flag proves the callback is safe
+after an await. Normal splash, disabled splash and keypress startup controls
+remain part of the covering evidence.
+
+## 2026-10-01 — A coalesced refresh request is not a render barrier (TASK-25907.23)
+
+The combined native Console selection exposed an assertion that session A's
+transcript had disappeared immediately after awaiting a direct refresh for
+session B. A held real sync worker reproduced the stale DOM on both immutable
+BASE and current source: the direct call only marked another refresh requested
+while an existing worker was in progress. Its finally path registered an
+exclusive successor before the predecessor retired. Waiting the predecessor
+could therefore raise cancellation and still miss the successor. The fixture
+now waits the public worker manager for the exact screen and console-sync group,
+under its original outer deadline, then retains its original render assertions.
+A held control observed that wait before release. An injected original assertion
+failure also proved the fixture's existing approval-thread join runs while the
+app context is live; otherwise its late callbacks reached a closed loop.
+
+## 2026-10-01 — Seed and reload the selected synthetic source (TASK-25907.23)
+
+Settings qualification found fixtures that changed TLDW_CONFIG_PATH after
+startup admission. Immutable BASE reproduced refusal before the intended
+behavior. Private children now write the same fixture TOML to their already
+selected synthetic path. Five fixtures then exposed a second assumption: the
+same path retained the intentional bootstrap cache, whereas the old source
+switch had incidentally missed it. Calling the public load_settings with
+force_reload=True after those original writes restored their actual behavior
+without resetting private caches or bypassing admission. All fifteen selected
+native child cases passed; source selection, cache freshness and the behavior
+assertion are separate contracts, so preserve evidence for each failure.
+
+## 2026-10-01 — Distinguish a borrowed WAL descriptor from a live worker handle (TASK-25907.23)
+
+The joined native resource probe reached zero owned and unexplained handles but
+still failed its private three-descriptor assumption for a legitimate borrowed
+WorkspaceDB owner. On SQLite3.49.1, both an isolated native control and the real
+WorkspaceDB close path showed a fourth same-inode descriptor retained by the
+Unix VFS while the original main WAL connection remained open. Repeated worker
+closes reused that descriptor; the original final main-owner close retired it
+without GC. The private assertion stayed RED. Connection/lease identity and
+native device/inode custody explained this observation; zero owned counters did
+not make the batch green, and the count did not authorize closing a borrower.
+The earlier aggregate growth warning remained a separate observation.

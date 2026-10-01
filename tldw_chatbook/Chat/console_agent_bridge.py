@@ -9554,16 +9554,19 @@ class ConsoleAgentBridge:
         """Resolve a log selection using metadata only. Call from a worker."""
         if not conversation_id:
             return None
-        if drill_id:
-            record = self._db.get_run_metadata(drill_id)
-            if (
-                record is not None
-                and record.get("conversation_id") == conversation_id
-                and record.get("agent_kind") == AGENT_KIND_SUBAGENT
-            ):
-                return drill_id
-            return None
-        return self.latest_primary_run_id(conversation_id)
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(self._db):
+            if drill_id:
+                record = self._db.get_run_metadata(drill_id)
+                if (
+                    record is not None
+                    and record.get("conversation_id") == conversation_id
+                    and record.get("agent_kind") == AGENT_KIND_SUBAGENT
+                ):
+                    return drill_id
+                return None
+            return self.latest_primary_run_id(conversation_id)
 
     def latest_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the most recent non-superseded PRIMARY run's id, if any.
@@ -9655,7 +9658,10 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self._db.get_run_metadata(run_id)
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(self._db):
+            record = self._db.get_run_metadata(run_id)
         parent_run_id = record.get("parent_run_id") if record else None
         return parent_run_id or run_id
 
@@ -9946,27 +9952,32 @@ class ConsoleAgentBridge:
         self, conversation_id: str
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Return anchored blocks containing only durable Change Review rows."""
-        records = [
-            record
-            for record in self._db.list_runs(conversation_id, include_superseded=False)
-            if record["agent_kind"] == AGENT_KIND_PRIMARY
-        ]
-        records.reverse()
-        snapshots: dict[str, list[dict]] = {}
-        try:
-            for row in self._db.change_snapshots_for_conversation(conversation_id):
-                snapshots.setdefault(str(row["run_id"]), []).append(row)
-        except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
-            snapshots = {}
-        return [
-            (
-                record.get("assistant_message_id"),
-                self._change_review_marker_block(
-                    record, snapshots.get(str(record.get("id")), ())
-                ),
-            )
-            for record in records
-        ]
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(self._db):
+            records = [
+                record
+                for record in self._db.list_runs(
+                    conversation_id, include_superseded=False
+                )
+                if record["agent_kind"] == AGENT_KIND_PRIMARY
+            ]
+            records.reverse()
+            snapshots: dict[str, list[dict]] = {}
+            try:
+                for row in self._db.change_snapshots_for_conversation(conversation_id):
+                    snapshots.setdefault(str(row["run_id"]), []).append(row)
+            except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
+                snapshots = {}
+            return [
+                (
+                    record.get("assistant_message_id"),
+                    self._change_review_marker_block(
+                        record, snapshots.get(str(record.get("id")), ())
+                    ),
+                )
+                for record in records
+            ]
 
     def resume_marker_messages(
         self,
@@ -10025,162 +10036,169 @@ class ConsoleAgentBridge:
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
         """
-        records = self._db.list_runs(
-            conversation_id,
-            include_superseded=False,
-            agent_kind=AGENT_KIND_PRIMARY,
-        )
-        records.reverse()  # list_runs is newest-first; markers must read chronologically
-        thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
-        # TASK-1972 review round: ONE conversation-level query, grouped in
-        # memory -- the per-run lookup was an N+1 over sqlite on every
-        # resume (finding 3).
-        snap_by_run: dict[str, list[dict]] = {}
-        try:
-            for _row in self._db.change_snapshots_for_conversation(conversation_id):
-                snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
-        except Exception:  # noqa: BLE001 -- resume must not die on this
-            snap_by_run = {}
-        # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
-        # the whole conversation -- same no-N+1 precedent as the snapshot
-        # fetch immediately above, and the same "resume must not die on
-        # this" posture: a change_notes read failure must degrade to no
-        # disclosure rows, not break conversation resume entirely.
-        #
-        # Grouped by (target_run_id, delivered_at) where target_run_id is
-        # `delivered_by_run_id` -- the run whose COMPLETION actually
-        # stamped the note delivered, matching live emission's placement
-        # exactly, and immune to both failure modes an earlier version of
-        # this method had: (a) one live batch spanning notes anchored to
-        # TWO different runs no longer fragments into two resume rows --
-        # it stays one row, keyed on the single delivering run; (b) a note
-        # annotated against a run that later became superseded (and so is
-        # excluded from `records`, silently dropping any block keyed to
-        # it) still surfaces, because the delivering run -- typically
-        # still live/non-superseded -- is what the row is keyed to, not
-        # the (possibly off-branch) annotated run.
-        #
-        # `delivered_by_run_id` is NULL on rows stamped before that column
-        # existed (a pre-migration DB) or by any future caller that omits
-        # it -- there is no way to recover which run delivered those, so
-        # they fall back to the note's OWN `run_id` (the annotated run):
-        # the same position this method used before the fix round, kept
-        # here only as the legacy floor, not the common path.
-        disclosure_batches: dict[str, dict[str, list[dict]]] = {}
-        try:
-            for _note in self._db.delivered_notes_for_conversation(conversation_id):
-                _target = _note.get("delivered_by_run_id") or _note.get("run_id")
-                _delivered_at = str(_note.get("delivered_at"))
-                disclosure_batches.setdefault(str(_target), {}).setdefault(
-                    _delivered_at, []
-                ).append(_note)
-        except Exception:  # noqa: BLE001 -- resume must not die on this
-            disclosure_batches = {}
-        blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
-        for record in records:
-            block: list[ConsoleChatMessage] = []
-            steps = record.get("steps") or []
-            planning_deriver = _PendingPrimaryPlanningDeriver()
-            actual_thinking_rounds = thinking_rounds_by_owner.get(
-                str(record.get("assistant_message_id") or ""),
-                frozenset(),
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(self._db):
+            records = self._db.list_runs(
+                conversation_id,
+                include_superseded=False,
+                agent_kind=AGENT_KIND_PRIMARY,
             )
-            for step in steps:
-                kind = str(step.get("kind") or "")
-                planning_marker = planning_deriver.observe(
-                    step,
-                    AGENT_KIND_PRIMARY,
-                    actual_thinking_round_ordinals=actual_thinking_rounds,
+            records.reverse()  # list_runs is newest-first; markers must read chronologically
+            thinking_rounds_by_owner = (
+                thinking_round_ordinals_by_assistant_message_id or {}
+            )
+            # TASK-1972 review round: ONE conversation-level query, grouped in
+            # memory -- the per-run lookup was an N+1 over sqlite on every
+            # resume (finding 3).
+            snap_by_run: dict[str, list[dict]] = {}
+            try:
+                for _row in self._db.change_snapshots_for_conversation(conversation_id):
+                    snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
+            except Exception:  # noqa: BLE001 -- resume must not die on this
+                snap_by_run = {}
+            # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
+            # the whole conversation -- same no-N+1 precedent as the snapshot
+            # fetch immediately above, and the same "resume must not die on
+            # this" posture: a change_notes read failure must degrade to no
+            # disclosure rows, not break conversation resume entirely.
+            #
+            # Grouped by (target_run_id, delivered_at) where target_run_id is
+            # `delivered_by_run_id` -- the run whose COMPLETION actually
+            # stamped the note delivered, matching live emission's placement
+            # exactly, and immune to both failure modes an earlier version of
+            # this method had: (a) one live batch spanning notes anchored to
+            # TWO different runs no longer fragments into two resume rows --
+            # it stays one row, keyed on the single delivering run; (b) a note
+            # annotated against a run that later became superseded (and so is
+            # excluded from `records`, silently dropping any block keyed to
+            # it) still surfaces, because the delivering run -- typically
+            # still live/non-superseded -- is what the row is keyed to, not
+            # the (possibly off-branch) annotated run.
+            #
+            # `delivered_by_run_id` is NULL on rows stamped before that column
+            # existed (a pre-migration DB) or by any future caller that omits
+            # it -- there is no way to recover which run delivered those, so
+            # they fall back to the note's OWN `run_id` (the annotated run):
+            # the same position this method used before the fix round, kept
+            # here only as the legacy floor, not the common path.
+            disclosure_batches: dict[str, dict[str, list[dict]]] = {}
+            try:
+                for _note in self._db.delivered_notes_for_conversation(conversation_id):
+                    _target = _note.get("delivered_by_run_id") or _note.get("run_id")
+                    _delivered_at = str(_note.get("delivered_at"))
+                    disclosure_batches.setdefault(str(_target), {}).setdefault(
+                        _delivered_at, []
+                    ).append(_note)
+            except Exception:  # noqa: BLE001 -- resume must not die on this
+                disclosure_batches = {}
+            blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
+            for record in records:
+                block: list[ConsoleChatMessage] = []
+                steps = record.get("steps") or []
+                planning_deriver = _PendingPrimaryPlanningDeriver()
+                actual_thinking_rounds = thinking_rounds_by_owner.get(
+                    str(record.get("assistant_message_id") or ""),
+                    frozenset(),
                 )
-                if planning_marker is not None:
-                    block.append(planning_marker)
-                text = format_agent_step_marker(
-                    kind,
-                    tool_name=step.get("tool_name"),
-                    result=step.get("result"),
-                    summary=step.get("summary"),
-                )
-                if text is not None:
+                for step in steps:
+                    kind = str(step.get("kind") or "")
+                    planning_marker = planning_deriver.observe(
+                        step,
+                        AGENT_KIND_PRIMARY,
+                        actual_thinking_round_ordinals=actual_thinking_rounds,
+                    )
+                    if planning_marker is not None:
+                        block.append(planning_marker)
+                    text = format_agent_step_marker(
+                        kind,
+                        tool_name=step.get("tool_name"),
+                        result=step.get("result"),
+                        summary=step.get("summary"),
+                    )
+                    if text is not None:
+                        block.append(
+                            ConsoleChatMessage(
+                                role=ConsoleMessageRole.TOOL,
+                                content=text,
+                                status="complete",
+                                activity_presentation=build_step_activity_presentation(
+                                    str(step.get("kind") or ""),
+                                    tool_name=step.get("tool_name"),
+                                    result=step.get("result"),
+                                    tool_outcome=step.get("tool_outcome"),
+                                ),
+                                activity_round_ordinal=(
+                                    planning_deriver.active_round_ordinal
+                                ),
+                                # AC#5: a resumed marker is as expandable as a
+                                # live one -- the step rows carry the full result.
+                                tool_output_full=full_step_output(
+                                    str(step.get("kind") or ""),
+                                    result=step.get("result"),
+                                    summary=step.get("summary"),
+                                    marker_text=text,
+                                ),
+                            )
+                        )
+                snap_rows = snap_by_run.get(str(record.get("id")), [])
+                block.extend(self._change_review_marker_block(record, snap_rows))
+                # task-6 (turn-file-annotate, spec §4) + fix round: append this
+                # run's own diff-feedback disclosure row(s) -- i.e. every
+                # delivery batch keyed to THIS run as the delivering run (see
+                # `disclosure_batches` construction above for the grouping and
+                # legacy-fallback rules). Placed after this run's own marker
+                # rows (steps, change-summary/failure rows), never gated on
+                # `snap_rows`, so a run with delivered notes but no snapshot
+                # rows at all (tracking failed or was never configured --
+                # delivery does not depend on tracking succeeding) still
+                # yields its disclosure row(s). This is the designed healer
+                # for Task 5's live seam, which stamps `delivered_at` then
+                # appends the disclosure row in one `try`: if the append fails
+                # after the stamp lands, the DB still records the delivery but
+                # the live transcript never got a row -- a fresh resume
+                # surfaces it regardless, byte-identical to what live emission
+                # would have produced (same shared `format_diff_feedback_disclosure`).
+                for _delivered_at in sorted(
+                    disclosure_batches.get(str(record.get("id")), {})
+                ):
                     block.append(
                         ConsoleChatMessage(
                             role=ConsoleMessageRole.TOOL,
-                            content=text,
+                            content=format_diff_feedback_disclosure(
+                                disclosure_batches[str(record.get("id"))][_delivered_at]
+                            ),
                             status="complete",
-                            activity_presentation=build_step_activity_presentation(
-                                str(step.get("kind") or ""),
-                                tool_name=step.get("tool_name"),
-                                result=step.get("result"),
-                                tool_outcome=step.get("tool_outcome"),
-                            ),
-                            activity_round_ordinal=(
-                                planning_deriver.active_round_ordinal
-                            ),
-                            # AC#5: a resumed marker is as expandable as a
-                            # live one -- the step rows carry the full result.
-                            tool_output_full=full_step_output(
-                                str(step.get("kind") or ""),
-                                result=step.get("result"),
-                                summary=step.get("summary"),
-                                marker_text=text,
+                            activity_presentation=ConsoleActivityPresentation(
+                                "feedback", "Feedback delivered", "done"
                             ),
                         )
                     )
-            snap_rows = snap_by_run.get(str(record.get("id")), [])
-            block.extend(self._change_review_marker_block(record, snap_rows))
-            # task-6 (turn-file-annotate, spec §4) + fix round: append this
-            # run's own diff-feedback disclosure row(s) -- i.e. every
-            # delivery batch keyed to THIS run as the delivering run (see
-            # `disclosure_batches` construction above for the grouping and
-            # legacy-fallback rules). Placed after this run's own marker
-            # rows (steps, change-summary/failure rows), never gated on
-            # `snap_rows`, so a run with delivered notes but no snapshot
-            # rows at all (tracking failed or was never configured --
-            # delivery does not depend on tracking succeeding) still
-            # yields its disclosure row(s). This is the designed healer
-            # for Task 5's live seam, which stamps `delivered_at` then
-            # appends the disclosure row in one `try`: if the append fails
-            # after the stamp lands, the DB still records the delivery but
-            # the live transcript never got a row -- a fresh resume
-            # surfaces it regardless, byte-identical to what live emission
-            # would have produced (same shared `format_diff_feedback_disclosure`).
-            for _delivered_at in sorted(
-                disclosure_batches.get(str(record.get("id")), {})
-            ):
-                block.append(
-                    ConsoleChatMessage(
-                        role=ConsoleMessageRole.TOOL,
-                        content=format_diff_feedback_disclosure(
-                            disclosure_batches[str(record.get("id"))][_delivered_at]
-                        ),
-                        status="complete",
-                        activity_presentation=ConsoleActivityPresentation(
-                            "feedback", "Feedback delivered", "done"
-                        ),
-                    )
-                )
-            blocks.append((record.get("assistant_message_id"), block))
+                blocks.append((record.get("assistant_message_id"), block))
 
-        try:
-            local_records = self._db.local_command_resume_records(conversation_id)
-        except Exception:  # noqa: BLE001 -- poison local rows must not break resume
-            local_records = []
-        for record in local_records:
-            if not isinstance(record, Mapping):
-                continue
-            anchor = record.get("assistant_message_id")
-            if anchor is not None and (type(anchor) is not str or not anchor.strip()):
-                continue
-            marker = local_command_resume_marker(record)
-            if marker is not None:
-                blocks.append(
-                    (
-                        anchor
-                        if anchor is not None
-                        else TRANSCRIPT_START_MARKER_ANCHOR,
-                        [marker],
+            try:
+                local_records = self._db.local_command_resume_records(conversation_id)
+            except Exception:  # noqa: BLE001 -- poison local rows must not break resume
+                local_records = []
+            for record in local_records:
+                if not isinstance(record, Mapping):
+                    continue
+                anchor = record.get("assistant_message_id")
+                if anchor is not None and (
+                    type(anchor) is not str or not anchor.strip()
+                ):
+                    continue
+                marker = local_command_resume_marker(record)
+                if marker is not None:
+                    blocks.append(
+                        (
+                            anchor
+                            if anchor is not None
+                            else TRANSCRIPT_START_MARKER_ANCHOR,
+                            [marker],
+                        )
                     )
-                )
-        return blocks
+            return blocks
 
     def append_todo_marker(
         self, session_id: str, tasks: list[dict[str, object]]

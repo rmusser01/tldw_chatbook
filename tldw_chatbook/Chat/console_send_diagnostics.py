@@ -186,6 +186,7 @@ async def send_diagnostic_scope(
     current = _CURRENT.get()
     owns_monitor = current is None and monitor is None
     token = None
+    closing = False
     if current is None or (phase == "controller_submit" and current.submission_started):
         if current is not None:
             monitor = current.monitor
@@ -208,6 +209,7 @@ async def send_diagnostic_scope(
     try:
         yield current
     except BaseException as error:
+        closing = isinstance(error, GeneratorExit)
         record_send_stage(current.phase, "failed", error=error)
         current.outcome = (
             "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
@@ -219,4 +221,7 @@ async def send_diagnostic_scope(
             _CURRENT.reset(token)
         if owns_monitor:
             with contextlib.suppress(Exception):
-                await asyncio.to_thread(current.monitor.close)
+                if closing:
+                    current.monitor.close(timeout=0)
+                else:
+                    await asyncio.to_thread(current.monitor.close)

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.bootstrap_profile
+
 from Tests.Chat.test_console_chat_controller import (
     ConsoleChatController,
     ConsoleChatStore,

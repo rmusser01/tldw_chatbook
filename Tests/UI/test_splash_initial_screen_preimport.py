@@ -50,6 +50,8 @@ from tldw_chatbook.UI.Navigation.screen_registry import (
 
 from Tests.UI.app_factory import _build_test_app
 
+pytestmark = pytest.mark.bootstrap_profile
+
 _SCREEN_MODULE_PREFIX = "tldw_chatbook.UI.Screens."
 CHAT_MODULE = "tldw_chatbook.UI.Screens.chat_screen"
 
@@ -541,3 +543,64 @@ def test_a_thread_that_refuses_to_start_degrades_instead_of_raising(
 
     assert app._initial_screen_preimport_thread is None
     assert app._screen_preimport_thread is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_splash_close_during_native_shutdown_does_not_restart_startup(
+    monkeypatch, record_property
+):
+    """A real Closed message cannot resume startup after native screen retirement."""
+    monkeypatch.setenv("TLDW_SCREEN_PREIMPORT", "0")
+    app = _build_test_app(configured_default="chat")
+    real_setting = app_module.get_cli_setting
+
+    def held_splash(section, key=None, default=None, *args, **kwargs):
+        if section == "splash_screen" and key == "enabled":
+            return True
+        if section == "splash_screen" and key == "duration":
+            return 0  # The test posts the real close event explicitly.
+        return real_setting(section, key, default, *args, **kwargs)
+
+    set_app_global(monkeypatch, "get_cli_setting", held_splash)
+    removed = asyncio.Event()
+    screens_closed = asyncio.Event()
+    shutdown_states = []
+    startup_calls = []
+    real_close_all = app._close_all
+    real_create_ui = app._create_main_ui_widgets
+
+    async def observe_close_all():
+        await real_close_all()
+        shutdown_states.append((app.is_running, len(app.screen_stack)))
+        record_property("shutdown_public_is_running", app.is_running)
+        record_property("shutdown_private_flag", getattr(app, "_shutting_down", None))
+        record_property("shutdown_screen_count", len(app.screen_stack))
+        screens_closed.set()
+
+    def observe_create_ui():
+        startup_calls.append(app.is_running)
+        return real_create_ui()
+
+    monkeypatch.setattr(app, "_close_all", observe_close_all)
+    monkeypatch.setattr(app, "_create_main_ui_widgets", observe_create_ui)
+    async with app.run_test(size=(120, 36)):
+        splash = app._splash_screen_widget
+        assert splash is not None
+        real_remove = splash.remove
+
+        async def hold_removed_splash():
+            await real_remove()
+            removed.set()
+            await screens_closed.wait()
+
+        monkeypatch.setattr(splash, "remove", hold_removed_splash)
+        splash.close()
+        await removed.wait()
+        record_property("before_shutdown_public_is_running", app.is_running)
+        assert app.is_running
+        assert app.screen_stack
+
+    assert shutdown_states == [(False, 0)]
+    assert startup_calls == []
+    assert app._splash_screen_widget is None

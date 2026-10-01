@@ -1031,7 +1031,10 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
     app.app_config.setdefault("chat_defaults", {})["provider"] = ""
     # TASK-33001.5: an untouched chat follows the SAVED defaults, so the seed
     # must be on disk too, not only in the in-memory snapshot.
-    persist_seeded_config(app, "chat_defaults")
+    app.app_config.setdefault("console", {}).setdefault("onboarding", {})[
+        "first_send_completed"
+    ] = False
+    persist_seeded_config(app, "chat_defaults", "console.onboarding")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:

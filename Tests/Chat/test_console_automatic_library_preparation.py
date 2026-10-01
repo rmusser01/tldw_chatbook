@@ -69,6 +69,8 @@ from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class ConsoleChatStore(_ConsoleChatStore):
     """Ephemeral test store with an automatic-retrieval authority ceiling."""
@@ -2701,10 +2703,7 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")
         try:
-            for _ in range(20):
-                closed_loop.run_until_complete(asyncio.sleep(0))
-                if held.is_set():
-                    break
+            closed_loop.run_until_complete(held.wait())
             preparation = store.preparation_for_session(session.id)
             assert held.is_set()
             assert preparation is not None
@@ -3097,3 +3096,90 @@ async def test_recovered_queue_acknowledges_postaccept_cancellation_once(
         )
         == 0
     )
+
+
+@pytest.mark.parametrize("phase", ["hook_admission", "committing"])
+@pytest.mark.parametrize("foreign_loop", [False, True])
+def test_closed_loop_submit_retires_diagnostic_context_before_gc(
+    monkeypatch, phase, foreign_loop
+):
+    import sys
+
+    from tldw_chatbook.Chat.console_send_diagnostics import _CURRENT
+
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    session = store.create_session(session_id="closed-context")
+    gateway = _StreamingFence()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    held = asyncio.Event()
+
+    async def hold(*_args):
+        held.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        controller,
+        "hook_admission_reason"
+        if phase == "hook_admission"
+        else "_record_prompt_history",
+        hold,
+    )
+    loop = asyncio.new_event_loop()
+    loop_errors = []
+    loop.set_exception_handler(
+        lambda _loop, context: loop_errors.append(str(context.get("message", "")))
+    )
+    unraisable = []
+    monkeypatch.setattr(
+        sys, "unraisablehook", lambda event: unraisable.append(str(event.exc_value))
+    )
+    caller_context = _CURRENT.get()
+    task = loop.create_task(controller.submit_draft("draft", session_id=session.id))
+    try:
+        loop.run_until_complete(held.wait())
+        assert _CURRENT.get() is caller_context
+        diagnostic = task.get_context().get(_CURRENT)
+        assert diagnostic is not None
+        assert not diagnostic.monitor._diagnostic_closed
+        assert task in controller._maintenance_calls
+        if phase == "committing":
+            assert task in controller._active_submit_tasks
+            preparation = store.preparation_for_session(session.id)
+            assert preparation.state is ConsoleTurnPreparationState.COMMITTING
+        else:
+            assert store.preparation_for_session(session.id) is None
+        loop.close()
+        if foreign_loop:
+
+            async def shutdown_from_other_loop():
+                controller.begin_shutdown()
+
+            asyncio.run(shutdown_from_other_loop())
+        else:
+            controller.begin_shutdown()
+
+        assert task.get_context().get(_CURRENT) is None
+        assert diagnostic.monitor._diagnostic_closed
+        diagnostic.monitor._stall_thread.join(timeout=1.0)
+        assert not diagnostic.monitor._stall_thread.is_alive()
+        assert task not in controller._maintenance_calls
+        assert controller._active_submit_tasks == {}
+        assert store.preparation_for_session(session.id) is None
+        assert _CURRENT.get() is caller_context
+        assert gateway.provider_calls == 0
+        assert not task.done()  # Emergency detachment does not make a Task terminal.
+        assert loop_errors == []
+        assert unraisable == []
+    finally:
+        if not loop.is_closed():
+            loop.close()
+        # Test custody only, after the before-GC assertions. Failed RED controls
+        # must not abandon their own diagnostic context into later cases.
+        if task.get_coro().cr_frame is not None:
+            task.get_context().run(task.get_coro().close)
+        del task
+        gc.collect()
+    assert loop_errors == ["Task was destroyed but it is pending!"]
+    assert unraisable == []

@@ -78,9 +78,14 @@ after that durable read. After the provider gateway applies endpoint fallback,
 normalization, and readiness, it freezes a separate resolved destination record
 classified as on-device, private network, public network, or external/unknown.
 Unknown/custom destinations never default to on-device. The final execution
-context combines both records. Queued sends capture after dequeue, not when
-typed. The primary agent and all subagents share that context. A later policy,
-selector, or provider change applies only to later executed turns.
+context combines both records. Queued sends capture fresh Library authority and
+resolve the provider destination after dequeue, not when typed. Under
+[ADR-094](094-console-turn-lifetime-and-navigation-boundary.md), each queued entry
+already owns its immutable screen-derived configuration at queue handoff; execution
+revalidates Library authority and intersects it with that captured maximum. The
+primary agent and all subagents share the resulting execution context. Later
+configuration changes belong to later handoffs, while a later authority restriction
+can narrow the next executed turn.
 
 When assistant access is Blocked, the built-in Library provider is absent.
 The complete built-in Library namespace remains statically reserved in every
