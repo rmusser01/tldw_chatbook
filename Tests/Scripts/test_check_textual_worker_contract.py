@@ -462,6 +462,47 @@ def unrelated(items):
     assert _w003(source) == [_row("Inspector._recover", "_pick")]
 
 
+def test_w003_follows_a_local_rename_chain_of_any_length():
+    """A chain of local renames is followed to its end. Bounded by a fixed
+    depth of 16, the 17th rename returned no targets and the handler dropped
+    out of the census with no error (PR #2944 review)."""
+    renames = "\n".join(f"        r{i + 1} = r{i}" for i in range(20))
+    source = f"""
+class Inspector(ModalScreen):
+    def __init__(self, recovery=None):
+        super().__init__()
+        self._recovery = recovery
+
+    @on(Panel.RecoveryRequested)
+    async def _recover(self, event):
+        r0 = self._recovery
+{renames}
+        await r20(event.session_id)
+
+
+async def _pick(session_id):
+    await app.push_screen_wait(SetupModal())
+
+
+def build():
+    return Inspector(recovery=_pick)
+"""
+    assert _w003(source) == [_row("Inspector._recover", "_pick")]
+
+
+def test_w003_a_local_rename_cycle_ends_without_a_row():
+    """`a = b; b = a` names nothing: resolution stops at the repeat, and no
+    row is invented from it."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        a = b
+        b = a
+        await a()
+"""
+    assert _w003(source) == []
+
+
 def test_w003_accepts_the_fixed_shape_a_handler_that_starts_a_worker():
     """The fix TASK-33621.13 shipped: the handler returns, a worker awaits."""
     source = """

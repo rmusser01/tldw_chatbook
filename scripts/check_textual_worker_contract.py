@@ -984,7 +984,7 @@ class _WaitGraph:
         module: _Module,
         cls: str | None,
         fn: _Function | None,
-        depth: int = 0,
+        seen: set[tuple[int, str]] | None = None,
     ) -> list[_Target]:
         kind, name = ref
         if kind == "self" and cls is not None:
@@ -996,16 +996,18 @@ class _WaitGraph:
                     return [scope.nested[name]]
                 if name in scope.local_aliases:
                     # `recovery = self._project_instruction_recovery` then
-                    # `await recovery(...)`: follow the local, bounded so an
-                    # `a = b; b = a` cycle cannot recurse forever.
-                    if depth >= 16:
+                    # `await recovery(...)`: follow the local to its end.
+                    # Each local is followed once per resolution, so an
+                    # `a = b; b = a` cycle stops at the repeat; a fixed depth
+                    # cap silently dropped any chain longer than the cap.
+                    seen = set() if seen is None else seen
+                    if (id(scope), name) in seen:
                         return []
+                    seen.add((id(scope), name))
                     return [
                         target
                         for local in scope.local_aliases[name]
-                        for target in self._targets(
-                            local, module, cls, scope, depth + 1
-                        )
+                        for target in self._targets(local, module, cls, scope, seen)
                     ]
                 scope = scope.parent
             if name in module.functions:
