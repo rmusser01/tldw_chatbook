@@ -10,26 +10,26 @@
  ─────────────────────────────────  │                                                                                                                                                                   │
  Workspaces                    ▸    │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
- Conversations                 ▾    │        ╭─ Switch model · now: llama.cpp · qwen3:32b ──────────────────────────────────────────────────────────────────────────╮                                   │
-        Archive this chat           │        │ Find son                                                                                                             │                                   │
-          Archived chats            │        │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                              │                                   │
-        Search all chats…           │        │ ▶ claude-sonnet-5              Anthropic            ~200k  Ready · not tested                                        │                                   │
-   Chat 1                           │        │   claude-sonnet-4-20250514     Anthropic            ~200k  Ready · not tested                                        │                                   │
-                                    │        │   claude-3-7-sonnet-20250219   Anthropic            ~200k  Ready · not tested                                        │                                   │
-  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │        │   claude-3-5-sonnet-20241022   Anthropic             200k  Ready · not tested                                        │                                   │
-  ▊  Filter visible     ▎           │        │   claude-3-5-sonnet-20240620   Anthropic             200k  Ready · not tested                                        │                                   │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │        │   claude-3-sonnet-20240229     Anthropic             200k  Ready · not tested                                        │                                   │
-                                    │        │ NEEDS SETUP · Enter opens the fix                                                                                    │                                   │◂ Inspect
-   New conversation                 │        │   anthropic/claude-3.7-sonnet  OpenRouter           ~200k  Not ready · no key           Enter: add key in Settings   │                                   │
-  Chats                        ▾    │        │   anthropic/claude-sonnet-4    OpenRouter           ~200k  Not ready · no key           Enter: add key in Settings   │                                   │
-   Chat 1                     💬    │        │   anthropic/claude-3.7-son…ing OpenRouter           ~200k  Not ready · no key           Enter: add key in Settings   │                                   │
-                                    │        │ TYPED MODEL ID · not in any catalog                                                                                  │                                   │
- ─────────────────────────────────  │        │   son                          llama.cpp             ~32k  Ready · not tested           typed id · in no catalog     │                                   │
- Character · No chats          ▸    │        │ Values for claude-sonnet-5 · Anthropic                                                                               │                                   │
- ─────────────────────────────────  │        │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming Off   ▼  provider             │                                   │
- Model                         ▸    │        │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel  │                                   │
- ─────────────────────────────────  │        │  Save as model default  saves Temperature, Max tokens, Streaming                         Applies to: this chat only  │                                   │
- Agent                         ▸    │        ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                                   │
+ Conversations                 ▾    │                                                                                                                                                                   │
+        Archive this chat           │                                                                                                                                                                   │
+          Archived chats            │                                                                                                                                                                   │
+        Search all chats…           │                                                                                                                                                                   │
+   Chat 1                           │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                                   │
+  ▊  Filter visible     ▎           │                                                                                                                                                                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │◂ Inspect
+   New conversation                 │                                                                 Ready — type a message to begin.                                                                  │
+  Chats                        ▾    │                                                                                                                                                                   │
+   Chat 1                     💬    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Character · No chats          ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Model                         ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Agent                         ▸    │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
@@ -41,4 +41,4 @@
 
 █  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
 
-  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

@@ -125,4 +125,11 @@ AC qualifications:
 - AC#8: chat_screen.py is 25,360 lines and 766 methods. The ratchet row is 25,218/759, which is already red on dev at 25,496/766. Phase 4 nets no growth against dev (ruling R1).
 - AC#9: the _ui_ready ceiling is 1,033 at HEAD; the census reads 1,029. Boot CSS and preimport pass after rebasing onto the Phase 3 tip (the earlier 557 > 500 preimport red was a stale baseline).
 - AC#13: CLAUDE.md now forbids "Verified against" paragraphs, so verification is recorded here and in the subtask notes instead.
+
+cubic review of #2947 (49 threads, on 5b5db496cf):
+- The P1 (a blank quick Max tokens saved the fallback cap) and the P2 RECENT timestamp were already fixed by the Qodo round (1cb26ea776). Their tests fail on 5b5db496cf's source (4 cases and 1).
+- Fixed: typed results no longer sit under "top 3 each"; PageDown/PageUp from Find no longer leave nothing highlighted; the key row says "Esc keep editing" while the unsaved-edit prompt is up (c4e1e54b3b, each test RED before). The switcher and hydration read stored last-use timestamps through one `Utils.timestamps.as_utc`.
+- The geometry test still pinned the old 120-column width and failed 5 of 5; it now pins 140. Eleven other test-quality threads were fixed, and the evidence records were corrected.
+- Captures: `qa/model-config-p4-2026-09-30/README.md` says which later commits supersede what each per-task capture shows; `final/` re-captures the head at 211x44 and 235x52 (scratch profile, real `config.toml` mtime unchanged). The byte-identical `task-5/switch-model-alex-2-tab` was removed.
+- Rider TASK-33641.5: no PR lane collects `Tests/Chat/test_console_settings_defaults.py`, and two of its tests are red on origin/dev too.
 <!-- SECTION:NOTES:END -->
