@@ -189,7 +189,38 @@ def _historical_snapshot_target_available(original, prepared, proof, document):
     return bool(missing)
 
 
-def _snapshot_target_matches(items, expected, originals):
+def _snapshot_dependencies_match(current, expected, retained):
+    """Allow a legacy root to omit only authenticated files in its own tree."""
+    dependencies = set(expected.dependencies)
+    observed = set(current.dependencies)
+    if observed == dependencies:
+        return True
+    meta = expected.metadata
+    return (
+        expected.owner == "persona.assets"
+        and expected.status == "included_directory"
+        and meta is not None
+        and meta.root_id == expected.logical_id
+        and meta.parent_id is None
+        and meta.relative_path == ""
+        and meta.kind == "directory"
+        and expected.path is not None
+        and observed <= dependencies
+        and dependencies - observed
+        <= {
+            row.logical_id
+            for row in retained
+            if row.owner == expected.owner
+            and row.status == "included"
+            and row.metadata is not None
+            and row.metadata.kind == "file"
+            and row.metadata.root_id == expected.logical_id
+            and row.path == expected.path / row.metadata.relative_path
+        }
+    )
+
+
+def _snapshot_target_matches(items, expected, originals, *, retained=()):
     """Choose one reviewed alias only after checking every physical competitor."""
     matches = [
         item
@@ -214,7 +245,7 @@ def _snapshot_target_matches(items, expected, originals):
             or prior.shared_group != expected.shared_group
             or item.shared_group != expected.shared_group
             or prior.owner in {"persona.visual_identity_builtin", "persona.assets"}
-            and set(prior.dependencies) != set(item.dependencies)
+            and not _snapshot_dependencies_match(item, prior, retained)
         ):
             raise ValueError("local_snapshot_preservation_unverified")
         topology = [
@@ -330,7 +361,9 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
             raise ValueError("local_snapshot_preservation_unverified")
         config = configs[0]
         context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
-        current_roots = _snapshot_target_matches(updated, root, originals)
+        current_roots = _snapshot_target_matches(
+            updated, root, originals, retained=selected.values()
+        )
         if (
             len(current_roots) != 1
             or current_roots[0].owner != owner_id
@@ -438,7 +471,9 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
                     dependencies=tuple(dependencies),
                     shared_group=item.shared_group,
                 )
-                current = _snapshot_target_matches(updated, actual, originals)
+                current = _snapshot_target_matches(
+                    updated, actual, originals, retained=selected.values()
+                )
                 # A replacement core may no longer reference retained legacy
                 # files. Reattach only authenticated old edges to this exact
                 # reobserved tree; config/core edges and new dependencies must
@@ -450,21 +485,8 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
                     or current[0].status != "unused"
                     and (
                         current[0].status != actual.status
-                        or (
-                            set(current[0].dependencies) != set(actual.dependencies)
-                            and not (
-                                owner_id == "persona.assets"
-                                and item is root
-                                and set(current[0].dependencies)
-                                <= set(actual.dependencies)
-                                and set(actual.dependencies)
-                                - set(current[0].dependencies)
-                                <= {
-                                    row.logical_id
-                                    for row in mapped.values()
-                                    if row.status == "included"
-                                }
-                            )
+                        or not _snapshot_dependencies_match(
+                            current[0], actual, mapped.values()
                         )
                     )
                 ):

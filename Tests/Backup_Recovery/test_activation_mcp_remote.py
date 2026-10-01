@@ -53,11 +53,12 @@ access = ServerAccessContext(
         governance=True, advanced=True,
     ),
 )
-context_store.save(UnifiedMCPContext(
+server_context = UnifiedMCPContext(
     selected_source='server', selected_active_server_id='server-a',
     selected_scope='personal', selected_section='overview',
     per_server_state={'server-a': access},
-))
+)
+context_store.save(server_context)
 permission_store = MCPPermissionStore(paths['permissions']/'mcp_permissions.json')
 # Imported permission state remains recovery evidence, never activation authority.
 permission_store.set_global_default('allow')
@@ -142,6 +143,8 @@ async def run():
     if route == 'load_section':
         return await plane.load_section('overview')
     if route == 'run_action':
+        plane.context = server_context
+        assert plane.selected_source == 'server'
         return await plane.run_action(
             'external_server.secret.set',
             {'server_id':'external-a','secret':'never-resolve-this'},
@@ -160,9 +163,6 @@ try:
 except PermissionError as exc:
     if not denied or route == 'inspection': raise
     assert str(exc) == 'mcp_activation_required'
-except ValueError as exc:
-    assert denied and route == 'run_action'
-    assert str(exc) == 'Unsupported Unified MCP local action: external_server.secret.set'
 else:
     if denied and route != 'inspection':
         raise AssertionError('inactive remote MCP route was admitted')

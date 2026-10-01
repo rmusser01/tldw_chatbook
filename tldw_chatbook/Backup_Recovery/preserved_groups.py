@@ -80,11 +80,8 @@ def _check_absences(items, owners, scope):
         paths.extend(absent)
     if type(scope) is _DiscoveryScope:
         registry = bootstrap._registry(bootstrap.default_bootstrap_root())
-        foreign = {
-            name: entry
-            for name, entry in registry.items()
-            if name not in scope.session._names
-        }
+        held = set(scope.session._names)
+        foreign = {name: entry for name, entry in registry.items() if name not in held}
         if _absence_names(foreign, paths):
             raise ValueError("preserved_group_native_scope_required")
         return registry

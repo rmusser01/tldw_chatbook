@@ -84,8 +84,14 @@ def absent_scope(tmp_path, monkeypatch):
     authority.register("prompts", (prompt,))
     assert bootstrap._records(root)[1] == []
     return SimpleNamespace(
-        plan=plan, data=data, selector=selector, prompt=prompt, scheduler=scheduler,
-        root=root, authority=authority, owners=owners,
+        plan=plan,
+        data=data,
+        selector=selector,
+        prompt=prompt,
+        scheduler=scheduler,
+        root=root,
+        authority=authority,
+        owners=owners,
         names=(UNBOUND_NAMESPACE, "settings.config", "prompts"),
     )
 
@@ -165,6 +171,33 @@ def test_moved_absent_locator_refuses_even_when_both_paths_are_absent(absent_sco
         check(absent_scope, data)
 
 
+def test_absence_checks_do_not_rescan_held_name_tuple(absent_scope, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.preserved_groups import _check_absences
+    from tldw_chatbook.Backup_Recovery.storage_admission import _local
+
+    class CountedNames(tuple):
+        lookups = 0
+
+        def __contains__(self, name):
+            self.lookups += 1
+            return super().__contains__(name)
+
+    case = absent_scope
+    absent = tuple(
+        item for item in case.plan.target.items if item.owner == "db.scheduled_tasks"
+    )
+    with (
+        case.authority.maintenance(case.names, 3) as session,
+        session._discovery_reads(),
+    ):
+        names = CountedNames(session._names)
+        monkeypatch.setattr(session, "_names", names)
+        assert _check_absences(
+            absent, case.owners, _local.discovery_scope
+        ) == bootstrap._registry(case.root)
+        assert names.lookups <= 1
+
+
 @pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
 def test_absent_sqlite_primary_or_companion_arrival_refuses(absent_scope, suffix):
     arrived = Path(str(absent_scope.scheduler) + suffix)
@@ -198,7 +231,9 @@ def test_arrival_after_real_owner_discovery_refuses(absent_scope, monkeypatch, s
     assert observations == [observed(arrived)]
 
 
-@pytest.mark.parametrize("history", [False, True], ids=["current-root", "historical-file"])
+@pytest.mark.parametrize(
+    "history", [False, True], ids=["current-root", "historical-file"]
+)
 def test_absent_locator_requires_existing_namespace_and_capture_only_reuses_it(
     absent_scope, tmp_path, history
 ):
@@ -305,7 +340,9 @@ print('retired and reopened')
 '''
 
 
-def test_full_discovered_target_preserves_preferences_without_binding_absent_stores(tmp_path):
+def test_full_discovered_target_preserves_preferences_without_binding_absent_stores(
+    tmp_path,
+):
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
     _run(tmp_path, "absent-settings", "success", script=_FULL_TARGET, timeout=60)

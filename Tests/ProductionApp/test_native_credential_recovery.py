@@ -175,9 +175,11 @@ def _material(archive):
     from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
 
     doc = verify_sealed(archive)
-    member = next(
+    members = tuple(
         row.payload for row in doc.files if row.owner_id == "recovery.credentials"
     )
+    assert len(members) == 1, "native_capture_credential_material_count"
+    member = members[0]
     with zipfile.ZipFile(archive.path) as container:
         records = json.loads(container.read(member))["records"]
     assert records and all(row["status"] == "captured" for row in records)

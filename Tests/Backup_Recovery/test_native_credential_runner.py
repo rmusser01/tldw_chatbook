@@ -14,6 +14,43 @@ import pytest
 from Tests.Backup_Recovery import run_platform_product as runner
 
 
+@pytest.mark.parametrize(
+    "selection",
+    [
+        "native-credentials-source",
+        "native-credentials-destination",
+    ],
+)
+@pytest.mark.parametrize("value", [None, ""])
+def test_native_run_refuses_missing_transfer_root_before_effects(
+    tmp_path, monkeypatch, selection, value
+):
+    if value is None:
+        monkeypatch.delenv("TLDW_CREDENTIAL_TRANSFER_ROOT", raising=False)
+    else:
+        monkeypatch.setenv("TLDW_CREDENTIAL_TRANSFER_ROOT", value)
+    effects = []
+    monkeypatch.setattr(
+        runner,
+        "validate_native_credential_environment",
+        lambda: effects.append("backend"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_create_private_root",
+        lambda *_: effects.append("private-root"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_copy_tracked_source",
+        lambda *_: effects.append("source-copy"),
+    )
+    evidence = tmp_path / "evidence"
+    with pytest.raises(RuntimeError, match="native_credential_transfer_root_required"):
+        runner.run(tmp_path, evidence, product_selection=selection)
+    assert not effects and not evidence.exists()
+
+
 @pytest.mark.parametrize("system", ["posix", "nt"], ids=["unix", "windows"])
 @pytest.mark.parametrize("job", ["source", "destination"])
 @pytest.mark.skipif(os.name == "nt", reason="POSIX sandbox models Windows ancestry")
@@ -1051,6 +1088,7 @@ def test_native_destinations_seed_retargeted_profile_before_negative_checks(
 
 
 @pytest.mark.parametrize("linked", ["archive", "receipt", "parent", "root"])
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fixture requires symlink privileges")
 def test_native_destinations_refuse_transfer_links_before_reads_or_effects(
     tmp_path, monkeypatch, linked
 ):
@@ -1903,6 +1941,7 @@ def test_native_lane_refuses_unsafe_host_before_keyring_access(
         runner.validate_native_credential_environment()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX Secret Service session fixture")
 def test_linux_lane_refuses_callers_session_bus_before_keyring_access(
     tmp_path, monkeypatch
 ):
@@ -1923,6 +1962,7 @@ def test_linux_lane_refuses_callers_session_bus_before_keyring_access(
         runner.validate_native_credential_environment()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX Secret Service socket fixture")
 def test_linux_lane_refuses_locked_private_session_before_native_reads(
     tmp_path, monkeypatch
 ):

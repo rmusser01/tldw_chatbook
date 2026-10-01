@@ -255,6 +255,43 @@ def _index_entry_for_scope(scope: ServerCredentialScope) -> dict[str, Any]:
     }
 
 
+def _serialize_index(scopes: list[ServerCredentialScope]) -> str:
+    unique_scopes = sorted(
+        {
+            (
+                scope.server_profile_id,
+                scope.normalized_origin,
+                scope.principal_id,
+                scope.credential_type,
+            )
+            for scope in scopes
+        },
+        key=lambda scope_parts: (
+            scope_parts[0],
+            scope_parts[1],
+            scope_parts[2] or "",
+            scope_parts[3],
+        ),
+    )
+    payload = json.dumps(
+        [
+            _index_entry_for_scope(
+                ServerCredentialScope(
+                    server_profile_id=server_profile_id,
+                    normalized_origin=normalized_origin,
+                    principal_id=principal_id,
+                    credential_type=credential_type,
+                )
+            )
+            for server_profile_id, normalized_origin, principal_id, credential_type in unique_scopes
+        ],
+        ensure_ascii=True,
+    )
+    if len(payload) > _KEYRING_INDEX_MAX_TOTAL_CHARACTERS:
+        raise CredentialStoreUnavailable("Credential index exceeds supported size.")
+    return payload
+
+
 def _index_part_usernames(header: Any) -> list[str]:
     if not isinstance(header, dict):
         return []
@@ -533,39 +570,7 @@ class KeyringServerCredentialStore:
             self._delete_index_parts(previous_parts)
             return
 
-        unique_scopes = sorted(
-            {
-                (
-                    scope.server_profile_id,
-                    scope.normalized_origin,
-                    scope.principal_id,
-                    scope.credential_type,
-                )
-                for scope in scopes
-            },
-            key=lambda scope_parts: (
-                scope_parts[0],
-                scope_parts[1],
-                scope_parts[2] or "",
-                scope_parts[3],
-            ),
-        )
-        payload = json.dumps(
-            [
-                _index_entry_for_scope(
-                    ServerCredentialScope(
-                        server_profile_id=server_profile_id,
-                        normalized_origin=normalized_origin,
-                        principal_id=principal_id,
-                        credential_type=credential_type,
-                    )
-                )
-                for server_profile_id, normalized_origin, principal_id, credential_type in unique_scopes
-            ],
-            ensure_ascii=True,
-        )
-        if len(payload) > _KEYRING_INDEX_MAX_TOTAL_CHARACTERS:
-            raise CredentialStoreUnavailable("Credential index exceeds supported size.")
+        payload = _serialize_index(scopes)
         if len(payload) <= _KEYRING_INDEX_MAX_CHARACTERS:
             self._keyring.set_password(
                 self.service_name, _KEYRING_INDEX_USERNAME, payload
@@ -581,12 +586,12 @@ class KeyringServerCredentialStore:
             try:
                 for part, username in enumerate(_index_part_usernames(header)):
                     start = part * _KEYRING_INDEX_PART_CHARACTERS
+                    written.append(username)
                     self._keyring.set_password(
                         self.service_name,
                         username,
                         payload[start : start + _KEYRING_INDEX_PART_CHARACTERS],
                     )
-                    written.append(username)
             except Exception:
                 self._delete_index_parts(written)
                 raise
@@ -623,11 +628,6 @@ class KeyringServerCredentialStore:
                     "Credential index cleanup failed (exception_category={}).",
                     type(error).__name__,
                 )
-
-    def _add_scope_to_index(self, scope: ServerCredentialScope) -> None:
-        scopes = self._load_index()
-        scopes.append(scope)
-        self._save_index(scopes)
 
     def _delete_index_record(self) -> None:
         if (
@@ -675,10 +675,13 @@ class KeyringServerCredentialStore:
         scope = _normalize_scope(scope)
         with _RECOVERY_SCOPE_LOCK:
             try:
+                scopes = self._load_index()
+                scopes.append(scope)
+                _serialize_index(scopes)
                 self._keyring.set_password(
                     self.service_name, _username_for_scope(scope), secret
                 )
-                self._add_scope_to_index(scope)
+                self._save_index(scopes)
             finally:
                 self._drop_cached_reads()
 
@@ -703,24 +706,23 @@ class KeyringServerCredentialStore:
     def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
         with _RECOVERY_SCOPE_LOCK:
             try:
-                self._delete_scoped_secret(scope)
+                scope = _normalize_scope(scope)
+                self._delete_scoped_value(scope)
+                self._remove_scope_from_index(scope)
             finally:
                 self._drop_cached_reads()
 
-    def _delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
+    def _delete_scoped_value(self, scope: ServerCredentialScope) -> None:
         scope = _normalize_scope(scope)
         username = _username_for_scope(scope)
         legacy_username = _legacy_username_for_scope(scope)
 
         if self._keyring.get_password(self.service_name, username) is None:
             if not _is_legacy_scope(scope):
-                self._remove_scope_from_index(scope)
                 return
             if self._keyring.get_password(self.service_name, legacy_username) is None:
-                self._remove_scope_from_index(scope)
                 return
             self._keyring.delete_password(self.service_name, legacy_username)
-            self._remove_scope_from_index(scope)
             return
 
         self._keyring.delete_password(self.service_name, username)
@@ -729,7 +731,31 @@ class KeyringServerCredentialStore:
         )
         if _is_legacy_scope(scope) and legacy_secret_exists:
             self._keyring.delete_password(self.service_name, legacy_username)
-        self._remove_scope_from_index(scope)
+
+    def _clear_scopes(
+        self,
+        indexed: list[ServerCredentialScope],
+        selected: list[ServerCredentialScope],
+    ) -> None:
+        remaining = set(indexed)
+        completed = False
+        try:
+            for scope in dict.fromkeys(selected):
+                try:
+                    self._delete_scoped_value(scope)
+                    remaining.discard(scope)
+                    completed = True
+                finally:
+                    self._drop_cached_reads()
+        except Exception as error:
+            # Only finished deletions leave the index, including on partial failure.
+            if completed:
+                try:
+                    self._save_index(list(remaining))
+                except Exception as publication_error:
+                    raise error from publication_error
+            raise
+        self._save_index(list(remaining))
 
     def clear_server(
         self, server_id: str, *, normalized_origin: str | None = None
@@ -741,15 +767,16 @@ class KeyringServerCredentialStore:
             else _normalize_non_empty(normalized_origin, "normalized_origin")
         )
         with _RECOVERY_SCOPE_LOCK:
-            for scope in list(self._load_index()):
-                if scope.server_profile_id != normalized_server_id:
-                    continue
-                if (
-                    normalized_origin_value is not None
-                    and scope.normalized_origin != normalized_origin_value
-                ):
-                    continue
-                self.delete_scoped_secret(scope)
+            indexed = self._load_index()
+            selected = [
+                scope
+                for scope in indexed
+                if scope.server_profile_id == normalized_server_id
+                and (
+                    normalized_origin_value is None
+                    or scope.normalized_origin == normalized_origin_value
+                )
+            ]
             # Pre-task-31416 un-migrated entries were keyed directly on
             # server_id (profile == origin); only relevant when this clear
             # isn't narrowed to a different origin within a scoped profile.
@@ -757,16 +784,16 @@ class KeyringServerCredentialStore:
                 normalized_origin_value is None
                 or normalized_origin_value == normalized_server_id
             ):
-                for purpose in _KNOWN_SERVER_CREDENTIAL_PURPOSES:
-                    self.delete_scoped_secret(
-                        ServerCredentialScope.legacy(normalized_server_id, purpose)
-                    )
+                selected.extend(
+                    ServerCredentialScope.legacy(normalized_server_id, purpose)
+                    for purpose in _KNOWN_SERVER_CREDENTIAL_PURPOSES
+                )
+            self._clear_scopes(indexed, selected)
 
     def clear_all(self) -> None:
         with _RECOVERY_SCOPE_LOCK:
-            for scope in list(self._load_index()):
-                self.delete_scoped_secret(scope)
-            self._save_index([])
+            indexed = self._load_index()
+            self._clear_scopes(indexed, indexed)
 
 
 __all__ = [

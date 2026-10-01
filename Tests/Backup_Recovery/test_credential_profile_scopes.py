@@ -99,21 +99,7 @@ def test_capture_uses_application_profile_scope(tmp_path, monkeypatch, profile):
         provider(store, None).store_scoped_credential("peer", "api_key", "other-value")
     stage = tmp_path / "stage"
     stage.mkdir(mode=0o700)
-    targets = stage / "targets.json"
-    targets.write_text(
-        json.dumps(
-            {
-                "targets": [
-                    {
-                        "server_id": "peer",
-                        "base_url": "https://example.invalid",
-                        "auth_reference": "keyring:api_key",
-                    }
-                ]
-            }
-        )
-    )
-    targets.chmod(0o600)
+    targets = staged_targets(stage)
     issues = credentials.process_credentials(
         stage,
         inventory(targets, "mcp.targets"),
@@ -137,21 +123,7 @@ def test_replacement_resolves_in_destination_profile_preserving_source(
     destination.store_scoped_credential("peer", "api_key", "destination-value")
     stage = tmp_path / "stage"
     stage.mkdir(mode=0o700)
-    path = stage / "targets.json"
-    path.write_text(
-        json.dumps(
-            {
-                "targets": [
-                    {
-                        "server_id": "peer",
-                        "base_url": "https://example.invalid",
-                        "auth_reference": "keyring:api_key",
-                    }
-                ]
-            }
-        )
-    )
-    path.chmod(0o600)
+    path = staged_targets(stage)
     credentials.process_credentials(
         stage,
         inventory(path, "mcp.targets"),

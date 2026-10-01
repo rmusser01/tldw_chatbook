@@ -138,7 +138,7 @@ def test_pending_checks_do_not_repeat_held_namespace_overlap(tmp_path, monkeypat
         publication._pending(
             journal, prepared.publication, targets=(selector,), plan=plan
         )
-        assert len(calls) <= len(prepared.publication.selectors)
+        assert 0 < len(calls) <= len(prepared.publication.selectors)
 
 
 def test_finalization_uses_portable_scratch_paths_for_logical_root_ids(

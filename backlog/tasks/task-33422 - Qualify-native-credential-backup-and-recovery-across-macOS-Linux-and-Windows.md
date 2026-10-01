@@ -3,25 +3,24 @@ id: TASK-33422
 title: Qualify native credential backup and recovery across macOS Linux and Windows
 status: In Progress
 assignee: []
-created_date: '2026-09-29 17:58'
-updated_date: '2026-10-01 05:02'
+created_date: 2026-09-29 17:58
+updated_date: 2026-10-01 06:08
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/rmusser01/tldw_chatbook/pull/2642'
-  - 'https://github.com/rmusser01/tldw_chatbook/actions/runs/36715894237'
-  - 'https://github.com/rmusser01/tldw_chatbook/pull/2935'
-  - 'https://github.com/rmusser01/tldw_chatbook/actions/runs/36750597001'
-  - /private/tmp/task33422-linear-check-6003huws/summary.json
-  - /private/tmp/task33422-linear-check-p5hzjhoc/red-audit.json
-  - /private/tmp/task33422-linear-bandit-baseline-PqBmCztO/summary.json
-  - 'https://github.com/rmusser01/tldw_chatbook/actions/runs/36779033376'
-  - /private/tmp/task33422-linear-source-f9pw58q5/receipt.json
-  - /private/tmp/task33422-d31-win-review-v99kb44k/safe-audit-summary.json
-  - 'https://github.com/rmusser01/tldw_chatbook/actions/runs/36804188765'
-  - /private/tmp/task33422-reference-source-ji90fm8e/receipt.json
-  - >-
-    /private/tmp/task33422-reference-source-review-6u3kej0n/safe-audit-summary.json
+- https://github.com/rmusser01/tldw_chatbook/pull/2642
+- https://github.com/rmusser01/tldw_chatbook/actions/runs/36715894237
+- https://github.com/rmusser01/tldw_chatbook/pull/2935
+- https://github.com/rmusser01/tldw_chatbook/actions/runs/36750597001
+- /private/tmp/task33422-linear-check-6003huws/summary.json
+- /private/tmp/task33422-linear-check-p5hzjhoc/red-audit.json
+- /private/tmp/task33422-linear-bandit-baseline-PqBmCztO/summary.json
+- https://github.com/rmusser01/tldw_chatbook/actions/runs/36779033376
+- /private/tmp/task33422-linear-source-f9pw58q5/receipt.json
+- /private/tmp/task33422-d31-win-review-v99kb44k/safe-audit-summary.json
+- https://github.com/rmusser01/tldw_chatbook/actions/runs/36804188765
+- /private/tmp/task33422-reference-source-ji90fm8e/receipt.json
+- /private/tmp/task33422-reference-source-review-6u3kej0n/safe-audit-summary.json
 priority: high
 ---
 
@@ -34,10 +33,10 @@ Complete the approved native credential qualification for existing Python backup
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Native credential stores are isolated from existing user accounts and verified before any fixture writes.
-- [x] #2 Default and retargeted profiles capture and resolve their own credentials after replacement and later rollback without modifying other profiles.
-- [x] #3 All seeded supported credentials are captured; manual retention and unavailable backends are reported separately.
-- [x] #4 Three native source archives pass all nine OS destination workflows, with targeted failure checks and no plaintext credential evidence.
-- [x] #5 Targeted tests, formatting, Bandit and independent review pass; exact runtime/backend and artifact evidence are documented.
+- [ ] #2 Default and retargeted profiles capture and resolve their own credentials after replacement and later rollback without modifying other profiles.
+- [ ] #3 All seeded supported credentials are captured; manual retention and unavailable backends are reported separately.
+- [ ] #4 Three native source archives pass all nine OS destination workflows, with targeted failure checks and no plaintext credential evidence.
+- [ ] #5 Targeted tests, formatting, Bandit and independent review pass; exact runtime/backend and artifact evidence are documented.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,7 +61,6 @@ Remove obsolete empty Packaging-directory copy from Tests/Packaging/test_backup_
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implementation in isolated branch codex/native-credential-backup at dev base64579cce. Profile-aware capture/destination/rollback correction plus six focused namespace cases implemented. Initial targeted replacement/rollback regression run:32 passed,3 fresh-process crash cases failed with directory_metadata_unproven; investigation traced preexisting broad test-helper import to config creating chat_dicts under protected directory. Native runner14 focusedtests/format/Bandit clean; manual three-source/three-destination workflow implemented. Disposable Linux Python3.12.14/SecretService private owned bus/unlockedlogincollection verified twice. Actual current-source qualification awaiting explicit audited6-file SSH transfer approval after automatic approval rejected full and narrow working-tree uploads. Native product tests being reviewed/fixed before CI; no qualification claimed.
 Reviewed implementation ready for native execution, qualification still incomplete. Verified focused coverage:64 credential policy tests and6 profile namespace tests passed;14 runner tests passed after fixing inherited plugin-disable behavior;20 replacement cases and9 initial rollback cases passed; remaining12 rollback cases passed after test-only fixes (fresh child embeds existing backend class to avoid unrelated config import, validation wrapper forwards session keyword);51 later rollback/replacement recovery tests passed. Independent review:20 focused checks passed, no outstanding P1/P2; native opt-in gating verified2 ordinary-suite skips before wheel fixture. Ruff check/format, compile, diff-check, production/runner Bandit and new-test Bandit (B101 assertions excluded) passed. Manual workflow reuses required pip/setuptools>=77/wheel build setup. Actual Linux patch transfer remains pending explicit user approval after automatic review rejected it; no current-source native capture or nine-direction matrix has executed. Six-file code-only patch is reviewable at /private/tmp/native-credential-linux-source.patch (regenerate from final working bytes before transfer). No plaintext evidence publication is enabled for native lane.
@@ -298,9 +296,13 @@ Independent current Linux/macOS receipt audit PASSED at /private/tmp/task33422-6
 Exact PR head 68fcd, dev 198a697 unchanged. All current-head PR/UI/latency and strict derived-artifact checks passed. Zero unresolved review threads and no newer Qodo feedback. Merge still awaits Windows and full matrix audit, followed by current head/dev/merge requirement checks. Original dirty checkout/server2 untouched; sole local dirty tracked file remains this Task record.
 2026-10-01T04:56 current Windows destination completed SUCCESS (job 110187241733, run 36804188765 attempt 1). Downloaded artifact 11142155509 exactly ONCE, verified GitHub ZIP SHA b42eec79441846fbc5af19fab1a90480825d8fecd789f28c6cd1a4e1ce8ef1e5, safely extracted four regular members into /private/tmp/task33422-matrix-68fcd-VXkPU3Z9/destination-windows-2022. Existing ledger now has six completed artifacts; do not redownload any. Complete unchanged strict auditor through protected current wrapper PASSED at /private/tmp/task33422-f84f-full-audit-cknxdv6w/summary.json: exact 68fcd, 3 sources/3 destinations, all 9 ciphertext joins/directions and 21 negatives, stable artifact bytes/stat and 17 source pins, 39 metadata records/87 children/6,676 frames, zero network. Auditor hashes unchanged before/after. Full independent audit requested from existing reviewer before accepting final qualification/merge. No product changes, retries, cancellations or deadline/guard changes.
 Full independent current native audit PASSED: /private/tmp/task33422-68-full-native-review-q1jbqz7r/safe-full-native-summary.json. Exact 68fcd, six folders/ZIPs/manifests, 17 pins, all nine joins/21 negatives/all flags/36-28-0 counts and 39 records/87 children/6,676 frames; stable bytes/stat/auditors/proof/ledger, zero tests/native operations/network, no actionable findings. Root report independently reproduced; no repository edits by reviewer. All native/CLI qualification gates now passed. Preserve precise tested runtime 68fcd through a Task-only evidence commit; verify complete non-Task tree equivalence, wait for required checks on the new published head, then exact-head protected merge. Task finalization remains after merge.
+2026-10-01T05:04 final qualification evidence published normally as Task-only commit 8420b2033fd1bc31515bd1c4c0c67fc900e2f595, exact lease from 68fcd; normal hooks retained and clean worktree verified before publication. Git diff between qualified runtime 68fcd and evidence head 8420b contains exactly this Task record; every other tracked production/test/dependency/workflow byte is identical. All five acceptance criteria are now checked; Task remains In Progress until integration. PR description now records complete root/independent 9/21 qualification and precise tested-runtime/documentation-head distinction. Fresh current-head checks queued: Derived Artifacts run 36818028848 (PR Fast Lane 110227266959, UI Fast Lane 110227267161) and UI latency run 36818028828. Required strict Derived artifacts aggregate must pass on 8420b before exact-head merge. Native run 36804188765 is completed SUCCESS; no new native dispatch, redownload or CLI rerun is needed for this Task-only delta. Recheck latest dev and new Qodo feedback before merging.
+2026-10-01T05:16 new external review gate: Cubic review on evidence head 8420b posted 26 unresolved findings, saved with complete thread IDs/context in /private/tmp/task33422-cubic-review-bqqudrxy/review.json. Qodo remains 6 resolved/1 verified dismissed/0 open; current-head CI remains queued. Existing exact68 full native9/21 and CLI audits remain valid historical-current evidence for unchanged bytes, but merge is held pending technical validation of all Cubic claims. Read-only independent triage of production findings 1,4,10,11,12,17,18,20,26 delegated to the existing reviewer; root examines harness/test/schema findings. No blind implementation or speculative scope expansion. Validate shared callers and focused reproduction first; apply only demonstrated scoped fixes with failing regressions, targeted protected tests, paired Bandit and independent review. Renew appropriate exact native evidence for any relevant production/harness change before merge; do not reuse68 for changed behavior. Acceptance criterion5 reopened while review is unresolved; Task status remains In Progress.
+Cubic review repair plan (2026-10-01, before source edits): retain exact68 native qualification as historical evidence while fixing demonstrated issues only. ADR required: no; routine corrections within existing credential index, authenticated retained-root compatibility and private qualification harness boundaries. Stage 1: regress/fix committed-then-raised chunk cleanup, deterministic index-size preflight and linear bulk deletion, preserving uncertain root publication/cache/deletion failure behavior. Stage 2: narrow shared persona.assets retained-member dependency compatibility and held-name membership work; retain all foreign-tree/security negatives. Stage 3: repair actual remote-activation assertion and portable fixtures; guard missing native transfer input before effects and atomically publish private JSON diagnostics. Stage 4: scoped tests, lint/format/compile, paired Bandit and independent review; address each of 26 review threads with evidence and renew exact-source native evidence for relevant changes before merge. No full suite, new dependency, cache, deadline increase, raw child logs or guard weakening. Cubic #6 (future edits to current prompt schema could alter retained v4) is not a defect at current immutable schema bytes; preserve existing v4 migration/catalog tests rather than restructuring catalogs for a speculative future version. Incorrect/unsupported or incompatible recommendations #1/#2/#13/#14/#15/#17/#18/#20/#26 require explicit evidence responses, not silent resolution. Root proofs /private/tmp/task33422-cubic-harness-proof-edn8tz3l/summary.json and 5 passing contradiction cases /private/tmp/task33422-linear-check-tu30fj0i/summary.json retained; independent production triage confirms #4/#10/#11/#12.
+Cubic technical disposition update: #8 is also disproved, because restore_plan.os is the platform_files facade and WindowsOS explicitly supplies geteuid with the stat/fstat SID projection; no unsafe stdlib fallback added. Evidence replies posted and threads resolved for #1/#2/#6/#8/#13/#14/#15/#17/#18/#20/#26 via exact original thread IDs, durable ledger /private/tmp/task33422-cubic-response-ledger.json (11 replied/resolved; remaining 15 confirmed fixes stay open). PR description now explicitly holds merge for Cubic repair/requalification. Root harness RED6 reproduced interrupted JSON publication and absent/empty transfer root; guarded corrected GREEN6 passes at /private/tmp/task33422-linear-check-69f7c3_8/summary.json, zero network. Initial 226-case harness run passed 224 unrelated cases and exposed two regression-test fixture assumptions about preseeded tmp_path; corrected assertions compare unchanged initial members instead of assuming an empty directory. JSON writes now use private same-directory mkstemp and atomic replace; temporary .tmp files stay outside strict .json collector projection. Existing collector security, privacy policy and deadlines unchanged. Symlink and native Linux socket fixtures gated only where Windows cannot execute their POSIX setup. Relevant new source evidence still required before merge.
+Cubic scoped final checks: credentials82 pass (7kpfd544), alias31 pass (c4tlaubz), fixtures71 pass/2 native opt-in skips (_8wqfmqa), root harness226 pass (jsazmvrk), zero network across protected runs. Source paired Bandit en6ek46s: baseline/current20,0new/scanerrors, including exact statement fingerprints; paired Ruff cuiqimgr: baseline/current44,0new lint/new whole-file-format failures. Existing formatting debt kept. Prior-source later_rollback control speq4dwp reproduces unchanged existing builtin execution60s timeout in SQLite staging, no alias-helper dependency/no new regression proved. New shared-assets authenticated preview is proven; full rollback execution remains pending. Existing test.yml qodo-review Windows selection now includes explicit affected compatible tests and both full shared builtin/assets execution variants; original90min job/80min phase/2400s ordinary per-case limits and zero-skip gate unchanged, no new workflow/selector. Explicit collection passed, not execution. Criteria2/3/4 reopened because production/harness bytes now changed; historical68 matrix remains verified but does not qualify candidate. Independent reviewer active on immutable initial16-file patch ofmk3hs0 plus two-file final delta jqrp1gzn. No source commit or new native dispatch yet.
+Independent Cubic combined review PASSED: /private/tmp/task33422-cubic-combined-review.md, immutable initial patch ofmk3hs0 plus final two-file delta jqrp1gzn, all16 final source hashes matched and no actionable P1/P2; requirements/code-quality approved. Normal source commit/publication now authorized by existing session approval. Preserve all unchanged security/privacy/deadline/zero-skip guards; existing formatting/lint debt is explicitly paired, no new findings. Remaining gates are actual new-source native9/21, affected native Windows fixtures/full shared rollback variants in existing qodo-review lane, appropriate installed CLI control and exact-head required CI/reviews/dev protections. Do not merge on historical68 evidence.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-<!-- SECTION:NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

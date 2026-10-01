@@ -16,6 +16,7 @@ import struct
 import subprocess  # nosec B404 - fixed local commands and arguments only
 import sys
 import tarfile
+import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import closing
 from pathlib import Path
@@ -247,6 +248,31 @@ _PRODUCT_SELECTIONS = {
     "plain": _RESTORE_DIAGNOSTIC_TESTS,
     "qodo-review": (
         _PRODUCT_TESTS[1] + "[plain]",
+        "Tests/RuntimePolicy/test_server_credentials.py",
+        "Tests/RuntimePolicy/test_server_credentials_lane_a.py",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_run_refuses_missing_transfer_root_before_effects",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_deadline_preserves_failure_and_discards_output",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_canary_streams_are_never_persisted_or_exported",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_environment_preserves_backend_and_bus",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_mac_child_selects_private_keychain_with_exact_home",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_thread_samples_publish_only_safe_late_frames",
+        "Tests/Backup_Recovery/test_thread_diagnostics.py",
+        "Tests/Backup_Recovery/test_activation_mcp_remote.py",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_only_windows_reviewed_instance_lock_is_observed_without_body_read",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_malformed_instance_lock_declarations_keep_the_body_hash",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_ordinary_and_sqlite_files_keep_exact_byte_hashes",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_instance_lock_keeps_native_drift_refusal",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_instance_lock_checks_pinned_before_named_and_after_state",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_preserved_lock_uses_reviewed_config_after_publication",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_instance_observation_binds_mode_without_normalizing_it",
+        "Tests/Backup_Recovery/test_credential_profile_scopes.py",
+        "Tests/Backup_Recovery/test_preserved_absent_scope.py",
+        "Tests/Backup_Recovery/test_publication_finalization.py::test_pending_checks_do_not_repeat_held_namespace_overlap",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_shared_legacy_later_preview_retains_authenticated_member_dependencies",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_legacy_snapshot_alias_root_accepts_only_authenticated_own_member_removal",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_legacy_snapshot_alias_root_refuses_other_dependency_changes",
         "Tests/Backup_Recovery/test_credentials.py::test_excluded_url_credentials_are_removed_from_staged_config",
         "Tests/Backup_Recovery/test_credentials.py::test_config_secret_is_removed_without_mutating_source",
         "Tests/Backup_Recovery/test_credentials.py::test_staged_current_and_history_leave_source_untouched",
@@ -509,10 +535,17 @@ def _sha256(path: Path) -> str:
 
 def _write_json(path: Path, value: object) -> None:
     """Write one deterministic JSON receipt."""
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True, default=str) + "\n",
-        encoding="utf-8",
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}-", suffix=".tmp", dir=path.parent
     )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(
+                json.dumps(value, indent=2, sort_keys=True, default=str) + "\n"
+            )
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _run_git(workspace: Path, *arguments: str) -> str:
@@ -1506,6 +1539,8 @@ def run(
     product_tests = _PRODUCT_SELECTIONS[product_selection]
     native_credentials = product_selection.startswith("native-credentials-")
     if native_credentials:
+        if not os.environ.get("TLDW_CREDENTIAL_TRANSFER_ROOT"):
+            raise RuntimeError("native_credential_transfer_root_required")
         validate_native_credential_environment()
     workspace = workspace.resolve()
     evidence_root = evidence_root.resolve()

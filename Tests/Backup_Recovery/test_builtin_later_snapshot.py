@@ -177,9 +177,7 @@ def shared_later_case(complete_builtin_case, tmp_path, monkeypatch):
     }
     declarations = install_adapters()
     builtin = next(
-        a
-        for a in recovery_adapters()
-        if a.owner_id == "persona.visual_identity_builtin"
+        a for a in recovery_adapters() if a.owner_id == first_members[0].owner
     )
 
     def peer_items():
@@ -363,7 +361,11 @@ def shared_later_case(complete_builtin_case, tmp_path, monkeypatch):
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 
-    for path in (live / "core.db", peer_core):
+    for path in (
+        (live / "core.db", peer_core)
+        if builtin.owner_id == "persona.visual_identity_builtin"
+        else ()
+    ):
         db = CharactersRAGDB(path, "current-shared-builtin")
         try:
             actor = db.add_character_card({"name": "Current builtin"})
@@ -396,16 +398,59 @@ def shared_later_case(complete_builtin_case, tmp_path, monkeypatch):
             db.close()
 
     def current():
-        return classify_entries(aliases((*_current(tmp_path).items, *peer_items())))
+        return classify_entries(
+            aliases((*_current(tmp_path, builtin.owner_id).items, *peer_items()))
+        )
 
     assert current().complete
     return operation, original, current, selected, original_configs
 
 
-def test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees(
+@pytest.mark.parametrize("complete_builtin_case", ["persona.assets"], indirect=True)
+def test_shared_legacy_later_preview_retains_authenticated_member_dependencies(
     shared_later_case, tmp_path
 ):
     operation, original, current, selected, original_configs = shared_later_case
+    before = selected.read_bytes(), selected.stat().st_ino
+    configs_before = {path: path.read_bytes() for path in original_configs}
+    roots = {
+        item.logical_id: item
+        for item in original.target.items
+        if item.owner == "persona.assets" and item.metadata.parent_id is None
+    }
+    assert len(roots) == 2
+    assert all(
+        set(item.dependencies) < set(roots[item.logical_id].dependencies)
+        for item in current().items
+        if item.logical_id in roots
+    )
+    reviewed = preview_rollback(
+        operation,
+        control_root=tmp_path / "control",
+        old_password=b"test-only",
+        target=current(),
+        cancel=Event(),
+    )
+    assert set(reviewed.safety_scope) == set(original.safety_scope)
+    assert all(
+        set(item.dependencies) == set(roots[item.logical_id].dependencies)
+        for item in reviewed.target.items
+        if item.logical_id in roots
+    )
+    assert (selected.read_bytes(), selected.stat().st_ino) == before
+    assert {path: path.read_bytes() for path in configs_before} == configs_before
+
+
+@pytest.mark.parametrize(
+    "complete_builtin_case",
+    ["persona.visual_identity_builtin", "persona.assets"],
+    indirect=True,
+)
+def test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees(
+    shared_later_case, complete_builtin_case, tmp_path
+):
+    operation, original, current, selected, original_configs = shared_later_case
+    owner = complete_builtin_case[2][0].owner
     before = selected.read_bytes(), selected.stat().st_ino
     reviewed = preview_rollback(
         operation,
@@ -416,12 +461,16 @@ def test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees(
     )
     assert set(reviewed.safety_scope) == set(original.safety_scope)
     assert {
-        item.logical_id
-        for item in reviewed.target.items
-        if item.owner == "persona.visual_identity_builtin"
+        item.logical_id for item in reviewed.target.items if item.owner == owner
     } == set(original.safety_scope)
     result = _execute_current(
-        operation, reviewed.target, tmp_path, reviewed, current_provider=current
+        operation,
+        reviewed.target,
+        tmp_path,
+        reviewed,
+        selected=selected,
+        owner_id=owner,
+        current_provider=current,
     )
     assert result != operation
     assert (selected.read_bytes(), selected.stat().st_ino) == before
@@ -454,6 +503,114 @@ def _snapshot_aliases(tmp_path):
         )
         for profile in ("first", "second")
     )
+
+
+def _legacy_snapshot_aliases(tmp_path):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+
+    roots = tuple(
+        replace(
+            item,
+            owner="persona.assets",
+            logical_id=item.logical_id.replace(
+                "persona.visual_identity_builtin", "persona.assets"
+            ),
+            metadata=replace(
+                item.metadata,
+                root_id=item.logical_id.replace(
+                    "persona.visual_identity_builtin", "persona.assets"
+                ),
+            ),
+        )
+        for item in _snapshot_aliases(tmp_path)
+    )
+    members = tuple(
+        StorageItem(
+            "persona.assets",
+            root.logical_id + ":selected",
+            root.path / "selected.png",
+            "included",
+            (root.logical_id,),
+            "shared-selected",
+            metadata=FileMetadata(
+                1,
+                root.logical_id,
+                "selected.png",
+                root.logical_id,
+                "file",
+                0o600,
+                0,
+                "private",
+            ),
+        )
+        for root in roots
+    )
+    roots = tuple(
+        replace(root, dependencies=(*root.dependencies, member.logical_id))
+        for root, member in zip(roots, members)
+    )
+    return roots, members
+
+
+@pytest.mark.parametrize("selected", [0, 1])
+def test_legacy_snapshot_alias_root_accepts_only_authenticated_own_member_removal(
+    tmp_path, selected
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    roots, members = _legacy_snapshot_aliases(tmp_path)
+    originals = {item.logical_id: item for item in (*roots, *members)}
+    current = tuple(replace(root, dependencies=root.dependencies[:2]) for root in roots)
+    assert _snapshot_target_matches(
+        current, roots[selected], originals, retained=members
+    ) == [current[selected]]
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["config", "core", "foreign_tree", "new_edge", "sibling_drift", "unauthenticated"],
+)
+def test_legacy_snapshot_alias_root_refuses_other_dependency_changes(tmp_path, damage):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    roots, members = _legacy_snapshot_aliases(tmp_path)
+    if damage == "foreign_tree":
+        roots = (
+            roots[0],
+            replace(
+                roots[1], dependencies=(*roots[1].dependencies, members[0].logical_id)
+            ),
+        )
+    originals = {item.logical_id: item for item in (*roots, *members)}
+    current = [replace(root, dependencies=root.dependencies[:2]) for root in roots]
+    sibling = current[1]
+    if damage in {"config", "core"}:
+        key = roots[1].dependencies[0 if damage == "config" else 1]
+        current[1] = replace(
+            sibling,
+            dependencies=tuple(value for value in sibling.dependencies if value != key),
+        )
+    elif damage == "new_edge":
+        current[1] = replace(
+            sibling, dependencies=(*sibling.dependencies, "unreviewed")
+        )
+    elif damage == "sibling_drift":
+        current[1] = replace(
+            sibling, metadata=replace(sibling.metadata, relative_path="unreviewed")
+        )
+    with pytest.raises(ValueError, match="^local_snapshot_preservation_unverified$"):
+        _snapshot_target_matches(
+            current,
+            roots[0],
+            originals,
+            retained=() if damage == "unauthenticated" else members,
+        )
 
 
 @pytest.mark.parametrize("selected", [0, 1])

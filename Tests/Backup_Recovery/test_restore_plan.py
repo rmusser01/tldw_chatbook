@@ -250,7 +250,23 @@ def test_windows_instance_lock_keeps_native_drift_refusal(
     elif change == "hardlink":
         os.link(case.lock, case.lock.with_name("alias"))
     elif change == "mode":
-        case.lock.chmod(0o644)
+        original_stat = case.facade.stat
+
+        def changed_mode(path, **kwargs):
+            value = original_stat(path, **kwargs)
+            return (
+                os.stat_result(
+                    (value.st_mode ^ 0o040, *value[1:]),
+                    {
+                        name: getattr(value, name)
+                        for name in ("st_atime_ns", "st_mtime_ns", "st_ctime_ns")
+                    },
+                )
+                if Path(path) == case.lock
+                else value
+            )
+
+        monkeypatch.setattr(case.facade, "stat", changed_mode)
     elif change == "mtime":
         os.utime(case.lock, ns=(1_234_000_000, 1_234_000_000))
     else:
@@ -327,8 +343,9 @@ def test_windows_instance_observation_binds_mode_without_normalizing_it(
 
     case = reviewed_instance_lock
     case.lock.chmod(0o644)
+    mode = case.facade.stat(case.lock, follow_symlinks=False).st_mode
     assert _fingerprint((case.lock,), case.target)
-    assert case.lock.stat().st_mode & 0o777 == 0o644
+    assert case.facade.stat(case.lock, follow_symlinks=False).st_mode == mode
 
 
 def sealed(tmp_path, *, partial=False, unknown=False, mutate=None, data=b"durable"):

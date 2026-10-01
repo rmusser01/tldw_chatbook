@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 import threading
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -43,9 +44,15 @@ def _frames(frame, limit: int = 64) -> list[dict]:
 
 
 def _write(path: Path, records: list | dict) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-        json.dump(records, output)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}-", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(records, output)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _snapshot() -> list[dict]:

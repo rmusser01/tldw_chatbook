@@ -125,7 +125,9 @@ def test_schema_policy_matches_installed_store(core_store):
     policy = adapter.schema_policy()
     assert policy is not None
     assert policy.versions == (
-        (5, 4) if name == "prompts" else (owner._CURRENT_SCHEMA_VERSION,)
+        (owner._CURRENT_SCHEMA_VERSION, 4)
+        if name == "prompts"
+        else (owner._CURRENT_SCHEMA_VERSION,)
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (2 if name in {"chachanotes", "prompts"} else 1)
