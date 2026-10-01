@@ -131,6 +131,7 @@ from tldw_chatbook.STT.executor import (
     WorkerPhase,
     snapshot_local_source,
 )
+from tldw_chatbook.Utils.egress import UrlProvenance
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -2282,6 +2283,21 @@ class LibraryIngestQueueMixin:
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
             "perform_analysis": perform_analysis,
+            # (TASK-20973) Mint the URL-provenance fact HERE, where the
+            # submission's lineage is known, so the video arm's egress
+            # check trusts a private host only for a URL the user actually
+            # entered. A general Library-import submission IS user entry
+            # (the source string came from the import form); a
+            # research-source job's URL is agent-discovered catalog
+            # content, NOT user entry, and must fail closed. Deriving
+            # this from the job's own field -- rather than from "who
+            # happens to call" -- is what makes adding a caller unable to
+            # silently change the trust decision.
+            "url_provenance": (
+                UrlProvenance.UNKNOWN
+                if job.research_source_operation_id
+                else UrlProvenance.USER_ENTERED
+            ),
             # These generic fields intentionally travel independently of the
             # detected type-group branch. The downstream local overwrite/RAG
             # behavior is owned by later work; this seam only makes the form
