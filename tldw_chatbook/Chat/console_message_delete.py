@@ -49,7 +49,14 @@ def _messages(count: int) -> str:
 
 
 def console_delete_receipt_copy(count: int) -> str:
-    """Return the receipt for ``count`` removed messages."""
+    """Return the receipt for ``count`` removed messages.
+
+    Args:
+        count: How many transcript messages the delete removed.
+
+    Returns:
+        The receipt copy, singular for one message.
+    """
     if count == 1:
         return "Deleted message from transcript."
     return f"Deleted {count} messages from transcript."
@@ -107,6 +114,14 @@ class ConsoleDeleteScope:
 def console_delete_scope(store: Any, message_id: str) -> ConsoleDeleteScope:
     """Measure what deleting ``message_id`` would remove right now.
 
+    Args:
+        store: The Console store holding the message.
+        message_id: Native id of the selected message.
+
+    Returns:
+        The subtree the delete would tombstone, and how much of it sits off
+        the active branch.
+
     Raises:
         KeyError: The message is no longer in the store.
     """
@@ -156,7 +171,19 @@ class ConsoleDeletedSubtree:
 
 
 def capture_deleted_subtree(store: Any, message_id: str) -> ConsoleDeletedSubtree:
-    """Snapshot the subtree rooted at ``message_id`` BEFORE it is deleted."""
+    """Snapshot the subtree rooted at ``message_id`` BEFORE it is deleted.
+
+    Args:
+        store: The Console store about to delete the subtree.
+        message_id: Native id of the subtree's root message.
+
+    Returns:
+        Everything Undo needs to re-register the subtree exactly; its
+        ``tombstones`` stay empty until :func:`with_committed_tombstones`.
+
+    Raises:
+        KeyError: The message is no longer in the store.
+    """
     session_id = store.session_id_for_message(message_id)
     nodes_by_id = store._nodes_by_session.get(session_id, {})
     children = store._children_by_parent.get(session_id, {})
@@ -226,6 +253,10 @@ def with_committed_tombstones(
             rows that are never store nodes (tool-role rows, empty rows), so
             these -- not the captured nodes -- are what Undo must restore.
             ``None`` falls back to the captured nodes' persisted ids.
+
+    Returns:
+        ``deleted`` carrying the committed ``(message_id, version)``
+        tombstones, or ``deleted`` unchanged when nothing was persisted.
     """
     persisted = (
         list(committed_ids)
@@ -256,6 +287,14 @@ def delete_subtree_for_undo(
     the held message ids are returned so the caller can release them once
     the delete is final.
 
+    Args:
+        store: The Console store to delete from.
+        message_id: Native id of the subtree's root message.
+
+    Returns:
+        The Undo snapshot, and the persisted ids whose reference release
+        was held back.
+
     Raises:
         Exception: Whatever ``store.delete_message`` raised.
     """
@@ -276,6 +315,10 @@ def restore_deleted_subtree(store: Any, deleted: ConsoleDeletedSubtree) -> None:
 
     The durable half is one version-checked transaction: every tombstone
     must still be at the version this delete wrote, or nothing changes.
+
+    Args:
+        store: The Console store the delete ran on.
+        deleted: The snapshot :func:`delete_subtree_for_undo` returned.
 
     Raises:
         ConsoleDeleteUndoError: The conversation changed so Undo is unsafe.

@@ -154,7 +154,9 @@ def bind_message_references(db) -> RecoveredMessageReferences | None:
         return None
 
 
-def references_absent(binding, message_ids: tuple[str, ...]) -> bool:
+def references_absent(
+    binding: RecoveredMessageReferences | None, message_ids: tuple[str, ...]
+) -> bool:
     """Return True only on positive evidence that no reference names these ids.
 
     A release that could not verify its source normally leaves cleanup
@@ -163,6 +165,14 @@ def references_absent(binding, message_ids: tuple[str, ...]) -> bool:
     release -- a media-free delete must not warn (TASK-33628.2). Any doubt
     (unreadable catalog, changed source) answers False, keeping the pending
     retry.
+
+    Args:
+        binding: The service's bound source, or ``None`` when unbound (the
+            default recovered-media root and profile are inspected).
+        message_ids: Persisted ids whose references to look for.
+
+    Returns:
+        True only when no current-profile reference names these ids.
     """
     try:
         if type(binding) is RecoveredMessageReferences:

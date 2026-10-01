@@ -339,6 +339,9 @@ class ChatPersistenceService:
     def release_recovered_media_references(self, message_ids: Sequence[str]) -> bool:
         """Release held references for a now-final delete.
 
+        Args:
+            message_ids: The ids :meth:`hold_recovered_media_release` held.
+
         Returns:
             True when this release left recovered-media cleanup pending.
         """
