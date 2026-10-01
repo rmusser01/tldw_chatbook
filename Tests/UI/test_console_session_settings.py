@@ -75,6 +75,7 @@ from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
+    ProviderTestEvidenceStore,
 )
 from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
@@ -7505,6 +7506,84 @@ def _discovery_status_text(modal: ConsoleSettingsModal) -> str:
 def _readiness_text(modal: ConsoleSettingsModal) -> str:
     readiness = modal.query_one("#console-settings-readiness", Static)
     return str(getattr(readiness.renderable, "plain", readiness.renderable))
+
+
+@pytest.mark.asyncio
+async def test_chat_settings_test_result_is_shared_with_other_surfaces() -> None:
+    """TASK-33005.1 (AC#1): a Chat settings connection test lands in the app's
+    shared owner, where any other surface's store reads it back for the same
+    connection -- whatever draft generation that surface counts."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        provider_connection_evidence,
+    )
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                connection_tester=_unreachable_connection_tester,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        for _ in range(_PROBE_POLL_MAX_PAUSES):
+            await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
+            if modal._active_connection_probe_token is None:
+                break
+
+        identity = modal._current_connection_probe_identity()
+        other_surface = replace(identity, draft_generation=0)
+        shared = provider_connection_evidence(app).evidence_for(other_surface)
+        assert shared is not None and shared.identity == other_surface
+        assert shared.endpoint == "unreachable"
+        assert shared.observed_at is not None
+        assert ProviderTestEvidenceStore(lambda: app).evidence_for(
+            other_surface
+        ) == shared
+
+
+@pytest.mark.asyncio
+async def test_chat_settings_identity_revision_is_the_saved_key_digest() -> None:
+    """TASK-33005.1 (ruling 2): Chat settings stamped revision 0 for every
+    saved key, so its evidence could never match Settings or the Console;
+    it now stamps the digest of the key a send would use."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        connection_credential_revision,
+    )
+
+    app = ModalHarness()
+    app.app_config["api_settings"]["openai"] = {
+        "api_key": "sk-modal-saved-key",
+        "api_url": "https://api.openai.com/v1",
+    }
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4o"),
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4o"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        identity = app.screen._current_connection_probe_identity()
+
+        assert identity.credential_source == "stored"
+        assert identity.credential_revision == connection_credential_revision(
+            "sk-modal-saved-key"
+        )
 
 
 @pytest.mark.asyncio

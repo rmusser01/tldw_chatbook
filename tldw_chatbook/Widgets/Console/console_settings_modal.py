@@ -130,6 +130,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderProbeResult,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
+    connection_credential_revision,
     console_generation_test_availability,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
@@ -1281,7 +1282,7 @@ class ConsoleSettingsModal(
         self._generation_tester: GenerationTester = (
             generation_tester or _default_generation_tester
         )
-        self._connection_evidence_store = ProviderTestEvidenceStore()
+        self._connection_evidence_store = ProviderTestEvidenceStore(lambda: self.app)
         self._entry_credential_state: tuple[object, ...] | None = None
         self._entry_credential_revision = self._expected_settings_revision
         self._active_connection_probe_token: object | None = None
@@ -5720,7 +5721,9 @@ class ConsoleSettingsModal(
         )
         if connection_identity is None:
             return None
-        credential_revision = self._expected_settings_revision
+        # TASK-33005.1: the revision is the sent key's digest, as on every surface.
+        readiness = get_provider_readiness(provider_key, self._app_config, background_credentials=True)
+        api_key = readiness.api_key
         if entry is not None:
             api_key, source = resolve_entry_credential(entry)
             state = (
@@ -5735,7 +5738,6 @@ class ConsoleSettingsModal(
                 self._entry_credential_revision += 1
                 if prior_state is not None and prior_state[0] == state[0]:
                     self._advance_model_discovery_generation(force=True)
-            credential_revision = self._entry_credential_revision
             credential_source = (
                 "environment"
                 if source and source.startswith("env:")
@@ -5747,7 +5749,6 @@ class ConsoleSettingsModal(
             provider_settings = self._provider_settings(provider_key)
             credential_source = configured_provider_credential_source(provider_settings)
         if credential_source is None:
-            readiness = get_provider_readiness(provider_key, self._app_config, background_credentials=True)
             if readiness.api_key_source is None:
                 credential_source = "none"
             elif readiness.api_key_source.startswith("env:"):
@@ -5758,7 +5759,7 @@ class ConsoleSettingsModal(
             provider_key=provider_key,
             connection_identity=connection_identity,
             credential_source=credential_source,
-            credential_revision=credential_revision,
+            credential_revision=connection_credential_revision(api_key),
             draft_generation=self._model_discovery_generation,
             custom_endpoint_id=f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}" if entry is not None else None,
         )
@@ -5935,12 +5936,7 @@ class ConsoleSettingsModal(
         if prior_evidence is not None and rebound_identity is not None:
             token = self._connection_evidence_store.begin(rebound_identity)
             self._connection_evidence_store.settle(
-                token,
-                ProviderProbeResult(
-                    prior_evidence.endpoint,
-                    prior_evidence.model_ids,
-                    prior_evidence.category,
-                ),
+                token, replace(prior_evidence, identity=rebound_identity)
             )
 
     def _invalidate_model_discovery_for_provider(self, provider: str) -> None:
@@ -6305,11 +6301,7 @@ class ConsoleSettingsModal(
                 identity
             )
             self._connection_evidence_store.settle_generation(
-                generation_token,
-                ProviderGenerationProbeResult(
-                    prior_evidence.generation,
-                    prior_evidence.generation_category,
-                ),
+                generation_token, replace(prior_evidence, identity=identity)
             )
         token = self._connection_evidence_store.begin(identity)
         self._active_connection_probe_token = token

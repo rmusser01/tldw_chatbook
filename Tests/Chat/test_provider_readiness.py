@@ -576,6 +576,8 @@ def test_evidence_records_are_frozen_slotted_and_secret_free():
         "credential",
         "generation",
         "generation_category",
+        # TASK-33005.1 (AC#5): when the result was observed, local time.
+        "observed_at",
     ]
     assert not hasattr(identity, "__dict__")
     assert not hasattr(evidence, "__dict__")

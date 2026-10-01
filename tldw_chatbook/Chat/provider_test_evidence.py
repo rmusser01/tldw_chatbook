@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
-from dataclasses import dataclass, field
+import secrets
+from collections.abc import Callable, Collection
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from enum import StrEnum
-from threading import RLock
-from typing import TYPE_CHECKING, Collection, Literal, Protocol
+from threading import Lock, RLock
+from typing import TYPE_CHECKING, Literal, Protocol
 from unicodedata import category as unicode_category
 
 from .provider_endpoint_contract import canonical_connection_identity
@@ -468,10 +473,15 @@ class ProviderTestEvidence:
     credential: CredentialFacet = "not_required"
     generation: GenerationFacet = "not_tested"
     generation_category: GenerationFailureCategory | None = None
+    #: TASK-33005.1: local time of the latest settled observation, for the
+    #: "verified HH:MM" / "reachable HH:MM" words. Not part of equality.
+    observed_at: datetime | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if type(self.identity) is not ProviderDraftIdentity:
             raise ValueError("Provider evidence identity is invalid.")
+        if self.observed_at is not None and type(self.observed_at) is not datetime:
+            raise ValueError("Provider evidence observation time is invalid.")
         if (
             type(self.endpoint) is not str
             or self.endpoint not in _EVIDENCE_ENDPOINT_FACETS
@@ -562,9 +572,17 @@ class _ProviderEvidenceSaveLease:
 
 
 class ProviderTestEvidenceStore:
-    """Thread-safe process-local owner of latest-generation probe evidence."""
+    """Thread-safe draft-scoped owner of one surface's latest probe evidence.
 
-    def __init__(self) -> None:
+    TASK-33005.1: a store built with ``app`` (a callable returning the running
+    app) publishes every settled fact to that app's
+    :class:`ProviderConnectionEvidence` and reads the other surfaces' facts
+    back for an exact connection. Without one it is draft-only, as before.
+    """
+
+    def __init__(self, app: Callable[[], object] | None = None) -> None:
+        self._app = app
+        self._shared_owner: ProviderConnectionEvidence | None = None
         self._lock = RLock()
         self._operation_epoch = 0
         self._generation_operation_epoch = 0
@@ -661,15 +679,21 @@ class ProviderTestEvidenceStore:
             ):
                 return False
             self._settling = None
-            self._evidence = _replace_endpoint_evidence(
-                self._evidence,
-                identity=identity,
-                endpoint=evidence.endpoint,
-                model_ids=evidence.model_ids,
-                category=evidence.category,
+            settled = replace(
+                _replace_endpoint_evidence(
+                    self._evidence,
+                    identity=identity,
+                    endpoint=evidence.endpoint,
+                    model_ids=evidence.model_ids,
+                    category=evidence.category,
+                ),
+                # A rebound earlier observation keeps its own time.
+                observed_at=evidence.observed_at or _local_now(),
             )
+            self._evidence = settled
             self._advance_operation()
-            return True
+        self._publish(settled, generation=False)
+        return True
 
     def begin_generation(self, identity: ProviderDraftIdentity) -> object:
         """Start an exact-identity generation probe and return its token.
@@ -722,7 +746,10 @@ class ProviderTestEvidenceStore:
     def settle_generation(self, token: object, outcome: object) -> bool:
         """Attach a bounded generation result only to its exact current draft."""
 
-        supported_outcome = type(outcome) is ProviderGenerationProbeResult
+        supported_outcome = type(outcome) in {
+            ProviderGenerationProbeResult,
+            ProviderTestEvidence,
+        }
         with self._lock:
             if (
                 type(token) is not _ProviderGenerationTestToken
@@ -748,7 +775,9 @@ class ProviderTestEvidenceStore:
             self._reject_generation_settlement(settlement_claim)
             return False
         try:
-            generation, category = _generation_evidence_from_exact_outcome(outcome)
+            generation, category, observed_at = _generation_evidence_from_exact_outcome(
+                identity, outcome
+            )
         except ValueError:
             self._reject_generation_settlement(settlement_claim)
             return False
@@ -762,27 +791,41 @@ class ProviderTestEvidenceStore:
             ):
                 return False
             self._generation_settling = None
-            self._evidence = _replace_generation_evidence(
-                self._evidence,
-                identity=identity,
-                generation=generation,
-                category=category,
+            settled = replace(
+                _replace_generation_evidence(
+                    self._evidence,
+                    identity=identity,
+                    generation=generation,
+                    category=category,
+                ),
+                observed_at=observed_at or _local_now(),
             )
+            self._evidence = settled
             self._generation_cancel_restore = None
             self._advance_generation_operation()
-            return True
+        self._publish(settled, endpoint=False)
+        return True
 
     def evidence_for(
         self, identity: ProviderDraftIdentity
     ) -> ProviderTestEvidence | None:
-        """Return evidence only for the exact semantic identity supplied."""
+        """Return evidence only for the exact semantic identity supplied.
+
+        A linked store falls back to another surface's settled result for the
+        same connection, re-stamped with ``identity`` -- but never for an
+        identity ``begin`` would refuse (TASK-33001.3's invariant).
+        """
 
         if type(identity) is not ProviderDraftIdentity:
             return None
         with self._lock:
-            if self._evidence is None or self._evidence.identity != identity:
+            if self._evidence is not None and self._evidence.identity == identity:
+                return self._evidence
+            if identity.draft_generation < self._latest_generation:
                 return None
-            return self._evidence
+        shared = self._shared()
+        found = shared.evidence_for(identity) if shared is not None else None
+        return found if found is not None and found.identity == identity else None
 
     def latest_evidence(self) -> ProviderTestEvidence | None:
         """Return the latest bounded snapshot for changed-since-test projection."""
@@ -955,17 +998,33 @@ class ProviderTestEvidenceStore:
             self._clear_all_test_state()
             self._advance_generation_operation()
             if can_preserve and evidence is not None:
-                self._evidence = ProviderTestEvidence(
-                    saved_identity,
-                    evidence.endpoint,
-                    evidence.model_ids,
-                    evidence.category,
-                    evidence.credential,
-                    evidence.generation,
-                    evidence.generation_category,
-                )
+                self._evidence = replace(evidence, identity=saved_identity)
             self._advance_operation()
-            return can_preserve
+            rebased = self._evidence if can_preserve else None
+        if rebased is not None:
+            self._publish(rebased)
+        return can_preserve
+
+    def _shared(self) -> ProviderConnectionEvidence | None:
+        """Resolve (once) the app's shared owner; ``None`` keeps this draft-only."""
+
+        if self._shared_owner is None and self._app is not None:
+            try:
+                self._shared_owner = provider_connection_evidence(self._app())
+            except (AttributeError, RuntimeError):  # No app: bare screens, units.
+                return None
+        return self._shared_owner
+
+    def _publish(
+        self,
+        evidence: ProviderTestEvidence,
+        *,
+        endpoint: bool = True,
+        generation: bool = True,
+    ) -> None:
+        shared = self._shared()
+        if shared is not None:
+            shared.publish(evidence, endpoint=endpoint, generation=generation)
 
     def _reject_settlement(
         self,
@@ -1072,6 +1131,172 @@ class ProviderTestEvidenceStore:
         self._save_lease = None
 
 
+#: Per-process salt: a revision means nothing outside this process.
+_CREDENTIAL_REVISION_SALT = secrets.token_bytes(32)
+_OWNER_ATTRIBUTE = "_provider_connection_evidence"
+_OWNER_CREATION_LOCK = Lock()
+
+
+def connection_credential_revision(credential: object) -> int:
+    """Return the secret-free revision of one resolved provider credential.
+
+    TASK-33005.1: every surface stamps this into
+    ``ProviderDraftIdentity.credential_revision`` -- computed from the key a
+    send would use (``ProviderReadiness.api_key`` for saved state, the typed
+    value for a draft) -- so one saved credential compares equal in Chat
+    settings, Settings and the Console, and changing it changes the
+    connection. A salted HMAC, so the number never reveals the key.
+
+    Args:
+        credential: The resolved credential, or ``None`` when none is sent.
+
+    Returns:
+        ``0`` when there is no credential, else a positive 56-bit integer.
+    """
+
+    if type(credential) is not str or not credential:
+        return 0
+    digest = hmac.new(
+        _CREDENTIAL_REVISION_SALT, credential.encode("utf-8"), hashlib.sha256
+    ).digest()
+    return int.from_bytes(digest[:7], "big") + 1
+
+
+class ProviderConnectionEvidence:
+    """Process-memory settled evidence, one record per provider connection.
+
+    TASK-33005.1 / ADR-033: a narrow owner attached to the app (see
+    :func:`provider_connection_evidence`), never persisted. A connection is a
+    ``ProviderDraftIdentity`` without its surface-local ``draft_generation``:
+    provider, custom endpoint id, canonical endpoint, credential source and
+    :func:`connection_credential_revision`. Surfaces publish settled facts
+    through their draft stores; the Console reads here directly.
+    """
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        # ponytail: one record per connection ever tested this process; it
+        # only grows with explicit tests, so no eviction until that matters.
+        self._records: dict[tuple[object, ...], ProviderTestEvidence] = {}
+        self._latest: dict[tuple[str, str | None], tuple[object, ...]] = {}
+        self._version = 0
+
+    @property
+    def version(self) -> int:
+        """Monotonic count of accepted publications, for cheap change polling."""
+
+        return self._version
+
+    def publish(
+        self,
+        evidence: ProviderTestEvidence,
+        *,
+        endpoint: bool = True,
+        generation: bool = True,
+    ) -> bool:
+        """Merge the settled facets of ``evidence`` into its connection's record.
+
+        Only terminal facts move (a ``testing`` or changed-since-test marker is
+        a surface's draft state), and an older observation never overwrites a
+        newer one.
+
+        Returns:
+            Whether the record changed.
+        """
+
+        if type(evidence) is not ProviderTestEvidence:
+            return False
+        take_endpoint = endpoint and evidence.endpoint in _PROBE_ENDPOINT_FACETS
+        take_generation = generation and evidence.generation in {"succeeded", "failed"}
+        if not (take_endpoint or take_generation):
+            return False
+        observed_at = evidence.observed_at or _local_now()
+        identity = replace(evidence.identity, draft_generation=0)
+        key = _connection_key(identity)
+        with self._lock:
+            record = self._records.get(key)
+            if (
+                record is not None
+                and record.observed_at is not None
+                and observed_at < record.observed_at
+            ):
+                return False
+            if take_endpoint:
+                record = _replace_endpoint_evidence(
+                    record,
+                    identity=identity,
+                    endpoint=evidence.endpoint,
+                    model_ids=evidence.model_ids,
+                    category=evidence.category,
+                )
+            if take_generation:
+                record = _replace_generation_evidence(
+                    record,
+                    identity=identity,
+                    generation=evidence.generation,
+                    category=evidence.generation_category,
+                )
+            self._records[key] = replace(record, observed_at=observed_at)
+            self._latest[(identity.provider_key, identity.custom_endpoint_id)] = key
+            self._version += 1
+        return True
+
+    def evidence_for(
+        self, identity: ProviderDraftIdentity
+    ) -> ProviderTestEvidence | None:
+        """Return what is known about ``identity``'s connection.
+
+        Returns:
+            The connection's record re-stamped with ``identity``; or, when only
+            another connection of the same provider was tested, that record
+            unchanged -- its identity no longer matches, so readers project it
+            as changed since test instead of reusing it; else ``None``.
+        """
+
+        if type(identity) is not ProviderDraftIdentity:
+            return None
+        with self._lock:
+            record = self._records.get(_connection_key(identity))
+            if record is None:
+                latest = self._latest.get(
+                    (identity.provider_key, identity.custom_endpoint_id)
+                )
+                return None if latest is None else self._records[latest]
+        return replace(record, identity=identity)
+
+
+def provider_connection_evidence(owner: object) -> ProviderConnectionEvidence:
+    """Return the one connection evidence owner attached to an app process.
+
+    Mirrors ``process_provider_test_evidence_store`` (TTS): a private
+    attribute on the running app, so a restart starts with nothing tested.
+    """
+
+    existing = getattr(owner, _OWNER_ATTRIBUTE, None)
+    if type(existing) is ProviderConnectionEvidence:
+        return existing
+    with _OWNER_CREATION_LOCK:
+        existing = getattr(owner, _OWNER_ATTRIBUTE, None)
+        if type(existing) is not ProviderConnectionEvidence:
+            existing = ProviderConnectionEvidence()
+            setattr(owner, _OWNER_ATTRIBUTE, existing)
+        return existing
+
+
+def _connection_key(identity: ProviderDraftIdentity) -> tuple[object, ...]:
+    return (
+        identity.provider_key,
+        identity.custom_endpoint_id,
+        identity.connection_identity,
+        identity.credential_source,
+        identity.credential_revision,
+    )
+
+
+def _local_now() -> datetime:
+    return datetime.now().astimezone()
+
+
 def _validate_model_ids(model_ids: object) -> None:
     if type(model_ids) is not tuple:
         raise ValueError("Model IDs must be a tuple.")
@@ -1175,12 +1400,23 @@ def _evidence_from_exact_outcome(
 
 
 def _generation_evidence_from_exact_outcome(
+    identity: ProviderDraftIdentity,
     outcome: object,
-) -> tuple[Literal["succeeded", "failed"], GenerationFailureCategory | None]:
+) -> tuple[
+    Literal["succeeded", "failed"],
+    GenerationFailureCategory | None,
+    datetime | None,
+]:
+    if type(outcome) is ProviderTestEvidence:
+        # A rebound earlier result: same draft, and it keeps its own time.
+        if outcome.identity != identity:
+            raise ValueError("Generation evidence identity does not match the token.")
+        _validate_generation_result(outcome.generation, outcome.generation_category)
+        return outcome.generation, outcome.generation_category, outcome.observed_at
     if type(outcome) is not ProviderGenerationProbeResult:
         raise ValueError("Provider generation result type is invalid.")
     _validate_generation_result(outcome.generation, outcome.category)
-    return outcome.generation, outcome.category
+    return outcome.generation, outcome.category, None
 
 
 def _replace_endpoint_evidence(
@@ -1193,15 +1429,7 @@ def _replace_endpoint_evidence(
 ) -> ProviderTestEvidence:
     if evidence is None or evidence.identity != identity:
         return ProviderTestEvidence(identity, endpoint, model_ids, category)
-    return ProviderTestEvidence(
-        identity,
-        endpoint,
-        model_ids,
-        category,
-        evidence.credential,
-        evidence.generation,
-        evidence.generation_category,
-    )
+    return replace(evidence, endpoint=endpoint, model_ids=model_ids, category=category)
 
 
 def _replace_generation_evidence(
@@ -1224,15 +1452,7 @@ def _replace_generation_evidence(
             generation=generation,
             generation_category=category,
         )
-    return ProviderTestEvidence(
-        identity,
-        evidence.endpoint,
-        evidence.model_ids,
-        evidence.category,
-        evidence.credential,
-        generation,
-        category,
-    )
+    return replace(evidence, generation=generation, generation_category=category)
 
 
 def _mutation_flags(mutation_result: object) -> tuple[bool, bool] | None:

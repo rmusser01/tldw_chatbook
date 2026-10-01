@@ -124,6 +124,7 @@ from ...Chat.provider_test_evidence import (
     ProviderProbeResult,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
+    connection_credential_revision,
 )
 from ...Chat.console_provider_support import (
     CARRY_FORWARD_OPTIONS,
@@ -186,6 +187,7 @@ from ...Chat.provider_catalog import (
 )
 from ...config import (
     ConfigMutationResult,
+    resolve_provider_api_key,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
     DEFAULT_CONSOLE_AGENT_MAX_STEPS,
@@ -731,9 +733,10 @@ class _VllmDefaultPresentationSnapshot:
     draft: SettingsDraft | None
     provider_save_result: str
     provider_test_result: str
-    provider_test_evidence_store: ProviderTestEvidenceStore
+    # TASK-33005.1: no evidence store and no credential counter here. Test
+    # evidence is shared with Chat settings and the Console, so restoring a
+    # private copy would roll back what another surface settled.
     provider_draft_generation: int
-    provider_credential_revision: int
     model_discovery_status: str
     model_discovery_models: tuple[object, ...]
     model_discovery_selected_model_ids: frozenset[str]
@@ -3184,7 +3187,8 @@ class SettingsScreen(BaseAppScreen):
         self._snapshot_preferences_unavailable = False
         self._web_search_settings: WebSearchSettings | None = None
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
-        self._provider_test_evidence_store = ProviderTestEvidenceStore()
+        # TASK-33005.1: draft-scoped, publishing to the app's shared owner.
+        self._provider_test_evidence_store = ProviderTestEvidenceStore(lambda: self.app)
         self._provider_draft_generation = 0
         # Bumped whenever the Test rows go stale; every live probe carries it.
         self._provider_test_draft_generation = 0
@@ -3194,7 +3198,6 @@ class SettingsScreen(BaseAppScreen):
         self._local_model_review_token = None
         self._local_model_review_busy = False
         self._local_model_review_prompt_open = False
-        self._provider_credential_revision = 0
         self._subscription_readiness_timer = None
         self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
             None
@@ -13334,11 +13337,7 @@ class SettingsScreen(BaseAppScreen):
             draft=copy.deepcopy(self._provider_draft()),
             provider_save_result=self._provider_save_result,
             provider_test_result=self._provider_test_result,
-            provider_test_evidence_store=copy.copy(
-                self._provider_test_evidence_store
-            ),
             provider_draft_generation=self._provider_draft_generation,
-            provider_credential_revision=self._provider_credential_revision,
             model_discovery_status=self._model_discovery_status,
             model_discovery_models=tuple(self._model_discovery_models),
             model_discovery_selected_model_ids=frozenset(
@@ -13433,11 +13432,7 @@ class SettingsScreen(BaseAppScreen):
                 snapshot.draft
             )
         self._provider_test_result = snapshot.provider_test_result
-        self._provider_test_evidence_store = copy.copy(
-            snapshot.provider_test_evidence_store
-        )
         self._provider_draft_generation = snapshot.provider_draft_generation
-        self._provider_credential_revision = snapshot.provider_credential_revision
         self._model_discovery_status = snapshot.model_discovery_status
         self._model_discovery_models = tuple(snapshot.model_discovery_models)
         self._model_discovery_selected_model_ids = set(
@@ -13824,7 +13819,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
         store = getattr(self, "_provider_test_evidence_store", None)
         if not isinstance(store, ProviderTestEvidenceStore):
-            store = ProviderTestEvidenceStore()
+            store = ProviderTestEvidenceStore(lambda: self.app)
             self._provider_test_evidence_store = store
         return store
 
@@ -13834,10 +13829,6 @@ class SettingsScreen(BaseAppScreen):
             self._provider_draft_generation = (
                 getattr(self, "_provider_draft_generation", 0) + 1
             )
-            if key in {"credential_env_var", "api_key"}:
-                self._provider_credential_revision = (
-                    getattr(self, "_provider_credential_revision", 0) + 1
-                )
             self._provider_evidence_store().invalidate()
             self._mark_provider_test_result_stale()
             return
@@ -13925,6 +13916,45 @@ class SettingsScreen(BaseAppScreen):
             return "stored"
         return "none"
 
+    def _provider_draft_credential_revision(
+        self,
+        provider: str,
+        credential_source: str,
+        values: Mapping[str, object],
+    ) -> int:
+        """Return the draft's credential as a cross-surface revision.
+
+        TASK-33005.1: the digest of the key a send would use once this draft
+        is saved -- the readiness key for an untouched credential, exactly as
+        Chat settings and the Console compute it -- so one key is one
+        connection on every surface, and Save carries Test evidence only when
+        the saved key is the tested one.
+
+        Args:
+            provider: The draft provider.
+            credential_source: ``_provider_current_credential_source`` result.
+            values: Draft values holding ``api_key`` and ``credential_env_var``.
+
+        Returns:
+            The :func:`connection_credential_revision` of that key.
+        """
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if credential_source == "none":
+            key = None
+        elif credential_source == "draft":
+            key = str(values.get("api_key") or "").strip()
+        elif not {"api_key", "credential_env_var"} & dirty:
+            key = get_provider_readiness(
+                provider, self._app_config_mapping(), background_credentials=True
+            ).api_key
+        elif credential_source == "environment":
+            env_var = str(values.get("credential_env_var") or "").strip()
+            key = os.environ.get(env_var) if env_var else None
+        else:
+            key = self._provider_api_key_value(provider)
+        return connection_credential_revision(resolve_provider_api_key(key))
+
     def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
         try:
             values = self._provider_form_values_from_widgets()
@@ -13942,8 +13972,8 @@ class SettingsScreen(BaseAppScreen):
                     model=str(values.get("model") or "").strip(),
                     endpoint=endpoint,
                     credential_source=credential_source,
-                    credential_revision=getattr(
-                        self, "_provider_credential_revision", 0
+                    credential_revision=self._provider_draft_credential_revision(
+                        provider, credential_source, values
                     ),
                     draft_generation=getattr(self, "_provider_draft_generation", 0),
                     credential_value=(
@@ -16086,6 +16116,25 @@ class SettingsScreen(BaseAppScreen):
         )
         return redact_secret_text(detail), redact_secret_text(summary), passed
 
+    def _adopt_shared_provider_test_evidence(self) -> str:
+        """Show the saved connection's last result from any surface on a visit.
+
+        TASK-33005.1 (AC#6): Settings is rebuilt on every visit, so its draft
+        store starts empty, while the app's shared owner still holds what
+        Chat settings, the Console or an earlier visit settled.
+
+        Returns:
+            The Test result text to render.
+        """
+        if self._provider_test_result == self._PROVIDER_TEST_NOT_RUN_COPY:
+            identity = self._provider_current_draft_identity()
+            if (
+                identity is not None
+                and self._provider_evidence_store().evidence_for(identity) is not None
+            ):
+                self._provider_test_result = self._provider_readiness_test_report()[0]
+        return self._provider_test_result
+
     def _run_provider_readiness_test(self) -> str:
         detail, _summary, _passed = self._provider_readiness_test_report()
         return detail
@@ -17184,7 +17233,7 @@ class SettingsScreen(BaseAppScreen):
                     f"{self._provider_overview_readiness_status()}"
                 ),
                 "last_connection_test": self._provider_test_headline(
-                    self._provider_test_result
+                    self._adopt_shared_provider_test_evidence()
                 ),
                 "storage_privacy": (
                     f"Config path: {self._config_path_overview_value()}; "
@@ -17620,7 +17669,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield _ProviderTestResult(
-                self._provider_test_result,
+                self._adopt_shared_provider_test_evidence(),
                 id="settings-provider-test-result",
                 markup=False,
             )
@@ -31657,8 +31706,13 @@ class SettingsScreen(BaseAppScreen):
                             model=model,
                             endpoint=endpoint,
                             credential_source=credential_source,
-                            credential_revision=getattr(
-                                self, "_provider_credential_revision", 0
+                            credential_revision=self._provider_draft_credential_revision(
+                                provider,
+                                credential_source,
+                                {
+                                    "api_key": api_key,
+                                    "credential_env_var": credential_env_var,
+                                },
                             ),
                             draft_generation=getattr(
                                 self, "_provider_draft_generation", 0

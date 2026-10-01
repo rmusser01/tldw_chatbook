@@ -414,6 +414,8 @@ def test_extended_records_remain_frozen_and_slotted():
         "credential",
         "generation",
         "generation_category",
+        # TASK-33005.1 (AC#5): appended last, so positional meanings hold.
+        "observed_at",
     ]
     assert not hasattr(evidence, "__dict__")
     with pytest.raises(AttributeError):

@@ -261,7 +261,11 @@ names the address the field shows, for example "https://api.openai.com/v1
 generation works. Running it again replaces the previous probe result: while
 the new probe runs the Endpoint row says "checking the model listing", and
 each fact appears once. If the tested values change, run **Test Provider**
-again.
+again. The last result for the saved connection is kept for the rest of the
+session, whichever surface ran it: leave Settings and return, and the rows show
+it, including a **Discover** test in Chat settings of the same provider,
+endpoint and key. Nothing is saved; after a restart every connection reads as
+not tested.
 
 Model and Endpoint edits stay as a draft when you visit another destination and
 return to Settings. Use **Tab** to move between fields. While typing, press

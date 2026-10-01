@@ -2157,3 +2157,144 @@ async def test_test_result_grid_stays_selectable_and_copyable(request):
 
         result.screen.action_copy_text()
         assert pilot.app.clipboard == tested
+
+
+def test_snapshot_restore_holds_no_private_evidence_copy():
+    """TASK-33005.1 (AC#6, controller ruling 3): the late-handoff restore no
+    longer copies the evidence store, so it can never roll back a result
+    Chat settings or the Console settled in the shared owner meanwhile."""
+    from dataclasses import fields
+
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        _VllmDefaultPresentationSnapshot,
+    )
+
+    names = {item.name for item in fields(_VllmDefaultPresentationSnapshot)}
+    assert "provider_test_evidence_store" not in names
+    assert "provider_credential_revision" not in names
+    assert "provider_draft_generation" in names
+
+
+def test_settings_identity_stamps_the_key_digest_every_surface_computes():
+    """TASK-33005.1 (AC#1, ruling 2): the credential revision is the digest
+    of the key a send would use -- never Settings' own edit counter -- so the
+    same saved key is the same connection in Settings, Chat settings and the
+    Console, and a typed key is a different one."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        connection_credential_revision,
+    )
+
+    app_config = {
+        "api_settings": {
+            "openai": {
+                "api_url": "https://api.openai.com/v1",
+                "api_key": "sk-saved-test-key",
+                "credential_source": "stored",
+            }
+        }
+    }
+    screen = _bare_settings_screen(app_config)
+    screen._settings_drafts = {}
+    saved = connection_credential_revision(
+        get_provider_readiness(
+            "openai", app_config, background_credentials=True
+        ).api_key
+    )
+    assert saved == connection_credential_revision("sk-saved-test-key")
+    untouched = {"api_key": "", "credential_env_var": ""}
+    assert screen._provider_draft_credential_revision(
+        "openai", "stored", untouched
+    ) == saved
+    typed = {"api_key": "sk-typed-test-key", "credential_env_var": ""}
+    assert screen._provider_draft_credential_revision(
+        "openai", "draft", typed
+    ) == connection_credential_revision("sk-typed-test-key")
+    assert screen._provider_draft_credential_revision("openai", "none", typed) == 0
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_returning_to_settings_shows_the_shared_test_result(request):
+    """TASK-33005.1 (AC#6, AC#1): Settings is rebuilt on every visit, so its
+    draft store starts empty; the result an earlier visit settled lives in
+    the app's shared owner and shows again instead of "has not run"."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        provider_connection_evidence,
+    )
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        first = _active_destination_screen(host)
+        tested = await _test_reachable_llama_cpp(first, pilot)
+        identity = first._provider_current_draft_identity()
+
+        await host.pop_screen()
+        await host.push_screen(SettingsScreen(app))
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        second = _active_destination_screen(host)
+
+        assert second is not first
+        assert _provider_test_result_text(second) == tested
+        overview = second._settings_overview_presentation()
+        rows = {
+            row.key: row.value
+            for row in (*overview.primary_rows, *overview.advanced_rows)
+        }
+        assert "model listing reached" in rows["last_connection_test"]
+        shared = provider_connection_evidence(host).evidence_for(identity)
+        assert shared is not None and shared.endpoint == "reachable"
+        assert shared.observed_at is not None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_test_result_reaches_chat_settings_for_the_same_connection(
+    request,
+):
+    """TASK-33005.1 (AC#1): a Settings 't' on the saved llama.cpp connection
+    is what Chat settings shows for that connection -- the two surfaces keep
+    their own draft stores but share settled evidence."""
+    from Tests.UI.test_console_session_settings import _readiness_text
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsContextEstimate,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        await _test_reachable_llama_cpp(screen, pilot)
+
+        await host.push_screen(
+            ConsoleSettingsModal(
+                settings=ConsoleSessionSettings(
+                    provider="llama_cpp", model="llama-3", base_url=None
+                ),
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["llama-3"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        modal = host.screen
+        identity = modal._current_connection_probe_identity()
+        evidence = modal._connection_evidence_store.evidence_for(identity)
+
+        assert evidence is not None
+        assert evidence.endpoint == "reachable"
+        assert evidence.model_ids == ("llama-3",)
+        assert "Endpoint · Reachable" in _readiness_text(modal)
