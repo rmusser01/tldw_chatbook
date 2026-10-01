@@ -473,7 +473,10 @@ class WatchlistsCommandService:
         if watchlist_id is None or add_ids is None or remove_ids is None:
             return self._invalid("Use unique canonical collection and source IDs.")
         if not add_ids and not remove_ids:
-            return self._invalid("Provide at least one source to add or remove.")
+            return self._invalid(
+                "Rule: provide at least one of add_source_ids or "
+                "remove_source_ids, non-empty."
+            )
         if len(add_ids) + len(remove_ids) > 100:
             return self._invalid("Provide at most 100 membership changes.")
         if set(add_ids) & set(remove_ids):
@@ -540,8 +543,13 @@ class WatchlistsCommandService:
             allowed=_CHECK_KEYS,
             required=frozenset(),
         )
-        if values is None or set(values) not in ({"source_ids"}, {"collection_id"}):
-            return self._invalid("Provide source_ids or one collection_id, not both.")
+        if values is None:
+            return self._invalid("Source check arguments are invalid.")
+        if set(values) not in ({"source_ids"}, {"collection_id"}):
+            return self._invalid(
+                "Rule: provide exactly one of source_ids or collection_id, "
+                "never both."
+            )
 
         try:
             if "source_ids" in values:
