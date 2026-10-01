@@ -297,6 +297,7 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
             )
         authority.ensure_issued_metadata(tuple(lineage.values()))
         coordinator._published = target
+        coordinator.root_usage.initialize(target, reconstructed=reconstructed)
         return tuple(receipts)
     except (ValueError, OSError, RuntimeError, sqlite3.DatabaseError):
         # Closed metadata only. Exception strings may contain retained paths or

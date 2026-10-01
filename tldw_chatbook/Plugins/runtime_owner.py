@@ -107,6 +107,7 @@ class PluginRuntimeOwner:
         self._pid: int | None = None
         self._registry: PluginRegistry | None = None
         self.session_id = uuid4().hex
+        self.root_usage = None
 
     def try_acquire(self) -> bool:
         """Return false only for contention; fail closed on qualification/OS errors."""
@@ -184,6 +185,9 @@ class PluginRuntimeOwner:
         installation_id: str,
         workspace_id: str | None,
         revision_digest: str,
+        *,
+        roots: tuple = (),
+        root_coverage: str | None = None,
     ) -> str:
         """Durably reserve identity before spawn; refuse unreconciled old ownership."""
         values = tuple(
@@ -196,7 +200,31 @@ class PluginRuntimeOwner:
         )
         if workspace_id is not None:
             _text(workspace_id, "workspace_id")
+        coverage = root_coverage or ("known" if roots else "unknown")
+        claim = versions = grants = None
+        if self.root_usage is not None:
+            claim, versions, grants = self.root_usage.begin_grants(
+                roots, installation_id, workspace_id, coverage
+            )
+        elif roots or coverage != "unknown":
+            raise PermissionError("root authority owner required")
         token = uuid4().hex
+        try:
+            self._reserve_launch(token, values, workspace_id, coverage, grants)
+            if self.root_usage is not None:
+                try:
+                    self.root_usage.publish_grants(claim, versions, token, grants)
+                except BaseException:
+                    # Reservation has not returned: producer cannot have spawned.
+                    self.settle_process(token, True)
+                    raise
+            return token
+        finally:
+            if self.root_usage is not None:
+                self.root_usage.abandon_grants(claim)
+
+    def _reserve_launch(self, token, values, workspace_id, coverage, grants):
+        installation_id = values[1]
         with self._store().transaction() as cursor:
             blocked = cursor.execute(
                 "SELECT 1 FROM processes WHERE installation_id=? AND state!='settled' AND (owner_session!=? OR state='unresolved') LIMIT 1",
@@ -205,10 +233,20 @@ class PluginRuntimeOwner:
             if blocked:
                 raise PermissionError("plugin runtime recovery required")
             cursor.execute(
-                "INSERT INTO processes(token, operation_id, installation_id, workspace_id, revision_digest, owner_session, state, kind) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending_launch')",
-                (token, values[0], values[1], workspace_id, values[2], self.session_id),
+                "INSERT INTO processes(token, operation_id, installation_id, workspace_id, revision_digest, owner_session, state, kind, root_coverage, root_grants_json) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending_launch', ?, ?)",
+                (
+                    token,
+                    values[0],
+                    values[1],
+                    workspace_id,
+                    values[2],
+                    self.session_id,
+                    coverage,
+                    json.dumps(grants) if grants is not None else None,
+                ),
             )
-        return token
+            for grant in grants or ():
+                self.root_usage._insert(cursor, token, grant)
 
     def publish_process(self, token: str, provenance: dict) -> None:
         """Persist exact non-secret process identity; never infer identity from PID."""
@@ -230,6 +268,10 @@ class PluginRuntimeOwner:
             )
             if cursor.rowcount != 1:
                 raise ValueError("launch is not pending for this owner")
+        # Publication can follow a real spawn. Persist provenance first and keep
+        # the owner unresolved/held if a concurrent root fence rejects exposure.
+        if self.root_usage is not None:
+            self.root_usage.check_publication(token)
 
     def settle_process(self, token: str, confirmed: bool) -> None:
         """Record trusted host reconciliation, never a stale PID liveness guess.
@@ -241,12 +283,30 @@ class PluginRuntimeOwner:
         if type(confirmed) is not bool:
             raise ValueError("confirmation must be boolean")
         with self._store().transaction() as cursor:
+            row = cursor.execute(
+                "SELECT * FROM processes WHERE token=?", (token,)
+            ).fetchone()
+            if (
+                row is not None
+                and row["root_coverage"] != "unknown"
+                and self.root_usage is not None
+            ):
+                self.root_usage._validate_owner(cursor, row)
             cursor.execute(
                 "UPDATE processes SET state=? WHERE token=? AND state!='settled'",
                 ("settled" if confirmed else "unresolved", token),
             )
             if cursor.rowcount != 1:
                 raise ValueError("unknown or already settled launch")
+            cursor.execute(
+                "UPDATE root_users SET state=? WHERE owner_token=?",
+                ("released" if confirmed else "unresolved", token),
+            )
+        if confirmed and self.root_usage is not None:
+            with self.root_usage.fences.live_lock:
+                self.root_usage.live_grants.pop(token, None)
+                self.root_usage.grant_epochs.pop(token, None)
+                self.root_usage.cancel_callbacks.pop(token, None)
 
     def set_process_kind(self, token: str, kind: str) -> None:
         """Distinguish active revision leases from idle/history references."""

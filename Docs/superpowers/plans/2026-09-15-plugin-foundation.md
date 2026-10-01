@@ -556,7 +556,7 @@ git diff --check
 - Consumes: F2 provenance, F3 authenticated root generations, F6 cancellation and F7 drain ownership.
 - Produces: DataRootRef(installation_id: str, root_id: str, generation: int, path: Path) is frozen. RootUsage.acquire(root: DataRootRef, owner_token: str) -> str; release(token: str, confirmed: bool) -> None; fence(roots: tuple[DataRootRef, ...]) -> str. async PluginCoordinator.delete_data(roots: tuple[DataRootRef, ...], operation_id: str) -> OperationReceipt validates reviewed identities, persists the fence and waits for actual root users.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 import pytest
@@ -573,9 +573,9 @@ async def test_idle_writer_blocks_data_deletion(data_cleanup_case):
     assert not case.root.exists()
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_data_cleanup.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_data_cleanup.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def deletion_ready(*, pending_launches: int, readers: int, writers: int,
@@ -583,20 +583,20 @@ def deletion_ready(*, pending_launches: int, readers: int, writers: int,
     return fence_committed and not any((pending_launches, readers, writers, unresolved_owners))
 ```
 
-  - [ ] 3.1. Create data_cleanup_case using plugin_stack, a real root and a controlled child that writes after an event while otherwise idle. start_delete schedules the real coordinator method; fenced observes its access gate; stop_owned_writer kills/reaps the exact owned child.
-  - [ ] 3.2. Track roots for the entire lifetime of processes and operations given access, including pending launch and idle MCP. Fence new root users and show blockers from every workspace sharing PLUGIN_DATA.
-  - [ ] 3.3. Persist exact root identities/fence through F4 before the first unlink. Revalidate resolved containment and generation immediately before each destructive operation; reject stale review, replacement links and retained-data reattachment.
-  - [ ] 3.4. Retain fences and ownership after partial deletion or unknown writer survival. Advance generation through the coordinator only after confirmed cleanup; fresh authorized admissions may create a new root, while cancelled old work stays cancelled.
+  - [x] 3.1. Create data_cleanup_case using plugin_stack, a real root and a controlled child that writes after an event while otherwise idle. start_delete schedules the real coordinator method; fenced observes its access gate; stop_owned_writer kills/reaps the exact owned child.
+  - [x] 3.2. Track roots for the entire lifetime of processes and operations given access, including pending launch and idle MCP. Fence new root users and show blockers from every workspace sharing PLUGIN_DATA.
+  - [x] 3.3. Persist exact root identities/fence through F4 before the first unlink. Revalidate resolved containment and generation immediately before each destructive operation; reject stale review, replacement links and retained-data reattachment.
+  - [x] 3.4. Retain fences and ownership after partial deletion or unknown writer survival. Advance generation through the coordinator only after confirmed cleanup; fresh authorized admissions may create a new root, while cancelled old work stays cancelled.
 
 **Failure and successful-control matrix:** Shared A/B writers, idle server, active readers/Windows handles, late launch publication, root rename/link replacement, kill failure, owner restart, stale PID and pre/post-deletion cancellation. Never claim containment of arbitrary external writers.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_data_cleanup.py Tests/Plugins/test_surviving_process_recovery.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32675 --plain

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Plugins.models import PackageInspection
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PAGE_SIZE = 50
 SELECT_INSTALLATIONS = """
 SELECT installation_id, revision_digest, activation_default
@@ -164,6 +164,24 @@ class PluginRegistry:
                     connection.execute(statement)
                 connection.execute("PRAGMA user_version=3")
                 version = 3
+            if version == 3 and not self.read_only:
+                with self._reference_schema(version=3) as reference:
+                    expected_v3 = list(
+                        reference.execute(
+                            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                        )
+                    )
+                actual_v3 = [
+                    tuple(row)
+                    for row in connection.execute(
+                        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                    )
+                ]
+                if actual_v3 != expected_v3:
+                    raise sqlite3.DatabaseError("invalid plugin migration predecessor")
+                for statement in _schema_statements("004_root_users.sql"):
+                    connection.execute(statement)
+                version = 4
             if version != SCHEMA_VERSION:
                 raise sqlite3.DatabaseError("unsupported plugin registry schema")
             # Exact DDL validation catches missing constraints/columns/triggers, not
@@ -210,6 +228,9 @@ class PluginRegistry:
                     connection.execute(statement)
             if version >= 3:
                 for statement in _schema_statements("003_installation_alias.sql"):
+                    connection.execute(statement)
+            if version >= 4:
+                for statement in _schema_statements("004_root_users.sql"):
                     connection.execute(statement)
             yield connection
         finally:
@@ -299,7 +320,7 @@ class PluginRegistry:
                 "authority_generations": "SELECT installation_id, scope_kind, workspace_id, generation, revoked FROM authority_generations ORDER BY installation_id, scope_kind, workspace_id",
                 "revision_trust": "SELECT installation_id, revision_digest, reviewed FROM revision_trust ORDER BY installation_id, revision_digest",
                 "tombstones": "SELECT installation_id, generation, operation_id FROM tombstones ORDER BY installation_id",
-                "data_roots": "SELECT root_id, installation_id, workspace_id, path, generation, deletion_fenced FROM data_roots ORDER BY root_id",
+                "data_roots": "SELECT root_id, installation_id, workspace_id, path, generation, deletion_fenced, custody_json, cleanup_json FROM data_roots ORDER BY root_id",
             }
             booleans = {
                 "activation_default",
@@ -317,6 +338,11 @@ class PluginRegistry:
                         row[field] = bool(row[field])
                     if name == "installations" and row.get("alias") is None:
                         row.pop("alias", None)
+                    if name == "data_roots":
+                        for field in ("custody", "cleanup"):
+                            raw = row.pop(field + "_json")
+                            if raw is not None:
+                                row[field] = parse_document(raw.encode())
                     result[name].append(row)
             inventories = {}
             for row in self._connection.execute(
@@ -685,9 +711,18 @@ class PluginRegistry:
                 placeholders = ",".join("?" for _ in fields)
                 for row in snapshot[table]:
                     cursor.execute(
-                        f"INSERT INTO {table} VALUES ({placeholders})",
+                        f"INSERT INTO {table} ({','.join(fields)}) VALUES ({placeholders})",
                         tuple(row[key] for key in fields),
                     )
+            for row in snapshot["data_roots"]:
+                cursor.execute(
+                    "UPDATE data_roots SET custody_json=?, cleanup_json=? WHERE root_id=?",
+                    (
+                        json.dumps(row["custody"]) if "custody" in row else None,
+                        json.dumps(row["cleanup"]) if "cleanup" in row else None,
+                        row["root_id"],
+                    ),
+                )
             for row in snapshot["mappings"]:
                 cursor.execute(
                     "INSERT INTO mappings VALUES (?, ?, ?)",
@@ -707,7 +742,7 @@ class PluginRegistry:
             for row in snapshot["installations"]:
                 if row["revision_digest"] is not None:
                     cursor.execute(
-                        "INSERT INTO processes VALUES (?, ?, ?, NULL, ?, 'unknown:registry-reconstruction', 'unresolved', 'active_run', ?) ON CONFLICT(token) DO UPDATE SET state='unresolved'",
+                        "INSERT INTO processes(token, operation_id, installation_id, workspace_id, revision_digest, owner_session, state, kind, provenance_json) VALUES (?, ?, ?, NULL, ?, 'unknown:registry-reconstruction', 'unresolved', 'active_run', ?) ON CONFLICT(token) DO UPDATE SET state='unresolved'",
                         (
                             "recovery:" + row["installation_id"],
                             snapshot["operation_result"]["operation_id"],

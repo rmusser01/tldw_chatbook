@@ -386,3 +386,40 @@ Limits: local macOS/APFS, real SQLite/crypto/native threads and controlled child
 provider and marker backends are isolated doubles. No full suite, external
 provider/keychain, Windows/Linux, hardware power loss or future MCP/root-cleanup
 qualification. Native Stop continuation qualification remains H5.
+
+
+## F8 — TASK-32675 exact-root custody and cleanup
+
+Integrated the reviewed `e1af542e8a` increment onto current authority/runtime
+owners. Registry v4 records original root grants for pending, active, reader
+and idle-process lifetimes. Native Darwin boot and precise directory birth
+identity bind every destructive step. A separate protected clean/dirty runtime
+checkpoint refuses unproven restart quiescence, including coherent SQLite
+rollback. Reviewed root creation, deletion, attachment and reconciliation retain
+original identity, deadline and destructive phase. Successful cleanup advances
+generation; uncertain writers and partial cleanup retain fences and receipts.
+Shutdown seals ordinary admissions before final clean publication while allowing
+actual terminal settlement after refused close. Managed resume checks actual
+root membership/generation through existing F7 pins.
+
+RED reached the missing root-creation review entry after a successful real
+installation. The idle writer and cross-process native identity then passed.
+Final core cleanup and surviving-process recovery: **55 passed, 289.47s**,
+no warnings/skips; `/private/tmp/hooks-f8-core.xml`. Registry migrations, runtime
+ownership, authority, managed continuation, revocation, update drains and retention:
+**250 passed, 513.89s**, no warnings/skips; `/private/tmp/hooks-f8-neighbors.xml`.
+Children use the existing isolated-checkout/profile/null-keyring/network-refusal
+bootstrap; the existing fresh-process real fork guard remains intact.
+
+All 46 owned plugin Python files pass Ruff/formatter; changed Python parses and
+whitespace checks pass. The uninstalled wheel
+`/private/tmp/hooks-f8-wheel/tldw_chatbook-0.2.2-py3-none-any.whl` contains all
+four registry migrations with exact source bytes. All ACs were self-reviewed
+against the live service/storage flow. ADR-162/163 govern these existing contracts.
+
+Limits: local macOS/APFS with actual boot/native fields, SQLite, threads and
+controlled surviving children; marker/provider doubles are isolated. Boot-change
+cases simulate a changed OS value and do not establish real reboot/power-loss
+behavior. No arbitrary external-writer containment, Windows/Linux, external
+provider/keychain or full-suite claim. Hook/MCP actual grant producers land in
+H6/M4; F8 qualifies their shared ownership seam.

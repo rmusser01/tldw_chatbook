@@ -217,6 +217,75 @@ class Tombstone(AuthorityModel):
     operation_id: Identifier
 
 
+class RuntimeCheckpoint(AuthorityModel):
+    version: Literal[1]
+    session_nonce: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+    namespace_id: Digest
+    marker: PluginMarker
+    phase: Literal["dirty", "clean"]
+
+
+class PhysicalIdentity(AuthorityModel):
+    device: Generation
+    inode: Annotated[int, Field(ge=1, le=2**64 - 1)]
+    birth_seconds: Annotated[int, Field(ge=1, le=2**63 - 1)]
+    birth_nanoseconds: Annotated[int, Field(ge=0, lt=10**9)]
+
+
+class RootBinding(AuthorityModel):
+    platform: Literal["darwin-apfs-boot-v1"]
+    boot_id: Annotated[
+        str, Field(pattern=r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+    ]
+    anchors: Annotated[list[PhysicalIdentity], Field(min_length=2, max_length=2)]
+    leaf: PhysicalIdentity
+
+
+class RootCustody(AuthorityModel):
+    attached_installation_id: Identifier | None
+    state: Literal["creating", "present", "cleaned_absent"]
+    binding: RootBinding | None
+
+    @model_validator(mode="after")
+    def present_binding(self):
+        if self.state != "creating" and self.binding is None:
+            raise ValueError("root custody requires binding")
+        return self
+
+
+class RootCleanup(AuthorityModel):
+    action: Literal["create", "delete", "attach"]
+    attachment: Identifier | None
+    group_id: Identifier
+    phase: Literal["creating", "waiting", "deleting"]
+    target_count: Annotated[int, Field(ge=1, le=256)]
+    target_digest: Digest
+    reviewed_generation: Generation
+    binding_digest: Digest
+
+
+class RootResult(AuthorityModel):
+    group_id: Identifier
+    phase: Literal[
+        "creating",
+        "created",
+        "waiting",
+        "deleting",
+        "complete",
+        "cancelled",
+        "attached",
+        "reconciled",
+    ]
+    target_digest: Digest
+    root_ids: Annotated[list[Identifier], Field(min_length=1, max_length=256)]
+
+    @model_validator(mode="after")
+    def sorted_unique(self):
+        if self.root_ids != sorted(set(self.root_ids)):
+            raise ValueError("root result requires sorted exact members")
+        return self
+
+
 class DataRoot(AuthorityModel):
     root_id: Identifier
     installation_id: Identifier
@@ -224,6 +293,16 @@ class DataRoot(AuthorityModel):
     path: Text
     generation: Generation
     deletion_fenced: bool
+    custody: RootCustody | None = None
+    cleanup: RootCleanup | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_absent_custody(self, handler):
+        value = handler(self)
+        for field in ("custody", "cleanup"):
+            if field not in self.model_fields_set:
+                value.pop(field, None)
+        return value
 
     @model_validator(mode="after")
     def validate_path(self):
@@ -259,11 +338,14 @@ class OperationResult(AuthorityModel):
         "revoke",
         "uninstall",
         "fence_data",
+        "root_data",
         "retain",
         "recover",
     ]
     revision_digest: Digest | None
     result: Literal["committed"]
+
+    root_result: RootResult | None = None
 
     retired_revisions: (
         Annotated[list[RetiredRevision], Field(min_length=1, max_length=1000)] | None
@@ -271,6 +353,10 @@ class OperationResult(AuthorityModel):
 
     @model_validator(mode="after")
     def retention_payload(self):
+        if (self.kind == "root_data") != (self.root_result is not None):
+            raise ValueError("root result belongs only to root_data")
+        if self.kind != "root_data" and "root_result" in self.model_fields_set:
+            raise ValueError("unexpected root result")
         if self.kind != "retain" and "retired_revisions" in self.model_fields_set:
             raise ValueError("cleanup payload belongs only to retain")
         if (self.kind == "retain") != (self.retired_revisions is not None):
@@ -288,6 +374,8 @@ class OperationResult(AuthorityModel):
     @model_serializer(mode="wrap")
     def preserve_absent_retention(self, handler):
         value = handler(self)
+        if self.root_result is None:
+            value.pop("root_result", None)
         if self.retired_revisions is None:
             value.pop("retired_revisions", None)
         return value

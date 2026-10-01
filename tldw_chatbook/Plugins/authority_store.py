@@ -162,6 +162,26 @@ class KeyringPluginMarkerStore:
             MARKER_SERVICE, self.account, canonical_json(payload).decode()
         )
 
+    def load_runtime_checkpoint(self) -> dict | None:
+        from .authority import RuntimeCheckpoint
+
+        raw = self.backend.get_password(MARKER_SERVICE, self.account + ":runtime-v1")
+        if raw is None:
+            return None
+        if len(raw.encode()) > 4096:
+            raise ValueError("runtime checkpoint too large")
+        return RuntimeCheckpoint.model_validate(_decode(raw.encode())).model_dump()
+
+    def save_runtime_checkpoint(self, value: dict) -> None:
+        from .authority import RuntimeCheckpoint
+
+        payload = canonical_json(RuntimeCheckpoint.model_validate(value).model_dump())
+        if len(payload) > 4096:
+            raise ValueError("runtime checkpoint too large")
+        self.backend.set_password(
+            MARKER_SERVICE, self.account + ":runtime-v1", payload.decode()
+        )
+
     def clear(self) -> None:
         # Reviewed reset must also remove malformed marker content; backend
         # availability and exact account ownership remain mandatory.
@@ -193,6 +213,35 @@ class FilePluginMarkerStore:
                     raise ValueError("unqualified marker")
                 condition = PrivateFileWritePrecondition.from_opened(opened)
         _write(self.path, payload, precondition=condition)
+
+    def load_runtime_checkpoint(self) -> dict | None:
+        from .authority import RuntimeCheckpoint
+
+        path = self.path.with_name("runtime_checkpoint.json")
+        if not os.path.lexists(path):
+            return None
+        with open_private_binary(path) as opened:
+            if not opened.result.verified_private:
+                raise ValueError("unqualified runtime checkpoint")
+            raw = opened.stream.read(4097)
+        if len(raw) > 4096:
+            raise ValueError("runtime checkpoint too large")
+        return RuntimeCheckpoint.model_validate(_decode(raw)).model_dump()
+
+    def save_runtime_checkpoint(self, value: dict) -> None:
+        from .authority import RuntimeCheckpoint
+
+        payload = RuntimeCheckpoint.model_validate(value).model_dump()
+        if len(canonical_json(payload)) > 4096:
+            raise ValueError("runtime checkpoint too large")
+        path = self.path.with_name("runtime_checkpoint.json")
+        condition = PrivateFileWritePrecondition.missing()
+        if os.path.lexists(path):
+            with open_private_binary(path) as opened:
+                if not opened.result.verified_private:
+                    raise ValueError("unqualified runtime checkpoint")
+                condition = PrivateFileWritePrecondition.from_opened(opened)
+        _write(path, payload, precondition=condition)
 
     def clear(self) -> None:
         if not os.path.lexists(self.path):
@@ -520,6 +569,33 @@ class PluginAuthorityStore:
         self._require_posture()
         value = self.marker_store.load_marker()
         return None if value is None else PluginMarker.model_validate(value)
+
+    def load_runtime_checkpoint(self):
+        """Read the separate bounded session fact; unsupported backends refuse."""
+        from .authority import RuntimeCheckpoint
+
+        self._require_posture()
+        value = self.marker_store.load_runtime_checkpoint()
+        if value is None:
+            return None
+        if len(canonical_json(value)) > 4096:
+            raise ValueError("runtime checkpoint too large")
+        return RuntimeCheckpoint.model_validate(value)
+
+    def save_runtime_checkpoint(self, session_nonce: str, phase: str) -> None:
+        """Publish and verify exact readback without changing authority identity."""
+        from .authority import RuntimeCheckpoint
+
+        value = RuntimeCheckpoint(
+            version=1,
+            session_nonce=session_nonce,
+            namespace_id=self.namespace_id(),
+            marker=self.load_marker(),
+            phase=phase,
+        )
+        self.marker_store.save_runtime_checkpoint(value.model_dump())
+        if self.load_runtime_checkpoint() != value:
+            raise ValueError("runtime checkpoint publication mismatch")
 
     def posture(self) -> str:
         """Report setup/locked/recovery/unavailable without exposing plaintext."""

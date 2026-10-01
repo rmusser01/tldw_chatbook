@@ -555,3 +555,76 @@ I3/I4 must qualify their future acquisition/cache producers against this seam.
 F8 must qualify root-user joins/attachment/generation changes; package-only native
 skills have qualified-no-data coverage, while unqualified data users refuse exact
 resume. No acquisition, hook or MCP execution owner is created here.
+
+## Saved data: exact roots and host ownership (F8)
+
+The host creates roots through `review_data_creation` / `create_data` and receives
+an immutable `DataRootRef` (original installation, root ID, generation, absolute
+path). A same-name reinstall receives no old data. Uninstall retains the original
+root owner; explicit `review_data_attachment` followed by `delete_data` performs
+a reviewed, drained attachment/detachment and advances the root generation.
+The original owner and physical path never change.
+
+Before giving any process or operation access, host adapters call
+`reserve_data_user(..., roots=..., cancel=...)`; reserve includes every root and
+publishes/readbacks the session's dirty checkpoint before returning. Publish the
+exact process provenance through `publish_data_user`. Later grants use
+`RootUsage.acquire`; release a grant only after its actual handle is closed.
+`settle_data_user(token, confirmed=True)` means the owned process exited and was
+reaped, or the whole retained operation actually ended. Failed stop/unknown exit
+must use `confirmed=False`. Idle connections, readers, pending launches, old
+revisions and all workspaces sharing a root remain blockers. An empty revision
+lease count or missing join is never terminal proof. Package-only host work must
+explicitly reserve `root_coverage="qualified_none"`; default/legacy is unknown.
+
+`review_data_deletion` captures exact roots. `delete_data` immediately fences the
+reviewed roots, then commits waiting and deleting phases with distinct issued
+operation IDs before unlinking. It waits for actual root users, and an abandoned
+waiter does not cancel its retained operation. `cancel_data_work` requests stop
+only from registered host callbacks for those roots; callback return alone does
+not settle a process. `cancel_data_deletion` cancels the proposal before deleting
+and clears only its own fence after safe authority reconciliation. After deleting
+begins, cancellation/IO failure retains the authenticated pending group and
+fence. Read-only receipt lookup never performs cleanup. Resume requires
+`review_data_cleanup_resume` and the original exact authenticated group/action.
+A pending attachment remains an attachment after restart. Every phase keeps the
+original review deadline; expiry leaves pending recovery for a fresh explicit
+review, including when the leaf has already been removed.
+
+The separate bounded runtime checkpoint uses the existing selected marker
+backend. Graceful `aclose` seals ordinary service admission and rejects queued
+ordinary callbacks on the worker. Already running calls, users and retained
+cleanup callbacks must finish before clean is written/read back against the
+final current authority marker. A refused shutdown still accepts exact
+`settle_data_user` / `complete_run` terminal evidence, while new authority work
+remains refused. A package/activation commit before shutdown is included in that
+final binding. Dirty, missing, mismatched or malformed checkpoint evidence fences
+all retained roots, including orphans. SQLite restoration cannot establish that
+an omitted writer stopped. `review_data_reconciliation(...,
+confirm_quiescence=host_proof)` / `reconcile_data` requires explicit whole-root
+host proof, repeated at application; a user assertion or empty SQL is not proof.
+Authenticated `cleaned_absent` roots remain tombstones: reconciliation confirms
+the expected absence through exact current ancestry and preserves the historical
+leaf binding. An unexpected leaf, replaced/missing ancestry or a missing
+`present` root refuses.
+
+Native root binding is qualified for same-boot local APFS on Darwin: no-follow
+owner/data anchors and leaf descriptors bind exact device/inode/birth seconds and
+nanoseconds plus the native boot session UUID. A changed, missing or malformed
+boot identity refuses access/reuse/deletion. After a system reboot, retained data
+requires reviewed host quiescence reconciliation and rebinding/generation advance;
+pending destructive groups cannot silently rebind. Package-only use remains
+available. A boot UUID does not prove inode non-reuse, stop writers or contain
+arbitrary external code. Windows, network filesystems and arbitrary external
+writers are unqualified. File-marker mode retains its explicit reduced coherent
+rollback protection; it does not become secure-marker protection.
+
+Adapter handoffs: **H2** hook launches and **M4/H6** MCP/runtime owners must reserve
+all roots before launch/handle delivery, retain joins while idle, and settle only
+actual terminal ownership; use the shared host callback seam for reviewed stop.
+**I6** must display waiting/deleting/recovery-required outcomes and specific
+`root_*` recovery reasons, distinguish Cancel operation from Cancel work, and
+route explicit host-proof reconciliation/cleanup resume through these APIs.
+**I7** must use service shutdown's admission-close/drain/final-clean order and
+preserve a failed shutdown's dirty evidence. None of these handoffs adds a second
+process owner, force-delete path, or plugin-controlled authority.

@@ -22,7 +22,7 @@ def test_memory_schema_pagination_and_rollback():
     from tldw_chatbook.Plugins.registry import PluginRegistry
 
     with PluginRegistry(Path(":memory:")) as registry:
-        assert registry.schema_version == 3
+        assert registry.schema_version == 4
         with registry.transaction() as cursor:
             cursor.executemany(
                 "INSERT INTO installations(installation_id) VALUES (?)",
@@ -200,7 +200,7 @@ def test_failed_schema_creation_rolls_back_all_ddl(tmp_path, monkeypatch):
         with module.PluginRegistry(
             tmp_path / "registry.sqlite3", owner=owner
         ) as registry:
-            assert registry.schema_version == 3
+            assert registry.schema_version == 4
     finally:
         owner.close()
 
@@ -409,7 +409,7 @@ def test_v1_upgrade_retains_rows_and_adds_independent_trust_and_tombstones(tmp_p
     assert owner.try_acquire()
     try:
         with PluginRegistry(path, owner=owner) as registry:
-            assert registry.schema_version == 3
+            assert registry.schema_version == 4
             with registry.transaction() as cursor:
                 assert (
                     cursor.execute("SELECT COUNT(*) FROM revision_trust").fetchone()[0]
@@ -434,7 +434,7 @@ def test_v1_upgrade_retains_rows_and_adds_independent_trust_and_tombstones(tmp_p
                 }
             ]
         with PluginRegistry(path) as registry:
-            assert registry.schema_version == 3
+            assert registry.schema_version == 4
             assert registry.authority_projection(operation_result=None) == snapshot
     finally:
         owner.close()
@@ -630,8 +630,128 @@ def test_v2_alias_migration_preserves_legacy_projection_and_digest(tmp_path):
     try:
         with PluginRegistry(path, owner=owner) as registry:
             actual = registry.authority_projection(operation_result=None)
-            assert registry.schema_version == 3
+            assert registry.schema_version == 4
             assert actual == expected
             assert snapshot_digest(actual) == snapshot_digest(expected)
+    finally:
+        owner.close()
+
+
+def test_v3_upgrade_preserves_retained_roots_and_legacy_owner_evidence(tmp_path):
+    from tldw_chatbook.Plugins.authority import empty_snapshot, snapshot_digest
+    from tldw_chatbook.Plugins.registry import PluginRegistry, _schema_statements
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    path = tmp_path / "registry.sqlite3"
+    root = {
+        "root_id": "retained",
+        "installation_id": "uninstalled",
+        "workspace_id": None,
+        "path": str(tmp_path / "saved"),
+        "generation": 7,
+        "deletion_fenced": True,
+    }
+    with sqlite3.connect(path) as connection:
+        for migration in (
+            "001_initial.sql",
+            "002_authority.sql",
+            "003_installation_alias.sql",
+        ):
+            for statement in _schema_statements(migration):
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version=3")
+        connection.execute(
+            "INSERT INTO data_roots VALUES (?, ?, ?, ?, ?, ?)", tuple(root.values())
+        )
+        for token, state, kind in (
+            ("pending", "pending", "pending_launch"),
+            ("idle", "published", "idle_connection"),
+            ("settled", "settled", "active_run"),
+        ):
+            connection.execute(
+                "INSERT INTO processes VALUES (?, 'op', 'uninstalled', NULL, 'revision', 'prior', ?, ?, ?)",
+                (token, state, kind, '{"host":"retained"}'),
+            )
+    owner = PluginRuntimeOwner(tmp_path)
+    assert owner.try_acquire()
+    try:
+        before = empty_snapshot()
+        before["data_roots"] = [root]
+        with pytest.raises(sqlite3.DatabaseError):
+            PluginRegistry(path, read_only=True)
+        with PluginRegistry(path, owner=owner) as registry:
+            after = registry.authority_projection(operation_result=None)
+            assert after == before and snapshot_digest(after) == snapshot_digest(before)
+            rows = registry._connection.execute(
+                "SELECT token, state, kind, root_coverage, root_grants_json FROM processes ORDER BY token"
+            ).fetchall()
+            assert [tuple(row) for row in rows] == [
+                ("idle", "published", "idle_connection", "unknown", None),
+                ("pending", "pending", "pending_launch", "unknown", None),
+                ("settled", "settled", "active_run", "unknown", None),
+            ]
+            with registry.transaction() as cursor:
+                cursor.execute(
+                    "INSERT INTO root_users VALUES ('usage', 'retained', 7, ?, 'idle', 'read_write', 'unresolved')",
+                    ("a" * 64,),
+                )
+            with (
+                pytest.raises(sqlite3.IntegrityError),
+                registry.transaction() as cursor,
+            ):
+                cursor.execute("DELETE FROM processes WHERE token='idle'")
+            with registry.transaction() as cursor:
+                cursor.execute("DELETE FROM data_roots WHERE root_id='retained'")
+            assert (
+                registry._connection.execute("SELECT state FROM root_users").fetchone()[
+                    0
+                ]
+                == "unresolved"
+            )
+    finally:
+        owner.close()
+
+
+def test_v3_root_user_migration_failure_rolls_back_columns(tmp_path, monkeypatch):
+    import tldw_chatbook.Plugins.registry as module
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    path = tmp_path / "registry.sqlite3"
+    with sqlite3.connect(path) as connection:
+        for migration in (
+            "001_initial.sql",
+            "002_authority.sql",
+            "003_installation_alias.sql",
+        ):
+            for statement in module._schema_statements(migration):
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version=3")
+    owner = PluginRuntimeOwner(tmp_path)
+    assert owner.try_acquire()
+    original = module._schema_statements
+    try:
+
+        def fail(name="001_initial.sql"):
+            statements = original(name)
+            return (
+                (*statements, "invalid root migration")
+                if name == "004_root_users.sql"
+                else statements
+            )
+
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_schema_statements", fail)
+            with pytest.raises(sqlite3.DatabaseError):
+                module.PluginRegistry(path, owner=owner)
+        with sqlite3.connect(path) as connection:
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert "root_coverage" not in {
+                row[1] for row in connection.execute("PRAGMA table_info(processes)")
+            }
+            assert not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='root_users'"
+            ).fetchone()
+        with module.PluginRegistry(path, owner=owner) as registry:
+            assert registry.schema_version == 4
     finally:
         owner.close()

@@ -416,6 +416,16 @@ def test_keyring_namespaces_and_profile_scopes_are_independent(tmp_path, monkeyp
     store = store_at(tmp_path / "one", first)
     store.bootstrap("pw")
     assert second.load_marker() is None
+    authority_marker = store.load_marker()
+    store.save_runtime_checkpoint("a" * 32, "dirty")
+    assert store.load_runtime_checkpoint().phase == "dirty"
+    assert store.load_marker() == authority_marker
+    assert second.load_runtime_checkpoint() is None
+    assert skill_marker.load_marker()["generation"] == 9
+    store.save_runtime_checkpoint("a" * 32, "clean")
+    assert store.load_runtime_checkpoint().phase == "clean"
+    # Authority reset is independent; it does not erase old root-session evidence.
+    assert len(backend.values) == 3
     skill_marker.clear()
     assert store.verify_current()["installations"] == []
     skill_marker.save_marker(generation=9, manifest_digest="standalone")

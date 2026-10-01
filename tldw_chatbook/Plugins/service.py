@@ -10,12 +10,15 @@ from concurrent.futures import Future
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from .admission import LivePluginFences, PluginAdmission, PluginUnavailable
 from .review import OperationReceipt, PluginReview
 from .revocation import RevocationRequest, RevocationTarget
+
+if TYPE_CHECKING:
+    from .data_cleanup import DataRootRef, RootReview
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,8 @@ class PluginService:
         self._lock = self.fences.live_lock
         self._thread = None
         self._closed = False
+        self._closing = False
+        self._ordinary_calls = set()
         self._ready = Future()
         self._catalog = {}
         self._details = ()
@@ -78,10 +83,16 @@ class PluginService:
         self._live_runs = self.fences.runs
         self._revision_refresh_tasks: set[asyncio.Task] = set()
 
-    def _start(self):
+    def _require_open(self, *, terminal=False):
         with self._lock:
             if self._closed:
                 raise PluginUnavailable("plugin_service_closed")
+            if self._closing and not terminal:
+                raise PluginUnavailable("plugin_service_closing")
+
+    def _start(self, *, terminal=False):
+        with self._lock:
+            self._require_open(terminal=terminal)
             if self._thread is None:
                 self._thread = threading.Thread(
                     target=self._worker, name="chatbook-plugin-storage", daemon=True
@@ -122,6 +133,7 @@ class PluginService:
             self._coordinator = PluginCoordinator(
                 registry, authority, owner, fences=self.fences
             )
+            self._coordinator.on_data_change = self._refresh
             self._admission = PluginAdmission(
                 self._coordinator, self.workspace_lookup, fences=self.fences
             )
@@ -143,26 +155,34 @@ class PluginService:
                 owner.close()
             loop.close()
 
-    async def _call(self, callback):
-        loop = await asyncio.wrap_future(self._start())
-
-        async def invoke():
+    async def _invoke(self, callback, *, terminal=False):
+        # Admission is checked again on the worker: a callback queued before
+        # shutdown may not run after the final clean checkpoint.
+        self._require_open(terminal=terminal)
+        task = asyncio.current_task()
+        if not terminal:
+            self._ordinary_calls.add(task)
+        try:
             result = callback()
             return await result if inspect.isawaitable(result) else result
+        finally:
+            self._ordinary_calls.discard(task)
 
+    async def _call(self, callback, *, terminal=False):
+        loop = await asyncio.wrap_future(self._start(terminal=terminal))
         return await asyncio.wrap_future(
-            asyncio.run_coroutine_threadsafe(invoke(), loop)
+            asyncio.run_coroutine_threadsafe(
+                self._invoke(callback, terminal=terminal), loop
+            )
         )
 
-    def _call_from_agent(self, callback):
+    def _call_from_agent(self, callback, *, terminal=False):
         if threading.current_thread() is threading.main_thread():
             raise RuntimeError("plugin synchronous checks require an agent worker")
-        loop = self._start().result()
-
-        async def invoke():
-            return callback()
-
-        return asyncio.run_coroutine_threadsafe(invoke(), loop).result()
+        loop = self._start(terminal=terminal).result()
+        return asyncio.run_coroutine_threadsafe(
+            self._invoke(callback, terminal=terminal), loop
+        ).result()
 
     async def bootstrap(self, passphrase: str) -> None:
         def operation():
@@ -191,6 +211,112 @@ class PluginService:
             )
 
         return await self._call(operation)
+
+    async def review_data_creation(
+        self, installation_id: str, *, workspace_id: str | None = None
+    ):
+        def operation():
+            self._admission._workspace(workspace_id)
+            return self._coordinator.review_data_creation(
+                installation_id, workspace_id=workspace_id
+            )
+
+        return await self._call(operation)
+
+    async def create_data(self, review: RootReview, operation_id: str) -> DataRootRef:
+        return await self._call(
+            lambda: self._coordinator.create_data(review, operation_id)
+        )
+
+    async def review_data_deletion(self, roots: tuple[DataRootRef, ...]) -> RootReview:
+        return await self._call(lambda: self._coordinator.review_data_deletion(roots))
+
+    async def review_data_attachment(
+        self, roots: tuple[DataRootRef, ...], installation_id: str | None
+    ) -> RootReview:
+        return await self._call(
+            lambda: self._coordinator.review_data_attachment(roots, installation_id)
+        )
+
+    async def delete_data(
+        self, roots: tuple[DataRootRef, ...], operation_id: str
+    ) -> OperationReceipt:
+        from .data_cleanup import begin_data_operation
+
+        self._require_open()
+        begin_data_operation(self._coordinator, roots, operation_id)
+        return await self._call(
+            lambda: self._coordinator.delete_data(roots, operation_id)
+        )
+
+    async def cancel_data_work(self, operation_id: str) -> None:
+        await self._call(lambda: self._coordinator.cancel_data_work(operation_id))
+
+    async def cancel_data_deletion(self, operation_id: str) -> None:
+        await self._call(lambda: self._coordinator.cancel_data_deletion(operation_id))
+
+    async def review_data_reconciliation(self, roots, *, confirm_quiescence):
+        return await self._call(
+            lambda: self._coordinator.review_data_reconciliation(
+                roots, confirm_quiescence=confirm_quiescence
+            )
+        )
+
+    async def reconcile_data(
+        self, review: RootReview, operation_id: str
+    ) -> tuple[DataRootRef, ...]:
+        return await self._call(
+            lambda: self._coordinator.reconcile_data(review, operation_id)
+        )
+
+    async def review_data_cleanup_resume(
+        self, roots: tuple[DataRootRef, ...]
+    ) -> RootReview:
+        return await self._call(
+            lambda: self._coordinator.review_data_cleanup_resume(roots)
+        )
+
+    async def reserve_data_user(
+        self,
+        operation_id: str,
+        installation_id: str,
+        workspace_id: str | None,
+        revision_digest: str,
+        *,
+        roots,
+        cancel=None,
+    ):
+        """Host producer reserves all actual grants before spawn or handle access."""
+
+        def reserve():
+            token = self._coordinator.owner.reserve_launch(
+                operation_id,
+                installation_id,
+                workspace_id,
+                revision_digest,
+                roots=roots,
+            )
+            if cancel is not None:
+                try:
+                    self._coordinator.root_usage.retain_cancel(token, cancel)
+                except BaseException:
+                    self._coordinator.owner.settle_process(token, True)
+                    raise
+            return token
+
+        return await self._call(reserve)
+
+    async def publish_data_user(self, token: str, provenance: dict) -> None:
+        await self._call(
+            lambda: self._coordinator.owner.publish_process(token, provenance)
+        )
+
+    async def settle_data_user(self, token: str, *, confirmed: bool) -> None:
+        """Only actual host terminal evidence permits confirmed settlement."""
+        await self._call(
+            lambda: self._coordinator.owner.settle_process(token, confirmed),
+            terminal=True,
+        )
 
     async def retain_revisions(self, installation_id: str) -> OperationReceipt:
         """Run owned bounded retention through the existing commit worker."""
@@ -221,6 +347,7 @@ class PluginService:
     async def apply_revision(
         self, review: PluginReview, operation_id: str
     ) -> OperationReceipt:
+        self._require_open()
         self.revision_drain.activate(
             review.drain_token, review=review, operation_id=operation_id
         )
@@ -728,6 +855,7 @@ class PluginService:
     def _begin_revocation(self, target, kind, *, review=None):
         # Reject a missing event loop before sealing rather than losing task custody.
         asyncio.get_running_loop()
+        self._require_open()
         request = self.fences.request(target, kind, review)
         operation = self.fences.operations[request.request_id]
         self._start_revocation(operation)
@@ -830,6 +958,8 @@ class PluginService:
                 )
                 key = (snapshot.installation_id, run_id)
                 with self._lock:
+                    if self._closing:
+                        raise PluginUnavailable("plugin_service_closing")
                     if run_id in self._terminal_runs:
                         raise PluginUnavailable("plugin_run_terminal")
                     existing = self._live_runs.get(key)
@@ -857,6 +987,7 @@ class PluginService:
                     snapshot.installation_id,
                     snapshot.workspace_id,
                     snapshot.revision_digest,
+                    root_coverage="qualified_none",
                 )
                 try:
                     owner.publish_process(
@@ -924,7 +1055,8 @@ class PluginService:
                 lambda: [
                     self._coordinator.owner.settle_process(record.lease_token, True)
                     for record in records
-                ]
+                ],
+                terminal=True,
             )
 
     async def retire_pending(self, pending_id: str) -> None:
@@ -939,6 +1071,9 @@ class PluginService:
         with self._lock:
             if self._closed:
                 return
+            self._closing = True
+            if hasattr(self, "_coordinator"):
+                self._coordinator.root_usage.closed = True
             if any(
                 (operation.task is not None and not operation.task.done())
                 or operation.cleanup_tasks
@@ -952,8 +1087,26 @@ class PluginService:
                 raise PluginUnavailable("plugin_revision_work_not_drained")
             if self._live_runs:
                 raise PluginUnavailable("plugin_owned_work_not_drained")
-            self._closed = True
             thread = self._thread
+        if thread is not None:
+
+            async def finalize():
+                if self._ordinary_calls:
+                    raise PluginUnavailable("plugin_calls_not_drained")
+                usage = self._coordinator.root_usage
+                if any(
+                    operation.task is not None and not operation.task.done()
+                    for operation in usage.operations.values()
+                ):
+                    raise PluginUnavailable("plugin_data_cleanup_not_drained")
+                usage.shutdown()
+
+            # Root settlement runs on the owning worker; callers can still submit
+            # exact terminal evidence after a refused close, but never new grants.
+            if self._ready.done() and self._ready.exception() is None:
+                await self._call(finalize, terminal=True)
+        with self._lock:
+            self._closed = True
             self._catalog = {}
         if thread is not None:
             try:

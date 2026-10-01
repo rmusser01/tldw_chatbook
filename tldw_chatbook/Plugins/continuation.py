@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, replace
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from .authority import AuthorityModel, Digest, Generation, Identifier
 from .package_files import canonical_json
@@ -37,6 +37,16 @@ class RootPin(AuthorityModel):
     generation: Generation
     path_digest: Digest
     deletion_fenced: bool
+    authority_digest: Digest | None = None
+    live_epoch: Generation = 0
+
+    @model_serializer(mode="wrap")
+    def preserve_absent_root_extension(self, handler):
+        value = handler(self)
+        for field in ("authority_digest", "live_epoch"):
+            if field not in self.model_fields_set:
+                value.pop(field, None)
+        return value
 
 
 class InstallationPin(AuthorityModel):
@@ -121,15 +131,24 @@ def _digest(value) -> str:
 
 def installation_pin(service, snapshot, authority) -> dict:
     """Capture actual immutable component definitions and current root membership."""
-    roots = sorted(
-        (
-            row
-            for row in authority["data_roots"]
-            if row["installation_id"] == snapshot.installation_id
-            and row["workspace_id"] in {None, snapshot.workspace_id}
-        ),
-        key=lambda row: row["root_id"],
-    )
+    from .data_cleanup import applicable_roots, open_root
+
+    roots = applicable_roots(authority, snapshot.installation_id, snapshot.workspace_id)
+    known = True
+    for row in roots:
+        if (
+            not row.get("custody")
+            or row["root_id"] in service._coordinator.root_usage.recovery
+        ):
+            known = False
+        elif row["custody"]["state"] == "present":
+            try:
+                with open_root(service._coordinator.owner, row):
+                    pass
+            except (OSError, ValueError):
+                known = False
+        elif row["custody"]["state"] != "cleaned_absent":
+            known = False
     components = []
     for component_id in snapshot.selection:
         component = snapshot.inspection.inventory[component_id]
@@ -166,7 +185,15 @@ def installation_pin(service, snapshot, authority) -> dict:
             "components": components,
             "mappings_digest": _digest(json.loads(snapshot.mappings_json)),
             "data_coverage": (
-                "known" if roots else "qualified_none" if package_only else "unknown"
+                "known"
+                if roots and known
+                else (
+                    "unknown"
+                    if roots
+                    else "qualified_none"
+                    if package_only
+                    else "unknown"
+                )
             ),
             "data_roots": [
                 {
@@ -175,6 +202,8 @@ def installation_pin(service, snapshot, authority) -> dict:
                     "generation": row["generation"],
                     "path_digest": _digest(row["path"]),
                     "deletion_fenced": row["deletion_fenced"],
+                    "authority_digest": _digest(row),
+                    "live_epoch": dict(snapshot.root_epochs).get(row["root_id"], 0),
                 }
                 for row in roots
             ],
@@ -299,6 +328,14 @@ def verify_pin_authority(service, envelope, authority=None):
         if envelope["session_id"] != service.fences.session_nonce:
             old.pop("live_generations")
             observed.pop("live_generations")
+            old["data_roots"] = [
+                {key: value for key, value in root.items() if key != "live_epoch"}
+                for root in old["data_roots"]
+            ]
+            observed["data_roots"] = [
+                {key: value for key, value in root.items() if key != "live_epoch"}
+                for root in observed["data_roots"]
+            ]
         if (
             old != observed
             or pinned["data_coverage"] == "unknown"

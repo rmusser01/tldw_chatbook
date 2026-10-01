@@ -759,16 +759,11 @@ async def test_authenticated_data_pin_refuses_changed_root_authority(
 
     case = revocation_case
     service = case.service
-    data = tmp_path / "qualified-data-fixture"
-    data.mkdir()
-    root = {
-        "root_id": "qualified-root",
-        "installation_id": case.installation,
-        "workspace_id": "a",
-        "path": str(data),
-        "generation": 1,
-        "deletion_fenced": False,
-    }
+    creation = await service.review_data_creation(case.installation, workspace_id="a")
+    await service.create_data(creation, creation.operation_id)
+    root = (await service._call(service._coordinator.published_snapshot))["data_roots"][
+        0
+    ]
 
     async def publish(rows):
         # Existing F4 authenticated authority fixture, not a future F8 producer.
@@ -798,7 +793,7 @@ async def test_authenticated_data_pin_refuses_changed_root_authority(
                 )
                 for row in rows:
                     cursor.execute(
-                        "INSERT INTO data_roots VALUES (?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO data_roots(root_id, installation_id, workspace_id, path, generation, deletion_fenced) VALUES (?, ?, ?, ?, ?, ?)",
                         tuple(
                             row[key]
                             for key in (
@@ -810,6 +805,11 @@ async def test_authenticated_data_pin_refuses_changed_root_authority(
                                 "deletion_fenced",
                             )
                         ),
+                    )
+                for row in rows:
+                    cursor.execute(
+                        "UPDATE data_roots SET custody_json=? WHERE root_id=?",
+                        (json.dumps(row["custody"]), row["root_id"]),
                     )
                 snapshot = c.registry.authority_projection(operation_result=result)
                 new = PluginMarker(
@@ -826,14 +826,18 @@ async def test_authenticated_data_pin_refuses_changed_root_authority(
 
         await service._call(operation)
 
-    await publish([root])
-    pin = await asyncio.to_thread(
-        service.capture_resume_pin,
-        case.entries["a"],
-        "root-a",
-        "conversation",
-        "message",
+    import threading
+
+    entries = (await service.admit(service.capture_maximum("a"), "root-data-pending"))[
+        "available_skills"
+    ]
+    await asyncio.to_thread(
+        service.bind_run, entries, "root-data", threading.Event().set
     )
+    pin = await asyncio.to_thread(
+        service.capture_resume_pin, entries, "root-data", "conversation", "message"
+    )
+    await asyncio.to_thread(service.complete_run, "root-data")
     assert json.loads(pin)["installations"][0]["data_coverage"] == "known"
     sealed = await asyncio.to_thread(
         service.seal_resume_checkpoint,

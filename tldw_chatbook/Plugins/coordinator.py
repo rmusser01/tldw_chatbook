@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from .authority import PluginMarker, snapshot_digest
@@ -23,6 +24,10 @@ from .registry import PluginRegistry
 from .review import OperationReceipt, PluginReview, inspection_identity, reinspect
 from .revocation import RevocationRequest, RevocationTarget
 from .runtime_owner import PluginRuntimeOwner
+
+if TYPE_CHECKING:
+    from .data_cleanup import DataRootRef, RootReview
+
 
 REVIEW_SECONDS = 15 * 60
 FREE_RESERVE_BYTES = 100 * 1024 * 1024
@@ -59,10 +64,15 @@ class PluginCoordinator:
         from .revisions import RevisionDrain
 
         self.revision_drain = RevisionDrain(self.fences, self._drain_inventory)
+        from .data_cleanup import RootUsage
+
+        self.root_usage = RootUsage(self)
+        owner.root_usage = self.root_usage
         self._revocation_reviews = {}
         self._reviews: dict[str, PluginReview] = {}
         self._published: dict | None = None
         self.progress: Callable[[str], None] | None = None
+        self.on_data_change = None
 
     async def _drain_inventory(self, installation_id: str) -> tuple[str, ...]:
         self._require_worker()
@@ -79,14 +89,33 @@ class PluginCoordinator:
     def bootstrap(self, passphrase: str) -> None:
         """Explicit owner-gated setup; never bootstrap over registry authority."""
         self._require_worker()
-        if self.registry.authority_projection(operation_result=None)["installations"]:
-            raise ValueError("existing installations require reviewed recovery")
+        prior = self.registry.authority_projection(operation_result=None)
+        if prior["installations"] or prior["data_roots"]:
+            raise ValueError(
+                "existing installation or root custody requires reviewed recovery"
+            )
+        data_anchor = self.owner.root / "data"
+        if os.path.lexists(data_anchor):
+            raise ValueError("retained data anchor requires reviewed recovery")
         self.authority.bootstrap(passphrase)
         self._published = self.authority.verify_current()
+        self.root_usage.initialize(self._published, fresh=True)
 
     def reset(self, *, operation_id: str) -> Path | None:
         """Perform an explicitly reviewed plugin-only reset with a retained ID."""
         self._require_worker()
+        if self.registry._connection.execute(
+            "SELECT 1 FROM data_roots LIMIT 1"
+        ).fetchone():
+            self.root_usage.require_dirty()
+            self.root_usage.recovery.update(
+                {
+                    row[0]: "root_reset_retained_custody"
+                    for row in self.registry._connection.execute(
+                        "SELECT root_id FROM data_roots"
+                    )
+                }
+            )
         self._published = None
         self._reviews.clear()
         return self.authority.reset(operation_id=operation_id)
@@ -477,6 +506,11 @@ class PluginCoordinator:
     def _apply_review(
         self, cursor, review: PluginReview, retained: PackageInspection
     ) -> None:
+        if review.kind == "root_data":
+            from .data_cleanup import apply_root_review
+
+            apply_root_review(self, cursor, review)
+            return
         if review.kind == "retain":
             for digest in review.retired_revisions:
                 for table in (
@@ -752,6 +786,16 @@ class PluginCoordinator:
                 self._begin_revocation(target, "activate", review=review)
             )
         self._require_worker()
+        if review.kind == "root_data":
+            if review.token not in self.root_usage.committing:
+                raise PermissionError("root_lifecycle_entry_required")
+            if not self.root_usage.dirty:
+                raise PermissionError("root_dirty_checkpoint_required")
+            if review.phase in {"waiting", "deleting"} and any(
+                row["root_id"] not in self.root_usage.root_fences
+                for row in review.targets
+            ):
+                raise PermissionError("root_live_fence_required")
         if review.kind == "activate" and target is None:
             self.fences.require_enable_reconciled(
                 review.installation_id, review.workspace_id
@@ -780,7 +824,12 @@ class PluginCoordinator:
                 ]
             if (
                 result["installation_id"] != review.installation_id
-                or result["revision_digest"] != review.inspection.effective_digest
+                or result["revision_digest"]
+                != (
+                    None
+                    if review.kind == "root_data"
+                    else review.inspection.effective_digest
+                )
                 or result["kind"] != review.kind
             ):
                 raise ValueError("operation ID belongs to a different review")
@@ -903,7 +952,8 @@ class PluginCoordinator:
         from .retention import prune_transition_history
 
         prune_transition_history(self)
-        self._verify_reviewed_package(review.inspection)
+        if review.kind != "root_data":
+            self._verify_reviewed_package(review.inspection)
         if review.kind == "retain":
             from .retention import eligible_revisions
 
@@ -915,6 +965,8 @@ class PluginCoordinator:
         retained = (
             self._materialize(review)
             if review.kind in {"install", "update"}
+            else None
+            if review.kind == "root_data"
             else review.inspection
         )
         self._milestone("materialized")
@@ -924,9 +976,13 @@ class PluginCoordinator:
             "operation_id": operation_id,
             "installation_id": review.installation_id,
             "kind": review.kind,
-            "revision_digest": retained.effective_digest,
+            "revision_digest": (
+                retained.effective_digest if retained is not None else None
+            ),
             "result": "committed",
         }
+        if review.kind == "root_data":
+            result["root_result"] = review.result
         if review.kind == "retain":
             result["retired_revisions"] = json.loads(review.retirement_json)
         with self.registry.transaction() as cursor:
@@ -958,8 +1014,75 @@ class PluginCoordinator:
         self._published = snapshot
         if review.kind == "activate" and target is None:
             self.fences.reconcile_enable(review.installation_id, review.workspace_id)
+        if review.kind == "root_data" and self.on_data_change is not None:
+            self.on_data_change()
         self._milestone("published")
         return OperationReceipt(operation_id, "complete", True)
+
+    def review_data_creation(
+        self, installation_id: str, *, workspace_id: str | None = None
+    ):
+        from .data_cleanup import review_creation
+
+        self._require_worker()
+        return review_creation(self, installation_id, workspace_id)
+
+    async def create_data(self, review: RootReview, operation_id: str) -> DataRootRef:
+        from .data_cleanup import create_data
+
+        self._require_worker()
+        return await create_data(self, review, operation_id)
+
+    def review_data_deletion(self, roots: tuple[DataRootRef, ...]) -> RootReview:
+        from .data_cleanup import review_deletion
+
+        self._require_worker()
+        return review_deletion(self, roots)
+
+    def review_data_attachment(
+        self, roots: tuple[DataRootRef, ...], installation_id: str | None
+    ) -> RootReview:
+        from .data_cleanup import review_deletion
+
+        self._require_worker()
+        return review_deletion(self, roots, action="attach", attachment=installation_id)
+
+    async def delete_data(
+        self, roots: tuple[DataRootRef, ...], operation_id: str
+    ) -> OperationReceipt:
+        from .data_cleanup import delete_data
+
+        self._require_worker()
+        return await delete_data(self, roots, operation_id)
+
+    def review_data_reconciliation(self, roots, *, confirm_quiescence):
+        from .data_cleanup import review_reconciliation
+
+        self._require_worker()
+        return review_reconciliation(self, roots, confirm_quiescence)
+
+    async def reconcile_data(
+        self, review: RootReview, operation_id: str
+    ) -> tuple[DataRootRef, ...]:
+        from .data_cleanup import reconcile_data
+
+        self._require_worker()
+        return await reconcile_data(self, review, operation_id)
+
+    def review_data_cleanup_resume(self, roots: tuple[DataRootRef, ...]) -> RootReview:
+        from .data_cleanup import review_resume
+
+        self._require_worker()
+        return review_resume(self, roots)
+
+    def cancel_data_work(self, operation_id: str) -> None:
+        self.root_usage.cancel_work(operation_id)
+
+    async def cancel_data_deletion(self, operation_id: str) -> None:
+        from .data_cleanup import cancel_data_deletion
+
+        self._require_worker()
+        await cancel_data_deletion(self, operation_id)
 
     def begin_disable(self, target: RevocationTarget) -> RevocationRequest:
         return self._begin_revocation(target, "revoke")
@@ -1031,6 +1154,24 @@ class PluginCoordinator:
                     "operation_result"
                 ]
             )
+            if result["kind"] == "root_data":
+                from dataclasses import replace
+
+                group = result["root_result"]["group_id"]
+                pending_roots = [
+                    row
+                    for row in self.published_snapshot()["data_roots"]
+                    if (row.get("cleanup") or {}).get("group_id") == group
+                ]
+                receipt = replace(
+                    receipt,
+                    phase=(
+                        pending_roots[0]["cleanup"]["phase"]
+                        if pending_roots
+                        else result["root_result"]["phase"]
+                    ),
+                    cleanup_pending=bool(pending_roots),
+                )
             if result["kind"] == "retain":
                 from dataclasses import replace
 

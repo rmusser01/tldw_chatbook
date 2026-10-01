@@ -1266,3 +1266,66 @@ MAC with matching issued/snapshot generation or exact result-digest membership i
 the fixed legacy cutover map. Unknown legacy results refuse cleanup; never expand
 that map, infer commitment, authorize replay or select package/data/reset bytes.
 No live admission/revocation lock is held during this storage work.
+
+### F8 exact-root custody and runtime checkpoint (R18/R43, 2026-09-16)
+
+Plugin registry migration 004 adds noncascading exact-root users and a closed
+process coverage/expected-grants commitment. Initial owner and all grants commit
+together before access; idle, pending, reader and old-generation grants remain
+until trusted host terminal evidence. Missing joins or unknown coverage refuse
+cleanup. A live pending claim spans storage work under the existing lifecycle
+owner, without holding its lock during IO. Original root ownership never changes;
+reviewed attachment is separate and advances generation after drain.
+
+Each authenticated root may carry an optional closed physical binding and cleanup
+intent. Absent legacy fields preserve historical signed bytes and mean unknown
+custody. A cleanup group contains 1–256 exact roots of one original owner, bounded
+at 256 KiB. Waiting, deleting and final completion/cancellation each use a distinct
+issued review ID/nonce through the existing commit pipeline. Commit deleting before
+first unlink; errors or cancellation after that point retain fenced cleanup pending.
+Only confirmed removal and directory durability advance generation. No read-only
+lookup starts destruction. Every destructive step rechecks exact authenticated
+root targets and descriptor-relative no-follow ancestry. Platform proof must be
+qualified from actual identity fields; unsupported identity refuses.
+
+One separate, overwriteable checkpoint in the existing marker backend records
+version 1, session nonce, namespace identity, exact PluginMarker and clean/dirty
+phase (at most 4 KiB). It changes neither PluginMarker nor archived pin identity.
+Verified dirty publication precedes every session's first root grant/operation.
+Shutdown closes root admission, confirms all owners/handles terminal and settles
+joins, then publishes clean against the final authority marker before owner release.
+Missing, dirty, malformed or mismatched prior state quarantines every retained root,
+including orphans, until explicit reviewed host reconciliation. Empty restored SQL
+rows, a released lock or PID liveness are never quiescence proof. Clean publication
+failure preserves dirty/recovery state. Fresh bootstrap may initialize clean only
+with no prior root custody; reset cannot erase retained unresolved evidence.
+
+The secure backend guards against SQLite rollback relative to that backend; the
+explicitly accepted file backend retains reduced rollback protection, including
+its separate checkpoint file. Co-restoring those files does not prove drain.
+F7 admission/pins compare exact attached membership, original/current owner,
+scope, binding, generation and fence; package-only qualified-none is explicit
+producer evidence. H2/M4/H6 own actual grants and terminal callbacks through this
+owner; I6/I7 keep committed fence, drain, cleanup and recovery outcomes distinct.
+
+R46 qualifies the native APFS binding within one authenticated Darwin boot-session
+UUID, read with bounded native sysctl and stable readback. Bind exact native
+fstat device/inode/birth seconds and nanoseconds for the owned anchor and leaf;
+Python floating birth time and zero st_gen are insufficient. Changed, missing or
+malformed boot identity refuses retained-root grant/reuse/deletion with the specific
+root_boot_identity_changed reason until explicit reviewed quiescence/rebinding
+advances generation. Package-only use remains available. Same-boot application
+restart still requires every R43 clean/ownership/identity check. This is a tested
+host-owned comparison model, not mathematical non-reuse or cross-boot proof;
+after system reboot users must reconcile retained data. No production compiler or
+new dependency is used, and simulated boot changes are not reboot experiments.
+
+### F8 retained intent and lifecycle entry
+
+Pending root groups authenticate their action (create/delete/attach) and explicit attachment target alongside membership and phase. Restart resumes that same action; an attachment can never become deletion. Root authority commits require the root lifecycle entry, which owns dirty-checkpoint, proof, drain and phase checks; generic commit cannot bypass it. Cancelling a failed proposal clears only its own live fence after authority recovery proves no deleting phase was committed. A committed deleting phase remains fenced for reviewed recovery. The service installs the exact reviewed live fence before queuing worker storage.
+
+### F8 review corrections: completed absence and final publication
+
+An authenticated `cleaned_absent` root remains a tombstone: reconciliation may confirm its missing leaf only through its exact current no-follow ancestry and original binding. Any unexpected leaf or replaced/missing ancestry refuses; a missing `present` root is never completed absence. Reviewed whole-root proof, generation advancement and boot rebinding rules still apply.
+
+Shutdown seals ordinary service admission before finalization and rejects queued ordinary callbacks on the worker. Already executing calls must finish before clean can be published; a refused close continues to admit exact terminal settlement, not new authority work. The final checkpoint remains the last protected publication. Later root grants preserve all still-owned original epochs, and every cleanup phase retains the original review deadline; expiry leaves pending recovery for a fresh explicit review.

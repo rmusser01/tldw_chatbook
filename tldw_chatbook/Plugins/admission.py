@@ -40,6 +40,8 @@ class RunPluginSnapshot:
     inspection: PackageInspection
     alias: str
     live_generations: tuple[tuple[str, str, int], ...] = ()
+    data_roots_json: str = "[]"
+    root_epochs: tuple[tuple[str, int], ...] = ()
 
 
 class LivePluginFences:
@@ -53,6 +55,7 @@ class LivePluginFences:
         self.live_lock = RLock()
         self._sealed: set[tuple[str, str | None]] = set()
         self.epochs = {}
+        self.root_epochs = {}
         self.blocked = set()
         self.runs = {}
         self.operations = {}
@@ -87,6 +90,12 @@ class LivePluginFences:
 
     def check_snapshot(self, snapshot):
         self.check(snapshot.installation_id, snapshot.workspace_id)
+        with self.live_lock:
+            if any(
+                self.root_epochs.get(root_id, 0) != epoch
+                for root_id, epoch in snapshot.root_epochs
+            ):
+                raise PluginUnavailable("plugin_root_generation_changed")
         if (
             self.current(snapshot.installation_id, snapshot.generations)
             != snapshot.live_generations
@@ -385,6 +394,14 @@ class PluginAdmission:
             )
             if mappings != "[]":
                 raise PluginUnavailable("plugin_mapping_owner_unavailable")
+            from .data_cleanup import applicable_roots
+
+            roots = applicable_roots(authority, installation_id, workspace_id)
+            with self.fences.live_lock:
+                root_epochs = tuple(
+                    (row["root_id"], self.fences.root_epochs.get(row["root_id"], 0))
+                    for row in roots
+                )
             self.fences.check(installation_id, workspace_id)
             return RunPluginSnapshot(
                 installation_id,
@@ -400,6 +417,8 @@ class PluginAdmission:
                 inspection,
                 alias,
                 self.fences.current(installation_id, generations),
+                canonical_json(roots),
+                root_epochs,
             )
         except PluginUnavailable:
             raise
@@ -423,12 +442,14 @@ class PluginAdmission:
             current.mappings_json,
             current.dependencies,
             current.alias,
+            current.data_roots_json,
         ) != (
             snapshot.revision_digest,
             snapshot.generations,
             snapshot.mappings_json,
             snapshot.dependencies,
             snapshot.alias,
+            snapshot.data_roots_json,
         ) or not set(snapshot.selection) <= set(current.selection):
             # An archived ceiling may deliberately narrow the current selection.
             # Exact generations still detect every intervening authority edit.
