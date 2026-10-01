@@ -244,9 +244,34 @@ and whitespace pass. All four ACs self-reviewed. Local macOS/APFS durability
 controls and an isolated marker backend qualify behavior; no real-keyring,
 Linux/Windows, network filesystem, power-loss or full-sweep claim is made.
 
+## TASK-32671 — reviewed installation commit and recovery
+
+Reused reviewed F4 checkpoint `27514eea01`. The persistent storage worker owns
+review, immutable materialization, guarded SQLite commit and subsequent certificate,
+marker and projection publication. Recovery authenticates exact lineage and retained
+bytes; it preserves unrelated installations and unresolved runtime evidence instead
+of inferring grants or stopped processes. Protected transition discovery is bounded
+and never prunes the current recovery material. Existing ADR162/163 apply.
+
+RED: the intended missing recovery behavior failed and 15 stack entries reported
+the missing coordinator. Final full commit/recovery files: **51 passed in 55.26s**,
+no skips/warnings (`/private/tmp/expanded-hooks-f4-qualified.xml`). Real owner death
+at all six milestones, fresh-process missing/rolled-back registry, ambiguous lineage,
+missing certificate, stale review, full disk and same-ID retry are exercised. Crash
+workers now use Python isolation and the repository network-refusal/null-keyring
+bootstrap before app imports, with explicit private HOME/config/profile provenance.
+The six crash boundaries also passed separately (**6 in 10.11s**, overlapping).
+
+Authority/registry/runtime-owner neighbors: **175 passed in 34.07s**, no
+skips/warnings (`/private/tmp/expanded-hooks-f4-neighbors.xml`). Ten task-owned
+Python files pass full Ruff/formatting; changed syntax and whitespace pass.
+All four ACs self-reviewed. Local macOS/APFS and isolated marker storage are
+qualified; no full sweep, real keychain, hardware power-loss, Linux/Windows or
+network/synchronized storage qualification is claimed.
+
 ## Remaining requested order
 
-- TASK-32671 through TASK-32675: required plugin registry, authority and drain foundations.
+- TASK-32672 through TASK-32675: required plugin registry, authority and drain foundations.
 - TASK-32680: Stop continuations and teardown, including native plugin drain qualification.
 - TASK-32685: MCP hooks, including required MCP/plugin prerequisites.
 - TASK-32686: native capabilities, required by the requested TASK-32687.

@@ -991,3 +991,57 @@ def test_deeply_nested_reset_receipt_reports_recovery(tmp_path):
     assert store.posture() == "recovery_required"
     with pytest.raises(ValueError):
         store.bootstrap("pw")
+
+
+def test_transition_discovery_authenticates_and_pages_without_registry(tmp_path):
+    store = store_at(tmp_path / "protected")
+    store.bootstrap("pw")
+    snapshot, old, new = transition(store, "discover-me")
+    store.prepare(snapshot, old, new)
+    assert store.list_transitions(limit=1, offset=0)[0].committed is False
+    store.certify_commit(old, new)
+    evidence = store.list_transitions(limit=1, offset=0)
+    assert evidence[0].new.operation_id == "discover-me"
+    assert evidence[0].committed is True
+    assert store.list_transitions(limit=1, offset=1) == ()
+    with pytest.raises(ValueError):
+        store.list_transitions(limit=51, offset=0)
+
+
+def test_transition_discovery_refuses_forged_name_and_orphan_certificate(tmp_path):
+    store = store_at(tmp_path / "protected")
+    store.bootstrap("pw")
+    snapshot, old, new = transition(store)
+    store.prepare(snapshot, old, new)
+    intent = next((store.store_dir / "intents").iterdir())
+    renamed = intent.with_name("0" * 64 + ".json")
+    intent.rename(renamed)
+    with pytest.raises(ValueError):
+        store.list_transitions(limit=50, offset=0)
+    renamed.rename(intent)
+    store.certify_commit(old, new)
+    intent.unlink()
+    with pytest.raises(ValueError):
+        store.list_transitions(limit=50, offset=0)
+
+
+def test_transition_capacity_refuses_before_new_snapshot_publication(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Plugins import authority_store
+
+    monkeypatch.setattr(authority_store, "MAX_TRANSITIONS", 2)
+    store = store_at(tmp_path / "protected")
+    store.bootstrap("pw")
+    for operation_id in ("one", "two"):
+        snapshot, old, new = transition(store, operation_id)
+        store.prepare(snapshot, old, new)
+    retained = set((store.store_dir / "snapshots").iterdir())
+    snapshot, old, new = transition(store, "three")
+    with pytest.raises(ValueError, match="capacity"):
+        store.prepare(snapshot, old, new)
+    assert set((store.store_dir / "snapshots").iterdir()) == retained
+    # Exact retry remains possible at capacity; no evidence is removed.
+    snapshot, old, new = transition(store, "two")
+    store.prepare(snapshot, old, new)
+    assert len(store.list_transitions(limit=50, offset=0)) == 2

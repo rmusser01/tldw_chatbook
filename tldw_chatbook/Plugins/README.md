@@ -254,3 +254,92 @@ raise; do not report success after a partial reset. Rebootstrap creates only
 empty authority and never imports previously reviewed packages. Exact marker
 advancement retries also republish through the configured marker backend, so
 visible marker bytes cannot substitute for successful durable publication.
+
+## Reviewed installs and recovery (F4)
+
+Construct `PluginCoordinator(registry, authority, owner)` on the **same dedicated
+non-UI worker** that creates, uses and closes its real SQLite registry. Install one
+persistent asyncio event loop on that worker before construction. Call `review`,
+`bootstrap`, `reset`, `published_snapshot`, and the async `commit`/`recover` methods
+on that loop; wrong-thread/loop calls fail before storage mutation. App integration
+owns worker startup and message marshalling. Do not send this live connection to
+arbitrary `asyncio.to_thread` calls or construct a new loop for each request.
+
+Explicit owner-gated `bootstrap(passphrase)` sets up empty authority. After normal
+startup unlock, await `recover()` before reviewing a new install. The internal
+store remains an owner-gated primitive; UI must not bypass the coordinator.
+`reset(operation_id=...)` requires an explicit reviewed reset and its retained ID.
+Reset invalidates pending reviews and fences publication; it does not establish
+that existing package bytes or runtime users are trusted or stopped.
+
+`review(inspection, selection=(...), workspace_id=...)` captures a fresh
+installation identity, exact inspected bytes/source/link/interpretation,
+components/dependencies, selected component IDs, explicit target workspace,
+and the complete current authenticated state (including mapping/configuration
+references and their absence). The frozen review has a session token and a
+15-minute expiry. Changed package inputs, authority, selection or target invalidate
+it. Embedded manifest overlays are verified with package bytes; unknown or missing
+external overlay artifacts cannot be reconstructed. F4's public mutation installs
+new local packages **disabled and untrusted**. Workspace targeting does not enable
+the install. Explicit activation/trust, replacement drain, catalogs and their
+additional review inputs are later lifecycle integrations.
+
+Retain one operation ID when awaiting `commit(review, operation_id)`. The owned
+package copy is reinspected and its files/directories synchronized before protected
+preparation. Candidate rows exist only inside the guarded uncommitted SQLite
+transaction while `authority_projection` builds the complete snapshot. The snapshot
+and intent are durable **before that transaction exits**. The sequence is:
+
+1. Reconcile previous transitions and revalidate the exact review.
+2. Materialize immutable bytes and persist the complete protected snapshot/intent.
+3. Return successfully from the real durable SQLite transaction.
+4. Create the separate authenticated commit certificate.
+5. Verify agreement and durably advance the exact marker tuple.
+6. Publish the authenticated projection and acknowledge the operation.
+
+`progress`, when set to a host callback, reports `materialized`, `prepared`,
+`registry_committed`, `certified`, `marker_advanced`, and `published` milestones.
+It contains no package bodies or secrets. A raised callback leaves the same
+recoverable state as a lost response at that boundary. `published_snapshot()`
+refuses fenced or mismatched state; a projection cannot enable itself by editing
+registry flags. Publication is metadata eligibility, never a filesystem, tool,
+network, credential or execution grant.
+
+`recover()` returns closed `OperationReceipt` values: operation ID, phase,
+commitment evidence status, and a non-secret recovery reason. Prepared-only work
+with the old registry aborts. A new-looking registry without post-commit proof
+requires reviewed recovery. A matching certificate with the old marker completes
+its transition. A secure new marker and complete snapshot can reconstruct lost
+SQLite state independently of registry phase. Ambiguous transitions, malformed
+journals or missing/mismatched retained bytes stay fenced. Recovery performs no
+fetch, package execution, credential-grant synthesis or process signalling.
+
+Reconstruction reinspects retained material under its authenticated dialect and
+adapter, verifying exact content, definitions, variable digests, dependencies,
+selection and blockers. It restores the complete logical snapshot, including
+unrelated installations, root fences and tombstones. Original acquisition links
+are copied files: source/link provenance comes from authenticated references and
+does not require the original acquisition directory. Missing owning-service
+verification for configuration/credential mappings blocks reconstruction instead
+of weakening those references.
+
+Registry reconstruction preserves every surviving process row and records an
+idempotent **unresolved unknown-runtime-user** row for each affected installation,
+with no invented PID. F2 `reserve_launch` blocks these rows even after another
+restart. Restoring authority never proves earlier processes stopped; host
+reconciliation is still required. F8 adds exact durable root-user relationships.
+
+`PluginAuthorityStore.list_transitions(limit=1..50, offset=...)` provides bounded
+public authenticated discovery without relying on a surviving registry. Consume
+all pages before reconciliation. The inventory accepts at most **1,000 retained
+transitions**; capacity refuses new preparation before creating a new snapshot,
+while exact existing-operation retries and recovery remain available. F4 never
+prunes snapshots, intents or certificates, including the marker's current snapshot.
+Lifecycle retention integrates this inventory bound with protected-current and
+in-flight evidence later; it is not intended as a lifetime installation limit.
+
+Qualification: real controlled owner death and fresh-process recovery on local
+macOS/APFS, including missing/rolled-back SQLite before and after marker publication.
+Tests isolate config/data/marker storage before imports and verify imported module
+and effective profile provenance. This is not hardware power-loss, real OS-keychain,
+Windows, Linux, synchronized-root or network-filesystem qualification.

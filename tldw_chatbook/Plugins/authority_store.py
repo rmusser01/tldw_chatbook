@@ -29,9 +29,11 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
 )
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
+    PrivatePathStatus,
     atomic_private_write_bytes,
     open_private_binary,
     secure_private_directory,
+    verify_trusted_directory,
 )
 
 from .authority import (
@@ -46,6 +48,7 @@ MARKER_SERVICE = "tldw_chatbook.plugin_trust"
 MARKER_ACCOUNT = "managed-plugins:generation-marker:v1"
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 MAX_RESET_RECORDS = 1000
+MAX_TRANSITIONS = 1000
 
 
 def default_plugin_authority_dir(local_skills_store_dir: str | Path) -> Path:
@@ -484,6 +487,13 @@ class PluginAuthorityStore:
         """Persist complete snapshot and intent, without any commit proof."""
         self._require_keys()
         payload = self._transition(old, new)
+        names = self._transition_inventory()
+        if (
+            self._operation_path("prepared", new.operation_id).name
+            not in names["intents"]
+            and len(names["intents"]) >= MAX_TRANSITIONS
+        ):
+            raise ValueError("transition inventory capacity reached")
         if self.load_marker() != old:
             raise ValueError("stale authority marker")
         self.verify_snapshot(old)
@@ -522,6 +532,63 @@ class PluginAuthorityStore:
         if committed and self._read_evidence("committed", operation_id) != payload:
             raise ValueError("commit certificate mismatch")
         return TransitionEvidence(old, new, snapshot, committed)
+
+    def _transition_inventory(self) -> dict[str, set[str]]:
+        self._require_keys()
+        names = {}
+        for directory in ("intents", "certificates"):
+            path = self.store_dir / directory
+            entries = set()
+            if os.path.lexists(path):
+                qualification = verify_trusted_directory(
+                    path, allow_shared_sticky=False
+                )
+                if qualification.status != PrivatePathStatus.TRUSTED_DIRECTORY:
+                    raise ValueError("unqualified transition inventory")
+                with os.scandir(path) as inventory:
+                    for entry in inventory:
+                        if (
+                            len(entries) >= MAX_TRANSITIONS
+                            or re.fullmatch(r"[0-9a-f]{64}\.json", entry.name) is None
+                            or not entry.is_file(follow_symlinks=False)
+                        ):
+                            raise ValueError(
+                                "invalid or excessive transition inventory"
+                            )
+                        entries.add(entry.name)
+            names[directory] = entries
+        if not names["certificates"] <= names["intents"]:
+            raise ValueError("orphan commit certificate")
+        return names
+
+    def list_transitions(
+        self, *, limit: int, offset: int
+    ) -> tuple[TransitionEvidence, ...]:
+        """Discover a bounded authenticated page without trusting registry hints.
+
+        Inventory is capped at 1,000 retained transitions; overflow, unexpected
+        entries and orphan certificates fail closed. Each returned transition is
+        authenticated. Callers must consume every page before reconciliation.
+        Nothing is pruned. Filenames locate evidence, never prove commitment.
+        """
+        from .registry import validate_page
+
+        validate_page(limit, offset)
+        names = self._transition_inventory()
+        result = []
+        for name in sorted(names["intents"])[offset : offset + limit]:
+            path = self.store_dir / "intents" / name
+            envelope = _read(path)
+            try:
+                operation_id = envelope["payload"]["new"]["operation_id"]
+                if not isinstance(operation_id, str):
+                    raise TypeError("invalid transition discovery identity")
+            except (KeyError, TypeError) as error:
+                raise ValueError("invalid transition discovery envelope") from error
+            if self._operation_path("prepared", operation_id) != path:
+                raise ValueError("transition filename mismatch")
+            result.append(self.verify_transition(operation_id))
+        return tuple(result)
 
     def advance_marker(self, old: PluginMarker, new: PluginMarker) -> None:
         """Advance only an exact certified transition, allowing exact retries."""

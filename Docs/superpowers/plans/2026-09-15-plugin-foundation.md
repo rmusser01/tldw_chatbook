@@ -293,7 +293,7 @@ git diff --check
 - Consumes: F1 inspections, F2 registry/ownership and F3 protected authority.
 - Produces: PluginCoordinator(registry: PluginRegistry, authority: PluginAuthorityStore, owner: PluginRuntimeOwner).review(inspection: PackageInspection, *, selection: tuple[str, ...], workspace_id: str | None) -> PluginReview; async commit(review: PluginReview, operation_id: str) -> OperationReceipt; async recover() -> tuple[OperationReceipt, ...]. PluginReview binds all spec section 8.1 inputs and an expiry/invalidation token. OperationReceipt exposes operation_id, phase, committed and recovery_reason without source bodies or secrets. recovery_action(*, registry_new: bool, marker_new: bool, certificate_valid: bool, snapshot_valid: bool) -> str implements the evidence table.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_registry_flag_cannot_replace_commit_certificate():
@@ -302,9 +302,9 @@ def test_registry_flag_cannot_replace_commit_certificate():
     assert recovery_action(registry_new=True, marker_new=False, certificate_valid=True, snapshot_valid=True) == "complete_marker"
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_coordinator.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_coordinator.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def recovery_action(*, registry_new: bool, marker_new: bool,
@@ -318,20 +318,20 @@ def recovery_action(*, registry_new: bool, marker_new: bool,
     return "review_required" if registry_new else "abort_prepared"
 ```
 
-  - [ ] 3.1. Create plugin_stack(tmp_path) in Tests/Plugins/conftest.py returning the real registry, authority and coordinator with isolated marker storage; add named fault barriers after each durable step, never a replacement fake coordinator.
-  - [ ] 3.2. Implement the six-step commit order from the spec. Keep certificate creation after SQLite returns durable success; fencing remains until marker/projections agree. Revalidate exact review inputs immediately before mutation.
-  - [ ] 3.3. Implement same-operation receipt lookup and recovery from the protected complete snapshot. The small decision kernel assumes identity/MAC validation already succeeded; unrelated markers, mismatched operations and missing provenance quarantine before that classifier.
-  - [ ] 3.4. Use recovery_worker.py to kill the actual owner after each durable boundary and recover in a fresh process. Preserve other installations, do not synthesize external grants and protect the current marker snapshot from retention.
+  - [x] 3.1. Create plugin_stack(tmp_path) in Tests/Plugins/conftest.py returning the real registry, authority and coordinator with isolated marker storage; add named fault barriers after each durable step, never a replacement fake coordinator.
+  - [x] 3.2. Implement the six-step commit order from the spec. Keep certificate creation after SQLite returns durable success; fencing remains until marker/projections agree. Revalidate exact review inputs immediately before mutation.
+  - [x] 3.3. Implement same-operation receipt lookup and recovery from the protected complete snapshot. The small decision kernel assumes identity/MAC validation already succeeded; unrelated markers, mismatched operations and missing provenance quarantine before that classifier.
+  - [x] 3.4. Use recovery_worker.py to kill the actual owner after each durable boundary and recover in a fresh process. Preserve other installations, do not synthesize external grants and protect the current marker snapshot from retention.
 
 **Failure and successful-control matrix:** Prepared-only abort; valid post-commit proof with old marker; missing proof after DB commit; new marker with rolled-back/missing DB; invalid journal; stale review; full disk; lost response; repeated operation ID. Verify positive install remains disabled and projections cannot self-activate.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_coordinator.py Tests/Plugins/test_recovery.py Tests/Plugins/recovery_worker.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32671 --plain
