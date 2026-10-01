@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from textual.containers import Grid
-from textual.widgets import Button, Input, OptionList, Select
+from textual.widgets import Button, Input, OptionList, Select, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_context_policy import (
@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsOrigin,
     ConsoleSettingsSubmission,
     ConsoleSettingsSurface,
+    ConsoleSettingsTransfer,
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     CURRENT_MARK,
@@ -164,6 +165,47 @@ def _rebase(
     )
 
 
+#: Per-model effective values for ``_rebase_with_values``:
+#: (temperature, max_tokens, streaming).
+PAIR_VALUES = {
+    "model-a": (0.7, None, False),
+    "claude-sonnet-4-5": (0.2, 1024, True),
+    "model-b": (1.3, 2048, True),
+}
+
+
+def _rebase_with_values(
+    state: ConsoleSettingsDraftState, **kwargs: object
+) -> ConsoleSettingsDraftState:
+    """A rebaser whose pairs differ in value, like the controller's: each target
+    starts from its own inherited Temperature and Max tokens."""
+    temperature, max_tokens, streaming = PAIR_VALUES.get(
+        str(kwargs["model"]), (1.0, 4096, True)
+    )
+    settings = replace(
+        state.settings,
+        provider=kwargs["provider"],
+        model=kwargs["model"],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        streaming=streaming,
+    )
+    return replace(
+        state,
+        settings=settings,
+        field_drafts=tuple(
+            replace(
+                field,
+                effective_value=getattr(settings, field.name),
+                profile_override=getattr(settings, field.name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for field in state.field_drafts
+        ),
+    )
+
+
 def build_switcher(
     recorder: Recorder,
     *,
@@ -173,6 +215,7 @@ def build_switcher(
     recent: tuple[_Use, ...] | None = None,
     remembered_previous: _Use | None = None,
     catalog_loader=None,
+    draft_rebaser=_rebase,
 ) -> ConsoleModelPopover:
     """One switcher with recording seams. RECENT loads after open."""
 
@@ -193,7 +236,7 @@ def build_switcher(
         else providers_models,
         scope_copy="Applies to: this chat only",
         durability_copy="Temporary until this chat is promoted",
-        draft_rebaser=_rebase,
+        draft_rebaser=draft_rebaser,
         live_committer=recorder.commit,
         default_readiness_resolver=recorder.readiness,
         recent_pairs_loader=load_recent if recent is not None else None,
@@ -435,16 +478,23 @@ async def test_filtering_a_2000_model_catalog_takes_under_50ms_per_keystroke() -
 
 async def test_a_typed_model_id_applies_as_a_pair_and_bad_ids_never_do() -> None:
     """AC#8: an id no catalog lists applies with the chat's provider, and only
-    as bounded single-line text (TASK-14812 AC#5, AC#7)."""
+    as bounded single-line text (TASK-14812 AC#5, AC#7) with no markup
+    bracket, which other Console surfaces would still parse and crash on."""
     recorder = Recorder()
     app = SwitcherHarness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(app, pilot, build_switcher(recorder))
         find = switcher.query_one("#console-popover-find", Input)
-        find.value = "x" * 300
-        await pilot.pause()
-        assert all(row.kind != "typed" for row in switcher._rows)
+        for bad in ("x" * 300, "foo[/]", "a[b]"):
+            find.value = bad
+            await pilot.pause()
+            assert all(row.kind != "typed" for row in switcher._rows), bad
 
+        # The highlight (and the draft with it) moves to Anthropic first; the
+        # typed id still pairs with the chat's provider, not the highlight's.
+        find.value = "claude"
+        await pilot.pause()
+        assert switcher.highlighted_row().provider == "anthropic"
         find.value = "private/model-id"
         await pilot.pause()
         typed = [row for row in switcher._rows if row.kind == "typed"]
@@ -795,3 +845,209 @@ def test_needs_setup_route_names_the_provider_its_model_and_the_field() -> None:
         "field": "api_key",
     }
     assert resolved == [("openrouter", "openai/gpt-4o-mini")]
+
+
+def _strip(app) -> str:
+    return line_with(painted_lines(app), "Values for")
+
+
+async def test_value_strip_follows_every_highlight_move_and_invents_no_edit() -> None:
+    """The strip names and shows the pair that Enter, Ctrl+N and Save act on:
+    PREVIOUS on open, then every Up/Down, from Find and from Temperature. Moving
+    edits nothing, and Save right after open saves exactly what the strip shows."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                remembered_previous=_Use(
+                    "anthropic", "claude-sonnet-4-5", timedelta(hours=2), True
+                ),
+                draft_rebaser=_rebase_with_values,
+            ),
+        )
+        temperature = switcher.query_one("#console-popover-temperature", Input)
+
+        def shown() -> tuple[str | None, str, str]:
+            row = switcher.highlighted_row()
+            return (row.model if row else None, _strip(app), temperature.value)
+
+        model, strip, value = shown()
+        assert model == "claude-sonnet-4-5"
+        assert "Values for claude-sonnet-4-5" in strip and "1,024" in strip
+        assert value == "0.2" and "Streaming: on" in strip
+
+        await pilot.press("down")  # from Find
+        await pilot.pause()
+        model, strip, value = shown()
+        assert model == "model-a"
+        assert "Values for model-a" in strip and "Max tokens —" in strip
+        # The longer label is painted whole, not wrapped inside the "on" width.
+        assert value == "0.7" and "Streaming: off" in strip
+
+        temperature.focus()
+        await pilot.press("up")  # from Temperature
+        await pilot.pause()
+        model, strip, value = shown()
+        assert model == "claude-sonnet-4-5"
+        assert "Values for claude-sonnet-4-5" in strip and value == "0.2"
+        for name in ("temperature", "streaming"):
+            marker = switcher.query_one(f"#console-popover-{name}-provenance", Static)
+            assert str(marker.render()) == "Inherited", name
+
+        switcher.query_one("#console-popover-save-model-default", Button).press()
+        await pilot.pause()
+
+    (submission,) = recorder.submissions
+    settings = submission.draft.settings
+    assert submission.action is ConsoleSettingsAction.SAVE_MODEL_DEFAULT
+    assert (settings.provider, settings.model) == ("anthropic", "claude-sonnet-4-5")
+    assert (settings.temperature, settings.max_tokens) == (0.2, 1024)
+    assert not any(field.dirty for field in submission.draft.field_drafts)
+
+
+async def test_a_row_without_a_pair_shows_and_applies_this_chats_pair() -> None:
+    """With no pair highlighted (no match, or a NEEDS SETUP row with no model)
+    the strip falls back to this chat's pair, never a pair the highlight
+    passed while typing; with no row at all, Enter applies nothing."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app, pilot, build_switcher(recorder, draft_rebaser=_rebase_with_values)
+        )
+        find = switcher.query_one("#console-popover-find", Input)
+        find.value = "claude-sonnet"
+        await pilot.pause()
+        assert "Values for claude-sonnet-4-5" in _strip(app)
+
+        find.value = ""
+        await pilot.pause()
+        setup = next(
+            index
+            for index, row in enumerate(switcher._rows)
+            if row.kind == "setup" and row.model is None
+        )
+        switcher._set_highlight(setup)
+        await pilot.pause()
+        assert "Values for model-a" in _strip(app)
+
+        find.value = "claude-sonnet"
+        await pilot.pause()
+        find.value = "x" * 300  # matches nothing, too long to be a typed id
+        await pilot.pause()
+        assert switcher.highlighted_row() is None
+        assert "Values for model-a" in _strip(app)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "Choose a model" in str(
+            switcher.query_one("#console-popover-error").render()
+        )
+        assert app.screen is switcher
+
+    assert recorder.submissions == []
+
+
+async def test_chat_settings_carries_the_highlighted_pair() -> None:
+    """'Chat settings…' transfers the pair the strip names, unapplied."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                remembered_previous=_Use(
+                    "anthropic", "claude-sonnet-4-5", timedelta(hours=2), True
+                ),
+                draft_rebaser=_rebase_with_values,
+            ),
+        )
+        switcher.query_one("#console-popover-full-settings", Button).press()
+        await pilot.pause()
+
+    assert recorder.submissions == []
+    assert isinstance(app.result, ConsoleSettingsTransfer)
+    settings = app.result.draft.settings
+    assert (settings.provider, settings.model, settings.temperature) == (
+        "anthropic",
+        "claude-sonnet-4-5",
+        0.2,
+    )
+
+
+@pytest.mark.parametrize(
+    ("draft", "app_config", "shown"),
+    [
+        (_draft(model="foo[/]"), None, "llama.cpp · foo[/]"),
+        (
+            _draft("custom-ep:lab", "lab-model"),
+            {
+                "api_settings": {},
+                "custom_endpoints": {
+                    "lab": {
+                        "display_name": "[x] lab",
+                        "base_url": "http://127.0.0.1:9999/v1",
+                        "family": "openai_compatible",
+                        "models": ["lab-model"],
+                    }
+                },
+            },
+            "[x] lab · lab-model",
+        ),
+    ],
+)
+async def test_title_shows_bracketed_model_ids_and_names_literally(
+    draft, app_config, shown
+) -> None:
+    """A model id or endpoint name is never parsed as markup: 'foo[/]' raised
+    MarkupError on every open, and '[x] lab' lost its '[x]'."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app, pilot, build_switcher(recorder, draft=draft, app_config=app_config)
+        )
+        box = switcher.query_one("#console-model-popover")
+        assert f"Switch model · now: {shown}" in painted_lines(app)[box.region.y]
+
+
+async def test_a_value_edit_pins_its_pair_against_a_late_recent_fill() -> None:
+    """RECENT arriving after an edit must not move the draft, and the edit,
+    to the PREVIOUS pair it brings."""
+    release = asyncio.Event()
+
+    async def late_recent():
+        await release.wait()
+        return (_Use("anthropic", "claude-sonnet-4-5", timedelta(hours=1)),)
+
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build_switcher(recorder, draft_rebaser=_rebase_with_values)
+        switcher._recent_pairs_loader = late_recent
+        app.push_screen(switcher)
+        for _ in range(3):
+            await pilot.pause()
+        assert switcher.highlighted_row().model == "model-a"
+        temperature = switcher.query_one("#console-popover-temperature", Input)
+        temperature.focus()
+        temperature.value = "0.3"
+        await pilot.pause()
+        release.set()
+        await _settle(app, pilot)
+        assert any(row.model == "claude-sonnet-4-5" for row in switcher._rows)
+        assert switcher.highlighted_row().model == "model-a"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    settings = recorder.submissions[0].draft.settings
+    assert (settings.provider, settings.model, settings.temperature) == (
+        "llama_cpp",
+        "model-a",
+        0.3,
+    )

@@ -16,7 +16,8 @@ on the boot path.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import asyncio
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -239,11 +240,37 @@ def open_provider_setup(
     screen.post_message(NavigateToScreen(TAB_SETTINGS, screen_context=context))
 
 
+async def load_provider_catalog(
+    screen: ChatScreen,
+    providers_models: Mapping[str, Sequence[str]],
+    provider: str,
+) -> list[str]:
+    """Return one provider's cached catalog for Switch model, off the UI thread.
+
+    The local catalog merge is synchronous under its async wrapper: about
+    6 ms a provider, so 13 ready providers held the event loop for 110 ms
+    in one block on every open. It runs in a worker thread; the options'
+    warnings are remembered back on the UI thread.
+    """
+    from ..Screens.provider_model_resolution import resolve_provider_model_options
+
+    options = await asyncio.to_thread(
+        asyncio.run,
+        resolve_provider_model_options(
+            providers_models,
+            getattr(screen.app_instance, "llm_provider_catalog_scope_service", None),
+            provider=provider,
+            merge_cap=None,
+        ),
+    )
+    screen._remember_console_model_options(provider, options)
+    return [option.model_id for option in options]
+
+
 async def open_model_switcher(screen: ChatScreen) -> None:
     """Open Switch model for the active chat (Alt+M, chips, palette, /model)."""
     from ...Chat.console_settings_apply import QUICK_MODEL_DEFAULT_FIELDS
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
-    from ..Screens.provider_model_resolution import resolve_provider_model_options
 
     if screen._console_setup_modal_blocking():
         return
@@ -264,16 +291,6 @@ async def open_model_switcher(screen: ChatScreen) -> None:
         after = (submission.draft.settings.provider, submission.draft.settings.model)
         PREVIOUS_PAIRS.record_switch(session.id, before, after)
         return live_commit
-
-    async def load_catalog(provider: str) -> list[str]:
-        options = await resolve_provider_model_options(
-            providers_models,
-            getattr(screen.app_instance, "llm_provider_catalog_scope_service", None),
-            provider=provider,
-            merge_cap=None,
-        )
-        screen._remember_console_model_options(provider, options)
-        return [option.model_id for option in options]
 
     screen.app.push_screen(
         ConsoleModelPopover(
@@ -304,7 +321,9 @@ async def open_model_switcher(screen: ChatScreen) -> None:
             previous_pair=lambda recent: PREVIOUS_PAIRS.previous(
                 session.id, before, recent
             ),
-            catalog_loader=load_catalog,
+            catalog_loader=lambda provider: load_provider_catalog(
+                screen, providers_models, provider
+            ),
             setup_opener=lambda provider, model: open_provider_setup(
                 screen, provider, model
             ),

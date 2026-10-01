@@ -517,12 +517,16 @@ to pair the id with that provider. A provider whose list is still loading,
 empty or unavailable says so in its own row. Legacy alias providers (such
 as "llama.cpp (legacy alias)") only appear when a chat uses them.
 
-Up and Down move the highlight while you type. **Enter** applies the
-highlighted pair to this chat only. Tabbing into Temperature or
-**Streaming** edits the highlighted pair's values. **Ctrl+N** makes the
-highlighted pair the default for new chats, and **Save as model default**
-saves its Temperature, Max tokens and Streaming. **Chat settings…** opens the
-full modal with the same draft. **Esc** closes without changing anything.
+Up and Down move the highlight while you type, and from Temperature too.
+The value row below the list follows the highlight: "Values for <model>"
+always names the highlighted pair and shows its Temperature, Streaming and
+Max tokens, so what you see is what the keys act on. **Enter** applies the
+highlighted pair to this chat only. **Ctrl+N** makes the highlighted pair
+the default for new chats, and **Save as model default** saves its
+Temperature, Max tokens and Streaming. Once you edit a value, the highlight
+stays on that pair while the list finishes filling in. **Chat settings…**
+opens the full modal on the highlighted pair, with your unapplied edits.
+**Esc** closes without changing anything.
 Context and compaction settings live in the full modal only; Apply here
 keeps the chat's compaction setting as it is.
 

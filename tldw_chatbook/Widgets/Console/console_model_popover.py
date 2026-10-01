@@ -644,7 +644,9 @@ class ConsoleModelPopover(
 
     def on_mount(self) -> None:
         """Highlight PREVIOUS, focus Find, then resolve readiness and recents."""
-        self.query_one("#console-model-popover").border_title = self._title()
+        # Text, not str: a str title is parsed as markup, and model ids and
+        # endpoint display names may hold brackets ("foo[/]" raised).
+        self.query_one("#console-model-popover").border_title = Text(self._title())
         if self._previous_pair is not None:
             self._previous = self._previous_pair(())
         self._rebuild_rows()
@@ -1104,12 +1106,18 @@ class ConsoleModelPopover(
             provider = max(named, key=lambda key: len(self._display(key)))
             text = query[len(self._display(provider)) :]
         else:
-            provider = provider_key(self._draft.settings.provider or self._current[0])
+            # The chat's provider, not the draft's: the draft follows the
+            # highlight, which moves as the user types.
+            provider = provider_key(self._current[0])
             text = query
         typed = normalize_model_id(text)
         if (
             not provider
             or typed is None
+            # ponytail: Console surfaces (control bar, workbench mode labels)
+            # still parse a model id as markup and crash on "foo[/]"; refuse
+            # "[" here until those render sites stop parsing markup.
+            or "[" in typed
             or typed in self._models_for(provider)
             or self._is_current(provider, typed)
         ):
@@ -1213,19 +1221,34 @@ class ConsoleModelPopover(
         self._paint_highlight(index)
 
     def _paint_highlight(self, index: int | None) -> None:
-        """Mark the highlighted row with the glyph, not colour alone."""
+        """Mark the highlighted row with the glyph, not colour alone.
+
+        Every highlight change also rebases the draft to the row's pair, so
+        the value strip always names and shows the pair that Enter, Ctrl+N,
+        Save and Chat settings… act on.
+        """
         pairs = self.query_one("#console-popover-pairs", OptionList)
         old = self._painted_index
         if old is not None and old != index and old < len(self._rows):
             pairs.replace_option_prompt_at_index(
                 old, self._prompt(self._rows[old], False)
             )
-        if index is not None and index < len(self._rows):
-            pairs.replace_option_prompt_at_index(
-                index, self._prompt(self._rows[index], True)
-            )
-            self._highlight_key = self._rows[index].key
+        row = (
+            self._rows[index] if index is not None and index < len(self._rows) else None
+        )
+        if row is not None:
+            pairs.replace_option_prompt_at_index(index, self._prompt(row, True))
+            self._highlight_key = row.key
         self._painted_index = index
+        # A row with no pair of its own (NEEDS SETUP with no model, "… more",
+        # or no row at all) shows this chat's pair, never one passed while typing.
+        provider, model = (
+            (row.provider, row.model)
+            if row is not None and row.kind in {"pair", "typed", "setup"} and row.model
+            else self._current
+        )
+        if model:
+            self._rebase_to(provider, model)
 
     def highlighted_row(self) -> SwitcherRow | None:
         """The row Enter acts on, or None when nothing is selectable."""
@@ -1267,19 +1290,6 @@ class ConsoleModelPopover(
         if event.option_index < len(self._rows):
             self._activate(self._rows[event.option_index])
 
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        """Editing a value edits the highlighted pair's values."""
-        if getattr(event.widget, "id", None) in {
-            "console-popover-temperature",
-            "console-popover-streaming",
-        }:
-            self._rebase_to_highlighted()
-
-    def _rebase_to_highlighted(self) -> None:
-        row = self.highlighted_row()
-        if row is not None and row.kind in {"pair", "typed"} and row.model:
-            self._rebase_to(row.provider, row.model)
-
     def _activate(
         self,
         row: SwitcherRow | None,
@@ -1287,7 +1297,11 @@ class ConsoleModelPopover(
     ) -> None:
         """Enter: apply the highlighted pair, open its fix, or expand a provider."""
         if row is None:
-            self._submit(action)
+            # Spec rule 1: with no row highlighted there is no pair to act on.
+            self._set_error(
+                "Choose a model: type to search, then Enter.",
+                focus=self.query_one("#console-popover-find", Input),
+            )
             return
         if row.kind == "more":
             find = self.query_one("#console-popover-find", Input)
@@ -1396,6 +1410,7 @@ class ConsoleModelPopover(
             self._temperature_mount_echo_pending = False
             if event.value == self._temperature_mount_value:
                 return
+        self._user_moved = True  # a late fill must not retarget an edit
         value = self._parse_temperature(event.value)
         if value is not None:
             self._replace_quick_field("temperature", value, direct_edit=True)
@@ -1461,9 +1476,7 @@ class ConsoleModelPopover(
                 temperature.value = (
                     "" if settings.temperature is None else str(settings.temperature)
                 )
-            self.query_one(
-                "#console-popover-streaming", Button
-            ).label = self._streaming_label()
+            self._show_streaming()
             self.query_one("#console-popover-response-max", Static).update(
                 self._max_tokens_copy(settings)
             )
@@ -1473,6 +1486,13 @@ class ConsoleModelPopover(
         finally:
             self._updating_controls = False
         self._sync_provenance_labels()
+
+    def _show_streaming(self) -> None:
+        button = self.query_one("#console-popover-streaming", Button)
+        button.label = self._streaming_label()
+        # Button.label is not a layout reactive: without a re-measure,
+        # "Streaming: off" wraps inside the "on" width and paints "Streaming:".
+        button.refresh(layout=True)
 
     def _sync_provenance_labels(self) -> None:
         if not self.is_mounted:
@@ -1492,8 +1512,9 @@ class ConsoleModelPopover(
             event: The streaming toggle button's press event.
         """
         event.stop()
+        self._user_moved = True  # a late fill must not retarget an edit
         self._streaming = not self._streaming
-        event.button.label = self._streaming_label()
+        self._show_streaming()
         self._replace_quick_field(
             "streaming",
             self._streaming,

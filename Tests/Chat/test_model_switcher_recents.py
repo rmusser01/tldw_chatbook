@@ -25,10 +25,17 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+    LLMProviderCatalogScopeService,
+)
+from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+    LocalLLMProviderCatalogService,
+)
 from tldw_chatbook.UI.Console_Modules.model_switcher import (
     RECENT_CONVERSATION_LIMIT,
     ModelPairUse,
     PreviousPairMemory,
+    load_provider_catalog,
     persisted_model_pair_uses,
     read_recent_model_pairs,
 )
@@ -350,3 +357,37 @@ def test_each_pair_says_when_it_was_last_used() -> None:
         )
         == "used 2h ago in this chat"
     )
+
+
+async def test_a_catalog_resolves_off_the_ui_thread_and_is_remembered_on_it() -> None:
+    """TASK-33004.4 first-open cost: the real catalog merge is synchronous under
+    its async wrapper (13 ready providers held the loop 110 ms in one block),
+    so it runs in a worker thread; the options are remembered on the UI thread."""
+    loop_thread = threading.get_ident()
+    providers = {"Ollama": ["qwen3:32b", "llama3.1:8b"]}
+    merge_threads: list[int] = []
+    remembered: list[tuple[int, str, list[str]]] = []
+
+    def saved_catalog() -> dict[str, list[str]]:
+        merge_threads.append(threading.get_ident())
+        return dict(providers)
+
+    local = LocalLLMProviderCatalogService(
+        provider_catalog_loader=saved_catalog, settings_loader=dict, environ={}
+    )
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            llm_provider_catalog_scope_service=LLMProviderCatalogScopeService(
+                local_service=local, server_service=None
+            )
+        ),
+        _remember_console_model_options=lambda provider, options: remembered.append(
+            (threading.get_ident(), provider, [option.model_id for option in options])
+        ),
+    )
+
+    models = await load_provider_catalog(screen, providers, "ollama")
+
+    assert models == ["qwen3:32b", "llama3.1:8b"]
+    assert merge_threads and loop_thread not in merge_threads
+    assert remembered == [(loop_thread, "ollama", models)]
