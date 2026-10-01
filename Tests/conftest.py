@@ -1195,6 +1195,19 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-19425: the Console hook-consent send gate (aed1b13501)
+            # reads the saved [hooks] section through the guarded config
+            # loader on EVERY controller submit_draft/queue_prompt. Under
+            # the per-test redirect that read raises RecoveryRequired
+            # ("raw_source_selection_changed"), the gate's fail-closed
+            # except denies the send ("Hooks unavailable; review or
+            # disable hooks before sending."), and this suite's
+            # controlled-gateway tests wait forever for provider events
+            # that never arrive -- 87 reds, 17 of them pinned at the full
+            # --timeout cap per run (the 300s hang class this task
+            # measures). Same admission signature as the continuation
+            # suites above; the suite never re-selects a config itself.
+            "test_console_local_citation_boundary.py",
         }
     )
     test_data_dir = (
