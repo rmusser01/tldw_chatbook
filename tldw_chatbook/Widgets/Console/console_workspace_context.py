@@ -624,6 +624,12 @@ class _ComposeReadView:
 class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
+    #: TASK-33621.12: a state sync (e.g. the one that follows closing a row
+    #: menu's Save .md… prompt) rebuilds every row; keep a focused row's
+    #: control focused across that rebuild instead of letting Textual's reset
+    #: strand it on a neighbour.
+    RECOMPOSE_KEEPS_FOCUS = True
+
     #: (row id, row key) pairs for the grouped-browser rows the last COMPLETED
     #: `compose()` built, or None when `compose` has not finished for this
     #: instance (never started, or abandoned part-way). Only
@@ -2105,6 +2111,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 )
             )
             row_button.row_key = row.row_key
+            # Qodo #2932: the id is positional; a rebuild that reorders the
+            # list must hand focus to this chat's row, not to its old slot.
+            if row.row_key:
+                row_button.focus_identity = f"conversation-row:{row.row_key}"
             # TASK-15454: this pair is the row's click identity; `compose`
             # publishes the collected sequence once it finishes.
             if self._composing_row_signature is not None:
@@ -2147,6 +2157,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 f"{title} · {presentation.summary or 'Conversation'} — conversation actions"
             )
             menu_button.row_key = row.row_key
+            if row.row_key:
+                menu_button.focus_identity = f"conversation-actions:{row.row_key}"
             menu_button.conversation_id = row.conversation_id
             # PR #2262 review: Copy-as-markdown reads open native sessions
             # live; the asterisk needs the same identity the row button

@@ -440,19 +440,181 @@ async def test_copy_empty_chat_is_gated_and_copies_nothing(monkeypatch) -> None:
     )
 
 
+# ---- Save .md… through the real row menu (TASK-33621.12) -----------------
+#
+# G3-02 (2026-09-29 Console UX review): the save handler called
+# `push_screen` on the ChatScreen -- a Screen, which has none -- so the
+# worker's AttributeError ended the whole app. The test that used to stand
+# here replaced `_save_console_conversation_markdown` with a fake, so the
+# broken call never ran under test. Everything below drives the real menu,
+# the real push and the real modal; nothing on that path is monkeypatched.
+
+_OPENER_ID = "console-conversation-actions-0"
+
+
+def _menu_button(menu, action_id: str) -> Button:
+    return next(
+        button
+        for button in menu.query(Button)
+        if getattr(button, "console_action_id", "") == action_id
+    )
+
+
+async def _wait_until(pilot, predicate, *, timeout: float = 5.0) -> bool:
+    """Pump the app until ``predicate()`` holds or the app has died."""
+    steps = int(timeout / 0.05)
+    for _ in range(steps):
+        if predicate():
+            return True
+        if pilot.app._exception is not None or not pilot.app.is_running:
+            return False
+        await pilot.pause(0.05)
+    return predicate()
+
+
+def _assert_app_alive(pilot) -> None:
+    assert pilot.app._exception is None, (
+        f"the app died: {pilot.app._exception!r}"
+    )
+    assert pilot.app.is_running
+
+
+def _notifications(pilot, severity: str) -> list[str]:
+    return [
+        str(note.message)
+        for note in pilot.app._notifications
+        if note.severity == severity
+    ]
+
+
+async def _seed_row_zero_messages(pilot) -> None:
+    """Give the open "Chat 1" row real messages in the live chat store."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    store = pilot.app.screen._ensure_console_chat_store()
+    session_id = store.active_session_id
+    store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="saved question"
+    )
+    store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="saved answer"
+    )
+    await pilot.pause(0.2)
+
+
+def _ready_save_prompt(pilot):
+    """The save prompt once it is mounted with its path field focused.
+
+    ``app.screen`` switches to a pushed screen before that screen has
+    composed, so "the top screen is the prompt" alone races its mount.
+    """
+    from textual.widgets import Input
+
+    from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
+        ConsoleSaveMarkdownModal,
+    )
+
+    screen = pilot.app.screen
+    if not isinstance(screen, ConsoleSaveMarkdownModal) or not screen.is_mounted:
+        return None
+    fields = screen.query("#console-save-markdown-input").results(Input)
+    field = next(fields, None)
+    return screen if field is not None and field.has_focus else None
+
+
+async def _open_save_prompt_from_row_menu(pilot):
+    """Row 0 ▸ Copy as ▸ Save .md…, by keyboard, exactly as a user would.
+
+    Returns:
+        The mounted save prompt. Fails -- naming the app's own exception --
+        when the prompt never opens, which is what the pre-fix crash does.
+    """
+    screen = pilot.app.screen
+    _opener(screen).focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause(0.3)
+    menu = screen.query_one(ConsoleConversationActionMenu)
+    _menu_button(menu, "page:copy").focus()
+    await pilot.press("enter")
+    await pilot.pause(0.3)
+    save = _menu_button(menu, "save-markdown")
+    assert not save.disabled, "the seeded row should offer Save .md…"
+    save.focus()
+    await pilot.press("enter")
+    opened = await _wait_until(pilot, lambda: _ready_save_prompt(pilot) is not None)
+    assert opened, (
+        "Save .md… never opened its path prompt; "
+        f"app exception: {pilot.app._exception!r}"
+    )
+    return _ready_save_prompt(pilot)
+
+
+async def _submit_save_path(pilot, modal, path) -> None:
+    from textual.widgets import Input
+
+    field = modal.query_one("#console-save-markdown-input", Input)
+    assert field.has_focus, "the prompt should open with its path field focused"
+    field.value = str(path)
+    await pilot.press("enter")
+
+
+def _focused_id(pilot) -> str | None:
+    focused = pilot.app.focused
+    return focused.id if focused is not None else None
+
+
 @pytest.mark.asyncio
 @private_profile_test
-async def test_save_writes_validated_markdown_file(
-    request, monkeypatch, tmp_path
+async def test_row_menu_save_md_writes_the_file_and_keeps_the_app_running(
+    request, tmp_path
 ) -> None:
+    """AC#1/#4: the real row-menu Save .md… writes the file; the app lives."""
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        chat_screen = pilot.app.screen
+        await _seed_row_zero_messages(pilot)
+        modal = await _open_save_prompt_from_row_menu(pilot)
+        target = tmp_path / "exports" / "saved-chat.md"
+
+        await _submit_save_path(pilot, modal, target)
+
+        assert await _wait_until(pilot, target.exists), (
+            f"no file was written; app exception: {pilot.app._exception!r}"
+        )
+        written = target.read_text(encoding="utf-8")
+        assert written.startswith("# ")
+        assert "saved question" in written and "saved answer" in written
+        _assert_app_alive(pilot)
+        assert pilot.app.screen is chat_screen
+        # The toast names the folder too, so a file saved under a bare name
+        # (relative to where the app was started) can be found.
+        saved_message = f"Saved saved-chat.md to {target.parent}."
+        assert await _wait_until(
+            pilot, lambda: saved_message in _notifications(pilot, "information")
+        ), _notifications(pilot, "information")
+        # Save closes through the same dismiss-once path as Cancel, so focus
+        # goes back to the row control the user opened the menu from.
+        assert await _wait_until(pilot, lambda: _focused_id(pilot) == _OPENER_ID), (
+            f"focus landed on {pilot.app.focused!r}"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_save_md_for_a_persisted_conversation_writes_its_database_rows(
+    request, tmp_path
+) -> None:
+    """A saved (not open) chat exports its database rows through the prompt."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+        ConversationActionChosen,
+    )
+
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
-        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-
         screen.app_instance.chachanotes_db = CharactersRAGDB(
             str(tmp_path / "copy.db"), "copy-test"
         )
-        db = screen.app_instance.chachanotes_db
         db = screen.app_instance.chachanotes_db
         conv_id = db.add_conversation({"title": "Copyable chat"})
         db.add_message(
@@ -462,33 +624,245 @@ async def test_save_writes_validated_markdown_file(
                 "content": "persisted question",
             }
         )
-        monkeypatch.setattr(
-            screen,
-            "_console_conversation_state",
-            lambda cid: "in-progress",
-        )
-        target = tmp_path / "exported.md"
-
-        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
-            ConversationActionChosen,
-        )
-
-        async def _fake_save(t):
-            markdown = screen._render_console_conversation_markdown(t, "clean")
-            assert markdown is not None
-            await screen._write_console_markdown_file(str(target), markdown)
-
-        monkeypatch.setattr(screen, "_save_console_conversation_markdown", _fake_save)
-        screen.on_conversation_action_chosen(
+        screen.post_message(
             ConversationActionChosen(
                 "save-markdown", _copy_target(conversation_id=conv_id)
             )
         )
-        await pilot.pause(1.0)
+        assert await _wait_until(
+            pilot, lambda: _ready_save_prompt(pilot) is not None
+        ), f"no prompt; app exception: {pilot.app._exception!r}"
+        modal = _ready_save_prompt(pilot)
+        # The default is a slug of the title under ~/Downloads.
+        default = modal.query_one("#console-save-markdown-input").value
+        assert default.endswith("copyable-chat.md"), default
+        target = tmp_path / "exported.md"
 
+        await _submit_save_path(pilot, modal, target)
+
+        assert await _wait_until(pilot, target.exists)
         written = target.read_text(encoding="utf-8")
-        assert "persisted question" in written
         assert written.startswith("# ")
+        assert "persisted question" in written
+        _assert_app_alive(pilot)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["escape", "cancel", "backdrop"])
+@private_profile_test
+async def test_save_prompt_closes_without_writing_and_restores_focus(
+    request, tmp_path, how
+) -> None:
+    """AC#2: Esc and Cancel both close the prompt, write nothing, and return
+    focus to the row control that opened the menu. A click on the dimmed
+    backdrop is the same cancel (the ADR-031 modal contract)."""
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        chat_screen = pilot.app.screen
+        await _seed_row_zero_messages(pilot)
+        modal = await _open_save_prompt_from_row_menu(pilot)
+        target = tmp_path / "never-written.md"
+        from textual.widgets import Input
+
+        modal.query_one("#console-save-markdown-input", Input).value = str(target)
+        await pilot.pause()
+
+        if how == "escape":
+            await pilot.press("escape")
+        elif how == "cancel":
+            cancel = modal.query_one("#console-save-markdown-cancel", Button)
+            cancel.focus()
+            await pilot.press("enter")
+        else:
+            box = modal.query_one("#console-save-markdown-box")
+            assert not box.region.contains(1, 1), "the prompt covers the corner"
+            assert await pilot.click(offset=(1, 1))
+
+        assert await _wait_until(pilot, lambda: pilot.app.screen is chat_screen), (
+            f"{how} left the save prompt open"
+        )
+        assert modal not in pilot.app.screen_stack
+        await pilot.pause(0.5)
+        assert not target.exists(), f"{how} still wrote the file"
+        _assert_app_alive(pilot)
+        assert await _wait_until(pilot, lambda: _focused_id(pilot) == _OPENER_ID), (
+            f"focus after {how} landed on {pilot.app.focused!r}"
+        )
+
+
+async def _make_newest(pilot, chat_screen, session_id: str, opener_id: str) -> None:
+    """Give ``session_id`` a new message, so it rises to the top of the rail.
+
+    Waits until the rail has re-synced and ``opener_id`` -- its old slot --
+    belongs to another chat.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    store = chat_screen._ensure_console_chat_store()
+    store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="a newer question"
+    )
+    chat_screen._sync_console_workspace_context()
+    tray = chat_screen.query_one("#console-workspace-context")
+
+    def _slot_moved_on() -> bool:
+        slot = next(iter(chat_screen.query(f"#{opener_id}")), None)
+        return (
+            slot is not None
+            and not tray.recompose_in_flight
+            and getattr(slot, "row_key", None) not in (None, f"native:{session_id}")
+        )
+
+    assert await _wait_until(pilot, _slot_moved_on), (
+        "the chat never moved: its old slot still names it"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reorder_while", ["menu-open", "prompt-open"])
+@private_profile_test
+async def test_a_reorder_during_save_md_returns_focus_to_the_same_chat(
+    request, reorder_while
+) -> None:
+    """Checkpoint review of Qodo #2932: the opener is its chat, not its slot.
+
+    Row ids are positional. The menu captured its opener's id when it
+    opened, and the Save .md prompt captured the same id under it, so a tray
+    rebuild that reordered the chats while either was open sent focus to the
+    chat that now held that slot -- the next Enter or ``m`` acted on the
+    wrong chat. Two open chats; the menu is opened from the older one's
+    row, that chat then gets a message (so it moves to the top), and Esc
+    closes the prompt.
+    """
+    from Tests.UI.test_console_tray_rebuild_focus import _open_second_tab
+
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        chat_screen = pilot.app.screen
+        await _seed_row_zero_messages(pilot)
+        store = chat_screen._ensure_console_chat_store()
+        first_id = store.active_session_id
+        first_key = f"native:{first_id}"
+        await _open_second_tab(chat_screen, store, pilot)
+        (opener,) = [
+            button
+            for button in chat_screen.query(Button)
+            if str(button.id or "").startswith("console-conversation-actions-")
+            and getattr(button, "row_key", None) == first_key
+        ]
+        opener_id = str(opener.id)
+
+        opener.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        menu = chat_screen.query_one(ConsoleConversationActionMenu)
+        _menu_button(menu, "page:copy").focus()
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        if reorder_while == "menu-open":
+            await _make_newest(pilot, chat_screen, first_id, opener_id)
+        _menu_button(menu, "save-markdown").focus()
+        await pilot.press("enter")
+        assert await _wait_until(
+            pilot, lambda: _ready_save_prompt(pilot) is not None
+        ), f"no prompt; app exception: {pilot.app._exception!r}"
+        if reorder_while == "prompt-open":
+            await _make_newest(pilot, chat_screen, first_id, opener_id)
+
+        await pilot.press("escape")
+        assert await _wait_until(pilot, lambda: pilot.app.screen is chat_screen)
+        await pilot.pause(0.5)
+        _assert_app_alive(pilot)
+
+        focused = pilot.app.focused
+        assert focused is not None and str(focused.id or "").startswith(
+            "console-conversation-actions-"
+        ), f"focus landed on {focused!r}"
+        assert getattr(focused, "row_key", None) == first_key, (
+            f"focus followed the opener's old slot to chat "
+            f"{getattr(focused, 'row_key', None)!r}, not {first_key!r}"
+        )
+
+
+def _parent_is_a_file(tmp_path):
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("occupied", encoding="utf-8")
+    return blocker / "chat.md", lambda: None
+
+
+def _read_only_folder(tmp_path):
+    import os
+    import stat
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root ignores directory write permission")
+    folder = tmp_path / "read-only"
+    folder.mkdir()
+    folder.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    return folder / "chat.md", lambda: folder.chmod(stat.S_IRWXU)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unwritable", [_parent_is_a_file, _read_only_folder], ids=["file-parent", "read-only"]
+)
+@private_profile_test
+async def test_unwritable_save_path_shows_an_error_and_keeps_the_app_running(
+    request, tmp_path, unwritable
+) -> None:
+    """AC#3: a save that cannot complete says why and never ends the app."""
+    target, restore = unwritable(tmp_path)
+    try:
+        async with make_console_pilot(
+            size=(160, 48), production_styles=True
+        ) as pilot:
+            chat_screen = pilot.app.screen
+            await _seed_row_zero_messages(pilot)
+            modal = await _open_save_prompt_from_row_menu(pilot)
+
+            await _submit_save_path(pilot, modal, target)
+
+            def _save_errors() -> list[str]:
+                return [
+                    text
+                    for text in _notifications(pilot, "error")
+                    if text.startswith("Could not save chat.md")
+                ]
+
+            assert await _wait_until(pilot, lambda: bool(_save_errors())), (
+                "an unwritable path produced no visible error: "
+                f"{_notifications(pilot, 'error')}"
+            )
+            (message,) = _save_errors()
+            assert str(target.parent) in message, message
+            # The path is shown verbatim, never parsed as markup.
+            assert all(
+                note.markup is False
+                for note in pilot.app._notifications
+                if str(note.message) == message
+            )
+            assert not target.exists()
+            _assert_app_alive(pilot)
+            assert pilot.app.screen is chat_screen
+    finally:
+        restore()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_blank_save_path_keeps_the_prompt_open_and_says_why(
+    request, tmp_path
+) -> None:
+    """Save with an empty path is refused visibly, not silently ignored."""
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        await _seed_row_zero_messages(pilot)
+        modal = await _open_save_prompt_from_row_menu(pilot)
+
+        await _submit_save_path(pilot, modal, "   ")
+        await pilot.pause(0.3)
+
+        assert pilot.app.screen is modal, "a blank path closed the prompt"
+        assert "Enter a file path to save to." in _notifications(pilot, "warning")
+        _assert_app_alive(pilot)
 
 
 @pytest.mark.asyncio

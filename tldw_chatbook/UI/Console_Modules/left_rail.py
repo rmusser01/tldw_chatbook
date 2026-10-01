@@ -91,6 +91,11 @@ from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
+from ...Widgets.recompose_capture_guard import (
+    family_position,
+    family_stand_in,
+    focus_identity,
+)
 from ...Workspaces.conversation_browser_state import (
     console_rail_section_height_budget,
 )
@@ -143,12 +148,26 @@ class ContextSectionDescriptor:
     max_content_lines: int
 
 
+#: TASK-33621.12: focus recovery waits for a rebuild of the lost control's
+#: own container by polling at this interval, at most this many times (2 s).
+_FOCUS_RECOVERY_REBUILD_POLL_SECONDS = 0.02
+_FOCUS_RECOVERY_REBUILD_MAX_POLLS = 100
+
+
 @dataclass(frozen=True, slots=True)
 class _ContextFocusRecoveryIncident:
-    """Stable local-focus identity retained across one DOM mutation."""
+    """Stable local-focus identity retained across one DOM mutation.
+
+    ``target_family``/``family_index`` place a row control among its own kind
+    (``recompose_capture_guard.family_position``), so when its item leaves
+    the list the stand-in is the same kind of control -- the one the tray's
+    own restore picks too (Qodo #2932).
+    """
 
     target_id: str | None
     target_index: int | None
+    target_family: str | None = None
+    family_index: int | None = None
 
 
 CONTEXT_SECTION_DESCRIPTORS = (
@@ -884,16 +903,22 @@ class ConsoleLeftRail(Vertical):
 
     @staticmethod
     def _stable_focus_id(widget: Widget) -> str | None:
-        return widget.id or None
+        # A reordered list hands a row's positional id to another item, so a
+        # row control's own identity wins over its id -- the key the tray's
+        # rebuild restore uses too (Qodo #2932).
+        return focus_identity(widget)
 
     def _focus_recovery_incident(
         self,
         previous: Widget,
         controls: tuple[Widget, ...],
     ) -> _ContextFocusRecoveryIncident:
+        family, family_index = family_position(controls, previous)
         return _ContextFocusRecoveryIncident(
             target_id=self._stable_focus_id(previous),
             target_index=controls.index(previous) if previous in controls else None,
+            target_family=family,
+            family_index=family_index,
         )
 
     def _ensure_focus_recovery(
@@ -930,15 +955,27 @@ class ConsoleLeftRail(Vertical):
         self,
         section_id: str,
         incident: _ContextFocusRecoveryIncident,
+        rebuild_polls: int = 0,
+        landing: Widget | None = None,
     ) -> None:
-        """Resolve one current incident against the section's current DOM."""
+        """Resolve one current incident against the section's current DOM.
+
+        Args:
+            section_id: The section whose focus is being recovered.
+            incident: The frozen identity of the control that lost focus.
+            rebuild_polls: How many times resolution has already waited for
+                an in-flight rebuild inside the section (TASK-33621.12).
+            landing: Where focus sat when that wait began -- Textual's
+                automatic reset target. Only read once ``rebuild_polls`` > 0.
+        """
 
         if self._pending_focus_recoveries.get(section_id) is not incident:
             return
         if not self.is_attached:
             self._pending_focus_recoveries.pop(section_id, None)
             return
-        if self._focus_is_valid_outside_rail(self.app.focused):
+        focused = self.app.focused
+        if self._focus_is_valid_outside_rail(focused):
             self._pending_focus_recoveries.pop(section_id, None)
             self._section_focus_history.pop(section_id, None)
             return
@@ -950,6 +987,46 @@ class ConsoleLeftRail(Vertical):
             self._pending_focus_recoveries.pop(section_id, None)
             return
 
+        # TASK-33621.12: focus moved while this incident waited for a rebuild
+        # -- Tab, a click, or the rebuilt container restoring its own focus.
+        # That move is newer than the incident; recovering now would snap
+        # focus back to the old row.
+        if (
+            rebuild_polls
+            and focused is not None
+            and focused is not landing
+            and self._is_enabled_focus_target(focused)
+        ):
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._section_focus_history.pop(section_id, None)
+            if self._section_for_owned_target(focused) == section_id:
+                self._record_section_focus(section_id, focused)
+            bounded._acknowledge_focus_recovery(focused)
+            return
+
+        # TASK-33621.12: the incident may come from a rebuild of the focused
+        # control's own container. Until that recompose has mounted the
+        # replacement, nothing matches the target's id and the index fallback
+        # strands focus on a neighbour -- live, "New conversation" after the
+        # Save .md prompt closed and the Conversations tray re-synced. Resolve
+        # once the rebuild is done. A same-section incident merges into this
+        # pending one; focus leaving the rail or moving on (above) ends the
+        # wait, and the poll is bounded so a rebuild that never finishes
+        # cannot hold it forever.
+        if (
+            rebuild_polls < _FOCUS_RECOVERY_REBUILD_MAX_POLLS
+            and self._section_rebuild_in_flight(bounded)
+        ):
+            wait_landing = landing if rebuild_polls else focused
+            self.set_timer(
+                _FOCUS_RECOVERY_REBUILD_POLL_SECONDS,
+                lambda: self._recover_pending_focus(
+                    section_id, incident, rebuild_polls + 1, wait_landing
+                ),
+                name="console-rail-focus-recovery-rebuild-wait",
+            )
+            return
+
         controls = self._focusable_body_controls(section_id)
         candidates: list[Widget] = []
         if incident.target_id is not None:
@@ -958,6 +1035,11 @@ class ConsoleLeftRail(Vertical):
                 for control in controls
                 if self._stable_focus_id(control) == incident.target_id
             )
+        stand_in = family_stand_in(
+            controls, incident.target_family, incident.family_index
+        )
+        if stand_in is not None:
+            candidates.append(stand_in)
         if incident.target_index is None:
             candidates.extend(controls)
         else:
@@ -1001,6 +1083,15 @@ class ConsoleLeftRail(Vertical):
         self._pending_focus_recoveries.pop(section_id, None)
         self._section_focus_history.pop(section_id, None)
         bounded._acknowledge_focus_recovery(None)
+
+    @staticmethod
+    def _section_rebuild_in_flight(bounded: ConsoleBoundedSection) -> bool:
+        """Whether a guarded container inside the section is mid-recompose."""
+
+        return any(
+            getattr(widget, "recompose_in_flight", False)
+            for widget in bounded.viewport.walk_children(Widget, with_self=True)
+        )
 
     def _commit_focus_recovery(
         self,

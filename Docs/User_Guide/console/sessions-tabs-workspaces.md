@@ -60,6 +60,18 @@ icon opens the action menu; focus a row and press `m` for the same menu. Escape
 returns focus to that row. **Icon and colour…** lives in this menu beside
 Favourite, status, rename, and other existing actions.
 
+**Copy as ▸** exports the chat as Markdown. **Clean markdown** and **Full
+transcript** copy it to the clipboard. **Save .md…** asks where to save the
+Clean version; the path starts as a file named after the chat in
+`~/Downloads`. Press Enter or **Save** to write the file, and a notification
+names the file and the folder it went to (a bare file name is saved in the
+folder the app was started from). Esc, **Cancel**, or a click outside the
+prompt closes it without writing, and focus returns to the row you opened the
+menu from — that chat's row even if the list reordered meanwhile, or the row
+now in its place if the chat has left the list. If the file cannot be written — for example the folder is
+read-only, or part of the path is a file — a notification names the path and
+the problem, and the Console stays open.
+
 Choose **Mark as unread** on a saved chat to keep a local reminder. It remains
 unread while you stay in the chat, reopen its menu, or click its current row.
 Leaving and explicitly reopening the chat clears the reminder after the chat

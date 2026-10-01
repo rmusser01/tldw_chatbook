@@ -6538,13 +6538,24 @@ class ChatScreen(BaseAppScreen):
         dismissed += dismiss_workspace_action_menus(self, restore_focus=False)
         return dismissed > 0
 
-    def _restore_console_menu_opener_focus(self, opener_id: str) -> None:
+    def _restore_console_menu_opener_focus(self, opener_id: str, anchor=None) -> None:
         """Return focus to whatever widget opened a row action menu.
 
         TASK-25712: the conversation menu's openers are asterisk ``Button``s,
         but the workspace menu's opener is the Workspaces tree, so the
         restore is by DOM id on any focusable widget -- not Button-typed.
+        A row opener's id is positional, so its ``anchor`` (captured when the
+        menu opened) finds its chat instead, or the stand-in for a chat that
+        left the list meanwhile (Qodo #2932).
         """
+        if anchor is not None:
+            from tldw_chatbook.Widgets.recompose_capture_guard import (
+                resolve_focus_anchor,
+            )
+
+            if (target := resolve_focus_anchor(anchor, self)) is not None:
+                target.focus()
+            return
         if not opener_id:
             return
         try:
@@ -6564,7 +6575,14 @@ class ChatScreen(BaseAppScreen):
         from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
             ConsoleConversationActionMenu,
         )
+        from tldw_chatbook.Widgets.recompose_capture_guard import (
+            capture_focus_anchor,
+        )
 
+        # Before any await: a tray rebuild can replace the row meanwhile.
+        return_to = getattr(opener, "console_return_focus_to", None) or opener
+        opener.console_return_focus_to = None
+        opener_anchor = capture_focus_anchor(return_to)
         # One row menu at a time (across kinds) and the DuplicateIds detach
         # guard both live in the shared mount helper (TASK-25709/25710).
         conversation_id = (
@@ -6598,13 +6616,10 @@ class ChatScreen(BaseAppScreen):
         menu_width = ConsoleConversationActionMenu.MENU_WIDTH
         menu_height = ConsoleConversationActionMenu.root_page_height(target)
         screen_region = self.region
-        return_focus_id = str(
-            getattr(opener, "console_return_focus_id", None) or opener.id or ""
-        )
-        opener.console_return_focus_id = None
         await self._mount_console_row_action_menu(
             target,
-            opener_id=return_focus_id,
+            opener_id=str(return_to.id or ""),
+            opener_anchor=opener_anchor,
             screen_x=max(
                 screen_region.x, min(region.x, screen_region.right - menu_width)
             ),
@@ -6678,7 +6693,9 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         if not getattr(event, "restore_focus", True):
             return
-        self._restore_console_menu_opener_focus(event.opener_id)
+        self._restore_console_menu_opener_focus(
+            event.opener_id, getattr(event, "opener_anchor", None)
+        )
 
     # ---- Workspace action menu (TASK-25712) ----------------------------
 
@@ -6846,6 +6863,7 @@ class ChatScreen(BaseAppScreen):
         opener_id: str,
         screen_x: int,
         screen_y: int,
+        opener_anchor=None,
     ) -> None:
         """Mount one shared conversation menu with the detach guard.
 
@@ -6854,6 +6872,7 @@ class ChatScreen(BaseAppScreen):
             opener_id: DOM id of the opener used for focus restoration.
             screen_x: Absolute anchor column.
             screen_y: Absolute anchor row.
+            opener_anchor: The opener's ``FocusAnchor``, when it is a row.
         """
         from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
             ConsoleConversationActionMenu,
@@ -6873,6 +6892,7 @@ class ChatScreen(BaseAppScreen):
                 opener_id=opener_id,
                 screen_x=screen_x,
                 screen_y=screen_y,
+                opener_anchor=opener_anchor,
             )
         )
 
@@ -7123,63 +7143,6 @@ class ChatScreen(BaseAppScreen):
         label = "Clean markdown" if fidelity == "clean" else "Full transcript"
         self.app.notify(f"Copied {label} ({size_kb} KB).")
 
-    async def _save_console_conversation_markdown(self, target) -> None:
-        """Prompt for a path and write the Clean markdown rendering."""
-
-        from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
-            ConsoleSaveMarkdownModal,
-            markdown_filename_slug,
-        )
-
-
-        markdown = await asyncio.to_thread(
-            self._render_console_conversation_markdown, target, "clean"
-        )
-        if markdown is None:
-            self.app.notify("This chat has no messages to save.", severity="warning")
-            return
-        title = str(getattr(target, "title", "") or "")
-        default_path = str(
-            Path.home() / "Downloads" / f"{markdown_filename_slug(title)}.md"
-        )
-
-        def _write(chosen: "str | None") -> None:
-            if not chosen:
-                return
-            self.run_worker(
-                self._write_console_markdown_file(chosen, markdown),
-                exclusive=True,
-                group="console-copy-markdown",
-            )
-
-        self.push_screen(
-            ConsoleSaveMarkdownModal(default_path=default_path), callback=_write
-        )
-
-    async def _write_console_markdown_file(self, path_text: str, markdown: str) -> None:
-        """Validate and write one markdown export off the loop."""
-
-        import aiofiles
-
-        from tldw_chatbook.Utils.path_validation import validate_path_simple
-
-        # expanduser FIRST: validate_path_simple rejects unresolved '~'
-        # components, and the expansion is exactly what a user means by it.
-        candidate = Path(path_text).expanduser()
-        try:
-            target_path = validate_path_simple(candidate, require_exists=False)
-        except Exception as exc:
-            self.app.notify(f"Invalid path: {exc}", severity="error")
-            return
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            async with aiofiles.open(target_path, "w", encoding="utf-8") as fh:
-                await fh.write(markdown)
-        except Exception as exc:
-            self.app.notify(f"Could not write file: {exc}", severity="error")
-            return
-        self.app.notify(f"Saved {target_path.name}.")
-
     def on_conversation_action_chosen(self, event: Message) -> None:
         """Run the chosen row command against the captured conversation.
 
@@ -7215,10 +7178,17 @@ class ChatScreen(BaseAppScreen):
             )
             return
         if action_id == "save-markdown":
+            from tldw_chatbook.UI.Console_Modules import markdown_export
+
+            # TASK-33621.12: the prompt returns focus to what was focused
+            # under it -- make that the row the menu was opened from.
+            self._restore_console_menu_opener_focus(
+                getattr(event, "opener_id", ""), getattr(event, "opener_anchor", None)
+            )
             self.run_worker(
-                self._save_console_conversation_markdown(target),
+                markdown_export.save_conversation_markdown(self, target),
                 exclusive=True,
-                group="console-copy-markdown",
+                group=markdown_export.SAVE_MARKDOWN_WORKER_GROUP,
             )
             return
         if not conversation_id:
@@ -22778,7 +22748,7 @@ class ChatScreen(BaseAppScreen):
                 )
             except NoMatches:
                 return
-            opener.console_return_focus_id = focused.id
+            opener.console_return_focus_to = focused
             opener.press()
             event.stop()
             event.prevent_default()

@@ -15,6 +15,7 @@ from textual.widget import Widget
 from textual.widgets import Footer
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Widgets.recompose_capture_guard import FocusAnchor
 
     class _SafeModalHost(Protocol):
         """Textual surface required by ``SafeModalDismissMixin``."""
@@ -85,11 +86,30 @@ def _is_safe_focus_target(widget: Widget | None) -> bool:
     )
 
 
+def _keyed_opener_anchor(opener: Widget) -> FocusAnchor | None:
+    """The opener's anchor when its DOM id is not its identity, else None.
+
+    A list row's id is positional (``console-conversation-actions-3``): a
+    rebuild while the modal is up can hand it to another item, so such an
+    opener is found again by its ``focus_identity`` instead (Qodo #2932).
+    Every other opener keeps the id restore below, unchanged.
+    """
+    from tldw_chatbook.Widgets.recompose_capture_guard import (
+        capture_focus_anchor,
+        focus_identity,
+    )
+
+    if focus_identity(opener) == (opener.id or None):
+        return None
+    return capture_focus_anchor(opener)
+
+
 def _restore_focus_after_dismissal(
     app: App[Any],
     revealed_screen: Screen[Any],
     opener_ref: ReferenceType[Widget] | None,
     opener_id: str | None,
+    opener_anchor: FocusAnchor | None = None,
 ) -> None:
     if app.screen is not revealed_screen:
         return
@@ -100,6 +120,21 @@ def _restore_focus_after_dismissal(
         if opener.screen is revealed_screen:
             opener.focus()
             return
+
+    if opener_anchor is not None:
+        from tldw_chatbook.Widgets.recompose_capture_guard import (
+            resolve_focus_anchor,
+        )
+
+        # The opener was rebuilt away: its own item's control, or the
+        # stand-in for an item that left the list -- never its old slot's id.
+        stand_in = resolve_focus_anchor(
+            opener_anchor, revealed_screen, eligible=_is_safe_focus_target
+        )
+        if stand_in is not None and stand_in.screen is revealed_screen:
+            stand_in.focus()
+            return
+        opener_id = None
 
     if opener_id is not None:
         eligible_matches = [
@@ -205,6 +240,7 @@ class SafeModalDismissMixin:
     _safe_dismiss_committed = False
     _safe_opener_focus_ref: ReferenceType[Widget] | None = None
     _safe_opener_focus_id: str | None = None
+    _safe_opener_focus_anchor: FocusAnchor | None = None
     _safe_backdrop_event_in_attempt: tuple[float, int, int] | None = None
     _safe_mount_generation = 0
 
@@ -215,6 +251,7 @@ class SafeModalDismissMixin:
         self._safe_dismiss_committed = False
         self._safe_opener_focus_ref = None
         self._safe_opener_focus_id = None
+        self._safe_opener_focus_anchor = None
         self._safe_backdrop_event_in_attempt = None
         self._safe_mount_generation += 1
 
@@ -226,11 +263,13 @@ class SafeModalDismissMixin:
         if opener is not None:
             self._safe_opener_focus_ref = ref(opener)
             self._safe_opener_focus_id = opener.id or None
+            self._safe_opener_focus_anchor = _keyed_opener_anchor(opener)
 
     def on_unmount(self) -> None:
         """Release the opener reference when the modal leaves the DOM."""
         self._safe_opener_focus_ref = None
         self._safe_opener_focus_id = None
+        self._safe_opener_focus_anchor = None
 
     async def action_request_safe_cancel(self) -> None:
         """Route Escape to the modal's safe cancellation request."""
@@ -283,6 +322,7 @@ class SafeModalDismissMixin:
         app = host.app
         opener_ref = self._safe_opener_focus_ref
         opener_id = self._safe_opener_focus_id
+        opener_anchor = self._safe_opener_focus_anchor
         backdrop_event = self._safe_backdrop_event_in_attempt
         host.dismiss(result)
         revealed_screen = app.screen
@@ -295,6 +335,7 @@ class SafeModalDismissMixin:
                 revealed_screen,
                 opener_ref,
                 opener_id,
+                opener_anchor,
             )
         return True
 
