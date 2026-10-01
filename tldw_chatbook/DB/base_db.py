@@ -530,9 +530,11 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
     """Cursor that keeps a read reservation until results are consumed."""
 
     def __init__(self, connection: _QuiescentSQLiteConnection) -> None:
-        super().__init__(connection)
+        # Set before the next initializer: a composed caller cursor may run a
+        # statement from its own __init__ (Qodo, #2894).
         self._quiescent_connection = connection
         self._quiescence_token: object | None = None
+        super().__init__(connection)
 
     def _begin_use(self) -> None:
         self._release_use()
@@ -561,23 +563,26 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         never leave the quiescence registry pinned.
 
         ``boundary`` is reported even when the call fails (a script may have
-        committed and begun again before failing). ``boundary_if_run`` only
-        when it succeeds: a COMMIT the authorizer refused never ran, and the
-        trace callback never reported one either. A failed call still reports
-        any real ``in_transaction`` change.
+        committed and begun again before failing). ``boundary_if_run`` unless
+        the authorizer refused the statement (SQLITE_AUTH): a refused COMMIT
+        never ran, and the trace callback never reported one either. Any other
+        failure may have come after the statement ran (a caller cursor that
+        raises after ROLLBACK TO), so it is still a boundary: fail closed.
         """
 
         self._begin_use()
         connection = self._quiescent_connection
         try:
             connection._observe_transaction_state()
-            ran = False
+            refused = False
             try:
                 result = run(*args)
-                ran = True
+            except sqlite3.DatabaseError as error:
+                refused = getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_AUTH
+                raise
             finally:
                 connection._observe_transaction_state(
-                    boundary=boundary or (ran and boundary_if_run)
+                    boundary=boundary or (boundary_if_run and not refused)
                 )
         except BaseException:
             self._release_use()

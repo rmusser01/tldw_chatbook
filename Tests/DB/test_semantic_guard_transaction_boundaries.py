@@ -333,6 +333,100 @@ def test_a_composed_cursor_still_runs_the_callers_finalizer() -> None:
         conn.close()
 
 
+class InitStatementCursor(sqlite3.Cursor):
+    """Runs a statement from its own initializer."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """Initialize, then run one statement.
+
+        Args:
+            connection: The connection the cursor belongs to.
+        """
+        super().__init__(connection)
+        self.execute("SELECT 1").fetchall()
+
+
+class DirectInitCursor(sqlite3.Cursor):
+    """Initializes the base cursor directly rather than through ``super()``."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """Initialize the base cursor directly.
+
+        Args:
+            connection: The connection the cursor belongs to.
+        """
+        sqlite3.Cursor.__init__(self, connection)
+
+
+@pytest.mark.parametrize("factory", [InitStatementCursor, DirectInitCursor])
+def test_a_composed_cursor_works_whatever_its_initializer_does(
+    factory: type[sqlite3.Cursor],
+) -> None:
+    """The tracked state exists before the caller's initializer runs (Qodo, #2894).
+
+    Args:
+        factory: A caller cursor type with an unusual initializer.
+    """
+    conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
+    try:
+        cursor = conn.cursor(factory)
+        assert cursor.execute("SELECT 2").fetchall() == [(2,)]
+    finally:
+        conn.close()
+
+
+def test_a_savepoint_rollback_that_ran_before_a_failure_is_still_a_boundary(
+    tmp_path: Path,
+) -> None:
+    """Only an authorizer refusal (SQLITE_AUTH) means the statement never ran.
+
+    A caller cursor can execute ROLLBACK TO and then raise; that rollback
+    happened, so it must still advance the generation (Qodo, #2894).
+
+    Args:
+        tmp_path: pytest fixture; holds this test's database file.
+    """
+
+    class RaisesAfterRunning(sqlite3.Cursor):
+        """Runs the statement, then fails."""
+
+        def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+            """Run ``sql``, then raise for a ROLLBACK.
+
+            Args:
+                sql: Statement text.
+                parameters: Bound parameters.
+
+            Returns:
+                This cursor, for any other statement.
+
+            Raises:
+                RuntimeError: After a ROLLBACK statement has run.
+            """
+            result = super().execute(sql, parameters)
+            if sql.lstrip().upper().startswith("ROLLBACK"):
+                raise RuntimeError("caller failure after the statement ran")
+            return result
+
+    db = CharactersRAGDB(tmp_path / "ran-then-failed.sqlite", "ran-then-failed")
+    try:
+        _seed_traced_message(db)
+        conn = db.get_connection()
+        authorization = db._semantic_mutation_authorization_for_coordinator(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("SAVEPOINT failing_probe")
+            generation = authorization._transaction_generation
+            with pytest.raises(RuntimeError):
+                conn.cursor(RaisesAfterRunning).execute("ROLLBACK TO failing_probe")
+            assert conn.in_transaction
+            assert authorization._transaction_generation != generation
+        finally:
+            conn.execute("ROLLBACK")
+    finally:
+        db.close_connection()
+
+
 def test_a_non_class_cursor_factory_is_refused() -> None:
     """A factory that cannot be made tracked fails closed rather than untracked."""
     conn = sqlite3.connect(":memory:", factory=base_db._QuiescentSQLiteConnection)
