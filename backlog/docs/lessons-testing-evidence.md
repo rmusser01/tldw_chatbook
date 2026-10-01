@@ -17274,3 +17274,14 @@ had no owner teardown. Yield/finally and the existing content-operation scope
 closed their actual handles, including direct manual calls to archive helpers.
 The final 125-case run passed without a descriptor warning. Do not hide profile
 refusals, change leak thresholds, or rely on GC to close strongly owned fixtures.
+
+
+## A bridge timeout does not prove an audit was never published
+
+**TASK-32681, original review 2026-09-17, integrated 2026-09-30.** A delayed
+Future publication after the actual service audit append produced contradictory
+service/fallback rows for one invocation. One per-call publication claim before
+I/O preserves best-effort audit semantics and uncertain caller completion.
+Current controlled-peer checks reach the real append using an event before
+claiming this race; a short timeout that expires during admission proves only
+a refusal before dispatch. Test-owned stalled writers are released and joined.

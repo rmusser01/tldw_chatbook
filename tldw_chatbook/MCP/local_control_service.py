@@ -24,6 +24,7 @@ from tldw_chatbook.Library.library_tool_contract import (
 
 from .activation import batch_guard, guarded, request_guard
 from .client import MCPClient
+from .tool_results import MCPToolResult, current_dispatch, transport_failure
 from .local_runtime_delegate import LocalMCPRuntimeDelegate
 from .local_store import (
     LocalApprovalRequest,
@@ -361,6 +362,19 @@ class LocalMCPControlService:
 
     @producer_call
     @guarded
+    async def execute_external_tool_result(
+        self,
+        profile_id: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> MCPToolResult:
+        """Execute through the existing gates, retaining the complete MCP result."""
+        return await self._execute_external_tool(
+            profile_id, tool_name, arguments, typed_result=True
+        )
+
+    @producer_call
+    @guarded
     async def execute_external_tool(
         self,
         profile_id: str,
@@ -381,6 +395,16 @@ class LocalMCPControlService:
             PermissionError: If governance denies the trigger action.
             RuntimeError: If the client reports an error payload.
         """
+        return await self._execute_external_tool(profile_id, tool_name, arguments)
+
+    async def _execute_external_tool(
+        self,
+        profile_id: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        typed_result: bool = False,
+    ) -> MCPToolResult | dict[str, Any]:
         self._require_allowed("mcp.external_profiles.trigger.local")
         from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
 
@@ -393,6 +417,13 @@ class LocalMCPControlService:
             await self.connect_profile(profile_id)
         if automatic_work is not None:
             automatic_work.check()
+        if typed_result:
+            call = getattr(client, "call_tool_result", None)
+            if not callable(call):
+                return transport_failure(
+                    "mcp_typed_result_unavailable", current_dispatch()
+                )
+            return await call(profile_id, tool_name, arguments or {})
         payload = await client.call_tool(profile_id, tool_name, arguments or {})
         if isinstance(payload, dict) and "error" in payload:
             raise RuntimeError(payload["error"])
@@ -795,9 +826,17 @@ class LocalMCPControlService:
                 error=str(exc),
             )
             raise
-        result = await self.runtime_delegate.execute_tool(
-            normalized_tool_name, normalized_arguments
-        )
+        observation = current_dispatch()
+        observation.state = "uncertain"
+        try:
+            result = await self.runtime_delegate.execute_tool(
+                normalized_tool_name, normalized_arguments
+            )
+        except Exception:
+            # A known raised invocation is settled; cancellation stays uncertain.
+            observation.state = "settled"
+            raise
+        observation.state = "settled"
         self._record_runtime_activity(
             action_name="tool.execute",
             target=normalized_tool_name,

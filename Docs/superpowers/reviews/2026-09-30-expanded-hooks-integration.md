@@ -474,3 +474,49 @@ Limits: local macOS, real SQLite/native threads/controlled processes and mounted
 Textual harness; provider and selected hook authority fixtures are isolated.
 No full-suite, external provider/keychain, Windows/Linux, real reboot/power-loss
 or future MCP hook qualification claim.
+
+
+## M1 — TASK-32681 complete typed MCP results
+
+Integrated reviewed `74462424ac` through the existing stdio client, local and
+unified services and MCP provider. Strict typed results retain all content,
+structured content, error flags and metadata before explicit legacy projection.
+Private exact wire-result spans, duplicate-key/depth/size validation and host
+write/settlement observations cannot be supplied by remote fields or retained
+by changed/copy models. Error results and transport failures use fixed body-free
+diagnostics. One per-call publication claim coordinates service/provider audit
+I/O; the existing bridge has one bounded best-effort writer and preserves
+uncertainty after timeout or unacknowledged cancellation.
+
+Preserved current producer/recovery decorators, same-task service deadlines and
+native failed-request settlement. Current custody retires a timed-out stdio
+child before releasing admission; fixtures explicitly reconnect rather than
+assume that child is reusable. Constructor-bypassing fixtures now initialize
+the actual lifetime owner. Audit race controls reach the actual append with an
+event before asserting the race. Native wire instrumentation passes the actual
+new dispatch observation parameter, and checks fixed diagnostics without remote
+text. Direct positive/refusal controls qualify all three new typed entries
+against real producer closure and storage pause before any tool write.
+
+Actual stdio RED retained the successful legacy control, then failed at dropped
+structured fields. Final complete-result, framing/catalog, client/provider,
+control-plane, fixed error projection and native child/recovery qualification:
+**453 passed, 172.38s**, no warnings/skips;
+`/private/tmp/hooks-m1-qualified.xml`. Twenty-one deselections comprise four
+known local-hub deadline cases and the existing 17-case inactive group; 16 of
+that group already passed in the affected-owner probe. Its one inspection
+failure and ten untouched durable-source fixture failures reproduce on frozen
+pre-M1 production: `/private/tmp/hooks-m1-backup-prior.xml`. The four short local
+hub deadline failures reproduce there as well:
+`/private/tmp/hooks-m1-local-hub-prior.xml`. Baselines remain failures; guards
+and production deadlines were preserved.
+
+Both new Python files pass Ruff/formatter; all changed Python parses, whitespace
+checks pass and shared Ruff diagnostics have no additions against HEAD. ACs
+were self-reviewed against actual client/service/provider flow. ADR-162/163
+apply; no new transport, permission store, schema or dependency was added.
+
+Limits: controlled stdlib peers, actual local processes/threads and production
+client/control-plane code; no third-party plugin execution, external MCP server,
+HTTP transport, full-suite or cross-platform qualification claim. M2 owns direct
+HTTP and protocol profiles; H6 owns MCP hook effect normalization.

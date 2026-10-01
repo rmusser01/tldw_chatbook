@@ -414,3 +414,67 @@ remain unchanged. A fresh authorized turn on the live session remains usable.
 The composer exposes this pending Stop availability separately from generation
 activity. Expanded and collapsed Stop remain reachable while the hook is pending;
 Redirect and the Generating indicator still require an actual active generation.
+
+## Typed MCP transport evidence and shared execution (R58)
+
+The external MCP typed entry runs through the existing local and unified control
+services, preserving their governance, timeout, cancellation and single audit
+owner. The legacy entry retains its explicit display projection. The five public
+`MCPToolResult` fields carry protocol content, structured content, strict error
+status, metadata and a separate sanitized transport failure. Private host evidence
+retains the bounded, immutable original UTF-8 result-value bytes, duplicate-key
+validation and dispatch state. This is the result span, including unknown members
+and internal whitespace, not the JSON-RPC envelope or a reserialization. Existing
+frame/result/depth limits remain independent of the hook result cap.
+
+Decoded mappings/models without original transport evidence remain unqualified
+for hook effects. Remote members cannot populate host evidence. Nested mutable
+fields or model copies cannot borrow qualification for changed effects; hook
+normalization derives its effects from the immutable qualified bytes or verifies
+exact agreement first. In-process built-in application mappings retain their
+legacy contract; they are not silently reinterpreted as wire protocol results.
+
+One per-call host observation may carry dispatch truth across cancelled awaits:
+not_started before proven dispatch, uncertain immediately before the actual write
+attempt, settled on a validated matching terminal protocol response. Invalid or
+lost responses and after-write cancellation retain uncertainty. An unacknowledged
+bridge-future cancellation is not proof that dispatch never occurred or cannot
+still occur. This observation owns no authority, process, lease or timeout. No
+uncertain result authorizes replay or late effects. Audit receives the explicit
+display projection and records tool-declared/transport failure honestly.
+
+M1 implements R58 with `call_tool_result`, `execute_external_tool_result` and
+`execute_hub_tool_result` through the existing owners. The raw reader retains
+exact result spans for single/batch responses; the frozen result's private
+mutation check stores a 32-byte SHA-256 rather than a second full encoded copy.
+`MCPDispatchObservation` is carried through the existing await chain and has no
+resource or permission ownership. The ordinary provider formats only after
+classifying typed errors and preserving host dispatch state. Builtin and legacy
+adapter mappings remain unqualified. H6 must cap and interpret qualified original
+bytes and reject unqualified mappings; M2 must qualify its own HTTP raw decoder,
+framing and dispatch evidence before using this contract.
+
+The same host observation classifies the existing builtin delegate await after
+its governance gates, without reinterpreting its mapping as MCP wire data.
+Unobserved legacy-session failures remain uncertain rather than claiming a
+pre-dispatch refusal.
+
+
+### Bounded MCP bridge audit publication (R59)
+
+The provider and existing unified execution service share one host-owned,
+per-invocation atomic audit publication claim. A bridge Future timeout or
+cancellation cannot establish that service audit did not start, nor prove a
+possibly dispatched operation was blocked. Claim before attempted publication;
+keep claim/capacity locks out of audit I/O and preserve sanitized uncertainty.
+
+The unified service may perform bridge-fallback metadata publication on at most
+one in-flight daemon thread per service, with no waiting queue and no caller
+join. This covers failed submissions even when the target loop is closed, while
+keeping provider completion bounded. It adds no execution/permission owner or
+durable schema and retains no tool arguments/results. Saturation or thread-start/
+write failure may lose a best-effort row; it cannot permit a duplicate publication,
+change execution authority, infer remote completion or authorize replay. An
+unscheduled fallback does not consume an otherwise available service publication.
+Capacity remains held until the actual writer exits. A stalled filesystem write
+may retain that one daemon writer and metadata until it returns or process exit.

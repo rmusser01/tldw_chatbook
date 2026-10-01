@@ -31,6 +31,19 @@ from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
 from .activation import client_guard, guarded
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
+from .tool_results import (
+    MAX_JSON_DEPTH,
+    MAX_OUTPUT_LINE_BYTES,
+    MAX_RESULT_BYTES,
+    MCPDispatchObservation,
+    MCPToolResult,
+    current_dispatch,
+    decode_protocol_frame,
+    parse_tool_result,
+    project_tool_result,
+    transport_failure,
+)
+
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the spawn-time check.)
 
 _MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -39,9 +52,6 @@ _TERMINATE_TIMEOUT_SECONDS = 2.0
 CONNECT_TIMEOUT_SECONDS = 30.0
 CATALOG_TIMEOUT_SECONDS = 10.0
 CLEANUP_TIMEOUT_SECONDS = 5.0
-MAX_OUTPUT_LINE_BYTES = 1_048_576
-MAX_RESULT_BYTES = 786_432
-MAX_JSON_DEPTH = 64
 MAX_SCHEMA_BYTES = 262_144
 MAX_SCHEMA_DEPTH = 32
 MAX_DESCRIPTOR_STRING_LENGTH = 4096
@@ -321,12 +331,7 @@ def _prompt_message_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
 class _JSONRPCError(RuntimeError):
     def __init__(self, error: Dict[str, Any]):
         self.error = error
-        message = error.get("message") or "JSON-RPC error"
-        code = error.get("code")
-        if code is not None:
-            super().__init__(f"[{code}] {message}")
-        else:
-            super().__init__(message)
+        super().__init__("MCP JSON-RPC error")
 
 
 class _StdioJSONRPCConnection:
@@ -470,29 +475,18 @@ class _StdioJSONRPCConnection:
     @producer_call
     async def call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
-    ) -> SimpleNamespace:
-        """Call a tool and validate its protocol error flag.
+    ) -> MCPToolResult:
+        """Call a tool with ephemeral progress and exact typed dispatch evidence.
 
         Args:
-            tool_name: Name of the server tool to invoke.
-            arguments: Tool arguments sent in the tools/call request.
+            tool_name: Server tool to invoke.
+            arguments: Arguments sent in the tools/call request.
 
         Returns:
-            Namespace with opaque content and a boolean isError flag, defaulting
-            to False when absent. A True flag reports a tool execution failure.
-
-        Raises:
-            MCPClientError: The server result contains an invalid error flag.
-            TimeoutError: The server does not respond before the request deadline.
-            RuntimeError: The connection is closed or the server rejects the request.
-            OSError: The request cannot be written to the transport.
-            TypeError: The arguments contain a value that is not JSON serializable.
-            ValueError: The request cannot be serialized.
+            Validated typed result or a fixed transport failure; raw server bodies
+            never enter diagnostics. Progress remains request-local display only.
         """
-        from pydantic import ValidationError
-
-        from tldw_chatbook.Utils.input_validation import MCPToolResultInput
-
+        observation = current_dispatch()
         from tldw_chatbook.Agents.tool_output import current_tool_output_sink
 
         sink = current_tool_output_sink()
@@ -505,16 +499,25 @@ class _StdioJSONRPCConnection:
             params["_meta"] = {"progressToken": token}
             observers[token] = (sink, float("-inf"))
         try:
-            result = await self.request("tools/call", params)
+            raw = await self.request(
+                "tools/call",
+                params,
+                _dispatch=observation,
+            )
+            result = parse_tool_result(raw)
+        except _JSONRPCError:
+            observation.state = "settled"
+            return transport_failure("mcp_rpc_error", observation)
+        except ValueError:
+            return transport_failure("mcp_result_invalid", observation)
+        except Exception:  # noqa: BLE001 -- sanitized transport boundary
+            return transport_failure("mcp_transport_unavailable", observation)
         finally:
             if token is not None:
                 observers.pop(token, None)
-        try:
-            validated = MCPToolResultInput.model_validate(result)
-        except ValidationError:
-            # Validator details may contain the server's untrusted response body.
-            raise MCPClientError("Invalid MCP tool result") from None
-        return SimpleNamespace(content=validated.content, isError=validated.is_error)
+        observation.state = "settled"
+        result._dispatch_state = observation.state
+        return result
 
     @guarded
     @producer_call
@@ -559,6 +562,7 @@ class _StdioJSONRPCConnection:
         params: Optional[Dict[str, Any]] = None,
         *,
         timeout_seconds: Optional[float] = None,
+        _dispatch: MCPDispatchObservation | None = None,
     ) -> Dict[str, Any]:
         if self._reader_unavailable or self._cleanup_complete:
             raise RuntimeError("Connection is closed")
@@ -582,7 +586,8 @@ class _StdioJSONRPCConnection:
                     "id": request_id,
                     "method": method,
                     "params": params or {},
-                }
+                },
+                **({"_dispatch": _dispatch} if _dispatch is not None else {}),
             )
             return await asyncio.wait_for(
                 future,
@@ -778,7 +783,12 @@ class _StdioJSONRPCConnection:
 
             self._cleanup_complete = True
 
-    async def _send_message(self, payload: Dict[str, Any]) -> None:
+    async def _send_message(
+        self,
+        payload: Dict[str, Any],
+        *,
+        _dispatch: MCPDispatchObservation | None = None,
+    ) -> None:
         stdin = getattr(self.process, "stdin", None)
         if stdin is None:
             raise RuntimeError("MCP subprocess stdin is unavailable")
@@ -787,8 +797,13 @@ class _StdioJSONRPCConnection:
         if "\n" in serialized:
             raise ValueError("MCP JSON-RPC messages must not contain embedded newlines")
 
+        encoded = serialized.encode("utf-8") + b"\n"
         async with self._write_lock:
-            stdin.write(serialized.encode("utf-8") + b"\n")
+            if self._reader_unavailable or self._cleanup_complete:
+                raise RuntimeError("MCP connection closed")
+            if _dispatch is not None:
+                _dispatch.state = "uncertain"
+            stdin.write(encoded)
             drain = getattr(stdin, "drain", None)
             if callable(drain):
                 await drain()
@@ -812,7 +827,7 @@ class _StdioJSONRPCConnection:
                 if not decoded_line:
                     continue
 
-                payload = json.loads(decoded_line)
+                payload = decode_protocol_frame(line)
                 await self._handle_incoming_payload(payload)
         except asyncio.CancelledError:
             raise
@@ -1033,10 +1048,23 @@ class _StdioJSONRPCConnection:
             return
 
         if "error" in payload:
-            future.set_exception(_JSONRPCError(dict(payload.get("error") or {})))
+            error = payload["error"]
+            if (
+                "result" in payload
+                or not isinstance(error, dict)
+                or type(error.get("code")) is not int
+                or not isinstance(error.get("message"), str)
+            ):
+                future.set_exception(MCPClientError("Invalid MCP response"))
+                return
+            future.set_exception(_JSONRPCError(error))
             return
-
-        future.set_result(dict(payload.get("result") or {}))
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            future.set_exception(MCPClientError("Invalid MCP response"))
+            return
+        # Preserve the raw reader's exact result span, not a lossy dict copy.
+        future.set_result(result)
 
     def _fail_pending_requests(self, exc: Exception) -> None:
         getattr(self, "_progress_observers", {}).clear()
@@ -1453,51 +1481,41 @@ class MCPClient:
             )
 
     @producer_call
+    @guarded
+    async def call_tool_result(
+        self, server_id: str, tool_name: str, arguments: dict[str, Any]
+    ) -> MCPToolResult:
+        """Call a tool without discarding protocol fields or host provenance."""
+        observation = current_dispatch()
+        session = self.sessions.get(server_id)
+        if session is None:
+            return transport_failure("mcp_server_not_connected", observation)
+        try:
+            if not isinstance(session, _StdioJSONRPCConnection):
+                # Legacy adapters have no precise write observation. Handing off
+                # cannot prove that a later raised error preceded dispatch.
+                observation.state = "uncertain"
+            result = await session.call_tool(tool_name, arguments)
+            if isinstance(result, MCPToolResult):
+                return result
+            # Compatible model/namespace sessions are deliberately unqualified.
+            result = parse_tool_result(result)
+            observation.state = "settled"
+            result._dispatch_state = observation.state
+            return result
+        except Exception:  # noqa: BLE001 -- sanitized transport boundary
+            logger.warning("MCP tool call failed")
+            return transport_failure("mcp_transport_unavailable", observation)
+
+    @producer_call
     @client_guard
     async def call_tool(
-        self, server_id: str, tool_name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Call a tool on a connected server.
-
-        Args:
-            server_id: Server identifier
-            tool_name: Name of the tool to call
-            arguments: Tool arguments
-
-        Returns:
-            Existing result payload on success, or an error with the server's
-            nonblank text details (a generic message when none are available).
-            A server-reported tool error leaves the connection available for retry.
-        """
-        try:
-            session = self.sessions.get(server_id)
-            if not session:
-                return {"error": f"Server {server_id} not connected"}
-
-            result = await session.call_tool(tool_name, arguments)
-
-            if getattr(result, "isError", False) is True:
-                content = getattr(result, "content", None)
-                text = "\n".join(
-                    block["text"].strip()
-                    for block in (content if isinstance(content, list) else [])
-                    if isinstance(block, dict)
-                    and block.get("type") == "text"
-                    and isinstance(block.get("text"), str)
-                    and block["text"].strip()
-                )
-                # Tool failures are successful protocol responses. Return the
-                # existing error shape without logging untrusted result bodies.
-                return {"error": text or "MCP tool reported an error."}
-
-            if hasattr(result, "content"):
-                return {"result": result.content}
-            else:
-                return {"result": str(result)}
-
-        except Exception as e:
-            logger.error("Error calling tool {} on {}: {}", tool_name, server_id, e)
-            return {"error": str(e)}
+        self, server_id: str, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Call a tool and explicitly project its legacy display shape."""
+        return project_tool_result(
+            await self.call_tool_result(server_id, tool_name, arguments)
+        )
 
     @producer_call
     @client_guard

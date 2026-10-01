@@ -81,7 +81,7 @@ the decomposition; no unrelated broad refactoring is part of these plans.
 - Consumes: MCPClient.call_tool currently projects result.content or string into a dict; _StdioJSONRPCConnection.call_tool is the underlying raw result seam.
 - Produces: MCPToolResult is a frozen Pydantic model: content: tuple[dict, ...], structured_content: dict | None, is_error: bool, metadata: dict, transport_error: str | None. parse_tool_result(payload: object) -> MCPToolResult accepts raw protocol/SDK forms with strict boolean validation and bounded serialization. MCPClient.call_tool_result(server_id: str, tool_name: str, arguments: dict) -> Awaitable[MCPToolResult]. project_tool_result(result: MCPToolResult) -> dict preserves existing UI shapes; legacy call_tool delegates through typed handling before projection.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_structured_error_survives_client_normalization():
@@ -93,9 +93,9 @@ def test_structured_error_survives_client_normalization():
     assert result.metadata == raw["_meta"]
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/MCP/test_typed_tool_results.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/MCP/test_typed_tool_results.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def strict_error_flag(payload: dict) -> bool:
@@ -105,20 +105,20 @@ def strict_error_flag(payload: dict) -> bool:
     return value
 ```
 
-  - [ ] 3.1. Add the typed model/parser and explicit old-display projection. Preserve complete content blocks and metadata without interpolating error strings into success values.
-  - [ ] 3.2. Route both SDK and built-in stdio result paths through the typed boundary, and retain a distinct sanitized transport failure. Use the typed service path for hooks/providers; display consumers get only the explicit projection.
-  - [ ] 3.3. Bound the original encoded payload before hook normalization, including metadata. Keep protocol framing bounds independent of the hook 16 KiB limit, so ordinary larger non-hook results follow their existing presentation policy.
-  - [ ] 3.4. Add controlled stdio client/service tests that return structured-only, mirrored text, error-with-pass and malformed flags; verify existing non-hook rendering/tool-log consumers still see compatible data.
+  - [x] 3.1. Add the typed model/parser and explicit old-display projection. Preserve complete content blocks and metadata without interpolating error strings into success values.
+  - [x] 3.2. Route both SDK and built-in stdio result paths through the typed boundary, and retain a distinct sanitized transport failure. Use the typed service path for hooks/providers; display consumers get only the explicit projection.
+  - [x] 3.3. Bound the original encoded payload before hook normalization, including metadata. Keep protocol framing bounds independent of the hook 16 KiB limit, so ordinary larger non-hook results follow their existing presentation policy.
+  - [x] 3.4. Add controlled stdio client/service tests that return structured-only, mirrored text, error-with-pass and malformed flags; verify existing non-hook rendering/tool-log consumers still see compatible data.
 
 **Failure and successful-control matrix:** Missing versus false isError, non-boolean flags, transport failure, structured-only results, resource/image blocks for non-hook display, oversized metadata and error sentinels. Do not flatten before hook interpretation.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/MCP/test_typed_tool_results.py Tests/MCP/test_client_catalog_pagination.py Tests/MCP/test_control_plane_tool_execute.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32681 --plain

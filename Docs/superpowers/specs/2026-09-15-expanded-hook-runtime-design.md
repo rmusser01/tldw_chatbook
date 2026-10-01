@@ -1273,3 +1273,80 @@ remain unchanged. A fresh authorized turn on the live session remains usable.
 The composer exposes this pending Stop availability separately from generation
 activity. Expanded and collapsed Stop remain reachable while the hook is pending;
 Redirect and the Generating indicator still require an actual active generation.
+
+## Typed MCP transport evidence and shared execution (R58)
+
+The external MCP typed entry runs through the existing local and unified control
+services, preserving their governance, timeout, cancellation and single audit
+owner. The legacy entry retains its explicit display projection. The five public
+`MCPToolResult` fields carry protocol content, structured content, strict error
+status, metadata and a separate sanitized transport failure. Private host evidence
+retains the bounded, immutable original UTF-8 result-value bytes, duplicate-key
+validation and dispatch state. This is the result span, including unknown members
+and internal whitespace, not the JSON-RPC envelope or a reserialization. Existing
+frame/result/depth limits remain independent of the hook result cap.
+
+Decoded mappings/models without original transport evidence remain unqualified
+for hook effects. Remote members cannot populate host evidence. Nested mutable
+fields or model copies cannot borrow qualification for changed effects; hook
+normalization derives its effects from the immutable qualified bytes or verifies
+exact agreement first. In-process built-in application mappings retain their
+legacy contract; they are not silently reinterpreted as wire protocol results.
+
+One per-call host observation may carry dispatch truth across cancelled awaits:
+not_started before proven dispatch, uncertain immediately before the actual write
+attempt, settled on a validated matching terminal protocol response. Invalid or
+lost responses and after-write cancellation retain uncertainty. An unacknowledged
+bridge-future cancellation is not proof that dispatch never occurred or cannot
+still occur. This observation owns no authority, process, lease or timeout. No
+uncertain result authorizes replay or late effects. Audit receives the explicit
+display projection and records tool-declared/transport failure honestly.
+
+M1's concrete external entry is `MCPClient.call_tool_result`, then
+`LocalMCPControlService.execute_external_tool_result`, then
+`UnifiedMCPControlPlaneService.execute_hub_tool_result`. The latter shares the
+existing `execute_hub_tool` execution/audit body; it returns a typed external
+result or an explicitly unqualified legacy/builtin mapping. The provider chooses
+this typed entry when available. `project_tool_result` remains the display
+boundary: successful content blocks retain `{"result": [...]}`, including an
+empty list for structured-only results, while tool and transport errors use
+fixed `{"error": ...}` diagnostics. Hook code must never parse that projection.
+
+The strict raw decoder retains the exact UTF-8 result-value span in single and
+batch responses. The limits are 1,048,576 bytes per frame, 786,432 bytes per
+complete result, and 64 JSON nesting levels; catalog page/item limits remain
+unchanged. Private evidence uses one immutable raw buffer and a 32-byte SHA-256
+of the bounded, type-sensitive public-field snapshot. Mutated fields and model
+copies lose qualification; reserializing plain/model input never adds it.
+H6 must require qualified original bytes, successful error/transport status and
+settled dispatch, apply its 16 KiB cap to those complete original bytes, and
+normalize effects from the immutable bytes. Unqualified builtin/legacy adapter
+mappings require an explicitly reviewed adapter and are not native MCP hooks.
+A valid JSON-RPC error is a settled transport/protocol failure, distinct from a
+valid tool result declaring `isError: true`. Invalid results stay uncertain.
+
+Compatible legacy session adapters have no precise write observer: handoff is
+uncertain until a known result returns, and a raised adapter error cannot claim
+`not_started`. The in-process builtin delegate marks dispatch only after its
+existing governance gates; returned/raised invocations settle, cancellation
+remains uncertain, and its application mapping still gains no wire provenance.
+
+
+### Bounded MCP bridge audit publication (R59)
+
+The provider and existing unified execution service share one host-owned,
+per-invocation atomic audit publication claim. A bridge Future timeout or
+cancellation cannot establish that service audit did not start, nor prove a
+possibly dispatched operation was blocked. Claim before attempted publication;
+keep claim/capacity locks out of audit I/O and preserve sanitized uncertainty.
+
+The unified service may perform bridge-fallback metadata publication on at most
+one in-flight daemon thread per service, with no waiting queue and no caller
+join. This covers failed submissions even when the target loop is closed, while
+keeping provider completion bounded. It adds no execution/permission owner or
+durable schema and retains no tool arguments/results. Saturation or thread-start/
+write failure may lose a best-effort row; it cannot permit a duplicate publication,
+change execution authority, infer remote completion or authorize replay. An
+unscheduled fallback does not consume an otherwise available service publication.
+Capacity remains held until the actual writer exits. A stalled filesystem write
+may retain that one daemon writer and metadata until it returns or process exit.

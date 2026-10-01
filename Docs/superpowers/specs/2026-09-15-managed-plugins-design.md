@@ -436,7 +436,11 @@ plugin loading. No new mandatory vendor client dependency is assumed.
 Preserve complete typed MCP tool results, including error and structured-content
 fields, through the client/service seam. Hook consumers apply the companion
 spec's error-first normalization; display formatting must not erase the fields
-needed to distinguish a successful hook from a failed tool call.
+needed to distinguish a successful hook from a failed tool call. The existing
+unified execution service remains the shared timeout and audit owner. Original
+bounded result-value bytes and private host decode/dispatch evidence accompany
+typed external results; decoded mappings and legacy built-in display envelopes
+do not acquire wire provenance. See the companion hook spec's R58 contract.
 
 The initial protocol profiles to qualify are 2026-07-28, 2025-11-25 and the
 existing local client's 2025-03-26 baseline. Implement the current per-request
@@ -1329,3 +1333,32 @@ Pending root groups authenticate their action (create/delete/attach) and explici
 An authenticated `cleaned_absent` root remains a tombstone: reconciliation may confirm its missing leaf only through its exact current no-follow ancestry and original binding. Any unexpected leaf or replaced/missing ancestry refuses; a missing `present` root is never completed absence. Reviewed whole-root proof, generation advancement and boot rebinding rules still apply.
 
 Shutdown seals ordinary service admission before finalization and rejects queued ordinary callbacks on the worker. Already executing calls must finish before clean can be published; a refused close continues to admit exact terminal settlement, not new authority work. The final checkpoint remains the last protected publication. Later root grants preserve all still-owned original epochs, and every cleanup phase retains the original review deadline; expiry leaves pending recovery for a fresh explicit review.
+
+M1 exposes complete external results through `MCPClient.call_tool_result`,
+`LocalMCPControlService.execute_external_tool_result` and the shared unified
+`execute_hub_tool_result` entry. Legacy presentation uses `project_tool_result`.
+Its stdio evidence retains exact original result bytes and host dispatch state;
+HTTP must establish equivalent evidence at its own raw receive/write boundary.
+Builtin application mappings and decoded-only adapters remain unqualified for
+native MCP hook effects. See the companion hook spec's R58 implementation notes
+for the exact byte/depth limits and H6's smaller complete-result cap.
+
+
+### Bounded MCP bridge audit publication (R59)
+
+The provider and existing unified execution service share one host-owned,
+per-invocation atomic audit publication claim. A bridge Future timeout or
+cancellation cannot establish that service audit did not start, nor prove a
+possibly dispatched operation was blocked. Claim before attempted publication;
+keep claim/capacity locks out of audit I/O and preserve sanitized uncertainty.
+
+The unified service may perform bridge-fallback metadata publication on at most
+one in-flight daemon thread per service, with no waiting queue and no caller
+join. This covers failed submissions even when the target loop is closed, while
+keeping provider completion bounded. It adds no execution/permission owner or
+durable schema and retains no tool arguments/results. Saturation or thread-start/
+write failure may lose a best-effort row; it cannot permit a duplicate publication,
+change execution authority, infer remote completion or authorize replay. An
+unscheduled fallback does not consume an otherwise available service publication.
+Capacity remains held until the actual writer exits. A stalled filesystem write
+may retain that one daemon writer and metadata until it returns or process exit.
