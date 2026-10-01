@@ -24,7 +24,8 @@ async def test_progress_is_scoped_to_active_call_and_final_only_requests_stay_id
         seen.append(text)
         loop.call_soon_threadsafe(arrived.set)
 
-    async def request(method, params):
+    async def request(method, params, *, _dispatch):
+        assert _dispatch.state == "not_started"
         requests.append(params)
         if "_meta" in params:
             token = params["_meta"]["progressToken"]
@@ -128,6 +129,10 @@ async def test_real_stdio_concurrent_calls_receive_only_their_own_progress(tmp_p
         assert "second" not in str(first) and "first" not in str(second)
         (tmp_path / "release").touch()
         results = await asyncio.gather(*calls)
+        assert all(
+            result.dispatch_state == "settled" and result.encoded_payload is not None
+            for result in results
+        )
         assert [r.content[0]["text"] for r in results] == [
             "first final",
             "second final",

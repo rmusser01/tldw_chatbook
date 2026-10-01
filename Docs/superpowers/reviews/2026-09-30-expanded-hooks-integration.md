@@ -779,3 +779,37 @@ after the final lint-only set/tuple corrections (`hooks-i2-lint-final.xml`). All
 changed Python/fixture JSON parses, all nine new Python files pass Ruff lint/format,
 changed ranges are formatted, shared Python adds no Ruff diagnostics versus I1 HEAD,
 and `git diff --check` passes. No dependency or copied-source licensing change.
+
+
+## Final latest-dev integration — 2026-10-01
+
+TASK-32668 through TASK-32687 are Done with checked ACs and implementation notes.
+Rebased their twenty ordered commits onto dev `ef831d9f383f58a806fe54d61a6fd75678ec73c0`.
+The two conflicts preserve both final hook dispatch validation and ephemeral tool
+output, and both typed MCP result/dispatch custody and request-local progress.
+`git range-diff` confirms the remaining changes are clean replay/context changes.
+The existing progress request stub now accepts the actual dispatch argument;
+controlled real stdio progress also proves complete original typed wire evidence
+and settled dispatch. The earlier stub timeout is harness failure, not production
+qualification, and no production boundary was loosened.
+
+Fresh post-rebase evidence:
+
+- `hooks-rebase-tools.xml`: 126 passed / 1 stale request-stub failure, 47.85s;
+  typed result, hook dispatch and output cases passed. Corrected progress file:
+  `hooks-rebase-progress-final.xml`, 3 passed / 0 skips, 0.75s. Together every
+  one of the original 127 selected cases passes; the combined failure is retained.
+- `hooks-rebase-console.xml`: 82 passed, one empty-parameter upstream architecture
+  case skipped, 94.15s. Actual controller guard, provider tool schemas, Console
+  rejection/denial and tab-close cases execute and pass. Empty parameter sets are
+  not qualification evidence.
+- `hooks-rebase-native.xml`: 98 passed / 0 skips, 221.49s; actual native Console
+  components/skill flow and all pinned source adapters on the latest base.
+- `hooks-rebase-governance.xml`: 11 passed / 0 skips, 14.96s; design-token and
+  hooks dependency governance. CSS rebuild produces no tracked difference; the
+  119-file UI gate census is intact.
+
+All 186 branch-changed Python files parse, whole-branch/working whitespace checks
+pass, and the two conflict owners plus changed progress test add no Ruff diagnostics
+against the predecessor/latest-dev baselines. Targeted checks only: this remains a
+draft for review, without a full-suite, original-host or cross-platform claim.
