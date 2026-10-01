@@ -35,6 +35,7 @@ EXPECTED_RESUME_HANDOFF_CONSUMERS = {
     "self._consume_pending_console_prompt_insert",
     "self._consume_pending_conversation_settings_return",
     "self.consume_pending_vllm_console_intent",
+    "self.consume_pending_llamacpp_console_intent",
     "self._fleet.consume_pending_console_fleet_completion",
 }
 

@@ -9,8 +9,6 @@ command-palette RE-RUN must leave the current screen alone.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME, TAB_SETTINGS
 
@@ -33,6 +31,7 @@ class CancelHarness:
 
     def run_worker(self, work, **_kwargs) -> None:
         self.calls.append("worker")
+        work.close()
 
     def _schedule_startup_model_catalog_refresh(self, **_kwargs) -> None:
         self.calls.append("catalog")
@@ -66,9 +65,7 @@ def test_cancelled_boot_wizard_applies_deferred_focus_request() -> None:
 def test_cancelled_rerun_leaves_the_current_screen_alone() -> None:
     app = CancelHarness(current_tab=TAB_SETTINGS)
 
-    TldwCli._continue_first_run_wizard_result(
-        app, None, cancel_to_console=False
-    )
+    TldwCli._continue_first_run_wizard_result(app, None, cancel_to_console=False)
 
     assert app.calls == [], app.calls
     assert app.posted == []
@@ -91,9 +88,7 @@ def test_interview_wrapper_forwards_cancel_flag() -> None:
     """The public entry must forward cancel_to_console to the continuation."""
     app = CancelHarness()
 
-    TldwCli._handle_first_run_wizard_result(
-        app, None, cancel_to_console=False
-    )
+    TldwCli._handle_first_run_wizard_result(app, None, cancel_to_console=False)
 
     assert app.calls == [], app.calls
 
