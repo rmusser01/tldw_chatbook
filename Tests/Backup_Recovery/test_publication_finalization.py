@@ -117,6 +117,30 @@ def events(journal):
     ]
 
 
+def test_pending_checks_do_not_repeat_held_namespace_overlap(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.journal import _Prepared
+
+    with installed(tmp_path) as case:
+        _, plan, journal, _, _, selector = case
+        prepared = _Prepared.model_validate(
+            next(
+                row["evidence"] for row in events(journal) if row["event"] == "prepared"
+            )
+        )
+        overlap = publication._overlap
+        calls = []
+
+        def counted_overlap(left, right):
+            calls.append((left, right))
+            return overlap(left, right)
+
+        monkeypatch.setattr(publication, "_overlap", counted_overlap)
+        publication._pending(
+            journal, prepared.publication, targets=(selector,), plan=plan
+        )
+        assert len(calls) <= len(prepared.publication.selectors)
+
+
 def test_finalization_uses_portable_scratch_paths_for_logical_root_ids(
     tmp_path, monkeypatch
 ):

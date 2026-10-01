@@ -117,6 +117,45 @@ def test_unchanged_absent_sqlite_needs_no_parent_registration(absent_scope):
     )
 
 
+@pytest.mark.parametrize("foreign", [False, True])
+def test_absence_checks_only_compare_unheld_namespaces(
+    absent_scope, monkeypatch, foreign
+):
+    from tldw_chatbook.Backup_Recovery.preserved_groups import _check_absences
+    from tldw_chatbook.Backup_Recovery.storage_admission import _local
+
+    case = absent_scope
+    if foreign:
+        case.authority.register("foreign-owner", (case.scheduler.parent,))
+    absent = tuple(
+        item for item in case.plan.target.items if item.owner == "db.scheduled_tasks"
+    )
+    overlap = bootstrap._overlap
+    calls = []
+
+    def counted_overlap(left, right):
+        calls.append((left, right))
+        return overlap(left, right)
+
+    with (
+        case.authority.maintenance(case.names, 3) as session,
+        session._discovery_reads(),
+    ):
+        scope = _local.discovery_scope
+        monkeypatch.setattr(bootstrap, "_overlap", counted_overlap)
+        if foreign:
+            with pytest.raises(
+                ValueError, match="preserved_group_native_scope_required"
+            ):
+                _check_absences(absent, case.owners, scope)
+            assert calls == [(case.scheduler, case.scheduler.parent)]
+        else:
+            assert _check_absences(absent, case.owners, scope) == bootstrap._registry(
+                case.root
+            )
+            assert calls == []
+
+
 def test_moved_absent_locator_refuses_even_when_both_paths_are_absent(absent_scope):
     data = deepcopy(absent_scope.data)
     data["database"]["scheduled_tasks_db_path"] = str(
