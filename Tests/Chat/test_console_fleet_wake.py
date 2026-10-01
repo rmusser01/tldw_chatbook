@@ -134,6 +134,15 @@ class _RecordingWakeGateway:
 
         The screen's hot context-usage path reads it (task-33081); without it
         every mounted wake test died with AttributeError before its assertions.
+
+        Args:
+            settings: The effective Console settings; only ``provider`` and
+                ``model`` are read.
+
+        Returns:
+            The ``ContextWindowResolution`` that ``resolve_context_window``
+            reports for that provider/model pair (the double skips the real
+            gateway's provider-identity mapping).
         """
         from tldw_chatbook.Utils.token_counter import resolve_context_window
 
