@@ -111,8 +111,10 @@ W003 (census ratchet, TASK-33621.13)
     that class's other mixins -- but never an unrelated class's ``x``. A name
     defined twice in one scope is its LAST definition, as Python binds it; a
     bare ``x()`` resolves to a nested or module-level ``x`` in scope
-    first. ``obj.x()``, and an imported ``x()``, are resolved by NAME: two
-    unrelated functions sharing a name are one to it. That over-approximation
+    first. ``obj.x()`` is resolved by NAME against every definition, methods
+    included, and an imported ``x()`` against every module-level function
+    (a bare name never reaches a method): two unrelated functions sharing a
+    name are one to it. That over-approximation
     is why W003 is a census like W002 rather than a zero-tolerance gate: the
     pre-existing rows are pinned in ``scripts/textual_wait_push_census.tsv``
     and only a NEW one fails. A row is an entry point AND the function
@@ -595,10 +597,12 @@ class _Function:
 
 
 #: What a reference can resolve to: one definition; every top-level
-#: definition (and alias) sharing a name, ``("defs", name)``; what one class
-#: assigns to one of its own attributes, ``("bound", "<path>::<Class>.<attr>")``;
-#: or an alias bound outside the class that reads it, ``("alias", name)``.
-#: The three tuple kinds are graph nodes solved alongside the functions, so
+#: definition -- methods included -- (and alias) sharing a name, ``("defs",
+#: name)``; every module-level FUNCTION (and alias) sharing a name, ``("funcs",
+#: name)``; what one class assigns to one of its own attributes, ``("bound",
+#: "<path>::<Class>.<attr>")``; or an alias bound outside the class that reads
+#: it, ``("alias", name)``.
+#: The four tuple kinds are graph nodes solved alongside the functions, so
 #: resolution never recurses through them (expanding ``self.a = self.b``
 #: chains in place went exponential and tripled the checker's runtime).
 _Target = "_Function | tuple[str, str]"
@@ -860,11 +864,15 @@ class _WaitGraph:
       ``_review``, and so censused the Console's Send dispatchers through a
       collision (TASK-33621.13 review).
     * a bare ``x()`` -- a nested def, a local alias, a module-level def in
-      scope, else every top-level def and alias named ``x``;
-    * ``obj.x()`` -- every top-level def and alias named ``x``: the real
-      defect's chain ran through ``controller._select_project_instruction_
-      binding``, a name shared with a non-waiting method of the Console
-      runtime, and ``obj``'s type is not statically known.
+      scope, else every module-level function and alias named ``x`` (an
+      import, a module global or a parameter). Never a method: only an
+      attribute reaches one, and falling back to methods too made an
+      imported helper wait through an unrelated class's same-named method
+      (PR #2944 review);
+    * ``obj.x()`` -- every top-level def (methods included) and alias named
+      ``x``: the real defect's chain ran through ``controller._select_
+      project_instruction_binding``, a name shared with a non-waiting method
+      of the Console runtime, and ``obj``'s type is not statically known.
 
     A NAME waits when ANY definition of it waits. An ALIAS waits only when
     EVERY place it is bound hands on a waiting callable: with "any" there
@@ -937,11 +945,14 @@ class _WaitGraph:
                 for target in self._targets(ref, fn.module, cls, fn)
             ]
         self.waiting_def_names: set[str] = set()
+        # The module-level functions among them: what a bare name can reach.
+        self.waiting_func_names: set[str] = set()
         self.waiting_aliases: set[str] = set()
         self.waiting_bound: set[str] = set()
         self.site_pushes: dict[str, int] = {}
         self.callback_only_sites: set[str] = set()
         self._def_sites: dict[str, frozenset[str]] = {}
+        self._func_sites: dict[str, frozenset[str]] = {}
         self._alias_sites: dict[str, frozenset[str]] = {}
         self._bound_sites: dict[str, frozenset[str]] = {}
         self._solve()
@@ -1012,6 +1023,8 @@ class _WaitGraph:
                 scope = scope.parent
             if name in module.functions:
                 return [module.functions[name]]
+            # An import, a module global or a parameter: never a method.
+            return [("funcs", name)]
         return [("defs", name)]
 
     def _resolve_on(self, module: _Module, cls: str, name: str) -> list[_Target]:
@@ -1064,6 +1077,8 @@ class _WaitGraph:
             return name in self.waiting_bound
         if name in self.waiting_aliases:
             return True
+        if kind == "funcs":
+            return name in self.waiting_func_names
         return kind == "defs" and name in self.waiting_def_names
 
     def _target_sites(self, target: _Target) -> frozenset[str]:
@@ -1075,6 +1090,8 @@ class _WaitGraph:
         sites = self._alias_sites.get(name, frozenset())
         if kind == "defs":
             sites = sites | self._def_sites.get(name, frozenset())
+        elif kind == "funcs":
+            sites = sites | self._func_sites.get(name, frozenset())
         return sites
 
     def _solve(self) -> None:
@@ -1094,6 +1111,8 @@ class _WaitGraph:
                     fn.waiting = True
                     if fn.parent is None:
                         self.waiting_def_names.add(fn.name)
+                        if fn.cls is None:
+                            self.waiting_func_names.add(fn.name)
                     changed = True
                 else:
                     still_pending.append(fn)
@@ -1135,10 +1154,16 @@ class _WaitGraph:
         while changed:
             changed = False
             def_sites: dict[str, frozenset[str]] = {}
+            func_sites: dict[str, frozenset[str]] = {}
             for fn in waiting:
                 if fn.parent is None:
                     def_sites[fn.name] = def_sites.get(fn.name, frozenset()) | fn.sites
+                    if fn.cls is None:
+                        func_sites[fn.name] = (
+                            func_sites.get(fn.name, frozenset()) | fn.sites
+                        )
             self._def_sites = def_sites
+            self._func_sites = func_sites
             alias_sites = {
                 alias: frozenset().union(
                     *(union(targets) for targets in self.alias_targets[alias])

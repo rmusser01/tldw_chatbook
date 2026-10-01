@@ -511,6 +511,104 @@ class S:
     assert _w003(source) == []
 
 
+def test_w003_a_local_bound_on_either_branch_waits_if_either_binding_does():
+    """A local bound on two paths may hold either callable at the await, so
+    every binding counts. Keeping only the last one by position would read
+    `_plain` here and miss the push on the `if` path (PR #2944 review)."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        if event.button.id == "pick":
+            choose = self._pick
+        else:
+            choose = self._plain
+        await choose()
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+
+    async def _plain(self):
+        return None
+"""
+    assert _w003(source) == [_row("S.on_button_pressed", "S._pick")]
+
+
+# An unrelated class owns a waiting method that shares the bare name below.
+_PICKER_CLASS = """
+class Picker:
+    async def pick(self):
+        await self.app.push_screen_wait(PickerModal())
+"""
+
+
+_BARE_PICK = {
+    "imported": """
+from helpers import pick
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await pick()
+""",
+    "parameter": """
+async def run(pick):
+    await pick()
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await run(self._plain)
+
+    async def _plain(self):
+        return None
+""",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_BARE_PICK))
+def test_w003_a_bare_call_never_resolves_to_a_class_method(shape):
+    """A bare `pick()` is a local, a module global, an import or a
+    parameter -- never a method, which only an attribute (`obj.pick`)
+    reaches. Falling back to every def named `pick`, methods included, made
+    both of these wait through the unrelated `Picker.pick` (PR #2944
+    review)."""
+    assert _w003(_PICKER_CLASS, _BARE_PICK[shape]) == []
+
+
+def test_w003_a_bare_call_still_reaches_a_module_function_in_another_module():
+    """...while an imported module-level function that waits still does."""
+    helpers = """
+async def pick():
+    await app.push_screen_wait(PickerModal())
+"""
+    source = """
+from helpers import pick
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await pick()
+"""
+    assert _w003(_PICKER_CLASS, helpers, source) == [
+        "tldw_chatbook/UI/m2.py::S.on_button_pressed => tldw_chatbook/UI/m1.py::pick"
+    ]
+
+
+def test_w003_attribute_calls_still_resolve_to_methods_by_name():
+    """`obj.pick()` keeps the by-name over-approximation: `obj`'s type is
+    not known statically, so every def named `pick` -- methods included --
+    still counts (the GAP4-01 chain ran through one)."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        await self._picker.pick()
+"""
+    assert _w003(_PICKER_CLASS, source) == [
+        "tldw_chatbook/UI/m1.py::S.on_button_pressed => "
+        "tldw_chatbook/UI/m0.py::Picker.pick"
+    ]
+
+
 def test_w003_accepts_the_fixed_shape_a_handler_that_starts_a_worker():
     """The fix TASK-33621.13 shipped: the handler returns, a worker awaits."""
     source = """
