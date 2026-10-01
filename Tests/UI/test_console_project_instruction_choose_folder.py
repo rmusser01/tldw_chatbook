@@ -265,7 +265,9 @@ async def test_cancelling_the_picker_returns_to_a_responsive_inspector(
         picker = await _press_choose_folder(app, pilot, inspector)
         await pilot.press("escape")
         await _until(pilot, lambda: app.screen is inspector, "the Inspector again")
-        assert not picker.is_running or app.screen is not picker
+        # The dismissed picker must actually stop. Textual removes a popped
+        # screen in a later call_next'd _replace_screen, so poll for it.
+        await _until(pilot, lambda: not picker.is_running, "the picker to close")
         # ...and Esc still closes the Inspector back to the Console.
         await pilot.press("escape")
         await _until(pilot, lambda: app.screen is console, "the Inspector to close")
