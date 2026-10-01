@@ -548,9 +548,11 @@ def test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost(
 
     The trace callback made SQLite hex-render the bound BLOB for the statement
     and every trigger/FTS step (1,217 ms median, isolated profile); without it
-    the insert measured 28.8 ms. The pin is 250 ms on the FASTEST of five
-    inserts: load inflates some samples (a median read 313 ms with two 8-worker
-    suites running), but the hex-rendering cost inflates every one.
+    the insert measured 28.8 ms. The samples are this process's CPU time, not
+    wall time: hex rendering is CPU work done here, so it shows in full, while
+    a loaded runner's scheduling delays do not (a wall-clock median read
+    313 ms with two 8-worker suites running; Qodo, #2894). The pin is 250 ms
+    of CPU on the fastest of five inserts.
 
     Args:
         tmp_path: pytest fixture; holds this test's database file.
@@ -562,7 +564,7 @@ def test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost(
         image = os.urandom(3 * 1024 * 1024)
         samples = []
         for index in range(5):
-            started = time.perf_counter()
+            started = time.process_time()
             db.add_message(
                 {
                     "conversation_id": conversation_id,
@@ -572,12 +574,12 @@ def test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost(
                     "image_mime_type": "image/png",
                 }
             )
-            samples.append(time.perf_counter() - started)
+            samples.append(time.process_time() - started)
     finally:
         db.close_connection()
 
     fastest_ms = min(samples) * 1000
     assert fastest_ms < 250, (
-        f"fastest of five 3 MiB image inserts took {fastest_ms:.0f} ms (pin 250 ms; "
+        f"fastest of five 3 MiB image inserts used {fastest_ms:.0f} ms CPU (pin 250 ms; "
         f"median {statistics.median(samples) * 1000:.0f} ms)"
     )

@@ -26,7 +26,7 @@ DB/base_db.py (~738) installs set_trace_callback on every ChaChaNotes connection
 <!-- AC:BEGIN -->
 - [x] #1 Transaction-boundary detection no longer requires a trace callback that expands bound parameters
 - [x] #2 The semantic-mutation guard keeps its fail-closed behaviour (existing guard tests pass)
-- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB measured under 50 ms (28.8 ms median, isolated profile), and a pinned test fails if the hex-expansion cost returns (fastest of five inserts above 250 ms)
+- [x] #3 Inserting a message with a 3 MiB image through CharactersRAGDB measured under 50 ms (28.8 ms median, isolated profile), and a pinned test fails if the hex-expansion cost returns (fastest of five inserts above 250 ms of CPU time)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,7 +62,7 @@ Fail-closed behaviour is preserved and now pinned. Inside an authorization scope
 
 Measured (isolated profile, load avg ~30):
 - 3 MiB image add_message: 1,217 ms -> 28.8 ms median
-- Pinned (review on #2894): test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost asserts the fastest of five inserts stays under 250 ms. A median read 313 ms with two 8-worker suites running, so the pin uses the fastest sample: load inflates some samples, the hex-rendering cost inflates every one. With the trace callback restored the fastest of five takes 960 ms. AC#3 was reworded from "under 50 ms in a pinned test" to match: 50 ms is the measured result, not a CI-stable bound.
+- Pinned (review on #2894): test_a_3_mib_image_message_inserts_without_the_hex_expansion_cost asserts the fastest of five inserts uses under 250 ms of this process's CPU time. Wall time was flaky under load (a median read 313 ms with two 8-worker suites running); hex rendering is CPU work done in-process, so CPU time keeps the whole regression signal while scheduling delays drop out. Passes 3/3 alongside two 8-worker DB suites; with the trace callback restored the fastest of five uses 1,067 ms of CPU. AC#3 was reworded from "under 50 ms in a pinned test" to match: 50 ms is the measured result, not a CI-stable bound.
 - text add_message: 10.3 -> 6.6 ms
 
 Tests, all in Tests/DB/test_semantic_guard_transaction_boundaries.py:
