@@ -458,9 +458,13 @@ async def request_hook_review(
     if not in_worker_task():
         # W003 cannot see this await (the modal settles its own answer), so
         # a new caller on a pump is reported here rather than found frozen.
+        # Class and widget id, and a bool: no permission content is logged.
         logger.error(
-            "Hook review awaited outside a worker task: the caller's message "
-            "pump is blocked until the review closes (TASK-33621.28)."
+            "Hook review awaited outside a worker task (screen={}, "
+            "waiting_for_send={}): the caller's message pump is blocked until "
+            "the review closes (TASK-33621.28).",
+            type(screen).__name__ + (f"#{screen.id}" if screen.id else ""),
+            waiting,
         )
     modal = ConsoleHooksReviewModal(
         snapshot=snapshot,

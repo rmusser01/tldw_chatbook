@@ -331,3 +331,8 @@ async def test_a_review_awaited_off_a_worker_task_is_logged(caller, hook_file):
     finally:
         logger.remove(sink)
     assert len(errors) == (1 if caller == "plain-task" else 0), errors
+    if errors:
+        # Attributable without a traceback: which screen's caller blocked,
+        # and whether a Send was waiting on the review.
+        assert "screen=ChatScreen" in errors[0], errors
+        assert "waiting_for_send=False" in errors[0], errors

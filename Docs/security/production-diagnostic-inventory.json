@@ -3929,7 +3929,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "2dea21981774a1dd0cc4",
+      "diagnostic_digest": "afdfeb12c955f14fded2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py",
       "reason": "remaining Chatbook production diagnostic owner"
