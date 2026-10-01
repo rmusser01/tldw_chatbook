@@ -130,10 +130,11 @@ on the send that made the call. **Compact now** is not a send, so it always
 reports its failure, whatever this setting says.
 
 After a failed summary call, automatic compaction pauses for that chat on that
-model. A Retry, a new send, or a micro-compaction tick makes no further
-summary call, so nothing more is billed. Instead, the note says "automatic
-compaction is paused … No new summary call was made". A failed **Compact
-now** or a failed micro-compaction tick pauses it too. The pause lifts when
+model. A Retry, a new send, a **Continue** or **Regenerate** of the latest
+reply, or a micro-compaction tick makes no further summary call, so nothing
+more is billed. Instead, the note says "automatic compaction is paused … No
+new summary call was made". A failed **Compact now** or a failed
+micro-compaction tick pauses it too. The pause lifts when
 the chat's compaction settings change (budget, **When limit nears**, **Reduce
 context to**, **Summary response max**, **Keep after compaction**,
 representation, or model), when an earlier message changes (edit, delete,

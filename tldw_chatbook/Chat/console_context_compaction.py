@@ -427,29 +427,109 @@ class CompactionRetryFence:
     policy change lifts the block. ``route`` names the provider and model the
     summary call goes to: each route keeps its own pause, so a failed Compact
     now on the auxiliary model never replaces the pause the sends' model set.
+    ``request`` is the active request itself, from its user turn on (empty
+    when the fence has none), so a request that resumes the paused latest
+    exchange -- Continue, regenerate -- stays covered.
     """
 
     conversation_id: str
     settings_key: str
     history: tuple[DurableMessageSnapshot, ...] = field(repr=False)
     route: str = ""
+    request: tuple[DurableMessageSnapshot, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
 class _FailedCompaction:
-    """One conversation's last failed attempt; content-free apart from sizes."""
+    """One conversation's last failed attempt: sizes, digests and ids only.
+
+    ``base_length``/``base_digest`` fence the history before the paused
+    history's latest user turn, and ``latest_exchange`` holds one digest per
+    row from that turn on, keyed by message id. They let the pause cover a
+    request that RESUMES that exchange instead of appending to it.
+    """
 
     settings_key: str
     history_length: int
     history_digest: str
     reason: str
+    base_length: int | None = None
+    base_digest: str = ""
+    latest_exchange: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def from_fence(
+        cls, fence: CompactionRetryFence, reason: str
+    ) -> _FailedCompaction:
+        """Record a failed attempt on ``fence``.
+
+        Args:
+            fence: The retry fence the failed attempt was made on.
+            reason: The failure reason the suppressed copy reports.
+
+        Returns:
+            The pause, with the latest exchange recorded when the fenced
+            history has a user turn.
+        """
+
+        history = fence.history
+        failed = cls(
+            settings_key=fence.settings_key,
+            history_length=len(history),
+            history_digest=_persisted_prefix_digest(history),
+            reason=reason,
+        )
+        user_positions = [i for i, row in enumerate(history) if row.role == "user"]
+        if not user_positions:
+            return failed
+        base = user_positions[-1]
+        return replace(
+            failed,
+            base_length=base,
+            base_digest=_persisted_prefix_digest(history[:base]),
+            latest_exchange=tuple(
+                (row.message_id, _persisted_prefix_digest((row,)))
+                for row in history[base:]
+            ),
+        )
 
     def blocks(self, fence: CompactionRetryFence) -> bool:
-        return (
-            fence.settings_key == self.settings_key
-            and len(fence.history) >= self.history_length
+        """Return whether ``fence`` must stay paused (AC#5).
+
+        Args:
+            fence: The fence of the automatic attempt about to be made.
+
+        Returns:
+            True while the settings match and the attempt either only
+            appended turns after the paused history, or resumes its latest
+            exchange: its history is the paused history before that
+            exchange's user turn, its request starts at that same turn, and
+            every paused row the request still carries is unchanged. A
+            Continue carries the reply it continues, so editing that reply
+            lifts the pause; a regenerate replaces it and does not.
+        """
+
+        if fence.settings_key != self.settings_key:
+            return False
+        if (
+            len(fence.history) >= self.history_length
             and _persisted_prefix_digest(fence.history[: self.history_length])
             == self.history_digest
+        ):
+            return True
+        if (
+            self.base_length is None
+            or not fence.request
+            or len(fence.history) != self.base_length
+            or fence.request[0].message_id != self.latest_exchange[0][0]
+            or _persisted_prefix_digest(fence.history) != self.base_digest
+        ):
+            return False
+        paused = dict(self.latest_exchange)
+        return all(
+            _persisted_prefix_digest((row,)) == paused[row.message_id]
+            for row in fence.request
+            if row.message_id in paused
         )
 
 
@@ -502,7 +582,8 @@ def compaction_retry_fence(
 
     Returns:
         A fence whose history excludes the active request, so a Retry or a
-        fresh send after a failure compares only the turns that existed then.
+        fresh send after a failure compares only the turns that existed then;
+        the request rows ride along separately.
     """
 
     user_positions = [i for i, row in enumerate(snapshots) if row.role == "user"]
@@ -510,7 +591,8 @@ def compaction_retry_fence(
         active_request
         or not _is_complete_durable_unit(snapshots[user_positions[-1] :])
     )
-    history = tuple(snapshots[: user_positions[-1]] if pending else snapshots)
+    split = user_positions[-1] if pending else len(snapshots)
+    history = tuple(snapshots[:split])
     kind, memory_id, legacy_boundary = effective_memory_identity(effective)
     settings = {
         "provider": resolution.provider,
@@ -538,6 +620,7 @@ def compaction_retry_fence(
         _digest_json(settings),
         history,
         route=f"{resolution.provider}/{resolution.model or ''}",
+        request=tuple(snapshots[split:]),
     )
 
 
@@ -2335,11 +2418,8 @@ class ConsoleCompactionService:
             and result.terminal is CompactionTerminal.FAILED
         ):
             routes = self._failed_compactions.setdefault(conversation_id, {})
-            routes[retry_fence.route] = _FailedCompaction(
-                settings_key=retry_fence.settings_key,
-                history_length=len(retry_fence.history),
-                history_digest=_persisted_prefix_digest(retry_fence.history),
-                reason=result.reason or "compaction_failed",
+            routes[retry_fence.route] = _FailedCompaction.from_fence(
+                retry_fence, result.reason or "compaction_failed"
             )
         return result
 

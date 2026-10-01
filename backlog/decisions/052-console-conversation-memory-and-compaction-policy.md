@@ -316,8 +316,14 @@ is unchanged (provider, model, prompt, policy other than failure behavior,
 model window, effective memory), and the durable history before the failed
 request is an unchanged prefix. Compact now and a micro-compaction tick carry
 no request, so their history is the whole lineage less only an unsent last
-turn; an edit to the latest complete exchange lifts their pause too. Keeping
-one pause per route means a failed
+turn; an edit to the latest complete exchange lifts their pause too. A request
+that resumes the paused history's latest exchange instead of appending to it
+-- Continue, regenerate, or a Retry of a failed regenerate sibling, whose
+request starts at that exchange's user turn -- stays paused while its history
+is the paused history before that turn, the turn is the same message, and
+every paused row the request still carries is unchanged: editing the reply a
+Continue resumes lifts the pause, deleting the exchange and sending does too.
+Keeping one pause per route means a failed
 Compact now on the `[chat_defaults] auxiliary_model` cannot replace the pause
 the sends' model set. Compact now is explicit and bypasses the latch; a
 success clears every route's pause. A stale result (the conversation moved

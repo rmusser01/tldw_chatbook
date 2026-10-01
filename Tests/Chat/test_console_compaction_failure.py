@@ -14,9 +14,11 @@ import pytest
 
 from Tests.Chat.test_console_context_compaction import (
     _Gateway,
+    _message,
     _prepare,
     _Repository,
     _resolution,
+    _resolved,
     _transaction_inputs,
 )
 from tldw_chatbook.Chat.console_compaction_failure import (
@@ -24,9 +26,14 @@ from tldw_chatbook.Chat.console_compaction_failure import (
     compaction_spend_copy,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
+    CompactionPromptSnapshot,
     CompactionRetryFence,
     CompactionTerminal,
     ConsoleCompactionService,
+    DurableMessageSnapshot,
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+    compaction_retry_fence,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
@@ -310,3 +317,116 @@ async def test_success_clears_the_latch() -> None:
     retried = await _compact(service, inputs, fence)
     assert retried.suppressed is False
     assert retried.attempted is True
+
+
+def _lineage_fence(
+    lineage: tuple[DurableMessageSnapshot, ...], *, active_request: bool = True
+) -> CompactionRetryFence:
+    """The fence the controller builds for ``lineage`` (the durable path)."""
+
+    return compaction_retry_fence(
+        "conversation-1",
+        _resolution(),
+        CompactionPromptSnapshot("Preserve decisions."),
+        _resolved(),
+        EffectiveMemoryResult(EffectiveMemoryKind.RAW),
+        lineage,
+        active_request=active_request,
+    )
+
+
+def _reply(message_id: str, status: str, content: str = "") -> DurableMessageSnapshot:
+    return replace(_message(message_id, "assistant", content), status=status)
+
+
+# The paused lineage is u0 a0 u1 a1 u2 a2 (``_transaction_inputs``' prefix).
+# Each shape is the durable path a request sees when it is built.
+_RESUME_SHAPES = {
+    # Continue persists its new empty reply before the preflight runs.
+    "continue": lambda p: p + (_reply("a-continue", "pending"),),
+    # Regenerate forks an unsaved sibling: the durable path ends at u2.
+    "regenerate": lambda p: p[:-1],
+    # Retry of a regenerate whose sibling failed: the sibling is the request.
+    "retry-failed-regenerate-sibling": lambda p: p[:-1]
+    + (_reply("a2-sibling", "failed", "partial"),),
+    # A send appends after the whole paused lineage.
+    "send": lambda p: p + (_message("u3", "user", "next"),),
+}
+_LIFTING_SHAPES = {
+    # The User Guide: deleting the latest exchange, then sending, lifts it.
+    "send-after-deleting-the-latest-exchange": lambda p: p[:-2]
+    + (_message("u3", "user", "next"),),
+    "regenerate-after-editing-the-question": lambda p: p[:-2]
+    + (replace(p[-2], version=2, content="edited question"),),
+    "continue-after-editing-the-reply": lambda p: p[:-1]
+    + (
+        replace(p[-1], version=2, content="edited reply"),
+        _reply("a-continue", "pending"),
+    ),
+    "regenerate-an-earlier-reply": lambda p: p[:3],
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("shape", "paused"),
+    [(name, True) for name in _RESUME_SHAPES]
+    + [(name, False) for name in _LIFTING_SHAPES],
+)
+async def test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange(
+    shape: str, paused: bool
+) -> None:
+    """AC#5: Compact now fences the whole lineage, latest exchange included.
+
+    A Continue, a regenerate, or a Retry of a failed regenerate sibling
+    starts its request at that exchange's user turn, so its own history is
+    shorter than the pause's. The pause still covers it while every paused
+    row the request carries is unchanged; an edit, a delete or another
+    request lifts it.
+    """
+
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    service = ConsoleCompactionService(repository, gateway)
+    inputs = _transaction_inputs()
+    prefix = inputs[2]
+    compact_now = _lineage_fence(prefix, active_request=False)
+    assert compact_now.history == prefix
+    await _compact(service, inputs, compact_now, honor=False)
+    assert gateway.calls == 1
+
+    build = {**_RESUME_SHAPES, **_LIFTING_SHAPES}[shape]
+    result = await _compact(service, inputs, _lineage_fence(build(prefix)))
+
+    assert result.suppressed is paused
+    assert gateway.calls == (1 if paused else 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["continue", "regenerate"])
+async def test_a_send_pause_covers_the_previous_reply_after_a_discard(
+    shape: str,
+) -> None:
+    """AC#5: Discard, then Continue or regenerate the reply before it.
+
+    A failed send pauses on the history before its own question. Discarding
+    that question and resuming the reply before it is no change to that
+    history, exactly like Discard plus a fresh send, so it stays paused.
+    """
+
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    service = ConsoleCompactionService(repository, gateway)
+    inputs = _transaction_inputs()
+    prefix = inputs[2]
+    send = _lineage_fence(prefix + (_message("u3", "user", "next"),))
+    assert send.history == prefix
+    await _compact(service, inputs, send)
+    assert gateway.calls == 1
+
+    result = await _compact(
+        service, inputs, _lineage_fence(_RESUME_SHAPES[shape](prefix))
+    )
+
+    assert result.suppressed is True
+    assert gateway.calls == 1

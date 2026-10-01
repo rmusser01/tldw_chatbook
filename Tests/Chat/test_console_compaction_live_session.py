@@ -638,17 +638,39 @@ def _latest_reply(store: ConsoleChatStore) -> Any:
     ][-1]
 
 
+async def _send_until_a_send_is_held(
+    controller: ConsoleChatController,
+    gateway: _LiveProviderGateway,
+    *,
+    first: int,
+    limit: int = 12,
+) -> None:
+    """Send ordinary turns until one is held back at the compaction preflight."""
+
+    for index in range(first, limit):
+        streams = gateway.stream_calls
+        await controller.submit_draft(
+            f"question-{index}: explain step {index} in detail.",
+            session_id="session-1",
+        )
+        if gateway.stream_calls == streams:
+            return
+    raise AssertionError("the custom budget was never crossed")
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("follow_up", ["micro-tick", "send"])
 @pytest.mark.parametrize("micro", [False, True], ids=["compact-now", "micro-tick"])
 @pytest.mark.parametrize("edit", [True, False], ids=["edited", "unchanged"])
 async def test_live_edit_to_the_latest_exchange_lifts_the_pause(
-    tmp_path: Path, micro: bool, edit: bool
+    tmp_path: Path, micro: bool, edit: bool, follow_up: str
 ) -> None:
     """AC#5: Compact now and a micro tick fence the WHOLE completed lineage.
 
     Neither carries an active request, so the latest exchange is history: an
-    edit to it lifts their pause like an edit to any earlier turn. Without
-    the edit (the negative control) the next automatic attempt stays paused.
+    edit to it lifts their pause like an edit to any earlier turn, for the
+    next micro tick and for the next send that crosses the trigger. Without
+    the edit (the negative control) that automatic attempt stays paused.
     """
 
     db, store, controller, gateway = _live_controller(
@@ -663,7 +685,13 @@ async def test_live_edit_to_the_latest_exchange_lifts_the_pause(
         store.update_message_content(
             _latest_reply(store).id, "An edited, much shorter answer."
         )
-    await controller.compact_context_now("session-1", micro=True)
+    if follow_up == "send":
+        await _send_until_a_send_is_held(controller, gateway, first=2)
+        assert ("automatic compaction is paused" in _system_rows(store)[-1]) is (
+            not edit
+        )
+    else:
+        await controller.compact_context_now("session-1", micro=True)
 
     assert gateway.auxiliary_calls == (2 if edit else 1)
     assert [row["failure_reason"] for row in _attempt_rows(db)] == [
@@ -695,3 +723,113 @@ async def test_live_compact_now_beside_an_unsent_turn_keeps_its_retry_paused(
     retried = await controller.retry_dispatch_recovery("session-1")
     assert gateway.auxiliary_calls == 2
     assert "automatic compaction is paused" in retried.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_live_compact_now_beside_an_unsent_turn_keeps_a_fresh_send_paused(
+    tmp_path: Path,
+) -> None:
+    """AC#5: Discard the unsent turn, then send: still the same history.
+
+    Compact now beside the unsent turn fences the history before it, the
+    same history a fresh send after Discard has, so that send stays paused.
+    Were the unsent turn history, the fresh send would start a different
+    request after it and make one more billed summary call.
+    """
+
+    _db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary="")
+    )
+    await _send_until_compaction(controller, gateway)
+    succeeded, _copy = await controller.compact_context_now("session-1")
+    assert succeeded is False
+    assert gateway.auxiliary_calls == 2
+
+    discarded = await controller.discard_dispatch_recovery("session-1")
+    assert discarded.accepted is True, discarded.visible_copy
+    streams = gateway.stream_calls
+    await controller.submit_draft("a fresh question", session_id="session-1")
+
+    assert gateway.auxiliary_calls == 2
+    assert gateway.stream_calls == streams
+    assert "automatic compaction is paused" in _system_rows(store)[-1]
+
+
+@pytest.mark.asyncio
+async def test_live_failed_compact_now_pauses_a_continue_of_the_latest_reply(
+    tmp_path: Path,
+) -> None:
+    """AC#5: Continue resumes the exchange a failed Compact now just fenced.
+
+    Under Omit older context the send that crossed the trigger went out
+    uncompacted, so the latest exchange is complete. Compact now's pause
+    holds that whole lineage; a Continue's request starts at the latest user
+    turn, so its own history is shorter. The pause must still cover it, or
+    the Continue makes one more billed summary call.
+    """
+
+    db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_LiveProviderGateway(summary=""), overrides=_OMIT
+    )
+    await _send_until_compaction(controller, gateway)
+    assert store.dispatch_recovery_for_session("session-1") is None
+    succeeded, _copy = await controller.compact_context_now("session-1")
+    assert succeeded is False
+    assert gateway.auxiliary_calls == 2
+
+    streams = gateway.stream_calls
+    result = await controller.continue_from_message(_latest_reply(store).id)
+
+    assert result.accepted is True, result.visible_copy
+    assert gateway.auxiliary_calls == 2
+    assert gateway.stream_calls == streams + 1  # Omit: it still goes out
+    assert [row["failure_reason"] for row in _attempt_rows(db)] == [
+        "invalid_summary_output"
+    ] * 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edit", [False, True], ids=["unchanged", "reply-edited"])
+async def test_live_failed_compact_now_pauses_a_continue_under_stop_and_ask(
+    tmp_path: Path, edit: bool
+) -> None:
+    """AC#5: on the default policy a paused Continue is held, not re-billed.
+
+    The chat is built over the trigger without any send compacting, then
+    automatic compaction is switched on and Compact now fails. Continuing
+    the latest reply must say the pause holds and make no summary call. An
+    edit to that reply (the control) lifts the pause like any other edit, so
+    the Continue makes its one billed attempt and is held for that failure.
+    """
+
+    _db, store, controller, gateway = _live_controller(
+        tmp_path,
+        gateway=_LiveProviderGateway(summary=""),
+        overrides=replace(_OVERRIDES, compaction_mode=ContextCompactionMode.OFF),
+    )
+    for index in range(8):
+        await controller.submit_draft(
+            f"question-{index}: explain step {index} in detail.",
+            session_id="session-1",
+        )
+    store.set_session_context_policy_overrides("session-1", _OVERRIDES)
+    succeeded, _copy = await controller.compact_context_now("session-1")
+    assert succeeded is False
+    assert gateway.auxiliary_calls == 1
+
+    latest = _latest_reply(store)
+    if edit:
+        store.update_message_content(latest.id, latest.content + " (edited)")
+    streams = gateway.stream_calls
+    await controller.continue_from_message(latest.id)
+
+    copy = controller.run_state_for("session-1").visible_copy
+    assert gateway.stream_calls == streams
+    if edit:
+        assert gateway.auxiliary_calls == 2
+        assert copy.startswith("Your message was not sent"), copy
+        assert "automatic compaction is paused" not in copy
+    else:
+        assert gateway.auxiliary_calls == 1
+        assert "automatic compaction is paused" in copy, copy
+        assert "No new summary call was made." in copy
