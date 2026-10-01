@@ -223,6 +223,15 @@ def _signal_call(node: ast.AST, method: str) -> str | None:
     return target.attr
 
 
+def _may_subscribe(source: str) -> bool:
+    """Cheap prefilter before parsing; the AST does the exact matching.
+
+    Only the bare word: ``.subscribe (`` and line-broken calls are valid Python
+    a punctuation-sensitive filter would skip (Qodo, #2897).
+    """
+    return "subscribe" in source
+
+
 def _unpaired_app_signal_subscriptions(source: str, filename: str) -> list[str]:
     """Classes that subscribe to an App signal but never drop it on unmount."""
     findings = []
@@ -261,7 +270,7 @@ def test_app_signal_subscribers_unsubscribe_on_unmount() -> None:
     findings = []
     for path in sorted((REPO_ROOT / "tldw_chatbook").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if "_signal" in source and ".subscribe(" in source:
+        if _may_subscribe(source):
             findings += _unpaired_app_signal_subscriptions(
                 source, str(path.relative_to(REPO_ROOT))
             )
@@ -295,6 +304,18 @@ def test_signal_guard_flags_a_subscription_without_unsubscribe() -> None:
     )
     assert _unpaired_app_signal_subscriptions(factory_leaky, "w.py")
     assert not _unpaired_app_signal_subscriptions(factory_paired, "w.py")
+
+    # Spacing and line breaks are formatting, not a way out (Qodo, #2897).
+    for spaced in (
+        "class W:\n    def on_mount(self):\n"
+        "        self.app.theme_changed_signal.subscribe (self, self.f)\n",
+        "class W:\n    def on_mount(self):\n"
+        "        self.app.theme_changed_signal.subscribe(\n            self, self.f\n        )\n",
+        "class W:\n    def on_mount(self):\n"
+        "        launch_default_signal(self.app) .subscribe (self, self.f)\n",
+    ):
+        assert _may_subscribe(spaced)
+        assert _unpaired_app_signal_subscriptions(spaced, "w.py")
 
 
 def test_fresh_context_executor_jobs_do_not_share_context() -> None:
