@@ -180,9 +180,11 @@ class LocalMCPControlService:
         manifest_provider: Callable[[], dict[str, Any]] | None = None,
         policy_enforcer: Any | None = None,
         runtime_delegate: LocalMCPRuntimeDelegate | None = None,
+        credential_service=None,
     ) -> None:
         self._producer_lifetime = ProducerLifetime()
         self.store = store
+        self.credential_service = credential_service
         self.client = client
         self.manifest_provider = manifest_provider or _default_manifest_provider
         self.policy_enforcer = policy_enforcer
@@ -199,6 +201,108 @@ class LocalMCPControlService:
         if isinstance(self.runtime_delegate, LocalMCPRuntimeDelegate):
             self.runtime_delegate._definition_store = self.store
         self._runtime_activity_limit = 50
+
+    def _credentials(self):
+        if self.credential_service is None:
+            from tldw_chatbook.config import create_mcp_credential_service
+
+            self.credential_service = create_mcp_credential_service(
+                self.store.path.parent
+            )
+        return self.credential_service
+
+    def capture_connection_mapping(
+        self,
+        *,
+        installation_id: str,
+        mapping_id: str,
+        inspection,
+        component_id: str,
+        profile_id: str,
+    ) -> dict:
+        """Capture an existing host profile and retained MCP definition.
+
+        This is metadata capture, not reviewed publication or execution permission.
+        M4 owns registration into the coordinator's durable mutation protocol.
+        """
+        from tldw_chatbook.Plugins.authority import Mapping as PluginMapping
+        from tldw_chatbook.Skills_Interop.skill_trust_crypto import (
+            canonical_json,
+            sha256_hex,
+        )
+
+        from .credential_bindings import CredentialError, endpoint_origin
+
+        try:
+            component = inspection.inventory[component_id]
+            profile = self.store.get_profile(profile_id)
+            if (
+                component.kind != "mcp"
+                or component.support != "supported"
+                or component.selection != "selected"
+                or component.activation_blockers
+                or profile is None
+                or profile.transport != "streamable_http"
+            ):
+                raise CredentialError("credential_mapping_invalid")
+            definition = json.loads(component.definition_json)
+            if (
+                definition.get("type") != "streamable-http"
+                or definition.get("url") != profile.url
+            ):
+                raise CredentialError("credential_mapping_invalid")
+            configuration = profile.to_input_dict()
+            configuration.pop("created_at")
+            configuration.pop("updated_at")
+            bindings = []
+            if profile.credential_reference is not None:
+                bindings.append(
+                    self._credentials().snapshot_binding(
+                        profile.credential_reference,
+                        profile.credential_generation,
+                        endpoint_origin(profile.url),
+                    )
+                )
+            result = PluginMapping.model_validate(
+                {
+                    "installation_id": installation_id,
+                    "mapping_id": mapping_id,
+                    "component_id": component_id,
+                    "revision_digest": inspection.effective_digest,
+                    "kind": "connection",
+                    "target_reference": "local:" + profile.profile_id,
+                    "definition_digest": sha256_hex(canonical_json(definition)),
+                    "configuration_digest": sha256_hex(canonical_json(configuration)),
+                    "credential_bindings": bindings,
+                }
+            )
+            return result.model_dump(mode="json")
+        except CredentialError:
+            raise
+        except Exception:  # noqa: BLE001 -- sanitized authority boundary
+            raise CredentialError("credential_mapping_invalid") from None
+
+    def validate_connection_mapping(self, mapping: dict, inspection) -> None:
+        """Validate every mapping field against retained material/current owners."""
+        from .credential_bindings import CredentialError
+
+        try:
+            reference = mapping["target_reference"]
+            if mapping["kind"] != "connection" or not reference.startswith("local:"):
+                raise CredentialError("credential_mapping_unsupported")
+            current = self.capture_connection_mapping(
+                installation_id=mapping["installation_id"],
+                mapping_id=mapping["mapping_id"],
+                inspection=inspection,
+                component_id=mapping["component_id"],
+                profile_id=reference.removeprefix("local:"),
+            )
+            if current != mapping:
+                raise CredentialError("credential_mapping_changed")
+        except CredentialError:
+            raise
+        except Exception:  # noqa: BLE001 -- sanitized authority boundary
+            raise CredentialError("credential_mapping_invalid") from None
 
     def get_overview(self) -> dict[str, Any]:
         self._require_allowed("mcp.runtime.observe.local")
@@ -317,6 +421,8 @@ class LocalMCPControlService:
         profile_id = profile.profile_id
 
         client = self._get_client()
+        if profile.credential_reference is not None and isinstance(client, MCPClient):
+            client.credential_service = self._credentials()
         from .local_store import TransportProfile
 
         if hasattr(client, "connect_profile"):
@@ -334,6 +440,8 @@ class LocalMCPControlService:
                     ),
                     url=profile.url,
                     development_loopback=profile.development_loopback,
+                    credential_reference=profile.credential_reference,
+                    credential_generation=profile.credential_generation,
                 )
             )
         elif profile.transport == "stdio" and profile.protocol_version == "2025-03-26":

@@ -566,3 +566,41 @@ sources were checked; earlier mcp-unified source inspection remains historical
 bounded evidence, not a fresh vendor-release claim. No external server/provider,
 full-suite, cross-platform, generic OAuth, MRTR, subscriptions or standalone
 push-listener qualification. M3 owns credential mapping and H6 MCP hook effects.
+
+
+## M3 — TASK-32683 stable credential bindings
+
+Integrated reviewed `406371452a` through existing config/keyring safety, local
+MCP profiles/transport and authenticated plugin recovery. Frozen metadata separates
+reviewed reference/generation/principal/issuer/audience/origin/scopes from current
+token bytes, expiry and storage revision. Verified unchanged renewal retains
+authority; changed/unknown identity, opaque replacement and revocation advance
+it. Missing references require a fresh UUID, tombstones never wrap generations.
+Secure keyring-only, data-root-scoped records use existing portalocker/safety
+checks; no plaintext or new dependency. Production has no generic MCP OAuth
+adapter and reports `unsupported_authentication`, never imported vendor grants.
+
+HTTP resolves current usable headers at dispatch for the exact selected origin.
+Reserved headers, case collisions and unsupported octets refuse. A bounded single
+retained credential worker keeps the event loop responsive without queued jobs,
+secret caching, late HTTP dispatch or replay after cancellation. Proven worker
+start failure now releases unowned capacity and returns a fixed body-free error;
+the same real transport succeeds after retry. Profile schema 3 persists only
+reference/generation, using the current protected writer and preserving malformed
+source bytes. Recovery validates every complete mapping through the actual owner.
+Current producer/source decorators and native HTTP/stdio cleanup were preserved.
+
+Saved-profile RED failed at discarded credential reference with M2 discovery
+passing. Final binding/current transport/sentinel/renewal/expiry/migration and
+protected recovery suite: **124 passed, 38.68s**, no warnings/skips;
+`/private/tmp/hooks-m3-qualified.xml`. Direct transport/store/lifecycle and actual
+plugin coordinator/recovery neighbors: **234 passed, 121.18s**, no warnings/skips;
+`/private/tmp/hooks-m3-neighbors.xml`. New Python passes Ruff/formatter; all changed
+Python parses, whitespace passes and shared Ruff has no additions against pre-M3
+HEAD. All ACs self-reviewed; ADR-162/163 apply. Modified client/local store/service,
+HTTP, config factory, coordinator/recovery and added credential owner/tests/docs.
+
+Limits: memory credential backends, real portalocker with fake keyring API,
+controlled local peers and actual protected recovery on macOS. No real OS
+keychain/vendor OAuth, external MCP server, full-suite or cross-platform claim.
+M3 mapping fixtures qualify capture/reconstruction, not M4 publication/launch.

@@ -49,6 +49,7 @@ class PluginCoordinator:
         owner: PluginRuntimeOwner,
         *,
         fences=None,
+        mcp_mapping_owner=None,
     ) -> None:
         if threading.current_thread() is threading.main_thread():
             raise RuntimeError("plugin coordinator requires a dedicated worker")
@@ -56,6 +57,7 @@ class PluginCoordinator:
         # Probe SQLite's real affinity now, instead of weakening check_same_thread.
         _ = registry.schema_version
         self.registry, self.authority, self.owner = registry, authority, owner
+        self.mcp_mapping_owner = mcp_mapping_owner
         self._thread = threading.get_ident()
         self._loop = asyncio.get_event_loop()
         from .admission import LivePluginFences

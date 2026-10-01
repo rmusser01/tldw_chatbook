@@ -235,7 +235,7 @@ git diff --check
 - Consumes: M2 selected transport/origin and F3 authenticated references. Use existing host config/encryption/keyring boundaries; do not reinterpret runtime_policy/server_credentials.py credentials for arbitrary MCP origins.
 - Produces: CredentialBinding is frozen and includes reference_id, authority_generation, method, issuer, audience, endpoint_origin, principal and scopes; opaque unverified fields are explicit None. same_authority(old: CredentialBinding, new: CredentialBinding) -> bool ignores storage/token revision. CredentialBindingService.resolve(reference_id: str, expected_generation: int, endpoint_origin: str) -> dict returns current secret material only to transport; renew(reference_id: str) -> Awaitable[CredentialBinding] never proves an uncertain tool outcome. Supported OAuth adapters remain owned by this service, not Plugins.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_token_rotation_does_not_change_binding_generation(binding_case):
@@ -247,9 +247,9 @@ def test_token_rotation_does_not_change_binding_generation(binding_case):
     assert case.binding().authority_generation > old.authority_generation
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/MCP/test_credential_bindings.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/MCP/test_credential_bindings.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 AUTHORITY_FIELDS = ("reference_id", "authority_generation", "method", "issuer", "audience", "endpoint_origin", "principal", "scopes")
@@ -258,20 +258,20 @@ def same_authority(old, new) -> bool:
     return all(getattr(old, field) == getattr(new, field) for field in AUTHORITY_FIELDS)
 ```
 
-  - [ ] 3.1. Build binding_case with a real CredentialBindingService and an isolated fake credential backend: binding returns the service record; rotation/switch methods simulate verified host-auth callbacks with distinct token storage revisions.
-  - [ ] 3.2. Separate stable reviewed identity/scope from token bytes, expiry and storage revision. Resolve current usable secrets at dispatch and authenticate only references/generations in plugin snapshots.
-  - [ ] 3.3. Wire explicit header/token mappings and available host OAuth flows. Inventory which OAuth flow is actually supported before exposing it; missing generic OAuth support returns unsupported_authentication rather than implementing a new OAuth framework or claiming imported vendor access.
-  - [ ] 3.4. Invalidate captured mappings on account/issuer/audience/scope/reference/revocation changes. Test unknown continuity, opaque credentials and store migration; sanitize every status/error/receipt path with credential sentinels.
+  - [x] 3.1. Build binding_case with a real CredentialBindingService and an isolated fake credential backend: binding returns the service record; rotation/switch methods simulate verified host-auth callbacks with distinct token storage revisions.
+  - [x] 3.2. Separate stable reviewed identity/scope from token bytes, expiry and storage revision. Resolve current usable secrets at dispatch and authenticate only references/generations in plugin snapshots.
+  - [x] 3.3. Wire explicit header/token mappings and available host OAuth flows. Inventory which OAuth flow is actually supported before exposing it; missing generic OAuth support returns unsupported_authentication rather than implementing a new OAuth framework or claiming imported vendor access.
+  - [x] 3.4. Invalidate captured mappings on account/issuer/audience/scope/reference/revocation changes. Test unknown continuity, opaque credentials and store migration; sanitize every status/error/receipt path with credential sentinels.
 
 **Failure and successful-control matrix:** Valid renewal during a pending review/live run, expired token, failed refresh, identity changes, unauthorized redirect, new scope, unknown issuer/principal and no imported connector grant. Package trust alone never makes expired credentials ready.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/MCP/test_credential_bindings.py Tests/MCP/test_transport_auth.py Tests/Plugins/test_credential_authority.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32683 --plain
@@ -438,3 +438,69 @@ Host authorization uses its selected-origin credential service. Existing
 HTTPS/explicit-loopback, userinfo/fragment and redirect restrictions still apply.
 This follows the [Agent Plugins endpoint contract](https://agent-plugins.org/specification)
 without adding a blanket query-string restriction.
+
+### M3 credential reference recovery boundary (R62)
+
+M3 captures and validates complete connection mappings through the actual local MCP and credential owners: saved profile target, retained component definition, effective configuration and stable credential binding must all match. Authenticated recovery may reconstruct only those supported current references. M3 recovery fixtures may seed the existing protected snapshot/transaction boundary, but this does not qualify a public mapping-edit or launch workflow. M4 supplies reviewed publication and registration before plugin connections launch. No mapping, successful recovery or credential binding creates tool permission or vendor grants.
+
+### Credential reference identity after record loss (R63)
+
+New MCP credential records receive immutable UUID reference IDs from the host credential service. A supplied missing reference is unready and cannot be recreated at generation one. Normal replacement, renewal and revocation reread the protected record under the existing owner lock; retained tombstones and monotonically advancing signed-64-bit authority generations prevent ordinary reuse, and generation exhaustion refuses. After record loss, the user must create and review a fresh reference before rebinding a plugin mapping. No credential creation restores prior tool permission or proves a prior remote invocation completed.
+
+### Credential I/O and async transport deadlines (R64)
+
+Blocking credential-store and file-lock operations run outside the shared MCP event loop. The existing credential service retains at most one worker operation; other async callers wait within their applicable deadlines before performing a fresh operation, without a queued worker backlog or secret-result cache. Cancellation ends the wait and cannot trigger later HTTP dispatch; it does not terminate an OS keychain call. A stalled backend may retain one daemon worker until completion or process exit and cause authenticated requests to time out, while anonymous connections remain responsive. Capacity releases only after actual completion, and local waiting or cleanup never proves remote invocation completion or permits replay.
+
+### M3 implementation and operation contract
+
+`MCP.credential_bindings.CredentialBindingService` owns protected references.
+`create_opaque(endpoint_origin=..., headers=..., method="headers"|"bearer")`
+mints a new host reference; `set_opaque(reference_id, ...)` replaces an existing
+record and always advances its authority generation. `create(adapter)` and
+`authorize(adapter, reference_id)` call explicitly registered host adapters;
+`renew(reference_id)` reuses that adapter with a storage-revision check. The
+production factory registers no generic MCP OAuth adapters, so unavailable flows
+return `unsupported_authentication`. Server-account/provider OAuth and imported
+vendor connector claims do not establish MCP authority.
+
+Complete records live only in a secure OS keyring namespace scoped by the
+canonical data root. Existing portalocker plus a shared process lock serializes
+read/modify/write across instances. No plaintext/config fallback exists. A failed
+write returns a fixed failure; later resolution rereads actual protected state.
+Revocation keeps a generation tombstone. Deleted records require fresh UUID
+references and explicit rebinding. Signed-64-bit generation exhaustion refuses.
+`config.create_mcp_credential_service` is a lazy factory, not a new TOML secret
+format. JSON MCP profile schema 3 stores only `credential_reference` and
+`credential_generation`; schema 1/2 migrate without inventing bindings, and
+malformed/older-schema credential authority is not rewritten.
+
+Only selected-origin HTTP dispatch receives current headers through
+`resolve_async`; synchronous `resolve` is for existing worker-owned callers.
+The async storage adapter retains at most one daemon worker, waits for real
+completion before admitting another operation, and never queues thread jobs.
+Timeout/cancellation stops waiting, not an OS operation; authenticated callers
+can remain unready while anonymous peers continue. No late request or uncertain
+invocation replay follows credential renewal or cancellation.
+
+Header names are case-insensitively unique. Host protocol/routing, hop-by-hop,
+proxy and cookie headers are reserved. Explicit bearer/custom header values
+support literal Latin-1 octets (including obs-text), empty values and interior
+HTAB; leading/trailing whitespace, other controls and wider Unicode are refused.
+This is the host's wire-encoding policy, not a claim that portable Unicode
+inventory is RFC-invalid. Credentials never enter endpoint queries. Redirects
+remain refused. Legacy notification/DELETE authentication refusal still closes
+local HTTP resources.
+
+`LocalMCPControlService.capture_connection_mapping` captures the actual saved
+HTTP profile, exact retained MCP definition/configuration digests and stable
+credential metadata in the existing `connection` mapping shape.
+`validate_connection_mapping` checks the complete reference before coordinator
+recovery publishes or reconstructs it. Unsupported owners/kinds still refuse.
+M3's guarded authenticated recovery fixtures qualify reconstruction only;
+M4 must publish/register reviewed mappings and enforce live plugin admission.
+No successful recovery creates tool permission, account grants or runtime proof.
+
+Qualification uses memory credential backends, real portalocker with a fake
+keyring API, isolated profiles and controlled local HTTP peers. Real OS keychain
+interoperability, generic OAuth, other platforms and external production MCP
+servers remain unqualified by this task.

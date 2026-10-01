@@ -347,3 +347,24 @@ Host authorization uses its selected-origin credential service. Existing
 HTTPS/explicit-loopback, userinfo/fragment and redirect restrictions still apply.
 This follows the [Agent Plugins endpoint contract](https://agent-plugins.org/specification)
 without adding a blanket query-string restriction.
+
+### M3 credential reference recovery boundary (R62)
+
+M3 captures and validates complete connection mappings through the actual local MCP and credential owners: saved profile target, retained component definition, effective configuration and stable credential binding must all match. Authenticated recovery may reconstruct only those supported current references. M3 recovery fixtures may seed the existing protected snapshot/transaction boundary, but this does not qualify a public mapping-edit or launch workflow. M4 supplies reviewed publication and registration before plugin connections launch. No mapping, successful recovery or credential binding creates tool permission or vendor grants.
+
+### Credential reference identity after record loss (R63)
+
+New MCP credential records receive immutable UUID reference IDs from the host credential service. A supplied missing reference is unready and cannot be recreated at generation one. Normal replacement, renewal and revocation reread the protected record under the existing owner lock; retained tombstones and monotonically advancing signed-64-bit authority generations prevent ordinary reuse, and generation exhaustion refuses. After record loss, the user must create and review a fresh reference before rebinding a plugin mapping. No credential creation restores prior tool permission or proves a prior remote invocation completed.
+
+### Credential I/O and async transport deadlines (R64)
+
+Blocking credential-store and file-lock operations run outside the shared MCP event loop. The existing credential service retains at most one worker operation; other async callers wait within their applicable deadlines before performing a fresh operation, without a queued worker backlog or secret-result cache. Cancellation ends the wait and cannot trigger later HTTP dispatch; it does not terminate an OS keychain call. A stalled backend may retain one daemon worker until completion or process exit and cause authenticated requests to time out, while anonymous connections remain responsive. Capacity releases only after actual completion, and local waiting or cleanup never proves remote invocation completion or permits replay.
+
+M3 implements these decisions with a data-root-scoped MCP-only secure keyring
+namespace and schema-3 profile references. The existing credential/configuration
+owners remain the only source of current binding validity; protected plugin
+snapshots carry metadata, never secret values. Its explicit header wire policy
+preserves Latin-1 octets and reserves host protocol headers; it does not narrow
+portable inventory parsing or claim generic MCP OAuth support. Operational APIs
+and qualification limits are recorded in the MCP subplan's M3 implementation
+contract; M4 retains reviewed mapping publication/launch responsibility.

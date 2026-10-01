@@ -10764,3 +10764,19 @@ APP_CONFIG_GLOBAL = settings
 #
 # End of tldw_cli/config.py
 #######################################################################################################################
+
+
+def create_mcp_credential_service(data_root: Path | None = None):
+    """Build the MCP-only keyring owner for the active data root.
+
+    No arbitrary HTTP header values enter TOML or provider-account namespaces.
+    Unsupported/insecure keyring backends fail closed on first credential use.
+    """
+    from tldw_chatbook.MCP.credential_bindings import (
+        CredentialBindingService,
+        KeyringCredentialBackend,
+    )
+
+    return CredentialBindingService(
+        KeyringCredentialBackend(data_root or get_user_data_dir())
+    )

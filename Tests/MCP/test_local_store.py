@@ -645,7 +645,7 @@ def test_legacy_schema_migrates_durably_and_reopens(tmp_path):
         "spaced",
     )  # Explicit historical manual-profile normalization.
     migrated = path.read_bytes()
-    assert json.loads(migrated)["schema_version"] == 2
+    assert json.loads(migrated)["schema_version"] == 3
     assert LocalMCPStore(path).get_profile("old") == profile
     assert path.read_bytes() == migrated
 

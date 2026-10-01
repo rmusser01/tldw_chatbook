@@ -17301,3 +17301,15 @@ Require successful pool cleanup, not a closed flag or missing catalog, before
 reopening maintenance. Failed cleanup remains unready; a stalled cleanup can
 finish later. Test actual pools and subprocess neighbors before changing shared
 connection retirement.
+
+
+## Retained worker capacity must survive failed start correctly
+
+**TASK-32683 integration, 2026-09-30.** Injecting failure at the actual credential
+thread start exposed the original exception body and left its reserved future
+pending forever, so later authenticated requests could not acquire capacity.
+
+**What to do.** If no worker started, release its reservation and complete the
+original future with a fixed error. Keep capacity for workers that actually did
+start until real completion. Verify the real transport refuses before wire and
+can retry successfully; do not conflate failed start with cancelled waiting.

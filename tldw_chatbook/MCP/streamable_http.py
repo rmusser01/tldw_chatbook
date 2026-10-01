@@ -39,7 +39,11 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
     """HTTP I/O with the same catalog and complete-result normalization as stdio."""
 
     def __init__(
-        self, profile: TransportProfile, *, client_name: str = "tldw_chatbook_client"
+        self,
+        profile: TransportProfile,
+        *,
+        client_name: str = "tldw_chatbook_client",
+        credential_service=None,
     ) -> None:
         if profile.transport != "streamable_http":
             raise ValueError("mcp_profile_invalid")
@@ -47,6 +51,9 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
         self.profile = protocol_profile(profile.protocol_version)
         self._allow_negotiation = True
         self.url = profile.url
+        self._credential_reference = profile.credential_reference
+        self._credential_generation = profile.credential_generation
+        self._credential_service = credential_service
         self.client_name = client_name
         self.request_timeout_seconds = 10.0
         self.protocol_version = ""
@@ -80,9 +87,9 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
         self._tool_headers = bindings
         return SimpleNamespace(tools=accepted)
 
-    def _headers(
+    async def _headers(
         self, method: str | None = None, params: dict | None = None
-    ) -> dict[str, str]:
+    ) -> dict[str, str | bytes]:
         headers = {
             "Accept": "application/json, text/event-stream",
             "Content-Type": "application/json",
@@ -119,6 +126,23 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
                 headers["MCP-Protocol-Version"] = self.profile.version
             if self._session_id is not None:
                 headers["Mcp-Session-Id"] = self._session_id
+        if self._credential_reference is not None:
+            from .credential_bindings import CredentialError, endpoint_origin
+
+            if self._credential_service is None:
+                raise CredentialError("credential_missing")
+            # Only this boundary sees secrets; never cache them across requests.
+            async with asyncio.timeout(self.request_timeout_seconds):
+                resolved = await self._credential_service.resolve_async(
+                    self._credential_reference,
+                    self._credential_generation,
+                    endpoint_origin(self.url),
+                )
+            # RFC 9110 obs-text is octets. Host mapping supports Latin-1 exactly,
+            # refuses other Unicode, and never rewrites/re-encodes values silently.
+            headers.update(
+                {name: value.encode("latin-1") for name, value in resolved.items()}
+            )
         return headers
 
     @guarded
@@ -135,7 +159,6 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
             raise RuntimeError("mcp_connection_closed")
         request_id = next(self._request_ids)
         params = self.profile.params(params or {}, self.client_name)
-        headers = self._headers(method, params)
         body = self._encode(
             {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         )
@@ -143,12 +166,15 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
         drained = asyncio.get_running_loop().create_future()
         self._requests[task] = drained
         failed = False
+        exchange_started = False
         try:
             async with asyncio.timeout(
                 timeout_seconds
                 if timeout_seconds is not None
                 else self.request_timeout_seconds
             ):
+                headers = await self._headers(method, params)
+
                 # HTTPX trace fires immediately before request headers are written,
                 # after DNS/connect/TLS. Outer cancellation never creates certainty.
                 async def trace(event, info):
@@ -158,10 +184,16 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
                     ):
                         _dispatch.state = "uncertain"
 
+                exchange_started = True
                 result = await self._exchange(body, headers, request_id, method, trace)
                 return result
         except (TimeoutError, asyncio.CancelledError):
-            if not self.profile.modern and method != "initialize" and not self._closed:
+            if (
+                exchange_started
+                and not self.profile.modern
+                and method != "initialize"
+                and not self._closed
+            ):
                 try:
                     await asyncio.wait_for(
                         self.notify(
@@ -175,7 +207,9 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
         except _JSONRPCError:
             raise
         except Exception:
-            failed = True
+            # Header/credential refusal precedes transport I/O and must not kill
+            # a healthy connection or imply an uncertain remote invocation.
+            failed = exchange_started
             raise
         finally:
             self._requests.pop(task, None)
@@ -204,7 +238,7 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
             verb = "GET" if attempt else "POST"
             if attempt:
                 await asyncio.sleep(retry)
-                headers = {**self._headers(), "Last-Event-ID": last_id}
+                headers = {**(await self._headers()), "Last-Event-ID": last_id}
             async with self._http.stream(
                 verb,
                 self.url,
@@ -382,7 +416,10 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
 
     async def _post_oneway(self, payload: dict) -> None:
         async with self._http.stream(
-            "POST", self.url, content=self._encode(payload), headers=self._headers()
+            "POST",
+            self.url,
+            content=self._encode(payload),
+            headers=await self._headers(),
         ) as response:
             if response.status_code != 202:
                 self._status(response)
@@ -423,7 +460,7 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
                 try:
                     async with asyncio.timeout(1.0):
                         async with self._http.stream(
-                            "DELETE", self.url, headers=self._headers()
+                            "DELETE", self.url, headers=await self._headers()
                         ):
                             pass
                 except Exception:  # noqa: BLE001 -- best-effort session close
