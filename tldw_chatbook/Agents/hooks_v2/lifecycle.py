@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import replace
@@ -10,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from ..agent_models import AgentConfig
+from ..agent_models import AgentConfig, RunBudget, RunOutcome
 from .checkpoints import HookCheckpointError, HookCheckpointStore
 from .context import ContextLedger
 from .engine import HookEngine, HookEventOutcome
@@ -120,6 +121,72 @@ class HookSessionLifecycle:
         self._pending = set()
         self._handoff = None
         self.diagnostics = {"late_context": 0}
+        self.terminal_budgets = {}
+        self.terminal_budget_times = {}
+        self.inherited_budgets = {}
+
+    def inherit_root_budget(self, turn_id: str, config: AgentConfig) -> AgentConfig:
+        """Narrow a new root to the actual settled parent's remaining budget."""
+        inherited = self.inherited_budgets.pop(turn_id, None)
+        if inherited is None:
+            return config
+        from dataclasses import fields
+
+        inherited, admitted_at = inherited
+        wall = inherited.max_wall_seconds - (time.monotonic() - admitted_at)
+        if wall <= 0:
+            raise HookCheckpointError("hook_continuation_budget_exhausted")
+        inherited = replace(inherited, max_wall_seconds=wall)
+        unlimited = {
+            "max_total_tokens",
+            "max_tool_call_seconds",
+            "max_tool_result_chars",
+        }
+        values = {}
+        for field in fields(inherited):
+            old = getattr(inherited, field.name)
+            current = getattr(config.budget, field.name)
+            if field.name in unlimited and (old == 0 or current == 0):
+                values[field.name] = max(old, current)
+            else:
+                values[field.name] = min(old, current)
+        return replace(config, budget=replace(config.budget, **values))
+
+    def record_root_budget(
+        self,
+        turn_id: str,
+        outcome: RunOutcome,
+        budget: RunBudget,
+        elapsed_seconds: float,
+    ) -> None:
+        """Capture actual usage before terminal scope retirement loses the run."""
+        self.terminal_budget_times[turn_id] = time.monotonic()
+        steps = budget.max_steps - len(outcome.steps)
+        turns = budget.max_model_turns - sum(
+            step.kind == "model" for step in outcome.steps
+        )
+        wall = budget.max_wall_seconds - elapsed_seconds
+        tokens = (
+            budget.max_total_tokens - outcome.total_tokens
+            if budget.max_total_tokens
+            else 0
+        )
+        if (
+            outcome.status != "done"
+            or min(steps, turns, wall) <= 0
+            or budget.max_total_tokens
+            and tokens <= 0
+        ):
+            self.terminal_budgets[turn_id] = False
+            return
+        self.terminal_budgets[turn_id] = replace(
+            budget,
+            max_steps=steps,
+            max_model_turns=turns,
+            max_wall_seconds=wall,
+            max_total_tokens=tokens,
+            max_subagents=max(0, budget.max_subagents - outcome.subagents_spawned),
+        )
 
     def event(self, name: str, **kwargs: Any) -> HookEvent:
         key = getattr(self, "context_key", None)
@@ -337,6 +404,9 @@ class HookSessionLifecycle:
             execution.close()
         self._executions.clear()
         self._handoff = None
+        self.terminal_budgets.clear()
+        self.terminal_budget_times.clear()
+        self.inherited_budgets.clear()
         for owner in reversed(tuple(self.checkpoints._parents)):
             self.close_scope(owner)
         if self.live:

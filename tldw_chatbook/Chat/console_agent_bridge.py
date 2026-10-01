@@ -239,6 +239,7 @@ from tldw_chatbook.config import (
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
     ChangeReviewFinalizeResult,
@@ -9782,18 +9783,19 @@ class ConsoleAgentBridge:
         self, conversation_id: str, drill_id: str | None
     ) -> str | None:
         """Resolve a log selection using metadata only. Call from a worker."""
-        if not conversation_id:
-            return None
-        if drill_id:
-            record = self._db.get_run_metadata(drill_id)
-            if (
-                record is not None
-                and record.get("conversation_id") == conversation_id
-                and record.get("agent_kind") == AGENT_KIND_SUBAGENT
-            ):
-                return drill_id
-            return None
-        return self.latest_primary_run_id(conversation_id)
+        with operation_owned_connection(self._db):
+            if not conversation_id:
+                return None
+            if drill_id:
+                record = self._db.get_run_metadata(drill_id)
+                if (
+                    record is not None
+                    and record.get("conversation_id") == conversation_id
+                    and record.get("agent_kind") == AGENT_KIND_SUBAGENT
+                ):
+                    return drill_id
+                return None
+            return self.latest_primary_run_id(conversation_id)
 
     def latest_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the most recent non-superseded PRIMARY run's id, if any.

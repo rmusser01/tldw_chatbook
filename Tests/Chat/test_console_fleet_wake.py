@@ -168,7 +168,7 @@ class _FakeWakeBridge:
 
     def __init__(self, runs_db):
         self.registered: dict[str, object] = {}
-        self._runs_db = runs_db
+        self._db = runs_db
 
     def on_fleet_drained(self, name, consumer):
         self.registered[name] = consumer
@@ -178,7 +178,7 @@ class _FakeWakeBridge:
 
     @property
     def runs_db(self):
-        return self._runs_db
+        return self._db
 
 
 def _drain(conversation_id, *children):

@@ -1759,10 +1759,40 @@ class ConsoleRuntime:
         bind_submitter = getattr(coordinator, "bind_runtime_submitter", None)
         if callable(bind_submitter):
             bind_submitter(self._submit_queued_turn)
+            coordinator.bind_continuation_admission(
+                self._continuation_admission_current
+            )
         fleet_wake = getattr(value, "fleet_wake", None)
         bind_wake_submitter = getattr(fleet_wake, "bind_runtime_submitter", None)
         if callable(bind_wake_submitter):
             bind_wake_submitter(self._submit_fleet_wake)
+
+    def _continuation_admission_current(
+        self, request: ConsoleTurnCustodyRequest
+    ) -> bool:
+        """Refuse old-revision follow-ups while the reviewed plugin drain waits."""
+        rows = request.configuration.skill_context_maximum.get("available_skills", ())
+        plugin_rows = [row for row in rows if row.get("plugin_installation_id")]
+        if not plugin_rows:
+            return True
+        skills = getattr(self._chat_controller, "_skills_service", None)
+        local = getattr(skills, "local_service", None)
+        service = getattr(local, "plugin_service", None)
+        if service is None:
+            return False
+        from tldw_chatbook.Plugins.admission import PluginUnavailable
+
+        try:
+            for row in plugin_rows:
+                service.fences.require_admission(
+                    row["plugin_installation_id"], row["plugin_revision"]
+                )
+                service.fences.check(
+                    row["plugin_installation_id"], row.get("plugin_workspace_id")
+                )
+        except (PluginUnavailable, KeyError):
+            return False
+        return True
 
     def _on_active_session_changed(self) -> None:
         """Re-derive app-owned decisions after the store's authoritative swap."""
@@ -2431,6 +2461,9 @@ class ConsoleRuntime:
             record.inputs.durable_accepted = True
 
         async def submit() -> Any:
+            controller.prompt_queue_coordinator.bind_turn_request(
+                request, origin=origin
+            )
             return await controller.submit_draft(
                 request.draft,
                 session_id=request.session_id,
@@ -2973,12 +3006,15 @@ class ConsoleRuntime:
         if store is None or controller is None:
             return None
         session = next(row for row in store.sessions() if row.id == session_id)
-        configuration = controller.resolve_turn_configuration_snapshot(session_id)
-        return (
-            session.workspace_id,
-            configuration.workspace_roots,
-            configuration.project_authority,
-        )
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(getattr(store.persistence, "db", None)):
+            configuration = controller.resolve_turn_configuration_snapshot(session_id)
+            return (
+                session.workspace_id,
+                configuration.workspace_roots,
+                configuration.project_authority,
+            )
 
     async def prepare_hooks_v2(
         self, session_id: str, *, reason="startup", initiator="manual"

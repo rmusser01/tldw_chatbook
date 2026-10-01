@@ -423,3 +423,54 @@ cases simulate a changed OS value and do not establish real reboot/power-loss
 behavior. No arbitrary external-writer containment, Windows/Linux, external
 provider/keychain or full-suite claim. Hook/MCP actual grant producers land in
 H6/M4; F8 qualifies their shared ownership seam.
+
+
+## H5 — TASK-32680 bounded Stop continuation and teardown
+
+Integrated reviewed `fb9bae2e7a` through the existing queue, actual accepted
+parent turn, controller and runtime. Whole proposals combine in stable order
+into one machine turn. Three-turn/120-second ceilings and inherited real agent
+budgets remain enforced. A one-use live gate and v74 SQLite receipt share the
+existing durable acceptance transaction; consumption never claims commit proof.
+Foreground input, maintenance, revocation/drain, veto, closure and uncertainty
+refuse stale work. Machine input retains its untrusted carrier, never becomes
+human history or fires UserPromptSubmit, and never replays automatically.
+Stop synchronously seals admissions and signals the retained cancellation owner.
+Interrupt/SessionEnd have fixed observation windows and cannot delay host cleanup.
+
+Real maintenance admission initially failed two cases; the shared current gate
+now checks the existing maintenance pause through acceptance. Fresh worker
+handles exposed by archive reads, hook configuration, run-log selection and
+fleet history discovery now use existing operation-owned connection retirement.
+Mounted harness teardown closes the real backing app and its replaced database.
+No warning suppression, descriptor threshold increase or production timeout
+increase was used. Mounted fixture waits allow cold parent startup separately
+from the measured immediate Stop action; the full chain cap is independently
+qualified by the real scheduler controls.
+
+Final scheduler, mounted/viewless teardown, legacy hooks and migration: **105
+passed, 453.52s**, no warnings/skips; `/private/tmp/hooks-h5-qualified.xml`.
+Affected queue/dispatch/maintenance controls: **133 passed, 61.64s**, no warnings;
+`/private/tmp/hooks-h5-neighbors-final.xml`.
+Archive, fleet and log-reader neighbors: **85 passed, two baseline failures,
+133.14s**; `/private/tmp/hooks-h5-owner-neighbors.xml`. The same fleet snapshot
+identity and old log-root assumptions fail on frozen pre-H5 production:
+`/private/tmp/hooks-h5-fleet-prior.xml`. Existing dispatch fixture/settlement and
+Stop record failures also reproduce there; see `hooks-h5-prior-dispatch*.xml`
+and `hooks-h5-prior-stop-ui.xml` under `/private/tmp`. These are baseline
+failures, not passing checks or grounds to weaken ownership guards.
+
+The 1,000-real-SQLite-turn retention benchmark passed in **465.05s** without
+warnings; `/private/tmp/hooks-h5-1000-turns.xml`.
+The uninstalled wheel `/private/tmp/hooks-h5-wheel/tldw_chatbook-0.2.2-py3-none-any.whl`
+contains the exact v74 migration bytes. All 16 hooks/new qualification Python
+files pass Ruff and formatter checks. Design-token governance: **8 passed, 17.27s**, no warnings;
+`/private/tmp/hooks-h5-governance.xml`. All H5 changed Python parses, whitespace
+checks pass, and shared-file Ruff diagnostics have no additions against HEAD.
+All ACs were self-reviewed against real scheduler/storage owners. ADR-162/163/063
+apply; no new scheduler, permission owner or recursive model dispatch was added.
+
+Limits: local macOS, real SQLite/native threads/controlled processes and mounted
+Textual harness; provider and selected hook authority fixtures are isolated.
+No full-suite, external provider/keychain, Windows/Linux, real reboot/power-loss
+or future MCP hook qualification claim.

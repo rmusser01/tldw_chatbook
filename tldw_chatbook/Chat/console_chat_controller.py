@@ -4241,6 +4241,7 @@ class _DurablePostcommitContinuation:
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
     hook_context: str = field(default="", repr=False)
+    hook_continuation: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -9977,8 +9978,17 @@ class ConsoleChatController:
             if hook_owner is not None:
                 lifecycle, scope, session_key = hook_owner
                 if lifecycle is not None:
-                    lifecycle.close_scope(scope)
-                    lifecycle.turn_scope = None
+                    try:
+                        if (
+                            self.run_state_for(session_key).status
+                            is ConsoleRunStatus.COMPLETED
+                        ):
+                            await self.prompt_queue_coordinator.settle_hook_parent(
+                                session_key, scope
+                            )
+                    finally:
+                        lifecycle.close_scope(scope)
+                        lifecycle.turn_scope = None
                 if (
                     self.run_state_for(session_key).status
                     is ConsoleRunStatus.VALIDATING
@@ -10188,6 +10198,14 @@ class ConsoleChatController:
                     queue_authorization, target_id
                 )
             ):
+                if self.prompt_queue_coordinator.owns_machine_claim(
+                    queue_authorization,
+                    target_id,
+                    queue_entry_id,
+                ):
+                    return self._block(
+                        target_id, "Hook continuation is no longer current."
+                    )
                 raise PermissionError(
                     "queued sends require coordinator-issued generation authority"
                 )
@@ -10320,7 +10338,14 @@ class ConsoleChatController:
             if pending.insert_mode == "attachment" and pending.data is not None
         ]
         has_pending_attachment = bool(attachment_mode_pendings)
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        machine_input = self.prompt_queue_coordinator.continuation_input(
+            session.id,
+            queue_entry_id,
+            draft,
+        )
+        if machine_input is not None:
+            clean_draft, validation_error = str(machine_input), None
+        elif origin is ConsoleSubmissionOrigin.AGENT_WAKE:
             # The notice is machine-composed from DB text and bounded by
             # `compose_wake_notice`'s own result budget; `_validated_draft`
             # exists to validate USER drafts (its length cap and markup
@@ -10348,6 +10373,7 @@ class ConsoleChatController:
         # the first pass.
         if (
             origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            and machine_input is None
             and resumed_preparation is None
         ):
             try:
@@ -10422,6 +10448,16 @@ class ConsoleChatController:
         if hook_runtime is not None:
             # Recheck after awaited reference expansion; reserve without an await.
             busy = self._live_busy_session_ids()
+            if (
+                origin is ConsoleSubmissionOrigin.QUEUED
+                and self.prompt_queue_coordinator.reuses_claimed_slot(
+                    queue_authorization, session.id
+                )
+            ):
+                # The queue holds this slot across terminal settlement. Its
+                # claimed next turn must reuse that reservation, not compete
+                # with itself during H4 provisional initialization.
+                busy = [identity for identity in busy if identity != session.id]
             if session.id in busy or len(busy) >= self.max_parallel_runs:
                 return ConsoleSubmitResult(False, False, "A run is already preparing.")
             self._set_run_state(
@@ -10575,15 +10611,22 @@ class ConsoleChatController:
             self.store.get_message(resumed_preparation.transient_user_message_id)
             if resumed_preparation is not None
             and resumed_preparation.transient_user_message_id is not None
-            else self.store.append_message(
-                session.id,
-                role=ConsoleMessageRole.USER,
-                content=clean_draft,
-                attachments=staged_attachments,
-                persist=False,
+            else (
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.USER,
+                    content=clean_draft,
+                    metadata=(
+                        MessageMetadata(origin=MESSAGE_ORIGIN_HOOK)
+                        if machine_input is not None
+                        else None
+                    ),
+                    attachments=staged_attachments,
+                    persist=False,
+                )
+                if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+                else None
             )
-            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-            else None
         )
         if reference_records:
             # TASK-27021 / 26020 AC#6 (placement per Qodo #7, PR #2313): the
@@ -11029,6 +11072,21 @@ class ConsoleChatController:
             provider_messages = self._provider_messages_for_session(
                 session.id, annotate_ids=True, turn_context=turn_context
             )
+            if machine_input is not None:
+                # Bind the current machine row before any whole-block transforms.
+                for index in range(len(provider_messages) - 1, -1, -1):
+                    if provider_messages[index].get("role") == "user":
+                        if provider_messages[index].get("content") != str(
+                            machine_input
+                        ):
+                            raise ValueError("hook_continuation_input_changed")
+                        provider_messages[index] = {
+                            **provider_messages[index],
+                            "content": machine_input,
+                        }
+                        break
+                else:
+                    raise ValueError("hook_continuation_input_missing")
             trace_source_messages = tuple(dict(row) for row in provider_messages)
             (
                 provider_messages,
@@ -11338,6 +11396,10 @@ class ConsoleChatController:
                     origin=origin,
                     queue_entry_id=queue_entry_id,
                 )
+        if not self.prompt_queue_coordinator.continuation_current(
+            session.id, queue_entry_id
+        ):
+            return self._block(session.id, "Hook continuation is no longer current.")
         committed_context_epoch = self.store.conversation_context_epoch(session.id)
         if durable_turn and preparation is not None and echoed_user is not None:
             return await self._accept_durable_turn(
@@ -11371,7 +11433,7 @@ class ConsoleChatController:
         # returns before this point, and `_record_prompt_history` itself
         # skips empty (attachment-only) drafts. A wake notice is not a
         # prompt the user typed and never enters their prompt history.
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and machine_input is None:
             try:
                 await self._record_prompt_history(clean_draft)
             except BaseException:
@@ -11397,6 +11459,16 @@ class ConsoleChatController:
                 origin=origin,
                 queue_entry_id=queue_entry_id,
             )
+        continuation_gate = self.prompt_queue_coordinator.continuation_contribution(
+            session.id, queue_entry_id
+        )
+        if continuation_gate is not None:
+            try:
+                continuation_gate.consume()
+            except PermissionError:
+                return self._block(
+                    session.id, "Hook continuation is no longer current."
+                )
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
@@ -12369,6 +12441,11 @@ class ConsoleChatController:
             and preparation_outcome.contribution is not None
             else ()
         )
+        continuation_gate = self.prompt_queue_coordinator.continuation_contribution(
+            session.id, queue_entry_id
+        )
+        if continuation_gate is not None:
+            contributions = (*contributions, continuation_gate)
         acceptance = ConsoleDurableTurnAcceptance(
             conversation_id=identity.conversation_id,
             user_message_id=owner_ids.user_message_id,
@@ -12392,7 +12469,8 @@ class ConsoleChatController:
             resolved_destination=turn_context.resolved_destination,
             reconstructability=ConsoleDispatchReconstructability(
                 attachments_reconstructable=True,
-                evidence_reconstructable=not hook_context and not bool(
+                evidence_reconstructable=not hook_context
+                and not bool(
                     prepared_continuation is not None
                     and (
                         prepared_continuation.staged_evidence_frozen
@@ -12403,6 +12481,9 @@ class ConsoleChatController:
                 opaque_reference=f"opaque:{preparation.preparation_id}",
             ),
             contributions=contributions,
+            continuation_receipt=self.prompt_queue_coordinator.continuation_receipt(
+                session.id, queue_entry_id
+            ),
         )
         from .console_send_diagnostics import record_send_stage
 
@@ -12415,6 +12496,42 @@ class ConsoleChatController:
             )
         except Exception as exc:  # noqa: BLE001 -- a failed commit is a retry, not a crash
             record_send_stage("durable_commit", "failed", error=exc)
+            from tldw_chatbook.Agents.hooks_v2.continuations import (
+                ContinuationAdmissionRefused,
+            )
+
+            if isinstance(exc, ContinuationAdmissionRefused):
+                # This exception originated inside the rolled-back transaction.
+                # A generic persistence failure has no such certainty.
+                cleanup_owner = self._preparation_by_id(preparation.preparation_id)
+                owned_echo = bool(
+                    cleanup_owner is not None
+                    and cleanup_owner.session_id == session.id
+                    and cleanup_owner.transient_user_message_id == echoed_user.id
+                    and cleanup_owner.state is ConsoleTurnPreparationState.PAUSED
+                )
+                before_cleanup = self.store.conversation_context_epoch(session.id)
+                self._abandon_preparation(preparation.preparation_id)
+                try:
+                    self.store.get_message(echoed_user.id)
+                    echo_removed = False
+                except KeyError:
+                    echo_removed = True
+                if (
+                    owned_echo
+                    and echo_removed
+                    and self._preparation_by_id(preparation.preparation_id) is None
+                ):
+                    self.prompt_queue_coordinator.acknowledge_machine_rollback(
+                        session.id,
+                        queue_entry_id,
+                        before_cleanup,
+                        self.store.conversation_context_epoch(session.id),
+                    )
+                return self._block(
+                    session.id, "Hook continuation is no longer current."
+                )
+
             # TASK-22251: the user-facing copy stays deliberately generic, but
             # something must record WHICH failure occurred. `commit_durable_turn`
             # is a multi-step transaction -- conversation create, Library-policy
@@ -12464,6 +12581,7 @@ class ConsoleChatController:
             session_id=session.id,
             origin=origin,
             queue_entry_id=queue_entry_id,
+            hook_continuation=acceptance.continuation_receipt is not None,
             clean_draft=preparation.executed_draft,
             commit=commit,
             echoed_user_id=echoed_user.id,
@@ -12488,9 +12606,7 @@ class ConsoleChatController:
                     preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=(
-                    preparation.pii_ruleset_revision_id
-                ),
+                frozen_pii_ruleset_revision_id=(preparation.pii_ruleset_revision_id),
                 frozen_next_trace_privacy_revision=(
                     preparation.next_trace_privacy_revision
                 ),
@@ -12772,6 +12888,19 @@ class ConsoleChatController:
             )
             if hook_owner is not None and hook_owner[0] is not None:
                 lifecycle, hook_scope, _session_key = hook_owner
+                self.prompt_queue_coordinator.capture_hook_parent(
+                    session_id,
+                    lifecycle,
+                    hook_scope,
+                    commit.assistant_message_id,
+                    accepted_policy=(
+                        next(
+                            row for row in self.store.sessions() if row.id == session_id
+                        ).library_policy_holder.snapshot
+                        if commit.first_persist
+                        else None
+                    ),
+                )
                 continuation.provider_messages.extend(
                     lifecycle.claim_handoff(hook_scope)
                 )
@@ -12786,7 +12915,11 @@ class ConsoleChatController:
 
         async def prompt_history() -> None:
             history = self.prompt_history
-            if history is not None and continuation.clean_draft.strip():
+            if (
+                history is not None
+                and continuation.clean_draft.strip()
+                and not continuation.hook_continuation
+            ):
                 await history.append(continuation.clean_draft)
 
         def publish_preparation() -> None:
@@ -14830,8 +14963,17 @@ class ConsoleChatController:
         """
         self._stop_requested = True
         cancel_event = self._active_cancel_events.get(session_id)
+        if cancel_event is None:
+            cancel_event = self.prompt_queue_coordinator.pending_stop_cancellation(
+                session_id
+            )
         if cancel_event is not None:
             cancel_event.set()
+            self.prompt_queue_coordinator.pause_for_stop(session_id)
+            parent = self.prompt_queue_coordinator.interrupt_parent(session_id)
+            if parent is not None:
+                self._interrupt_host.notify_hook_interrupt(cancel_event, *parent)
+            self.prompt_queue_coordinator.cancel_pending_stop(session_id, cancel_event)
 
     def _is_active_session_cancelled(self) -> bool:
         """Best-effort cancel-signal check that falls back to the VIEWED
@@ -19664,6 +19806,15 @@ class ConsoleChatController:
 
         return request_tool_call_abandon(run_id)
 
+    @property
+    def is_stop_allowed(self) -> bool:
+        """Project ordinary generation or exact pending Stop ownership for this tab."""
+        return self.run_state.is_stop_allowed or (
+            self.prompt_queue_coordinator.pending_continuation_stop_available(
+                self.store.active_session_id or ""
+            )
+        )
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the ACTIVE (viewed) session's stream to stop at the next
         safe boundary.
@@ -19686,6 +19837,9 @@ class ConsoleChatController:
             stopped; False (a no-op) when it did not.
         """
         session_id = self.store.active_session_id or ""
+        if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
+            self._signal_stop(session_id=session_id)
+            return True
         repair_session = self._active_citation_repair_sessions.get(session_id)
         if repair_session is not None and repair_session.selection_committed:
             return False
@@ -24504,6 +24658,13 @@ class ConsoleChatController:
             preparation_id=preparation_id,
             defer_queued_settlement=defer_queued_settlement,
         )
+        hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
+            asyncio.current_task()
+        )
+        if hook_owner is not None and hook_owner[0] is not None:
+            self.prompt_queue_coordinator.capture_hook_parent(
+                session_id, hook_owner[0], hook_owner[1], assistant_message_id
+            )
         self._arm_run_hooks_stop(session_id)
         if preparation_id:
             self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
@@ -27606,6 +27767,9 @@ class ConsoleChatController:
         # must never be torn down by a stale reference to THIS run's event.
         cancel_event = threading.Event()
         self._active_cancel_events[owner_id] = cancel_event
+        self.prompt_queue_coordinator.bind_hook_parent_cancellation(
+            owner_id, assistant_message_id, cancel_event
+        )
         # Narrowed once, here, rather than inside the try below: every use
         # in this method (the gateway dispatch, the usage attachments, the
         # post-generation citation selection) then sees a real signals
@@ -27775,6 +27939,9 @@ class ConsoleChatController:
                 )
             await self._wait_for_trace_maintenance_dispatch()
             self._trace_last_provider_activity = time.monotonic()
+            if self.prompt_queue_coordinator.continuation_cancelled(owner_id):
+                self._signal_stop(session_id=owner_id)
+                raise asyncio.CancelledError
             if before_provider_dispatch is not None:
                 await before_provider_dispatch()
             elif preparation_id is not None and not self._transition_preparation(
@@ -28772,6 +28939,9 @@ class ConsoleChatController:
         # thread observe a Stop correctly (task-227).
         cancel_event = threading.Event()
         self._active_cancel_events[session_id] = cancel_event
+        self.prompt_queue_coordinator.bind_hook_parent_cancellation(
+            session_id, assistant_message_id, cancel_event
+        )
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
             session_id=session_id,
@@ -29044,6 +29214,9 @@ class ConsoleChatController:
                 )
             await self._wait_for_trace_maintenance_dispatch()
             self._trace_last_provider_activity = time.monotonic()
+            if self.prompt_queue_coordinator.continuation_cancelled(session_id):
+                self._signal_stop(session_id=session_id)
+                raise asyncio.CancelledError
             if before_provider_dispatch is not None:
                 try:
                     await before_provider_dispatch()

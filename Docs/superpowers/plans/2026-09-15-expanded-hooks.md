@@ -368,7 +368,7 @@ git diff --check
 - Consumes: H4 lifecycle and existing queue/settlement/interrupt hosts; use their run budgets and cancellation owner rather than a recursive model call.
 - Produces: ContinuationPolicy.permits(*, admitted_turns: int, elapsed_seconds: float, foreground_waiting: bool, revoked: bool, draining: bool, closed: bool, vetoed: bool) -> bool. async schedule_continuation(parent_turn_id: str, event_id: str, proposals: tuple[HookResult, ...]) -> str | None uses one durable scheduler deduplication identity. Reuse existing scheduler checkpoint recovery for uncertain admission.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_user_work_and_chain_cap_prevent_continuation():
@@ -379,29 +379,29 @@ def test_user_work_and_chain_cap_prevent_continuation():
     assert not ContinuationPolicy.permits(**{**values, "admitted_turns": 3})
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Chat/test_hooks_v2_continuations.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Chat/test_hooks_v2_continuations.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def continuation_key(parent_turn_id: str, event_id: str) -> tuple[str, str]:
     return parent_turn_id, event_id
 ```
 
-  - [ ] 3.1. Use the real queue coordinator for Stop settlement and combine valid proposals in stable order into one next turn. Enforce 4 KiB/message and 8 KiB/combined with a whole-proposal refusal, not truncation.
-  - [ ] 3.2. Reserve deduplication identity atomically with scheduler admission. Keep inherited parent/workspace budgets, manual-origin distinction and foreground priority; never hold a stale proposal behind queued user work.
-  - [ ] 3.3. Wire Interrupt only after immediate admission sealing. Still-authorized handlers get their bounded observation window; plugin revocation suppresses affected callbacks and host cleanup cannot be vetoed.
-  - [ ] 3.4. Exercise mounted and viewless shutdown through the shared interrupt host; settle cancelled waiters independently of retained process reaping and keep metadata-only diagnostics.
+  - [x] 3.1. Use the real queue coordinator for Stop settlement and combine valid proposals in stable order into one next turn. Enforce 4 KiB/message and 8 KiB/combined with a whole-proposal refusal, not truncation.
+  - [x] 3.2. Reserve deduplication identity atomically with scheduler admission. Keep inherited parent/workspace budgets, manual-origin distinction and foreground priority; never hold a stale proposal behind queued user work.
+  - [x] 3.3. Wire Interrupt only after immediate admission sealing. Still-authorized handlers get their bounded observation window; plugin revocation suppresses affected callbacks and host cleanup cannot be vetoed.
+  - [x] 3.4. Exercise mounted and viewless shutdown through the shared interrupt host; settle cancelled waiters independently of retained process reaping and keep metadata-only diagnostics.
 
 **Failure and successful-control matrix:** Two simultaneous Stop callbacks, lost scheduler response, process restart, uncertain dispatch, pending plugin update, user queue arrival, continuation veto, 120-second cap, oversized combined input and repeated cancellation during cleanup.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Chat/test_hooks_v2_continuations.py Tests/Chat/test_hooks_v2_teardown.py Tests/Chat/test_console_viewless_hooks.py Tests/Chat/test_console_interrupt_rounds.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32680 --plain

@@ -4975,6 +4975,10 @@ class AgentService:
         resolved_base_url: str | None = None,
         resolved_params_json: str | None = None,
     ) -> tuple[str, RunOutcome]:
+        if parent_run_id is None and self._hooks_v2_lifecycle is not None:
+            config = self._hooks_v2_lifecycle.inherit_root_budget(
+                self._hooks_v2_turn_id, config
+            )
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
         # being read off `self.run_log_writer` at call time.
@@ -8699,6 +8703,17 @@ class AgentService:
                                 )
                             ],
                         )
+            if (
+                parent_run_id is None
+                and self._hooks_v2_lifecycle is not None
+                and "outcome" in locals()
+            ):
+                self._hooks_v2_lifecycle.record_root_budget(
+                    self._hooks_v2_turn_id,
+                    outcome,
+                    config.budget,
+                    self.clock() - started,
+                )
             self._notify_run_terminal(run_id)
         self._persist(run_id, outcome, durable_handle_ids, budget_tokens_known=budget_tokens_known)
         return run_id, outcome

@@ -370,6 +370,7 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(1800)
 async def test_success_cleanup_drops_content_and_bounds_minimal_tombstones(
     tmp_path,
 ) -> None:

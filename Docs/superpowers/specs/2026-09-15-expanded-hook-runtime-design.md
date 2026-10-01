@@ -1176,3 +1176,100 @@ fences without disk I/O or config locks on the app loop. Process creation remain
 inside the existing owner transaction on a worker, with transport custody on the
 app loop. V2 settings reuse the existing Advanced Config editor and review modal;
 no parallel guided schema or per-handler enable switch is introduced.
+
+## H5 continuation admission and retention (TASK-32680)
+
+The existing ConsolePromptQueueCoordinator alone chooses Stop follow-ups. A
+host-issued continuation identity travels with queued custody, separately from
+the existing `queued` dispatch origin: its initiator is `hook_continuation`, never
+a fresh human UserPromptSubmit or child wake. It pins the accepted parent turn,
+Stop event, chain start/count and inherited configuration. Only successful
+accepted root settlement can issue it; retired operation/run scopes are never
+rebound. Required post gates settle before transfer to the live session owner.
+
+ChaChaNotes schema 74 adds `console_hook_continuation_receipts`, keyed uniquely
+by `(parent_turn_id, stop_event_id)`. The existing acceptance transaction inserts
+the receipt, user-role attributed untrusted input, assistant owner and active
+dispatch checkpoint together. A duplicate rolls the competing acceptance back.
+Receipt metadata names machine initiation and the parent assistant/conversation;
+it contains no proposal body. Receipts survive terminal checkpoint deletion and
+soft deletion, and cascade only with permanent parent/conversation removal.
+The active checkpoint remains the sole uncertain-dispatch recovery owner; neither
+a lost response nor restart replays Stop or automatically replays model/tools.
+Ephemeral conversations retain only live-process deduplication.
+
+Each settlement admits at most one combined proposal in declaration order, with
+whole-message refusal above 4 KiB and whole-combination refusal above 8 KiB.
+Three admitted continuations and 120 elapsed seconds bound a host-minted chain.
+Exhausted parent budgets, queued human work, veto, current authority failure,
+reviewed update drain, cancellation and closure discard proposals. Machine work
+is never retained behind newly arrived foreground work. New turns keep normal
+provider/tool authorization, inherited budgets, and the H3 context carrier.
+
+Interrupt observation is installed only after immediate queue/run admission
+sealing, once per cancellation identity, on the shared view-independent interrupt
+host. H2's one-second Interrupt and three-second SessionEnd observation windows
+are separate from retained process cleanup. Revoked callbacks are suppressed;
+repeated cancellation neither releases cleanup custody nor resets deadlines, and
+no hook can veto cleanup. The schema resource is
+`tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_hook_continuation_receipts.sql`;
+its migration test is `Tests/DB/test_chachanotes_v74_hook_continuation_receipts_migration.py`.
+
+
+### H5 admission point across the database worker (R56)
+
+A coordinator-issued, body-free one-use gate is written through the existing
+`ConsoleTransactionContribution` seam after messages/checkpoint/receipt insertion
+and before transaction commit. Admitted human work and Stop synchronously
+invalidate pending gates. Invalidation first rolls the entire transaction back;
+consumption first establishes admission and later human work follows the normal
+queue. Consumption never proves a commit and is never reset after failure or
+uncertainty; the existing checkpoint/receipt owns reconciliation without replay.
+The short gate lock covers only pending/invalidation/consumption. Authority,
+reviewed plugin drain and deadline checks run outside it; no SQL, callbacks,
+cleanup or event-loop waits occur under it. Its canonical fingerprint contains
+only host-issued gate/session/entry/parent/Stop lineage. Ephemeral acceptance
+consumes the same gate without claiming restart durability. Exact claimed-entry
+cleanup releases live captures. The repository Library-policy validator remains
+unchanged; the first-save continuation handoff accepts only identical full policy
+values changing from new_session/no revision to the accepted durable revision 1.
+
+The 120-second clock begins at the accepted root, and actual remaining AgentService
+budgets include time spent waiting for Stop and queue admission. Event envelopes
+use the existing `continuation` initiator; persisted custody/receipts use
+`hook_continuation`, and scheduled roots retain `scheduled`. Hook messages carry
+H3 hook attribution without invented package installation origins; the host's
+untrusted-input label is separate from each contributed message's byte count.
+
+A typed admission refusal permits only synchronous cleanup of the exact owned
+preparation and transient echo. The coordinator acknowledges only that verified
+cleanup epoch; unrelated context changes preserve the normal pause. Other errors
+and uncertain acceptance retain ordinary recovery. User Stop seals its affected
+turn and emits Interrupt once; SessionEnd belongs to graceful session disposal.
+A later ordinary authorized turn can use the same session without reopening the
+cancelled turn's admission.
+
+## H5 pending Stop cancellation ownership (R57)
+
+The accepted parent's original provider cancellation Event may be retained by the
+existing queue coordinator only for that exact session, assistant and turn while
+its Stop settlement is pending. Bind it while the accepted parent is still known;
+provider-map removal does not revoke the coordinator's pending-settlement custody.
+Retire the reference when that settlement finishes. No synthetic cancellation
+identity, retired-scope rebind or later-turn borrowing is permitted.
+
+User Stop first seals admission for that parent, sets its original Event and
+notifies the shared interrupt host once for the exact parent. A child task owned
+by that settlement runs only its Stop fire_async call. Cancel and join that child
+through the existing per-event cancellation path: fire_handler_async stops the
+delivery, closes that event execution and retains the delivery/process cleanup
+owner until actual terminal proof. Never cancel the encompassing queue/root drain,
+close the session or emit SessionEnd for this operation. Suppress CancelledError
+only when this exact settlement's recorded user seal caused the child cancellation;
+unrelated cancellation propagates. Repeated Stop neither resets deadlines nor
+releases unresolved cleanup. Existing Interrupt observation and cleanup bounds
+remain unchanged. A fresh authorized turn on the live session remains usable.
+
+The composer exposes this pending Stop availability separately from generation
+activity. Expanded and collapsed Stop remain reachable while the hook is pending;
+Redirect and the Generating indicator still require an actual active generation.

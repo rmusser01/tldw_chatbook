@@ -2085,7 +2085,6 @@ class ConsoleChatStore:
         # Process-local, like the epochs above.
         self._pending_agent_handoff_clears: dict[str, None] = {}
 
-
         # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
         # ``message_trajectory_metadata`` table is never synced. Timing is
         # armed by the controller (step start / completion) and stamped here
@@ -2380,7 +2379,6 @@ class ConsoleChatStore:
                 "Console active-session subscriber raised (exception_type={})",
                 type(exc).__name__,
             )
-
 
     def _consume_pending_agent_handoff_clear(self, session_id: str) -> None:
         """Clear a restored handoff key when its session first activates.
@@ -5833,6 +5831,9 @@ class ConsoleChatStore:
             "user_content_sha256": hashlib.sha256(
                 acceptance.user_content.encode("utf-8")
             ).hexdigest(),
+            "continuation_receipt": cls._canonical_fingerprint_value(
+                acceptance.continuation_receipt
+            ),
             "parent_message_id": acceptance.parent_message_id,
             "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
             "origin": acceptance.origin,

@@ -359,6 +359,23 @@ top-to-bottom — no unit test would ever say so.
 **What to do.** For anything user-facing, run the app and look at it. Ask: does the
 screen read correctly top-to-bottom, and does the affordance actually lead somewhere?
 
+**TASK-32680, pending Stop hooks, 2026-09-17.** The initial mounted test called
+`_stop_console_generation_from_visible_action` directly during streaming; the
+91-test core run passed. Review then reproduced Stop failing while a completed
+parent's Stop hook was still running. Fixing the callable controller entry still
+left both composer Stop buttons hidden because visibility followed the completed
+parent's generation state. Two actual-button tests failed on `display=False`.
+The final fix projects pending-hook Stop separately from generation/Redirect and
+keeps the original cancellation Event through that exact settlement. Four mounted
+actual Send/Stop cases at 80x24 and 120x35 verify cancellation, once-only Interrupt,
+retained process cleanup and a fresh Send. These targeted checks do not resolve
+the separately recorded aggregate descriptor warning or predecessor UI failures.
+
+**Add to the check.** Exercise the visible action in each lifecycle phase where
+users need it, including after generation ends while follow-up work is pending.
+A mounted app plus direct handler invocation proves neither button reachability
+nor transfer of cancellation ownership across that phase boundary.
+
 Headless recipe (no repo tooling required):
 
 ```bash
@@ -3517,3 +3534,13 @@ a scratch HOME, XDG dirs, `TLDW_CONFIG_PATH` and `[paths].data_dir`, all set **b
 the first `tldw_chatbook` import. A `--rootdir` flag or a `sys.path` insert gives no
 isolation. Check afterwards: the real `config.toml` sha256 and the mtimes under
 `~/.local/share/tldw_cli/default_user` must be unchanged.
+
+
+## Finite native Console readers must retire their own worker connections
+
+**TASK-32680, 2026-09-30.** H5 mounted qualification accumulated native SQLite
+leases despite passing visible Send/Stop assertions. Registration stacks traced
+fresh handles to archive, hook configuration, run-log selection and fleet history
+reads. Reusing operation-owned connection retirement fixed the actual workers;
+closing only the main-thread database or collecting Python objects did not.
+The final 105-case run passed without resource warnings or raised FD thresholds.
