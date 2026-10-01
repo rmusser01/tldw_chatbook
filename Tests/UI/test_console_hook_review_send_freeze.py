@@ -151,11 +151,13 @@ async def _open_review_from(route: str, host, pilot):
         ), f"{route}: the hook review never opened"
         modal = host.screen
         return console, modal, modal._result_callbacks[-1].requester
-    except Exception:
+    except BaseException:
         # The caller's `finally` has not started yet, so release a review
         # this already pushed here: its result callback is stranded on the
         # blocked pump that pushed it, and run_test's teardown awaits that
-        # pump's task -- the run would hang instead of failing.
+        # pump's task -- the run would hang instead of failing. BaseException,
+        # not Exception: `pytest.fail` (a timeout plugin's too),
+        # KeyboardInterrupt and CancelledError skipped an `except Exception`.
         for screen in list(host.screen_stack):
             if isinstance(screen, ConsoleHooksReviewModal) and screen._result_callbacks:
                 await _until(lambda screen=screen: screen.is_mounted, 5)
@@ -204,8 +206,18 @@ async def test_console_pump_runs_again_after_the_send_review_is_dismissed(
             await _release(host, modal, requester)
 
 
+#: How the open check fails once the review is up: its assertion, or a
+#: BaseException -- what ``pytest.fail`` raises (a plugin's timeout among its
+#: callers), like ``KeyboardInterrupt`` and ``CancelledError``.
+_OPEN_FAILURES = {
+    "assertion": (AssertionError, "the hook review never opened"),
+    "base-exception": (pytest.fail.Exception, "Timeout"),
+}
+
+
+@pytest.mark.parametrize("failure", sorted(_OPEN_FAILURES))
 async def test_a_failed_open_check_still_releases_the_review_it_opened(
-    hook_file, monkeypatch
+    failure, hook_file, monkeypatch
 ):
     """PR #2944 review: each test opened the review BEFORE its ``try``, so a
     failure inside ``_open_review_from`` once the review was pushed -- its
@@ -213,13 +225,23 @@ async def test_a_failed_open_check_still_releases_the_review_it_opened(
     callback stranded on the pump that pushed it. Textual's teardown awaits
     that blocked pump's task (``MessagePump._close_messages``), so the run
     would hang to the suite timeout instead of failing. The helper must
-    release what it opened before its error propagates."""
+    release what it opened before its error propagates, whatever the error:
+    catching only ``Exception`` let a BaseException skip the release."""
     real_until = _until
+    expected, message = _OPEN_FAILURES[failure]
+    calls = 0
 
-    async def wait_then_time_out(predicate, seconds):
-        # Wait for real, then report a timeout: the review IS open, exactly
-        # what a mount that finishes past the deadline leaves behind.
-        await real_until(predicate, seconds)
+    async def wait_then_fail(predicate, seconds):
+        # Wait for real, then fail the open check: the review IS open,
+        # exactly what a mount that finishes past the deadline leaves
+        # behind. Only the open check fails; the release's own waits run.
+        nonlocal calls
+        calls += 1
+        ready = await real_until(predicate, seconds)
+        if calls > 1:
+            return ready
+        if failure == "base-exception":
+            pytest.fail("Timeout while the hook review mounted")
         return False
 
     app = _build_test_app()
@@ -228,8 +250,8 @@ async def test_a_failed_open_check_still_releases_the_review_it_opened(
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen
         module = sys.modules[__name__]
-        monkeypatch.setattr(module, "_until", wait_then_time_out)
-        with pytest.raises(AssertionError, match="the hook review never opened"):
+        monkeypatch.setattr(module, "_until", wait_then_fail)
+        with pytest.raises(expected, match=message):
             await _open_review_from("send-button", host, pilot)
         monkeypatch.setattr(module, "_until", real_until)
         stranded = [
