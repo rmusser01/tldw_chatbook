@@ -67,7 +67,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # removed -- both import tldw_chatbook.UI.MediaWindow_v2 (and V88), which
 # that task deleted as dead code. This is the one shrink the floor is not
 # meant to stop: no behaviour went uncovered, the covered thing is gone.
-MINIMUM_FILES = 118
+# TASK-33621.15 raised it to 119: Tests/UI/test_console_session_tab_close.py
+# (8 private-profile tests, ~90 s serial) guards the Console tab close that
+# stayed broken for three weeks because no PR gate ran its routing tests.
+MINIMUM_FILES = 119
 
 
 def read_census(path: Path) -> list[str]:
